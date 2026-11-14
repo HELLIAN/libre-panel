@@ -328,31 +328,24 @@ def test_a_file_is_at_most_a_mebibyte_and_has_the_size_it_should():
             files._command(never)
 
 
-def test_a_file_the_panel_kept_is_taken_away_and_written_again(caplog):
-    """A 9.2" kept its standby clip when a larger one came, it seems where there was no room
-    for both at once: the old one is taken away and the new one written again; where it fits
-    beside the old one, it is written at once; where it fits nowhere, the panel has none."""
+def test_a_file_the_panel_kept_is_left_as_it_is():
+    """A 9.2" kept its standby clip when a larger one came (no room for both at once, it
+    seems): the error says what the panel has, and nothing is taken away to be written again
+    (0.9.1 did so; that 9.2" kept restarting after its start screen was written so); where the
+    new one fits beside the old one, it is written at once."""
     old, new = b"o" * 700, b"n" * 710
     clip = (F.STANDBY_CLIP, 0)
     panel = FakePanel({F.STANDBY_CLIP: old}, room=1000)
-    with caplog.at_level("INFO", logger="libre_panel.devices.panel_files"):
+    with pytest.raises(DeviceError, match="the panel has 700 bytes of it, not 710"):
         F.PanelFiles(panel).write(F.STANDBY_CLIP, new)
-    assert panel.files[F.STANDBY_CLIP] == new
-    assert panel.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip), (42, *clip),
-                          (40, F.STANDBY_CLIP, 710), (98, *clip)]  # fmt: skip
-    assert ("the panel kept the usr/data/standby.h264 it had (700 bytes, not 710): taken away, "
-            "written again") in caplog.text  # fmt: skip
+    assert panel.files[F.STANDBY_CLIP] == old
+    assert panel.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]  # (no 42)
     roomy = FakePanel({F.STANDBY_CLIP: old}, room=1410)
     F.PanelFiles(roomy).write(F.STANDBY_CLIP, new)
     assert roomy.files[F.STANDBY_CLIP] == new
     assert roomy.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]
-    full = FakePanel({F.STANDBY_CLIP: old}, room=705)
-    with pytest.raises(DeviceError, match="the panel has 0 bytes of it, not 710"):
-        F.PanelFiles(full).write(F.STANDBY_CLIP, new)
-    none = FakePanel(room=705)  # (nothing kept: nothing taken away)
-    with pytest.raises(DeviceError, match="the panel has 0 bytes of it, not 710"):
-        F.PanelFiles(none).write(F.STANDBY_CLIP, new)
-    assert none.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]
+    for cmd, *_ in panel.sent + roomy.sent:
+        assert cmd != 42
 
 
 def test_the_boot_logo_is_written_shown_and_taken_away_again():

@@ -621,9 +621,8 @@ limited range their black was grey.
   touched and shows again.
 - **The standby clip replaces** the one the panel has (`usr/data/standby.h264`, the vendor
   app's name); that one cannot be read back first. Where the panel keeps the one it had (a
-  9.2" did when a larger one came, it seems for want of room for both at once), that one is
-  taken away and the new one written again. Where `video.local_clip` is empty, the video mode
-  is then told this name.
+  9.2" did when a larger one came), Libre Panel says so and leaves it: it never deletes a file
+  to write it again. Where `video.local_clip` is empty, the video mode is then told this name.
 - **With more panels** the card is the one of the panel chosen at the top (*Panel 1 |
   Panel 2*): its own logo and clip, in its size and the way it is mounted, written to that
   panel alone, and a clip there is named in its own `[[panels]]` `video`, never in another's.

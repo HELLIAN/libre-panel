@@ -506,10 +506,9 @@ impl PanelFiles<'_> {
         Ok(if size == u32::MAX { 0 } else { i64::from(size) })
     }
 
-    /// write: a file written, and checked that it has the size it should. Where the panel
-    /// kept the file it had (a 9.2" kept its standby clip when a larger one came, it seems
-    /// where there is no room for both at once), that one is taken away and the new one
-    /// written again.
+    /// write: a file written, and checked that it has the size it should. A file the panel
+    /// kept in place of the new one is left as it is and said: never taken away to write
+    /// again (0.9.1 did so; a 9.2" kept restarting after its start screen was written so).
     fn write(&self, name: &str, data: &[u8]) -> Result<(), String> {
         let raw = checked_name(name)?;
         if data.is_empty() || data.len() > MAX_FILE {
@@ -519,17 +518,7 @@ impl PanelFiles<'_> {
             ));
         }
         self.command(CMD_WRITE_FILE, &file_args(&raw, data.len()), data, 20000)?;
-        let mut written = self.size(name)?;
-        if written != data.len() as i64 && written != 0 {
-            note(&format!(
-                "start screen: the panel kept the {name} it had ({written} bytes, not {}): \
-                 taken away, written again",
-                data.len()
-            ));
-            self.delete(name)?;
-            self.command(CMD_WRITE_FILE, &file_args(&raw, data.len()), data, 20000)?;
-            written = self.size(name)?;
-        }
+        let written = self.size(name)?;
         if written != data.len() as i64 {
             return Err(format!(
                 "{name}: the panel has {written} bytes of it, not {}",

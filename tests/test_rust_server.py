@@ -3328,9 +3328,9 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
     boot logo written and shown (the JPEG panel_files.py makes, byte for byte), taken away
     again, the standby clip written, played and saved as the start (H.264 byte for byte where
     ffmpeg is there) and named in config.toml; on a panel mounted upside down both turned
-    round, the files to keep as well, and a clip the panel kept in place of the new one taken
-    away and the new one written again; what is no action, panel or model refused in
-    server.py's words."""
+    round, the files to keep as well, and a clip the panel kept in place of the new one said and
+    left as it is (nothing taken away); what is no action, panel or model refused in server.py's
+    words."""
     from PIL import Image
 
     from libre_panel.devices import panel_files
@@ -3425,19 +3425,27 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                               for frame in bootscreen.standby_frames(model)]  # fmt: skip
                     clip = panel_files.clip_h264(model, shutil.which("ffmpeg"), frames, full=True)
                     # a panel that keeps the clip it had where there is no room for both at
-                    # once (as a 9.2" did): the old one is taken away and the new one written
-                    # again
+                    # once (as a 9.2" did): said, and left as it is: nothing taken away, played
+                    # or saved (0.9.1 took it away and wrote again; that 9.2" kept restarting
+                    # after its start screen was written so)
                     old = rig.fake.files[panel_files.STANDBY_CLIP]
                     rig.fake.room = len(old) + len(clip) - 1
                     before = len(rig.fake.commands)
                     status, said = post({"action": "clip"})
-                    assert status == "200" and said["standby_clip"] == len(clip), said
-                    assert rig.fake.files[panel_files.STANDBY_CLIP] == clip
+                    assert status == "409", said
+                    assert said["error"] == (
+                        f"{panel_files.STANDBY_CLIP}: the panel has "
+                        f"{len(old)} bytes of it, not {len(clip)}"
+                    ), said
+                    assert rig.fake.files[panel_files.STANDBY_CLIP] == old
                     sent = [cmd for cmd in rig.fake.commands[before:]
                             if cmd in (40, 42, 98, 15, 110, 125)]  # fmt: skip
-                    assert sent == [40, 98, 42, 40, 98, 15, 110, 125], sent
-                    assert get("/api/start-screen/file?model=turing-9.2-usb&what=clip") == clip
+                    assert sent == [40, 98], sent
                     rig.fake.room = None
+                    status, said = post({"action": "clip"})
+                    assert status == "200" and said["standby_clip"] == len(clip), said
+                    assert rig.fake.files[panel_files.STANDBY_CLIP] == clip
+                    assert get("/api/start-screen/file?model=turing-9.2-usb&what=clip") == clip
                 for payload, words in (
                     ({"action": "nope"},
                      'expected {"action": "state", "logo", "remove-logo" or "clip"}'),
