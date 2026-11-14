@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use lp_devices::models::PanelModel;
 use lp_pixels::{Image, Mode};
@@ -652,6 +653,158 @@ pub fn remove_logo(model: Option<&'static PanelModel>, place: &Where) -> Result<
             ("boot_logo", whole(files.size(BOOT_LOGO)?)),
         ]))
     })
+}
+
+/// What `libre-panel start-screen` does on a panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rescue {
+    /// what it holds: the boot logo's and the standby clip's sizes and its folder's names
+    /// (98 and 99: nothing is written)
+    Look,
+    /// its boot logo taken off, the factory logo again (42, as *Factory logo again*), where
+    /// it has one; then what it holds
+    RemoveLogo,
+}
+
+/// `libre-panel start-screen`, for a panel that restarts over and over after its start screen
+/// was written (issue 52): it is opened as the start screen's jobs open it, without the
+/// video's start (whose 110 plays the standby clip), the step asked for is taken first, then
+/// what it holds is asked, each said with the time since the panel came. With `wait`, the
+/// panel is waited for that long and tried as long as it is on the bus, again each time it
+/// comes back, until the step is done (a failure said once each time it is there). `say` gets
+/// each line.
+pub fn rescue(
+    what: Rescue,
+    wait: Option<Duration>,
+    say: &mut dyn FnMut(&str),
+) -> Result<(), String> {
+    let setup = crate::display::files_setup(None, &[])?;
+    let Some(limit) = wait else {
+        return rescue_once(&setup, what, Instant::now(), say);
+    };
+    let present = || match (&setup.test_link, &setup.test_present) {
+        (Some(_), Some(file)) => file.exists(),
+        (Some(_), None) => true,
+        (None, _) => lp_devices::usb::list()
+            .iter()
+            .any(|device| lp_devices::usb::model_of(device.pid).is_some()),
+    };
+    say(&format!(
+        "waiting up to {} s for the panel: plug it in, or let it come back",
+        limit.as_secs()
+    ));
+    let deadline = Instant::now() + limit;
+    let mut came: Option<Instant> = None;
+    let mut said = String::new(); // (the last failure, said once while the panel is there)
+    loop {
+        match (present(), came) {
+            (true, None) => {
+                came = Some(Instant::now());
+                said.clear();
+                say("+0 ms: the panel is on the bus");
+            }
+            (false, Some(since)) => {
+                say(&format!(
+                    "+{} ms: the panel left the bus",
+                    since.elapsed().as_millis()
+                ));
+                came = None;
+            }
+            _ => {}
+        }
+        if let Some(since) = came {
+            match rescue_once(&setup, what, since, say) {
+                Ok(()) => return Ok(()),
+                Err(why) if why == said => {}
+                Err(why) => {
+                    say(&format!("+{} ms: {why}", since.elapsed().as_millis()));
+                    said = why;
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "the panel was not reached in {} s",
+                limit.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// One try of `rescue` on the panel that is there (`since`: when it came).
+fn rescue_once(
+    setup: &lp_devices::turzx::Setup,
+    what: Rescue,
+    since: Instant,
+    say: &mut dyn FnMut(&str),
+) -> Result<(), String> {
+    let at = || since.elapsed().as_millis();
+    let link = lp_devices::turzx::FileLink::open(setup, 0).map_err(|e| e.to_string())?;
+    let name = link.model().map_or_else(
+        || format!("TURZX USB panel {:04x}", link.pid()),
+        |model| model.label(),
+    );
+    let firmware = lp_devices::turzx::firmware_of(link.reply());
+    let firmware = match firmware.is_empty() {
+        true => String::new(),
+        false => format!(" (firmware {firmware})"),
+    };
+    say(&format!("+{} ms: {name}{firmware} open and in step", at()));
+    let files = PanelFiles { link: &link };
+    let size_said = |size: i64| match size {
+        0 => "none".to_string(),
+        size => format!("{size} bytes"),
+    };
+    if what == Rescue::RemoveLogo {
+        let logo = files.size(BOOT_LOGO)?;
+        if logo == 0 {
+            say(&format!(
+                "+{} ms: {BOOT_LOGO}: none, nothing to take off (the factory logo shows)",
+                at()
+            ));
+        } else {
+            files.delete(BOOT_LOGO)?;
+            let left = files.size(BOOT_LOGO)?;
+            if left != 0 {
+                return Err(format!(
+                    "{BOOT_LOGO} is still there after it was taken off ({left} bytes)"
+                ));
+            }
+            say(&format!(
+                "+{} ms: the boot logo is taken off ({BOOT_LOGO} had {logo} bytes); the factory \
+                 logo shows at the next power-on",
+                at()
+            ));
+        }
+    }
+    // what it holds: the two files first (a question each), then the folder (20 of them)
+    for file in [BOOT_LOGO, STANDBY_CLIP] {
+        match files.size(file) {
+            Ok(size) => say(&format!("+{} ms: {file}: {}", at(), size_said(size))),
+            Err(why) if what == Rescue::Look => return Err(why),
+            Err(why) => {
+                say(&format!("+{} ms: {file}: no answer ({why})", at()));
+                return Ok(());
+            }
+        }
+    }
+    match files.listing() {
+        Ok(names) if names.is_empty() => say(&format!("+{} ms: {FOLDER}: nothing listed", at())),
+        Ok(names) => say(&format!(
+            "+{} ms: {FOLDER} holds {}",
+            at(),
+            names.join(", ")
+        )),
+        Err(why) => {
+            say(&format!(
+                "+{} ms: {FOLDER} could not be listed ({why})",
+                at()
+            ));
+            link.drain();
+        }
+    }
+    Ok(())
 }
 
 /// StartScreen.write_clip: the standby clip written, played and saved as what the panel

@@ -275,6 +275,94 @@ def rig(tmp_path: Path) -> Iterator[Rig]:
     made.close()
 
 
+def test_a_panel_that_keeps_restarting_has_its_boot_logo_taken_off_from_the_terminal(
+    rig: Rig,
+) -> None:
+    """`libre-panel start-screen` (issue 52): what a TURZX panel holds, asked without the
+    video's start (no 110: it plays the standby clip), or its boot logo taken off (42), the
+    factory logo again, each step said with the time since the panel came; with --wait the
+    panel is waited for and taken the moment it is on the bus. Nothing is written, played or
+    saved, a panel without a boot logo is sent no 42, and nothing goes while the app runs."""
+    from libre_panel.devices.panel_files import BOOT_LOGO, STANDBY_CLIP
+    from libre_panel.instance import InstanceLock
+
+    fake = rig.fake
+    fake.files = {BOOT_LOGO: b"\xff\xd8" + bytes(998), STANDBY_CLIP: bytes(2000)}
+    opened = r"\+\d+ ms: Turing 9\.2\" \(firmware turzx_00\) open and in step"
+    folder = "usr/data holds boot.jpg, standby.h264"
+
+    def said(done: subprocess.CompletedProcess[str] | tuple[int, str]) -> list[str]:
+        """The lines without their times (the first says the program, the second the panel)."""
+        out = done[1] if isinstance(done, tuple) else done.stdout
+        lines = out.splitlines()
+        assert re.fullmatch(opened, next(line for line in lines if "open and in" in line))
+        return [re.sub(r"^\+\d+ ms: ", "", line) for line in lines if "open and in" not in line]
+
+    # what it holds: asked, nothing else
+    done = rig.run("start-screen")
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert fake.commands == [10, 98, 98] + [99] * 20
+    version = said(done)[0]
+    assert version.startswith("Libre Panel ") and version.endswith(": start-screen look")
+    assert said(done)[1:] == [f"{BOOT_LOGO}: 1000 bytes", f"{STANDBY_CLIP}: 2000 bytes", folder,
+                              "done"]  # fmt: skip
+    # the boot logo taken off, and checked; then what it holds
+    fake.commands.clear()
+    done = rig.run("start-screen", "remove-logo")
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert fake.commands == [10, 98, 42, 98, 98, 98] + [99] * 20
+    assert set(fake.files) == {STANDBY_CLIP}
+    assert said(done)[1:] == [
+        f"the boot logo is taken off ({BOOT_LOGO} had 1000 bytes); the factory logo shows at "
+        "the next power-on",
+        f"{BOOT_LOGO}: none", f"{STANDBY_CLIP}: 2000 bytes", "usr/data holds standby.h264", "done",
+    ]  # fmt: skip
+    # none there: no 42
+    fake.commands.clear()
+    done = rig.run("start-screen", "remove-logo")
+    assert done.returncode == 0 and fake.commands == [10, 98, 98, 98] + [99] * 20
+    assert said(done)[1] == f"{BOOT_LOGO}: none, nothing to take off (the factory logo shows)"
+    # a panel that is away: waited for, and taken the moment it comes
+    fake.files[BOOT_LOGO] = bytes(500)
+    fake.unplugged = True
+    deadline = time.monotonic() + 5
+    while rig.present.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    fake.commands.clear()
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    with subprocess.Popen([str(_program()), "start-screen", "remove-logo", "--wait", "60"],
+                          env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          encoding="utf-8") as waiting:  # fmt: skip
+        time.sleep(1.0)
+        assert waiting.poll() is None, waiting.communicate()
+        assert fake.commands == []
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    assert waiting.returncode == 0, (out, err)
+    assert BOOT_LOGO not in fake.files
+    lines = said((0, out))
+    assert lines[1:4] == ["waiting up to 60 s for the panel: plug it in, or let it come back",
+                          "the panel is on the bus",
+                          f"the boot logo is taken off ({BOOT_LOGO} had 500 bytes); the factory "
+                          "logo shows at the next power-on"]  # fmt: skip
+    # a panel that does not come: said so, in time
+    fake.unplugged = True
+    while rig.present.exists():
+        time.sleep(0.02)
+    gone = rig.run("start-screen", "--wait", "1")
+    assert gone.returncode == 1 and gone.stdout.splitlines()[-1] == (
+        "not done: the panel was not reached in 1 s"
+    )
+    # not while the app runs: it has the panel
+    fake.unplugged = False
+    fake.commands.clear()
+    with InstanceLock(rig.home / "libre-panel.lock"):
+        refused = rig.run("start-screen", "remove-logo")
+    assert refused.returncode == 1 and fake.commands == []
+    assert "Libre Panel is running and has the panel: quit it first" in refused.stderr
+
+
 VIDEO = (
     'theme = "lumen"\n[device]\ndriver = "turzx"\nmodel = "turing-9.2-usb"\n'
     'brightness = 70\n[video]\nmode = "on"\nfps = 25\ndevice_fps = 30\n'

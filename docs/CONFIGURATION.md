@@ -629,6 +629,12 @@ limited range their black was grey.
   Of two panels alike, the second is the second of that model on the USB bus, as its loop
   found it.
 - **What is on the panel** lists its folder and the sizes of both files.
+- **A panel that keeps restarting** (on USB and gone again, without end) is reached from the
+  terminal, with the app quit: `libre-panel start-screen` says what it holds, and
+  `libre-panel start-screen remove-logo` takes its boot logo off, the factory logo again.
+  With `--wait` each waits for the panel (up to 600 s, or the seconds given) and acts the
+  moment it is on the USB, each step said with the time since it came. Neither starts the
+  video, whose start plays the standby clip.
 - **Mounted upside down** (`rotate = 180`), the panel gets both turned round, as its frames.
 - **JPEG** and **H.264** download the files as the panel takes them.
 

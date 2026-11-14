@@ -123,6 +123,11 @@ Libre Panel
   libre-panel notify TEXT [--title T] [--seconds S] [--icon NAME] [--level info|warning|error]
                                 a notice on the panel of the running app
   libre-panel devices           the drivers, serial ports and USB panels there are
+  libre-panel start-screen [look|remove-logo] [--wait [S]]
+                                a TURZX USB panel's own screens, the app quit first: what it
+                                holds (look), or its boot logo taken off, the factory logo
+                                again (remove-logo); --wait: up to S seconds (600) for the
+                                panel, acting the moment it comes (one that keeps restarting)
   libre-panel udev-rules        the Linux udev rule for the panels' access
   libre-panel location NAME     latitude and longitude for the weather
   libre-panel version
@@ -589,6 +594,7 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
         "quit" => std::process::exit(quit_command(args)?),
         "notify" => std::process::exit(notify_command(args)?),
         "devices" => devices_command(),
+        "start-screen" => std::process::exit(start_screen_command(args)?),
         "udev-rules" => print!("{}", linux_setup::udev_rules_text()),
         "location" => std::process::exit(location_command(args)?),
         // (the app's own: its capture program on Wayland, wayland.rs)
@@ -1206,6 +1212,69 @@ fn candidates(vid: Option<u16>, pid: Option<u16>, serial: Option<&str>) -> Strin
 
 /// `devices` (cli.py's _cmd_devices): the drivers, and the serial ports and USB panels there
 /// are, each with the panels its ids may be.
+/// `libre-panel start-screen [look|remove-logo] [--wait [S]]`: a TURZX USB panel's own screens
+/// from the terminal, for one that keeps restarting (start_screen::rescue): what it holds, or
+/// its boot logo taken off; said as it goes, into the log as well. Not while the app runs (it
+/// has the panel, and its video's start plays the standby clip).
+fn start_screen_command(args: &[String]) -> Result<i32, String> {
+    use start_screen::Rescue;
+    let mut what = Rescue::Look;
+    let mut wait = None;
+    let mut rest = args.iter().peekable();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "look" => what = Rescue::Look,
+            "remove-logo" => what = Rescue::RemoveLogo,
+            "--wait" => {
+                let seconds = match rest.peek().map(|value| value.parse::<f64>()) {
+                    Some(Ok(seconds)) if seconds.is_finite() && seconds >= 0.0 => {
+                        rest.next();
+                        seconds
+                    }
+                    _ => 600.0,
+                };
+                wait = Some(std::time::Duration::from_secs_f64(seconds));
+            }
+            other => return Err(format!("start-screen: unrecognized argument {other}")),
+        }
+    }
+    let home = Home::find()?;
+    if instance::InstanceLock::held_elsewhere(&home.settings) {
+        return Err(
+            "Libre Panel is running and has the panel: quit it first (libre-panel \
+                    quit), then try again"
+                .into(),
+        );
+    }
+    let _ = logs::to_file(); // (what it does goes into the log too, for a report)
+    let mut say = |line: &str| {
+        println!("{line}");
+        logs::log(
+            logs::Level::Info,
+            "libre_panel.start_screen",
+            &format!("start screen: {line}"),
+        );
+    };
+    let asked = match what {
+        Rescue::Look => "look",
+        Rescue::RemoveLogo => "remove-logo",
+    };
+    say(&format!(
+        "Libre Panel {}: start-screen {asked}",
+        lp_py::VERSION
+    ));
+    match start_screen::rescue(what, wait, &mut say) {
+        Ok(()) => {
+            say("done");
+            Ok(0)
+        }
+        Err(why) => {
+            say(&format!("not done: {why}"));
+            Ok(1)
+        }
+    }
+}
+
 fn devices_command() {
     println!("drivers: auto, turzx, virtual");
     let ports = lp_devices::serial::ports();

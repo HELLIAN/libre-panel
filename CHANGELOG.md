@@ -15,6 +15,13 @@ same pictures on the panel, pixel for pixel.
   is gone again, without end. Until that is understood, Libre Panel writes as 0.9.0 did: where
   the panel keeps the file it had, it says so and leaves it as it is.
 
+**Added**
+- **`libre-panel start-screen`, for a panel that keeps restarting.** With the app quit,
+  `libre-panel start-screen` says what the panel holds, and `libre-panel start-screen
+  remove-logo` takes its boot logo off, the factory logo again. `--wait` waits for the panel
+  and acts the moment it is on the USB, each step said with the time since it came. It opens
+  the panel without the video's start, which plays the standby clip.
+
 ## 0.9.1 — 2026-11-14
 
 A hotfix for 0.9.0, Libre Panel rewritten in Rust: a standby clip the panel kept in place of the
