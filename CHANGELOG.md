@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.2 — 2026-11-14
+
+A hotfix for 0.9.1: a 9.2" kept restarting after its start screen was written with 0.9.1,
+whose new step deletes a file the panel kept and writes it again. That step is taken back: the
+boot logo and the standby clip are written as in 0.9.0. Coming from 0.8? Everything 0.9 brought
+follows below: a third less memory, up to 38 % less processor and a quicker start, with the
+same pictures on the panel, pixel for pixel.
+
+**Fixed**
+- **Nothing on the panel is deleted to be written again.** Where the panel kept the file it
+  had in place of a new one, 0.9.1 deleted the old file and wrote the new one a second time.
+  A 9.2" kept restarting after its start screen was written with 0.9.1: it shows up on USB and
+  is gone again, without end. Until that is understood, Libre Panel writes as 0.9.0 did: where
+  the panel keeps the file it had, it says so and leaves it as it is.
+
 ## 0.9.1 — 2026-11-14
 
 A hotfix for 0.9.0, Libre Panel rewritten in Rust: a standby clip the panel kept in place of the
@@ -8,11 +23,12 @@ less memory, up to 38 % less processor and a quicker start, with the same pictur
 pixel for pixel.
 
 **Fixed**
-- **A standby clip the panel kept in place of the new one is written again.** A 9.2" mounted
-  upside down kept the upright Circuit clip it had when the one turned round came, 5 KB
-  larger, and the start screen stopped with "the panel has 701830 bytes of it, not 706912".
-  It seems to write a file anew only where there is room for both at once. Where the panel
-  keeps the file it had, Libre Panel now takes that one away and writes the new one again.
+- **A standby clip the panel kept in place of the new one is written again** (taken back in
+  0.9.2). A 9.2" mounted upside down kept the upright Circuit clip it had when the one turned
+  round came, 5 KB larger, and the start screen stopped with "the panel has 701830 bytes of
+  it, not 706912". It seems to write a file anew only where there is room for both at once.
+  Where the panel keeps the file it had, Libre Panel now takes that one away and writes the
+  new one again.
 - **The start screen's files to keep are turned round too** on a panel mounted upside down,
   as they are written to it (the JPEG and the H.264 were upright).
 
