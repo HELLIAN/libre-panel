@@ -263,8 +263,15 @@ enum Bus {
 }
 
 enum Found {
-    Usb(direct::Seen),
+    /// (boxed: what the system tells of a device is large on Windows, and Test has nothing)
+    Usb(Box<direct::Seen>),
     Test,
+}
+
+impl Found {
+    fn usb(seen: direct::Seen) -> Found {
+        Found::Usb(Box::new(seen))
+    }
 }
 
 impl Bus {
@@ -287,7 +294,7 @@ impl Bus {
 
     fn there(&self) -> Option<Found> {
         match self {
-            Bus::Usb { which } => direct::seen(which).map(Found::Usb),
+            Bus::Usb { which } => direct::seen(which).map(Found::usb),
             Bus::Test { .. } => self.scan().0,
         }
     }
@@ -303,7 +310,7 @@ impl Bus {
         match self {
             Bus::Usb { which } => {
                 let (panel, others) = direct::scan(which);
-                (panel.map(Found::Usb), others)
+                (panel.map(Found::usb), others)
             }
             Bus::Test {
                 which,
