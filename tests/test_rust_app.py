@@ -660,10 +660,12 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     assert waiting.returncode == 1 and set(fake.commands) == {10} and fake.saved == []
     lines = _said(out)
     assert re.fullmatch(
-        r"\[1\] sync \(10\): sent 2 times, each taken after \d+(?: to \d+)? ms, not answered; "
-        r"the next was not taken: the transfer failed after \d+ ms \(.+\)",
+        r"\[1\] sync \(10\): sent 2 times, each taken after \d+(?: to \d+)? ms, not answered",
         lines[4],
     ), lines[4]
+    # (the leaving is told when it happens, not when the next sync is due)
+    left = re.search(r"left the bus \(it was there for (\d+) ms\)$", out.splitlines()[5])
+    assert left and 450 <= int(left[1]) <= 650, out.splitlines()[5]
     # ... and one whose program does not read: its endpoint takes one packet, the next one
     # waits until the panel leaves, and the line says for how long
     fake.takes = 1
@@ -682,6 +684,40 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         lines[4],
     )
     assert waited and 80 <= int(waited[1]) <= 450, lines[4]
+    # one that says nothing a dozen times and then answers: the lines of its visits, kept
+    # back since the eighth time, are said the moment it does, and the steps follow. (There
+    # for 0.4 s and away for 0.35: the third sync of a visit meets no panel. The simulated
+    # link outlives the panel's leaving, where a USB handle does not.)
+    fake.unanswered = {10}
+    _away(rig)
+    fake.commands.clear()
+    stop = _comes_and_goes(rig, 0.4, 0.35)
+
+    def heals() -> None:
+        fake.unanswered = set()
+        stop.set()
+        time.sleep(0.05)  # (the coming and going has ended)
+        fake.unplugged = False
+
+    healing = threading.Timer(7.6, heals)
+    healing.start()
+    with _waiting(rig, "remove-clip", "--wait", "60") as waiting:
+        out, err = waiting.communicate(timeout=60)
+    healing.join()
+    assert waiting.returncode == 0, (out, err)
+    assert STANDBY_CLIP not in fake.files
+    lines = _said(out)
+    told = lines.index(
+        "the panel keeps leaving without an answer: from here on one line for every 20 times "
+        "it comes, until the time is over (Ctrl+C ends it sooner)"
+    )
+    came = re.fullmatch(r"\[(\d+)\] on the bus: the simulated panel", lines[told + 1])
+    assert came and int(came[1]) > 8, lines[told + 1]
+    assert lines[told + 2] == f"[{came[1]}] open"
+    assert lines[told + 3].startswith(f"[{came[1]}] sync (10): firmware turzx_00")
+    assert lines[told + 4] == f"[{came[1]}] stop the clip it may be playing (111): accepted"
+    assert lines[-2:] == [stays, "done"]
+    fake.files = _folder(clip=706912)
     # one that stays on the bus and says nothing: the sync is sent again for as long as the
     # panel would be watched (a panel that answers late in its stay is heard), and then it
     # is said to be on the bus without an answer

@@ -683,7 +683,7 @@ impl Visit<'_> {
     /// at most a packet or two into its endpoint: so whether it goes on taking them tells
     /// whether anything on it reads what is sent. (The app's own sync was not answered once
     /// in thirteen openings of the panel of issue 52 after it began to restart.)
-    fn greet(&mut self, link: &mut Direct, patience: Duration) -> Said {
+    fn greet(&mut self, link: &mut Direct, bus: &Bus, patience: Duration) -> Said {
         let what = "sync (10)";
         let began = Instant::now();
         let until = began + patience;
@@ -748,9 +748,17 @@ impl Visit<'_> {
                         self.late.push(other);
                     }
                     Err(Trouble::Silent) => {
-                        // (a read the system ended early: the next sync waits its time all
-                        // the same)
-                        std::thread::sleep(again.saturating_duration_since(Instant::now()));
+                        // (a read the system ended early, as it does where the panel is
+                        // leaving: the next sync waits its time all the same, and the bus
+                        // is looked at meanwhile, so that a leaving is told when it happens)
+                        while Instant::now() < again {
+                            if bus.there().is_none() {
+                                self.line(&format!("{what}: {}, not answered", sent_said(&taken)));
+                                return Said::Broke;
+                            }
+                            let rest = again.saturating_duration_since(Instant::now());
+                            std::thread::sleep(LOOK.min(rest));
+                        }
                         break;
                     }
                     Err(Trouble::Failed(why)) => {
@@ -1633,7 +1641,7 @@ fn visit(
             // the first answer's time and answers late in its stay is heard)
             let first = Duration::from_millis(FIRST_REPLY_MS);
             let patience = watch.map_or(first, |stay| stay.max(first));
-            let Some(reply) = told!(at.greet(&mut link, patience)) else {
+            let Some(reply) = told!(at.greet(&mut link, bus, patience)) else {
                 silent = true;
                 break 'talk; // (not answered: nothing else is sent this time)
             };
