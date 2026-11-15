@@ -471,6 +471,18 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
         "72 5f 30 30 00 00 00 00 00 00): nothing was changed on it"
     )
     fake.hello = b"turzx_00"
+    # one that takes the sync and says nothing is said to be on the bus without an answer
+    # (the sync is sent again for the time the first answer has: each one was taken)
+    fake.unanswered = {10}
+    code, lines = run()
+    fake.unanswered = set()
+    assert code == 1 and set(fake.commands) == {10} and len(fake.commands) > 5
+    assert re.fullmatch(
+        r"\[1\] sync \(10\): sent \d+ times, each taken after \d+(?: to \d+)? ms, no answer in "
+        r"\d+ ms",
+        lines[1],
+    ), lines[1]
+    assert lines[-1] == "not done: the panel is on the bus and does not answer"
     # a word that is no step
     fake.commands.clear()
     wrong = rig.run("start-screen", "write-logo")
@@ -531,7 +543,9 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     did not come is sent again the next time the panel comes, what it accepted or said is
     not; once no step is open the panel is only watched. One that stays is said to; one that
     still leaves, that takes no packet or that never comes is said so, with how long it was
-    on the bus; one that cannot be opened in time is waited for until the time is over.
+    on the bus; one that cannot be opened in time, or says nothing, is waited for until the
+    time is over, and the sync is sent again while it is there and unanswered (whether the
+    panel takes the next ones tells whether anything on it reads).
     One that restarts at its clip's end stays once the clip is stopped, which is the first
     thing remove-clip does. Another panel of the family on the same PC
     is told and sent nothing."""
@@ -601,28 +615,124 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     ), lines[-1]
     assert lines[-4:-1] == ["[6] on the bus: the simulated panel", "[6] open",
                             "[6] left the bus (it was there for N ms)"]  # fmt: skip
-    # one that takes no packet: twelve times, then said
+    # one that takes no packet: waited for until the time is over (nobody knows that a panel
+    # which said nothing a dozen times says nothing the next time), told of line by line
+    # eight times, then once for every twenty
     fake.files = _folder(clip=706912)
     fake.deaf = True
     _away(rig)
     fake.commands.clear()
     stop = _comes_and_goes(rig, 0.15, 0.1)
-    with _waiting(rig, "remove-clip", "--wait", "60") as waiting:
+    with _waiting(rig, "remove-clip", "--wait", "10") as waiting:
         out, err = waiting.communicate(timeout=60)
     stop.set()
     fake.deaf = False
     assert waiting.returncode == 1 and fake.commands == [] and fake.saved == []
     lines = _said(out)
-    assert lines[4] == "[1] sync (10): the panel did not take the packet in 8000 ms"
+    assert re.fullmatch(r"\[1\] sync \(10\): the panel did not take the packet in \d+ ms", lines[4])
+    assert len([line for line in lines if line.endswith("on the bus: the simulated panel")]) == 8
+    told = lines.index(
+        "the panel keeps leaving without an answer: from here on one line for every 20 times "
+        "it comes, until the time is over (Ctrl+C ends it sooner)"
+    )
     assert re.fullmatch(
-        r"not done: the panel came 12 times and did not stay \(on the bus for \d+(?: to \d+)? ms\)"
+        r"\[28\] no answer yet: it came 20 more times, was opened and left without an answer "
+        r"\(on the bus for \d+(?: to \d+)? ms\)",
+        lines[told + 1],
+    ), lines[told + 1]
+    came = re.fullmatch(
+        r"not done: the panel came (\d+) times and did not stay "
+        r"\(on the bus for \d+(?: to \d+)? ms\)"
         r"; it answered nothing; 0 of 2 steps are done \(not: remove-clip\)",
         lines[-1],
-    ), lines[-1]
+    )
+    assert came and int(came[1]) > 28, lines[-1]
+    # one that takes what is sent and answers nothing: the sync is sent again while the panel
+    # is there, and the line says that each one was taken ...
+    fake.unanswered = {10}
+    _away(rig)
+    fake.commands.clear()
+    stop = _comes_and_goes(rig, 0.55, 0.15)
+    with _waiting(rig, "remove-clip", "--wait", "3") as waiting:
+        out, err = waiting.communicate(timeout=60)
+    stop.set()
+    fake.unanswered = set()
+    assert waiting.returncode == 1 and set(fake.commands) == {10} and fake.saved == []
+    lines = _said(out)
+    assert re.fullmatch(
+        r"\[1\] sync \(10\): sent 2 times, each taken after \d+(?: to \d+)? ms, not answered; "
+        r"the next was not taken: the transfer failed after \d+ ms \(.+\)",
+        lines[4],
+    ), lines[4]
+    # ... and one whose program does not read: its endpoint takes one packet, the next one
+    # waits until the panel leaves, and the line says for how long
+    fake.takes = 1
+    _away(rig)
+    fake.commands.clear()
+    stop = _comes_and_goes(rig, 0.55, 0.15)
+    with _waiting(rig, "remove-clip", "--wait", "3") as waiting:
+        out, err = waiting.communicate(timeout=60)
+    stop.set()
+    fake.takes = None
+    assert waiting.returncode == 1 and set(fake.commands) == {10}
+    lines = _said(out)
+    waited = re.fullmatch(
+        r"\[1\] sync \(10\): taken after \d+ ms, not answered; the next was not taken: the "
+        r"transfer failed after (\d+) ms \(.+\)",
+        lines[4],
+    )
+    assert waited and 80 <= int(waited[1]) <= 450, lines[4]
+    # one that stays on the bus and says nothing: the sync is sent again for as long as the
+    # panel would be watched (a panel that answers late in its stay is heard), and then it
+    # is said to be on the bus without an answer
+    fake.unanswered = {10}
+    _away(rig)
+    fake.commands.clear()
+    with _waiting(rig, "remove-clip", "--wait", "7", LP_ENGINE_STAY_MS="6000") as waiting:
+        time.sleep(0.5)
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    fake.unanswered = set()
+    assert waiting.returncode == 1 and set(fake.commands) == {10} and len(fake.commands) >= 15
+    lines = _said(out)
+    quiet = re.fullmatch(
+        r"\[1\] sync \(10\): sent \d+ times, each taken after \d+(?: to \d+)? ms, no answer in "
+        r"(\d+) ms",
+        lines[4],
+    )
+    assert quiet and 5900 <= int(quiet[1]) <= 7000, lines[4]
+    assert lines[5:] == [
+        "[1] still on the bus, and it has not answered",
+        "not done: the panel is on the bus and does not answer; it answered nothing; 0 of 2 "
+        "steps are done (not: remove-clip)",
+    ]
+    # one whose program is up only a moment after it came (what it was sent meanwhile waits
+    # in its endpoint): the sync sent again is answered, the answers to the others are passed
+    # over, and the steps follow
+    fake.wakes_s = 0.45
+    _away(rig)
+    fake.commands.clear()
+    with _waiting(rig, "remove-clip", "--wait", "60") as waiting:
+        time.sleep(0.5)
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    fake.wakes_s = None
+    assert waiting.returncode == 0, (out, err)
+    syncs = fake.commands.count(10)
+    assert syncs in (2, 3) and fake.commands == [10] * syncs + [111, 42, *LOOK[1:], 112]
+    lines = _said(out)
+    assert re.fullmatch(
+        rf"\[1\] sync \(10\): firmware turzx_00 \[[0-9a-f ]+\] \(sent {syncs} times, each taken "
+        r"after \d+(?: to \d+)? ms; answered after \d+ ms\)",
+        lines[4],
+    ), lines[4]
+    assert lines[5] == "[1] stop the clip it may be playing (111): accepted"
+    assert lines[-2:] == [stays, "done"]
     # one the system never has ready to be opened while it is there: waited for until the
     # time is over (a system that sets the panel up anew may need many of its comings), told
     # of line by line eight times, then once for every twenty
     _away(rig)
+    fake.commands.clear()
     stop = _comes_and_goes(rig, 0.15, 0.1)
     with _waiting(rig, "remove-clip", "--wait", "12", LP_ENGINE_LINK="tcp:127.0.0.1:9") as waiting:
         out, err = waiting.communicate(timeout=60)

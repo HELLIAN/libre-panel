@@ -15,6 +15,16 @@
 //! taken off. On other panels, a 9.2" and a 12.3" among them, the same files were written
 //! for months without trouble: what is different on that panel is not known either.
 //!
+//! **What to expect.** The app (0.9.1) opened that panel thirteen times while it came and
+//! went, and its sync was not answered once; of its looks every five seconds in the hours
+//! after, not one ended with a panel in use. So the panel was not seen to take a command in
+//! its two seconds, and the chance that it takes one here is small. What this command has
+//! over the app's tries: it is there the moment the panel comes (the app started its engine
+//! first), it goes on for as long as it is given, and it says to the millisecond how far
+//! each coming gets: whether the panel can be opened, whether it takes what is sent (an
+//! endpoint can take a packet or two by itself; the ones after only where something on the
+//! panel reads), and whether it answers.
+//!
 //! **Which panels.** The vendor id 1CBE is shared by panels of several makers with protocols
 //! of their own (Lian Li's are no TURZX panels), and the TURZX family's models and firmwares
 //! may differ in what a command does. So: only a panel of the TURZX USB family is taken
@@ -33,11 +43,12 @@
 //! moment it is on the bus; a packet waits until the panel takes it. Then what the panel
 //! holds is asked, and how long it stays is watched. Every line says the milliseconds since
 //! the panel came, so that a run tells how long it is there and how far it gets. A step the
-//! panel accepted is not sent again the next time it comes; the rest is.
+//! panel accepted is not sent again the next time it comes; the rest is. A wait goes on
+//! until its time is over, however often the panel comes without an answer.
 //!
 //! What is sent, in this order whatever the order asked in:
 //!
-//! - 10, until it is answered once.
+//! - 10, until it is answered once: sent again every 300 ms while it is not.
 //! - `remove-clip`: 111, the clip the panel may be playing stopped (as the app does at each
 //!   of its starts), then 42 `usr/data/standby.h264`.
 //! - `remove-logo`: 42 `usr/data/boot.jpg` (as *Factory logo again*).
@@ -82,6 +93,10 @@ const TAKE_MS: u64 = 8000;
 const FIRST_REPLY_MS: u64 = 4000;
 const STEP_REPLY_MS: u64 = 4000;
 const REPLY_MS: u64 = 1500;
+/// How long the sync's answer is waited for before the sync is sent again (within the first
+/// reply's time): whether the panel takes the next packets tells whether anything on it
+/// reads what is sent, which one packet cannot tell (an endpoint can take one by itself).
+const SYNC_AGAIN_MS: u64 = 300;
 /// How often the bus is looked at while the panel is waited for, and while it is watched.
 /// (A look asks the system about every USB device: often enough for a panel that is there
 /// for two seconds, and no more.)
@@ -94,8 +109,6 @@ const OPEN_FOR: Duration = Duration::from_secs(6);
 const STAY: Duration = Duration::from_secs(20);
 /// How often a panel that still leaves is met again once no step is open any more.
 const MORE_VISITS: u32 = 5;
-/// After so many visits in a row without one answer the panel is given up.
-const FRUITLESS: u32 = 12;
 /// How often a step is sent at most without the panel accepting it.
 const SENDS: u32 = 6;
 /// How often a file may still be there after the panel accepted its taking off.
@@ -106,11 +119,13 @@ const AGAIN_AFTER: Duration = Duration::from_millis(200);
 /// How long an opening that failed is left before the next: each one asks for the panel's
 /// descriptors, which the hub may ask of the panel itself, and the panel is starting.
 const OPEN_AGAIN: Duration = Duration::from_millis(5);
-/// How many times in a row a panel that leaves before it could be opened is told of line by
-/// line; after that, one line for every `UNOPENED_EVERY` times it comes. (It is waited for
-/// all the same: a system that has to set the panel up anew may need many of its comings.)
-const UNOPENED_SHOWN: u32 = 8;
-const UNOPENED_EVERY: u32 = 20;
+/// How many stays in a row without an answer (the panel left before it could be opened, or
+/// was opened and said nothing) are told of line by line; after that, one line for every
+/// `TOLD_EVERY` of them. (The panel is waited for all the same, until the time given is
+/// over: a system that has to set it up anew may need many of its comings, and nobody knows
+/// that a panel which said nothing a dozen times says nothing the next time.)
+const TOLD_EACH: u32 = 8;
+const TOLD_EVERY: u32 = 20;
 /// How often a panel that is on the bus and cannot be opened is tried.
 const NOT_OPENED: u32 = 3;
 /// How often a panel is taken anew at once, each time it is on the bus, after a transfer
@@ -524,6 +539,8 @@ struct Visited {
     replies: u32,
     /// why it could not be opened (None: it was)
     unopened: Option<String>,
+    /// its lines that were kept back and not said (None: they were said)
+    kept: Option<Vec<String>>,
 }
 
 /// One visit: the panel on the bus, from the moment it was seen.
@@ -535,6 +552,11 @@ struct Visit<'a> {
     replies: u32,
     /// answers that came to a command no longer waited for
     late: Vec<Vec<u8>>,
+    /// its lines kept back until the panel answers (one that came many times without an
+    /// answer: a visit is told once it brings one); None: each line is said as it comes
+    kept: Option<Vec<String>>,
+    /// answers still to come to syncs that were sent again before the first was answered
+    owed: u32,
 }
 
 impl Visit<'_> {
@@ -549,7 +571,28 @@ impl Visit<'_> {
     /// A line for the moment `ms` after the panel came.
     fn line_at(&mut self, ms: u128, text: &str) {
         let line = format!("[{}] +{ms} ms: {text}", self.number);
-        (self.say)(&line);
+        match &mut self.kept {
+            Some(kept) => kept.push(line),
+            None => (self.say)(&line),
+        }
+    }
+
+    /// An answer came: counted, and what was kept back is said.
+    fn answered(&mut self) {
+        self.replies += 1;
+        for line in self.kept.take().unwrap_or_default() {
+            (self.say)(&line);
+        }
+    }
+
+    /// The visit is over (`unopened`: why the panel could not be opened in it).
+    fn ended(&mut self, outcome: Outcome, unopened: Option<String>) -> Visited {
+        Visited {
+            outcome,
+            replies: self.replies,
+            unopened,
+            kept: self.kept.take(),
+        }
     }
 
     /// A command sent and its reply read: the reply that begins with the command (others,
@@ -566,10 +609,13 @@ impl Visit<'_> {
     ) -> Said {
         let began = Instant::now();
         if let Err(trouble) = link.send(cmd, args, TAKE_MS) {
+            // (the time it really took: the system ends a transfer early where the panel
+            // is leaving)
+            let ms = began.elapsed().as_millis();
             return match trouble {
                 Trouble::Silent => {
                     self.line(&format!(
-                        "{what}: the panel did not take the packet in {TAKE_MS} ms"
+                        "{what}: the panel did not take the packet in {ms} ms"
                     ));
                     Said::NotTaken
                 }
@@ -584,7 +630,8 @@ impl Visit<'_> {
             0 => patience.max(FIRST_REPLY_MS),
             _ => patience,
         };
-        let until = Instant::now() + Duration::from_millis(wait);
+        let asked = Instant::now();
+        let until = asked + Duration::from_millis(wait);
         loop {
             let left = until.saturating_duration_since(Instant::now()).as_millis() as u64;
             let got = match left {
@@ -593,7 +640,7 @@ impl Visit<'_> {
             };
             match got {
                 Ok(reply) if reply.first() == Some(&cmd) => {
-                    self.replies += 1;
+                    self.answered();
                     let answered = began.elapsed().as_millis();
                     self.line(&format!(
                         "{what}: {} [{}] (taken after {taken} ms, answered after {answered} ms)",
@@ -602,8 +649,12 @@ impl Visit<'_> {
                     ));
                     return Said::Reply(reply);
                 }
+                // (the answer to a sync that was sent again: nothing new)
+                Ok(other) if self.owed > 0 && other.first() == Some(&CMD_SYNC) => {
+                    self.owed -= 1;
+                }
                 Ok(other) => {
-                    self.replies += 1;
+                    self.answered();
                     self.line(&format!(
                         "{what}: an answer to something else came first [{}]",
                         hex(&other, 12)
@@ -611,8 +662,9 @@ impl Visit<'_> {
                     self.late.push(other);
                 }
                 Err(Trouble::Silent) => {
+                    let waited = asked.elapsed().as_millis();
                     self.line(&format!(
-                        "{what}: taken after {taken} ms, no answer in {wait} ms"
+                        "{what}: taken after {taken} ms, no answer in {waited} ms"
                     ));
                     return Said::Quiet;
                 }
@@ -622,6 +674,101 @@ impl Visit<'_> {
                     ));
                     return Said::Broke;
                 }
+            }
+        }
+    }
+
+    /// The sync, until the panel answers it: sent again every `SYNC_AGAIN_MS` while no
+    /// answer comes, for `patience` in all. A panel whose program is not reading takes
+    /// at most a packet or two into its endpoint: so whether it goes on taking them tells
+    /// whether anything on it reads what is sent. (The app's own sync was not answered once
+    /// in thirteen openings of the panel of issue 52 after it began to restart.)
+    fn greet(&mut self, link: &mut Direct, patience: Duration) -> Said {
+        let what = "sync (10)";
+        let began = Instant::now();
+        let until = began + patience;
+        let mut taken: Vec<u128> = Vec::new(); // (how long the panel took to take each)
+        loop {
+            let sending = Instant::now();
+            if let Err(trouble) = link.send(CMD_SYNC, &[], TAKE_MS) {
+                let ms = sending.elapsed().as_millis();
+                let said = match (&trouble, taken.is_empty()) {
+                    (Trouble::Silent, true) => {
+                        format!("the panel did not take the packet in {ms} ms")
+                    }
+                    (Trouble::Failed(why), true) => format!("not sent ({why})"),
+                    (Trouble::Silent, false) => format!(
+                        "{}, not answered; the next was not taken in {ms} ms",
+                        sent_said(&taken)
+                    ),
+                    (Trouble::Failed(why), false) => format!(
+                        "{}, not answered; the next was not taken: the transfer failed \
+                         after {ms} ms ({why})",
+                        sent_said(&taken)
+                    ),
+                };
+                self.line(&format!("{what}: {said}"));
+                return match trouble {
+                    Trouble::Silent => Said::NotTaken,
+                    Trouble::Failed(_) => Said::Broke,
+                };
+            }
+            taken.push(sending.elapsed().as_millis());
+            let again = (Instant::now() + Duration::from_millis(SYNC_AGAIN_MS)).min(until);
+            loop {
+                let left = again.saturating_duration_since(Instant::now()).as_millis() as u64;
+                let got = match left {
+                    0 => Err(Trouble::Silent),
+                    left => link.read(left),
+                };
+                match got {
+                    Ok(reply) if reply.first() == Some(&CMD_SYNC) => {
+                        self.answered();
+                        self.owed = taken.len() as u32 - 1;
+                        let answered = began.elapsed().as_millis();
+                        let how = match taken.as_slice() {
+                            [taken] => {
+                                format!("taken after {taken} ms, answered after {answered} ms")
+                            }
+                            _ => format!("{}; answered after {answered} ms", sent_said(&taken)),
+                        };
+                        self.line(&format!(
+                            "{what}: {} [{}] ({how})",
+                            firmware_said(&reply),
+                            hex(&reply, 12)
+                        ));
+                        return Said::Reply(reply);
+                    }
+                    Ok(other) => {
+                        self.answered();
+                        self.line(&format!(
+                            "{what}: an answer to something else came first [{}]",
+                            hex(&other, 12)
+                        ));
+                        self.late.push(other);
+                    }
+                    Err(Trouble::Silent) => {
+                        // (a read the system ended early: the next sync waits its time all
+                        // the same)
+                        std::thread::sleep(again.saturating_duration_since(Instant::now()));
+                        break;
+                    }
+                    Err(Trouble::Failed(why)) => {
+                        self.line(&format!(
+                            "{what}: {}, then no answer ({why})",
+                            sent_said(&taken)
+                        ));
+                        return Said::Broke;
+                    }
+                }
+            }
+            if Instant::now() >= until {
+                self.line(&format!(
+                    "{what}: {}, no answer in {} ms",
+                    sent_said(&taken),
+                    began.elapsed().as_millis()
+                ));
+                return Said::Quiet;
             }
         }
     }
@@ -645,7 +792,7 @@ impl Visit<'_> {
         }
         match link.read(REPLY_MS) {
             Ok(reply) => {
-                self.replies += 1;
+                self.answered();
                 Said::Reply(reply)
             }
             Err(Trouble::Silent) => {
@@ -657,6 +804,20 @@ impl Visit<'_> {
                 Said::Broke
             }
         }
+    }
+}
+
+/// How the panel took the syncs sent to it: "taken after 2 ms", or "sent 5 times, each
+/// taken after 0 to 2 ms".
+fn sent_said(taken: &[u128]) -> String {
+    let (least, most) = (
+        taken.iter().min().copied().unwrap_or(0),
+        taken.iter().max().copied().unwrap_or(0),
+    );
+    match taken.len() {
+        0 | 1 => format!("taken after {least} ms"),
+        count if least == most => format!("sent {count} times, each taken after {least} ms"),
+        count => format!("sent {count} times, each taken after {least} to {most} ms"),
     }
 }
 
@@ -830,7 +991,8 @@ pub fn run(
             since: Instant::now(),
             waited: None,
             again: false,
-            hush: false,
+            hush: Hush::No,
+            carried: Vec::new(),
         };
         let visited = visit(&bus, found, &came, &mut steps, &mut known, None, say);
         return match visited.outcome {
@@ -881,39 +1043,122 @@ struct Stay {
     opened: bool,
     /// why it could not be opened, the last time that was tried
     unopened: String,
+    /// the lines of its visits that are kept back until it answers
+    kept: Vec<String>,
 }
 
-/// The stays in a row in which the panel could not be opened: told of line by line at
-/// first, then once in a while. They do not count as stays without an answer: the system
-/// may need many of the panel's comings until it has it ready, and the panel is waited for
-/// until the time given is over.
+/// Which of a visit's lines are kept back, for a panel that has come many times in a row
+/// without an answer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hush {
+    /// none: each line is said as it comes
+    No,
+    /// its coming is said once it is opened (it left before that every time so far)
+    UntilOpen,
+    /// all of them are said once the panel answers, and not at all where it does not
+    UntilAnswer,
+}
+
+/// The stays in a row that brought no answer (the panel left before it could be opened, or
+/// was opened and said nothing): told of line by line at first, then once in a while. They
+/// do not end a wait: the system may need many of the panel's comings until it has it ready,
+/// and nobody knows that a panel which said nothing a dozen times says nothing the next
+/// time. The panel is waited for until the time given is over.
 #[derive(Default)]
-struct Unopened {
+struct Quiet {
+    /// such stays in a row
     run: u32,
+    /// of them, those in which the panel was opened
+    opened: u32,
+    /// since the last line that told of them: those it could not be opened in (and why, the
+    /// last time), those it was opened in, and how long it was on the bus in these
+    shut: u32,
+    why: String,
+    open: u32,
+    lives: Option<(u128, u128)>,
 }
 
-impl Unopened {
-    /// Whether the panel's next coming is told only once it is opened.
-    fn hush(&self) -> bool {
-        self.run >= UNOPENED_SHOWN
+impl Quiet {
+    /// Which lines of the panel's next visit are kept back.
+    fn hush(&self) -> Hush {
+        match (self.run >= TOLD_EACH, self.opened) {
+            (false, _) => Hush::No,
+            (true, 0) => Hush::UntilOpen,
+            (true, _) => Hush::UntilAnswer,
+        }
     }
 
-    /// A stay is over in which the panel could not be opened.
-    fn once_more(&mut self, number: u32, why: &str, say: &mut dyn FnMut(&str)) {
+    /// A stay without an answer is over: the panel was on the bus for `ms`; `shut`: why it
+    /// could not be opened (None: it was).
+    fn once_more(&mut self, number: u32, ms: u128, shut: Option<&str>, say: &mut dyn FnMut(&str)) {
         self.run += 1;
-        if self.run == UNOPENED_SHOWN {
-            say(&format!(
-                "the panel keeps leaving before the system has it ready to be opened: from \
-                 here on one line for every {UNOPENED_EVERY} times it comes"
-            ));
-        } else if self.run > UNOPENED_SHOWN
-            && (self.run - UNOPENED_SHOWN).is_multiple_of(UNOPENED_EVERY)
-        {
-            say(&format!(
-                "[{number}] not opened yet: it came {UNOPENED_EVERY} more times and left \
-                 before it could be opened ({why})"
-            ));
+        self.opened += u32::from(shut.is_none());
+        if self.run < TOLD_EACH {
+            return;
         }
+        if self.run == TOLD_EACH {
+            say(&match self.opened {
+                0 => format!(
+                    "the panel keeps leaving before the system has it ready to be opened: \
+                     from here on one line for every {TOLD_EVERY} times it comes"
+                ),
+                _ => format!(
+                    "the panel keeps leaving without an answer: from here on one line for \
+                     every {TOLD_EVERY} times it comes, until the time is over (Ctrl+C ends \
+                     it sooner)"
+                ),
+            });
+            return;
+        }
+        match shut {
+            Some(why) => {
+                self.shut += 1;
+                self.why = why.to_string();
+            }
+            None => {
+                self.open += 1;
+                self.lives = Some(match self.lives {
+                    None => (ms, ms),
+                    Some((least, most)) => (least.min(ms), most.max(ms)),
+                });
+            }
+        }
+        if !(self.run - TOLD_EACH).is_multiple_of(TOLD_EVERY) {
+            return;
+        }
+        let lives = match self.lives {
+            None => String::new(),
+            Some((least, most)) if least == most => format!(" (on the bus for {least} ms)"),
+            Some((least, most)) => format!(" (on the bus for {least} to {most} ms)"),
+        };
+        say(&match (self.shut, self.open) {
+            (_, 0) => format!(
+                "[{number}] not opened yet: it came {TOLD_EVERY} more times and left before \
+                 it could be opened ({})",
+                self.why
+            ),
+            (0, _) => format!(
+                "[{number}] no answer yet: it came {TOLD_EVERY} more times, was opened and \
+                 left without an answer{lives}"
+            ),
+            (shut, open) => format!(
+                "[{number}] no answer yet: it came {TOLD_EVERY} more times: {} it left \
+                 before it could be opened ({}), {} it was opened and left without an \
+                 answer{lives}",
+                times(shut),
+                self.why,
+                times(open)
+            ),
+        });
+        (self.shut, self.open, self.lives) = (0, 0, None);
+    }
+}
+
+/// "once", "3 times".
+fn times(count: u32) -> String {
+    match count {
+        1 => "once".to_string(),
+        count => format!("{count} times"),
     }
 }
 
@@ -922,24 +1167,40 @@ impl Unopened {
 struct Tally {
     /// stays since no step is open any more
     settled: u32,
-    /// stays in a row without an answer
-    fruitless: u32,
 }
 
 impl Tally {
-    /// A stay is over: whether the panel is waited for once more.
-    fn goes_on(&mut self, answers: u32, steps: &[Step]) -> bool {
-        if steps.iter().all(|step| step.state != State::Open) {
-            self.settled += 1;
-            self.settled <= MORE_VISITS
-        } else if answers == 0 {
-            self.fruitless += 1;
-            self.fruitless < FRUITLESS
-        } else {
-            self.fruitless = 0;
-            true
+    /// A stay in which the panel was opened is over: whether the panel is waited for once
+    /// more. One with a step still open is, until the time is over, whatever it said; one
+    /// with none is watched `MORE_VISITS` times more.
+    fn goes_on(&mut self, steps: &[Step]) -> bool {
+        if steps.iter().any(|step| step.state == State::Open) {
+            return true;
         }
+        self.settled += 1;
+        self.settled <= MORE_VISITS
     }
+}
+
+/// A stay is over, `ms` after the panel came: told of where it brought no answer; whether
+/// the panel is waited for once more.
+fn stay_over(
+    over: &Stay,
+    ms: u128,
+    quiet: &mut Quiet,
+    tally: &mut Tally,
+    steps: &[Step],
+    say: &mut dyn FnMut(&str),
+) -> bool {
+    match over.answers {
+        0 => {
+            let shut = (!over.opened).then_some(over.unopened.as_str());
+            quiet.once_more(over.number, ms, shut, say);
+        }
+        _ => *quiet = Quiet::default(),
+    }
+    // (a stay in which it could not be opened is no visit: the system may need many)
+    !over.opened || tally.goes_on(steps)
 }
 
 fn wait_for(
@@ -966,21 +1227,17 @@ fn wait_for(
     let mut never_opened = None; // (why, as long as it could not be opened once)
     let mut opened = false;
     let mut mute = false; // (on the bus without an answer, the last time it was met)
-    let mut unopened_run = Unopened::default();
+    let mut quiet = Quiet::default();
     loop {
         let (found, others) = bus.scan();
         diary.note(others, say);
         let Some(found) = found else {
             // (it left between two tries: that stay is over)
             if let Some(over) = stay.take() {
-                lives.push(over.since.elapsed().as_millis());
-                if !over.opened {
-                    unopened_run.once_more(over.number, &over.unopened, say);
-                } else {
-                    unopened_run.run = 0;
-                    if !tally.goes_on(over.answers, steps) {
-                        break;
-                    }
+                let ms = over.since.elapsed().as_millis();
+                lives.push(ms);
+                if !stay_over(&over, ms, &mut quiet, &mut tally, steps, say) {
+                    break;
                 }
             }
             mute = false;
@@ -1000,6 +1257,7 @@ fn wait_for(
                 lost: 0,
                 opened: false,
                 unopened: String::new(),
+                kept: Vec::new(),
             }
         });
         let came = Came {
@@ -1007,12 +1265,29 @@ fn wait_for(
             since: now.since,
             waited: Some(now.since.duration_since(began)),
             again,
-            hush: unopened_run.hush(),
+            // (a stay that has answered is told as it goes, whatever came before it)
+            hush: match now.answers {
+                0 => quiet.hush(),
+                _ => Hush::No,
+            },
+            carried: std::mem::take(&mut now.kept),
         };
         let watch = stay_for(bus, &lives);
         let visited = visit(bus, found, &came, steps, known, Some(watch), say);
         replies += visited.replies;
         now.answers += visited.replies;
+        // (lines kept back: said with the stay's first answer; never where the panel leaves
+        // without one; at once where it stays on the bus and says nothing, cannot be opened
+        // while it is there, or is no panel for this)
+        match (&visited.outcome, visited.kept) {
+            (Outcome::Left(_) | Outcome::Lost(_), Some(kept)) => now.kept = kept,
+            (_, Some(kept)) => {
+                for line in &kept {
+                    say(line);
+                }
+            }
+            (_, None) => {}
+        }
         match &visited.unopened {
             Some(why) => now.unopened.clone_from(why),
             None => now.opened = true,
@@ -1040,18 +1315,10 @@ fn wait_for(
             }
             Outcome::Left(ms) => {
                 lives.push(ms);
-                let over = stay.take();
-                match over {
-                    Some(over) if !over.opened => {
-                        unopened_run.once_more(over.number, &over.unopened, say);
+                if let Some(over) = stay.take() {
+                    if !stay_over(&over, ms, &mut quiet, &mut tally, steps, say) {
+                        break;
                     }
-                    Some(over) => {
-                        unopened_run.run = 0;
-                        if !tally.goes_on(over.answers, steps) {
-                            break;
-                        }
-                    }
-                    None => {}
                 }
             }
             Outcome::Lost(_) => {
@@ -1107,13 +1374,9 @@ fn wait_for(
 
 /// What is said of a panel that came and did not stay, or stays without an answer.
 fn verdict(number: u32, lives: &[u128], replies: u32, mute: bool, steps: &[Step]) -> String {
-    let times = match number {
-        1 => "once".to_string(),
-        number => format!("{number} times"),
-    };
     let mut said = match mute {
         true => "the panel is on the bus and does not answer".to_string(),
-        false => format!("the panel came {times} and did not stay"),
+        false => format!("the panel came {} and did not stay", times(number)),
     };
     if let (Some(least), Some(most)) = (lives.iter().min(), lives.iter().max()) {
         said += &match least == most {
@@ -1197,8 +1460,10 @@ struct Came {
     waited: Option<Duration>,
     /// it is taken anew in the same stay (after a transfer that failed)
     again: bool,
-    /// its coming is told only once it is opened (it left before that many times in a row)
-    hush: bool,
+    /// which of its lines are kept back (it came many times in a row without an answer)
+    hush: Hush,
+    /// the lines of this stay's earlier visits that are still kept back
+    carried: Vec<String>,
 }
 
 /// One visit of the panel that is on the bus since `came.since`: opened, the steps not yet
@@ -1219,6 +1484,8 @@ fn visit(
         say,
         replies: 0,
         late: Vec::new(),
+        kept: (came.hush == Hush::UntilAnswer).then(|| came.carried.clone()),
+        owed: 0,
     };
     // (its coming: said at once, or only once it is opened where it has left before that
     // many times in a row)
@@ -1229,8 +1496,8 @@ fn visit(
         });
         let line = format!("on the bus: {}{waited}", named(&found));
         match came.hush {
-            true => held = Some((at.ms(), line)),
-            false => at.line(&line),
+            Hush::UntilOpen => held = Some((at.ms(), line)),
+            Hush::No | Hush::UntilAnswer => at.line(&line),
         }
     }
     // a step only to a model it was seen to work on: the family's other models, and other
@@ -1247,11 +1514,7 @@ fn visit(
                 "these steps are known on the Turing 9.2\" only; this panel is {this}: \
                  nothing was sent to it"
             );
-            return Visited {
-                outcome: Outcome::NotThis(why),
-                replies: 0,
-                unopened: None,
-            };
+            return at.ended(Outcome::NotThis(why), None);
         }
     }
     // opened: tried again every few milliseconds while it is there (Windows lists a device
@@ -1275,11 +1538,7 @@ fn visit(
                             "left the bus before it could be opened ({tries} tries; {failed})"
                         ));
                     }
-                    return Visited {
-                        outcome: Outcome::Left(ms),
-                        replies: 0,
-                        unopened: Some(failed),
-                    };
+                    return at.ended(Outcome::Left(ms), Some(failed));
                 }
             }
         }
@@ -1288,11 +1547,7 @@ fn visit(
                 at.line_at(ms, &line);
             }
             at.line(&format!("not opened in {} s: {failed}", OPEN_FOR.as_secs()));
-            return Visited {
-                outcome: Outcome::NotOpened(failed.clone()),
-                replies: 0,
-                unopened: Some(failed),
-            };
+            return at.ended(Outcome::NotOpened(failed.clone()), Some(failed));
         }
         std::thread::sleep(OPEN_AGAIN);
     };
@@ -1313,6 +1568,7 @@ fn visit(
     // the bus, or is taken anew. Once no step is open, a visit sends nothing of this: it
     // watches whether the panel stays by itself.
     let mut reading = true; // (false: the panel takes no packets; nothing more is sent)
+    let mut silent = false; // (the sync was not answered in all the time it had)
     'talk: {
         macro_rules! told {
             ($said:expr) => {
@@ -1325,11 +1581,7 @@ fn visit(
                     }
                     Said::Broke => {
                         let outcome = broke(bus, &mut at);
-                        return Visited {
-                            outcome,
-                            replies: at.replies,
-                            unopened: None,
-                        };
+                        return at.ended(outcome, None);
                     }
                 }
             };
@@ -1377,15 +1629,12 @@ fn visit(
             };
         }
         if !known.spoken {
-            let asked = at.command(
-                &mut link,
-                CMD_SYNC,
-                &[],
-                "sync (10)",
-                &firmware_said,
-                REPLY_MS,
-            );
-            let Some(reply) = told!(asked) else {
+            // (in a wait, for as long as the panel is watched: one that stays longer than
+            // the first answer's time and answers late in its stay is heard)
+            let first = Duration::from_millis(FIRST_REPLY_MS);
+            let patience = watch.map_or(first, |stay| stay.max(first));
+            let Some(reply) = told!(at.greet(&mut link, patience)) else {
+                silent = true;
                 break 'talk; // (not answered: nothing else is sent this time)
             };
             if !accepted(&reply) || firmware_of(&reply).is_empty() {
@@ -1394,11 +1643,7 @@ fn visit(
                      was changed on it",
                     hex(&reply, 16)
                 );
-                return Visited {
-                    outcome: Outcome::NotThis(why),
-                    replies: at.replies,
-                    unopened: None,
-                };
+                return at.ended(Outcome::NotThis(why), None);
             }
             known.spoken = true;
         }
@@ -1557,37 +1802,31 @@ fn visit(
         names!();
     }
     let Some(stay) = watch else {
-        let outcome = match reading {
+        // (asked once: a panel that took what was sent and said nothing has not answered)
+        let outcome = match reading && at.replies > 0 {
             true => Outcome::Asked,
             false => Outcome::Mute,
         };
-        return Visited {
-            outcome,
-            replies: at.replies,
-            unopened: None,
-        };
+        return at.ended(outcome, None);
     };
+    if silent {
+        // (it was on the bus all the time it would be watched, and said nothing)
+        at.line("still on the bus, and it has not answered");
+        return at.ended(Outcome::Mute, None);
+    }
     // watched, without a word to it: is it still on the bus?
     let until = Instant::now() + stay;
     while Instant::now() < until {
         if bus.there().is_none() {
             let ms = at.ms();
             at.line(&format!("left the bus (it was there for {ms} ms)"));
-            return Visited {
-                outcome: Outcome::Left(ms),
-                replies: at.replies,
-                unopened: None,
-            };
+            return at.ended(Outcome::Left(ms), None);
         }
         std::thread::sleep(WATCH);
     }
     if !reading {
         at.line("still on the bus, but it takes no packets");
-        return Visited {
-            outcome: Outcome::Mute,
-            replies: at.replies,
-            unopened: None,
-        };
+        return at.ended(Outcome::Mute, None);
     }
     let what = "still there: is its own clip playing (112)";
     let outcome = match at.command(&mut link, CMD_LOCAL_PLAYING, &[], what, &how, REPLY_MS) {
@@ -1598,11 +1837,7 @@ fn visit(
             Outcome::Mute
         }
     };
-    Visited {
-        outcome,
-        replies: at.replies,
-        unopened: None,
-    }
+    at.ended(outcome, None)
 }
 
 /// A transfer failed: the panel has left the bus (the system may list it a moment longer),

@@ -653,11 +653,15 @@ was and will be.
   With `--wait` each waits for the panel (up to 600 s, or the seconds given) and acts the
   moment it is on the USB: a step it accepted is not sent again the next time it comes, and
   every line says the milliseconds since it came, so the run tells how long the panel is
-  there and how far it gets. It ends when the panel stays, or says how often it came and
-  what is done. A panel that leaves before the system has it ready to be opened is waited
-  for until the time is over: Windows may need many of its comings to set up a panel it
-  has not seen before. None of them starts the video, whose start plays the standby clip,
-  and none writes a file.
+  there and how far it gets. It ends when the panel stays, or when its time is over: then
+  it says how often the panel came and what is done. A panel that leaves before the system
+  has it ready to be opened, or that says nothing, is waited for all that time (Windows may
+  need many of a panel's comings to set it up, and nobody knows that a panel which said
+  nothing a dozen times says nothing the next time); after eight such comings they are
+  told of in one line for every twenty. While the sync is not answered it is sent again
+  every 300 ms, and the line says whether the panel took each one: an endpoint can take
+  a packet or two by itself, the ones after only where something on the panel reads. No
+  step starts the video, whose start plays the standby clip, and none writes a file.
 
   The steps go to the Turing 9.2" alone, the panel they were seen to work on: the vendor id
   is shared by other makers' panels with other protocols, and the family's other models may

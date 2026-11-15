@@ -33,7 +33,9 @@ the panel, pixel for pixel.
   files. The steps go to the Turing 9.2" alone, the panel they were seen to work on, and
   only after it has answered as a TURZX panel does; another TURZX panel on the same PC is
   told and sent nothing (`--model` names the panel to look at). It is tried on a simulated
-  panel; whether a panel in that state still takes a command is not known yet.
+  panel only, and the chance is small: by its log, that panel answered the app nothing
+  after it began to restart. The command is there the moment the panel comes, goes on
+  until its time is over and says to the millisecond how far each coming gets.
 
 ## 0.9.1 — 2026-11-14
 

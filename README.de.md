@@ -227,7 +227,13 @@ gemischt; beim Stoppen kommt das Theme zurück.
 TURZX-USB-Panels zeigen beim Einschalten ein eigenes Logo und spielen beim Start des PCs einen
 Clip. Libre Panel zeichnet beides im Look deiner Wahl (dem eigenen, Polarlicht, Puls, Platine,
 Nacht, Pegel oder Dunkel), passend zur Größe deines Panels und so fein, wie das Panel es zeigen
-kann, und spielt es mit einem Klick auf; das Werkslogo kommt mit einem weiteren Klick zurück.
+kann, und gibt dir die Dateien dazu.
+
+**Das Aufspielen aufs Panel ist seit 0.9.2 abgeschaltet.** Einem 9,2"-Panel ging der Platz für
+seinen Startbildschirm aus, und es startet seitdem immer wieder neu; auf anderen Panels wurden
+dieselben Dateien ohne Probleme geschrieben. Das Schreiben kommt zurück, wenn Libre Panel weiß,
+wie viel auf ein Panel passt. Was auf einem Panel liegt, lässt sich weiter abfragen, und ein
+Bootlogo wieder entfernen: dann zeigt das Panel sein Werkslogo.
 
 ### Jede Größe, rund und hochkant
 
@@ -577,14 +583,14 @@ den Libre Panel nicht installiert. Mehr:
 Den Videomodus gibt es für die TURZX-USB-Panels, die einen Videodecoder haben. Die Windows-
 und Linux-Downloads bringen das [ffmpeg](https://ffmpeg.org) mit, das er braucht; du gibst nur
 unter *Einstellungen → Panel* den Namen des Standby-Clips des Panels an, so wie ihn die
-Hersteller-App zeigt, oder spielst unter *Einstellungen → Panel → Startbildschirm* den
-Standby-Clip von Libre Panel auf, der ihn gleich mit einträgt. Auf dem 9,2" schaltet er sich
-dann von selbst ein; auf den anderen TURZX-USB-Panels stellst du ihn zum Ausprobieren auf
-*an*. Mit einer Python-Installation installierst du ffmpeg selbst (Windows: `winget install
-ffmpeg`; Linux: das Paket deiner Distribution) oder nennst es an derselben Stelle. Der
-Videomodus speichert nichts auf dem Panel; nur der Startbildschirm schreibt darauf, auf einen
-Klick. Die seriellen Panels bekommen Standbilder, von denen nur die geänderten Teile gesendet
-werden ([Einzelheiten](docs/CONFIGURATION.md#video)).
+Hersteller-App zeigt. Auf dem 9,2" schaltet er sich dann von selbst ein; auf den anderen
+TURZX-USB-Panels stellst du ihn zum Ausprobieren auf *an*. Mit einer Python-Installation
+installierst du ffmpeg selbst (Windows: `winget install ffmpeg`; Linux: das Paket deiner
+Distribution) oder nennst es an derselben Stelle. Der Videomodus speichert nichts auf dem
+Panel, und seit 0.9.2 schreibt Libre Panel überhaupt keine Datei mehr auf ein Panel
+([warum](#der-eigene-startbildschirm-des-panels)). Die seriellen Panels bekommen Standbilder,
+von denen nur die geänderten Teile gesendet werden
+([Einzelheiten](docs/CONFIGURATION.md#video)).
 </details>
 
 <details>
@@ -632,8 +638,11 @@ Downloads ist geplant.
 <summary><b>Kann es meinem Panel schaden?</b></summary>
 <br>
 
-Libre Panel sendet nur Anzeigebefehle: Bilder, Helligkeit, Video. Es fasst die Firmware nie
-an; es speichert nichts auf dem Panel außer einem Startbildschirm, den du selbst aufspielst, und
+Für Themes sendet Libre Panel nur Anzeigebefehle: Bilder, Helligkeit, Video. Die Firmware
+fasst es nie an. Das Einzige, was es je auf einem Panel gespeichert hat, war ein
+Startbildschirm, auf einen Klick, und das hat einmal geschadet: Ein 9,2"-Panel startet immer
+wieder neu, seit sein Startbildschirm mit 0.9.1 geschrieben wurde. Seit 0.9.2 schreibt Libre
+Panel keine Datei mehr auf ein Panel ([mehr](#der-eigene-startbildschirm-des-panels)).
 Firmware-Updates bleiben Sache der Hersteller-App.
 </details>
 

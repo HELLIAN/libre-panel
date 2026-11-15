@@ -218,8 +218,14 @@ when you stop.
 
 TURZX USB panels show a logo of their own when they are switched on and play a clip when the PC
 starts. Libre Panel draws both in the look you choose (its own, Aurora, Pulse, Circuit, Night,
-Levels or Dark) for your panel's size, as finely as the panel can show them, and puts them on
-it with one click; the factory logo comes back with another.
+Levels or Dark) for your panel's size, as finely as the panel can show them, and gives you
+their files.
+
+**Putting them on the panel is switched off since 0.9.2.** One 9.2" ran out of room for its
+start screen and has kept restarting since; on other panels the same files were written
+without trouble. Writing comes back when Libre Panel can tell how much fits on a panel. What
+is on a panel can still be asked, and a boot logo taken off again: the panel then shows its
+factory logo.
 
 ### Every size, round and upright
 
@@ -554,13 +560,12 @@ from outside the kernel, which Libre Panel does not install. More:
 
 Video mode is for the TURZX USB panels, which have a video decoder. The Windows and Linux
 downloads carry the [ffmpeg](https://ffmpeg.org) it needs, so you only name the panel's
-standby clip, as the vendor app shows it, in *Settings → Panel*, or put Libre Panel's own
-standby clip on the panel under *Settings → Panel → Start screen*, which names it for you. On
-the 9.2" it then turns itself on; on the other TURZX USB panels set it to *on* to try it. With
-a pip install, install ffmpeg yourself (Windows: `winget install ffmpeg`; Linux: your
-distribution's package) or name it in the same place. Video mode saves nothing on the panel;
-only the Start screen writes to it, on a click. The serial panels get still frames, with only
-the changed parts sent ([details](docs/CONFIGURATION.md#video)).
+standby clip, as the vendor app shows it, in *Settings → Panel*. On the 9.2" it then turns
+itself on; on the other TURZX USB panels set it to *on* to try it. With a pip install, install
+ffmpeg yourself (Windows: `winget install ffmpeg`; Linux: your distribution's package) or name
+it in the same place. Video mode saves nothing on the panel, and since 0.9.2 Libre Panel
+writes no file to a panel at all ([why](#the-panels-own-start-screen)). The serial panels get
+still frames, with only the changed parts sent ([details](docs/CONFIGURATION.md#video)).
 </details>
 
 <details>
@@ -607,9 +612,11 @@ downloads is planned.
 <summary><b>Can it harm my panel?</b></summary>
 <br>
 
-Libre Panel sends display commands only: pictures, brightness, video. It never touches the
-firmware; it stores nothing on the panel but a start screen you put there yourself, and
-firmware updates stay the vendor app's job.
+Showing themes uses display commands only: pictures, brightness, video. Libre Panel never
+touches the firmware. The one thing it ever stored on a panel was a start screen, on a click,
+and that did harm once: a 9.2" has kept restarting since its start screen was written with
+0.9.1. Since 0.9.2 Libre Panel writes no file to a panel
+([more](#the-panels-own-start-screen)). Firmware updates stay the vendor app's job.
 </details>
 
 <details>

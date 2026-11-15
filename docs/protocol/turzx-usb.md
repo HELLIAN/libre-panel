@@ -461,9 +461,15 @@ firmware, its store, what else is in it) is not known either.
   with no room, and it fails on them. Or the clip's end is not on the panel as it
   was sent (98 says the size the panel has for the file, not what it can read),
   and the panel fails where its player gets there: the clip is 66 pictures, 2.2 s
-  at the panel's 30 a second, about as long as the panel stays on the USB. Then
-  the panel is itself for those two seconds and takes commands, as it does while
-  it plays its clip before each start of the app.
+  at the panel's 30 a second, about as long as the panel stays on the USB.
+- **It answered the app nothing after that.** In the five hours after, the app
+  opened the panel thirteen times while it came and went, and sent it the sync
+  (10): no answer came to any (the transfer failed five times as a stalled
+  endpoint, six times as a device that was gone, twice without an answer in
+  time), and of the app's looks every five seconds in between, not one ended with
+  a panel in use. So the panel was not seen to take a command in its two seconds.
+  Whether it takes none, or took none at the moments the app tried, that log does
+  not tell.
 - **42 does delete** on that panel: after it 98 says none for a boot logo that was
   there, twice in that log. It was never sent for a clip the panel was playing.
 
@@ -477,13 +483,22 @@ environment switches it on for who looks into it on a panel of their own). It
 never deleted a file to write it again before 0.9.1 and does not after it.
 
 For a panel in that state, `libre-panel start-screen remove-clip --wait` acts the
-moment the panel is on the USB: 10 until it is answered once, then 111 (the clip
-it may be playing stopped, as the app does at each of its starts), 42 for the clip
-and 98 to see that it is off: see
+moment the panel is on the USB: 10 until it is answered once (sent again every
+300 ms while it is not: an endpoint can take a packet or two by itself, so whether
+the panel goes on taking them tells whether anything on it reads what is sent), then
+111 (the clip it may be playing stopped, as the app does at each of its starts),
+42 for the clip and 98 to see that it is off: see
 [configuration](../CONFIGURATION.md#the-panels-start-screen). The settings are
 saved with start mode 0 (125) only once the clip is off, and only with
-`default-start` or where `app.cfg` is there and empty. Whether a panel in that
-state still takes a command is not known.
+`default-start` or where `app.cfg` is there and empty. It waits for the panel
+until its time is over, however often the panel comes without an answer.
+
+The chance is small: that panel answered the app nothing after it began to
+restart. What the command has over the app's tries is that it is there the moment
+the panel comes (the app looked every five seconds, and started its engine
+first), that it goes on for as long as it is given, and that it says to the
+millisecond how far each coming gets: whether the panel can be opened, whether it
+takes what is sent, whether it answers.
 
 ### Which panel, which maker: what is known where
 

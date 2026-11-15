@@ -100,12 +100,34 @@ class FakePanel:
         self.plays_clip = False
         self.clip_s: float | None = None
         self._plays_since: float | None = None
+        # a panel whose program does not read what is sent: its endpoint takes that many
+        # packets each time it is on the bus and no more (the next one waits until the time
+        # given is over, and fails when the panel leaves), and none is answered. None: it
+        # reads
+        self.takes: int | None = None
+        self._taken = 0
+        # a panel whose program is up only ``wakes_s`` after it came: what it is sent before
+        # that waits in its endpoint and is answered then, in order
+        self.wakes_s: float | None = None
+        self._since: float | None = None
+        self._dozing: list[bytes] = []
 
     @property
     def present(self) -> bool:
         """On the bus (not unplugged, not in the middle of a restart)."""
         self._clip_end()
-        return not self.unplugged and time.monotonic() >= self.away_until
+        there = not self.unplugged and time.monotonic() >= self.away_until
+        if not there:  # (it comes back as after power-on: its endpoint empty, its program down)
+            self._taken, self._since, self._dozing = 0, None, []
+        elif self._since is None:
+            self._since = time.monotonic()
+        return there
+
+    def _dozes(self) -> bool:
+        """Its program is not up yet (``wakes_s`` after it came)."""
+        if self.wakes_s is None or self._since is None:
+            return False
+        return time.monotonic() - self._since < self.wakes_s
 
     def _clip_end(self) -> None:
         """The restart of a panel that fails at its clip's end (``clip_s``)."""
@@ -157,6 +179,18 @@ class FakePanel:
             time.sleep(min(timeout, 20) / 1000)
             raise usb.core.USBTimeoutError("Operation timed out")
         data = bytes(data)
+        if self.takes is not None:  # (nothing reads: its endpoint takes so many, the rest wait)
+            if self._taken >= self.takes:
+                until = time.monotonic() + timeout / 1000
+                while time.monotonic() < until:
+                    if not self.present:
+                        gone = "No such device (it may have been disconnected)"
+                        raise usb.core.USBError(gone, errno=19)
+                    time.sleep(0.005)
+                raise usb.core.USBTimeoutError("Operation timed out")
+            self._taken += 1
+            self.commands.append(decode_packet(data[:512])[0])
+            return
         plain = decode_packet(data[:512])  # checks trailer and magic
         cmd = plain[0]
         self.commands.append(cmd)
@@ -253,6 +287,11 @@ class FakePanel:
             return
         if cmd in self.unanswered:
             return
+        if self._dozes():
+            self._dozing.append(bytes(reply))
+            return
+        self.pending.extend(self._dozing)  # (up: what it was sent meanwhile is answered first)
+        self._dozing.clear()
         self.pending.append(bytes(reply))
 
     # endpoint IN
@@ -262,6 +301,9 @@ class FakePanel:
         assert length >= READ_LEN, "read at least 1024 bytes or the ZLP stays in the pipe"
         if not self.present and self.gone_reads_fail:
             raise usb.core.USBError("No such device (it may have been disconnected)", errno=19)
+        if self._dozing and not self._dozes():
+            self.pending.extend(self._dozing)
+            self._dozing.clear()
         if not self.present or not self.pending:
             raise usb.core.USBTimeoutError("Operation timed out")
         return self.pending.pop(0)
