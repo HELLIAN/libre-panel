@@ -2993,7 +2993,8 @@
     "Icon in the notification area": "Значок в области уведомлений",
     "Icon in the tray": "Значок в трее",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "Его меню показывает состояние панели, переключает темы и закрывает Libre Panel. Выключено: Libre Panel открывается из меню «Пуск» или списка приложений.",
-    "Libre Panel runs in the background.": "Libre Panel работает в фоновом режиме."
+    "Libre Panel runs in the background.": "Libre Panel работает в фоновом режиме.",
+    "Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.": "Запись на панель в этой версии отключена. Панель хранит экран запуска в небольшой папке рядом с собственными настройками, и панель 9.2\" перезагружалась снова и снова, когда эта папка заполнилась. Запись вернётся, когда Libre Panel сможет определить, сколько в неё помещается."
   },
   "fields": {
     "night": "ночь",

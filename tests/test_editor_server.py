@@ -1220,6 +1220,7 @@ def test_the_panel_test_and_the_log_have_their_routes(editor, monkeypatch, isola
         root.setLevel(before)
 
 
+@pytest.mark.usefixtures("panel_writes")
 @pytest.mark.parametrize(("panels", "named"), [("", True), ("beside", False), ("first", True)])
 def test_a_standby_clip_written_is_named_in_its_own_panel_s_settings(panels, named, tmp_path):
     """On the person's click: the first panel's video mode then plays it. Written to a panel
@@ -1253,6 +1254,7 @@ def test_a_standby_clip_written_is_named_in_its_own_panel_s_settings(panels, nam
     assert (video.local_clip == STANDBY_CLIP) is named and video.clip_asked is named
 
 
+@pytest.mark.usefixtures("panel_writes")
 def test_panel_two_gets_its_own_start_screen_and_its_clip_in_its_own_settings(tmp_path):
     """The Start screen of the panel chosen at the top: panel 2 (a 9.2" on end beside a 12.3")
     is opened where its loop finds it, drawn upright and in its own brightness, and its clip is

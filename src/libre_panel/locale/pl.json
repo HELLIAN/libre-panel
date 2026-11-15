@@ -2993,7 +2993,8 @@
     "Icon in the notification area": "Ikona w obszarze powiadomień",
     "Icon in the tray": "Ikona w zasobniku",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "Jego menu pokazuje stan panelu, zmienia motywy i zamyka Libre Panel. Wyłączone: Libre Panel otwierasz z menu Start lub listy aplikacji.",
-    "Libre Panel runs in the background.": "Libre Panel działa w tle."
+    "Libre Panel runs in the background.": "Libre Panel działa w tle.",
+    "Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.": "Zapis na panelu jest w tej wersji wyłączony. Panel trzyma swój ekran startowy w małym folderze, obok własnych ustawień, a panel 9.2\" uruchamiał się wciąż od nowa, gdy ten folder się zapełnił. Zapis wróci, gdy Libre Panel będzie wiedzieć, ile się w nim mieści."
   },
   "fields": {
     "night": "noc",

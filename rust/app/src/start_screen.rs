@@ -4,7 +4,6 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use lp_devices::models::PanelModel;
 use lp_pixels::{Image, Mode};
@@ -33,6 +32,30 @@ const JPEG_STEPS: [(i64, bool); 6] = [
 const CLIP_CRF: i64 = 20;
 const CLIP_CRF_MIN: i64 = 17;
 const CLIP_CRF_MAX: i64 = 30;
+/// Writing a file to a panel is switched off (issue 52). The folder the start screen is
+/// written to holds the panel's own settings too and is small (about 0.7 MB on a 9.2"): a
+/// standby clip filled it to the last byte, and that panel has kept restarting since. Until
+/// Libre Panel can tell how much room a panel has, it writes nothing there. Who looks into it
+/// on a panel of their own sets this in the environment, at their own risk (panel_files.py
+/// WRITES_ENV).
+pub const WRITES_ENV: &str = "LIBRE_PANEL_PANEL_WRITES";
+pub const WRITES_WORD: &str = "at-my-own-risk";
+
+/// writes_on: whether files are written to a panel: not in this version, but for who asks
+/// for it in the environment.
+pub fn writes_on() -> bool {
+    std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
+}
+
+/// writes_off: why nothing is written, as the app says it.
+pub fn writes_off() -> String {
+    lp_i18n::t(
+        "Writing to the panel is switched off in this version. The panel keeps its start \
+         screen in a small folder beside its own settings, and a 9.2\" kept restarting once \
+         that folder was full. Writing comes back when Libre Panel can tell how much fits.",
+    )
+}
+
 /// How many of the app's pictures and of the files are kept (lru_cache's maxsize).
 const PICTURES_KEPT: usize = 16;
 const FILES_KEPT: usize = 4;
@@ -331,7 +354,7 @@ fn clip_h264(ffmpeg: &std::path::Path, frames: &[Image], full: bool) -> Result<V
 
 // -- on the panel -------------------------------------------------------------------------------
 
-const FOLDER: &str = "usr/data";
+pub(crate) const FOLDER: &str = "usr/data";
 const LIST_PIECES: usize = 20;
 const PIECE: usize = 512;
 const ACK: u8 = 0xC8;
@@ -379,7 +402,7 @@ pub fn checked_name(name: &str) -> Result<Vec<u8>, String> {
     Ok(raw.to_vec())
 }
 
-fn file_args(name: &[u8], size: usize) -> Vec<u8> {
+pub(crate) fn file_args(name: &[u8], size: usize) -> Vec<u8> {
     let mut args = (name.len() as u32).to_be_bytes().to_vec();
     args.extend_from_slice(&(size as u32).to_be_bytes());
     args.extend_from_slice(name);
@@ -509,8 +532,12 @@ impl PanelFiles<'_> {
 
     /// write: a file written, and checked that it has the size it should. A file the panel
     /// kept in place of the new one is left as it is and said: never taken away to write
-    /// again (0.9.1 did so; a 9.2" kept restarting after its start screen was written so).
+    /// again (0.9.1 did so, and so got a clip in that filled the panel's folder to the last
+    /// byte: that 9.2" has kept restarting since).
     fn write(&self, name: &str, data: &[u8]) -> Result<(), String> {
+        if !writes_on() {
+            return Err(writes_off());
+        }
         let raw = checked_name(name)?;
         if data.is_empty() || data.len() > MAX_FILE {
             return Err(format!(
@@ -630,6 +657,9 @@ pub fn write_logo(
     place: &Where,
     design: &str,
 ) -> Result<Dict, String> {
+    if !writes_on() {
+        return Err(writes_off());
+    }
     with_panel(model, place, |files, found| {
         let picture = boot::boot_logo(env, found, way, design, 1.0).map_err(|e| e.0)?;
         let data = logo_jpeg(&as_mounted(picture, turned))?;
@@ -655,158 +685,6 @@ pub fn remove_logo(model: Option<&'static PanelModel>, place: &Where) -> Result<
     })
 }
 
-/// What `libre-panel start-screen` does on a panel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Rescue {
-    /// what it holds: the boot logo's and the standby clip's sizes and its folder's names
-    /// (98 and 99: nothing is written)
-    Look,
-    /// its boot logo taken off, the factory logo again (42, as *Factory logo again*), where
-    /// it has one; then what it holds
-    RemoveLogo,
-}
-
-/// `libre-panel start-screen`, for a panel that restarts over and over after its start screen
-/// was written (issue 52): it is opened as the start screen's jobs open it, without the
-/// video's start (whose 110 plays the standby clip), the step asked for is taken first, then
-/// what it holds is asked, each said with the time since the panel came. With `wait`, the
-/// panel is waited for that long and tried as long as it is on the bus, again each time it
-/// comes back, until the step is done (a failure said once each time it is there). `say` gets
-/// each line.
-pub fn rescue(
-    what: Rescue,
-    wait: Option<Duration>,
-    say: &mut dyn FnMut(&str),
-) -> Result<(), String> {
-    let setup = crate::display::files_setup(None, &[])?;
-    let Some(limit) = wait else {
-        return rescue_once(&setup, what, Instant::now(), say);
-    };
-    let present = || match (&setup.test_link, &setup.test_present) {
-        (Some(_), Some(file)) => file.exists(),
-        (Some(_), None) => true,
-        (None, _) => lp_devices::usb::list()
-            .iter()
-            .any(|device| lp_devices::usb::model_of(device.pid).is_some()),
-    };
-    say(&format!(
-        "waiting up to {} s for the panel: plug it in, or let it come back",
-        limit.as_secs()
-    ));
-    let deadline = Instant::now() + limit;
-    let mut came: Option<Instant> = None;
-    let mut said = String::new(); // (the last failure, said once while the panel is there)
-    loop {
-        match (present(), came) {
-            (true, None) => {
-                came = Some(Instant::now());
-                said.clear();
-                say("+0 ms: the panel is on the bus");
-            }
-            (false, Some(since)) => {
-                say(&format!(
-                    "+{} ms: the panel left the bus",
-                    since.elapsed().as_millis()
-                ));
-                came = None;
-            }
-            _ => {}
-        }
-        if let Some(since) = came {
-            match rescue_once(&setup, what, since, say) {
-                Ok(()) => return Ok(()),
-                Err(why) if why == said => {}
-                Err(why) => {
-                    say(&format!("+{} ms: {why}", since.elapsed().as_millis()));
-                    said = why;
-                }
-            }
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "the panel was not reached in {} s",
-                limit.as_secs()
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-/// One try of `rescue` on the panel that is there (`since`: when it came).
-fn rescue_once(
-    setup: &lp_devices::turzx::Setup,
-    what: Rescue,
-    since: Instant,
-    say: &mut dyn FnMut(&str),
-) -> Result<(), String> {
-    let at = || since.elapsed().as_millis();
-    let link = lp_devices::turzx::FileLink::open(setup, 0).map_err(|e| e.to_string())?;
-    let name = link.model().map_or_else(
-        || format!("TURZX USB panel {:04x}", link.pid()),
-        |model| model.label(),
-    );
-    let firmware = lp_devices::turzx::firmware_of(link.reply());
-    let firmware = match firmware.is_empty() {
-        true => String::new(),
-        false => format!(" (firmware {firmware})"),
-    };
-    say(&format!("+{} ms: {name}{firmware} open and in step", at()));
-    let files = PanelFiles { link: &link };
-    let size_said = |size: i64| match size {
-        0 => "none".to_string(),
-        size => format!("{size} bytes"),
-    };
-    if what == Rescue::RemoveLogo {
-        let logo = files.size(BOOT_LOGO)?;
-        if logo == 0 {
-            say(&format!(
-                "+{} ms: {BOOT_LOGO}: none, nothing to take off (the factory logo shows)",
-                at()
-            ));
-        } else {
-            files.delete(BOOT_LOGO)?;
-            let left = files.size(BOOT_LOGO)?;
-            if left != 0 {
-                return Err(format!(
-                    "{BOOT_LOGO} is still there after it was taken off ({left} bytes)"
-                ));
-            }
-            say(&format!(
-                "+{} ms: the boot logo is taken off ({BOOT_LOGO} had {logo} bytes); the factory \
-                 logo shows at the next power-on",
-                at()
-            ));
-        }
-    }
-    // what it holds: the two files first (a question each), then the folder (20 of them)
-    for file in [BOOT_LOGO, STANDBY_CLIP] {
-        match files.size(file) {
-            Ok(size) => say(&format!("+{} ms: {file}: {}", at(), size_said(size))),
-            Err(why) if what == Rescue::Look => return Err(why),
-            Err(why) => {
-                say(&format!("+{} ms: {file}: no answer ({why})", at()));
-                return Ok(());
-            }
-        }
-    }
-    match files.listing() {
-        Ok(names) if names.is_empty() => say(&format!("+{} ms: {FOLDER}: nothing listed", at())),
-        Ok(names) => say(&format!(
-            "+{} ms: {FOLDER} holds {}",
-            at(),
-            names.join(", ")
-        )),
-        Err(why) => {
-            say(&format!(
-                "+{} ms: {FOLDER} could not be listed ({why})",
-                at()
-            ));
-            link.drain();
-        }
-    }
-    Ok(())
-}
-
 /// StartScreen.write_clip: the standby clip written, played and saved as what the panel
 /// starts with; in the range of values its decoder shows; turned round for a panel mounted
 /// upside down (`turned`), as its frames are.
@@ -821,6 +699,9 @@ pub fn write_clip(
     design: &str,
     video_range: &str,
 ) -> Result<Dict, String> {
+    if !writes_on() {
+        return Err(writes_off());
+    }
     let ffmpeg = lp_devices::h264::find_ffmpeg("")?;
     with_panel(model, place, |files, found| {
         let frames = boot::standby_frames(env, found, None, way, design, 1.0).map_err(|e| e.0)?;
@@ -908,6 +789,8 @@ pub fn state(told: &Told) -> Value {
         "designs".into(),
         Value::List(boot::DESIGNS.iter().map(|d| text(d)).collect()),
     );
+    // (whether files are written to a panel: not in this version, issue 52)
+    answer.insert("writes".into(), Value::Bool(writes_on()));
     Value::Dict(answer)
 }
 

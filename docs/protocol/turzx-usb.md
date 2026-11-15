@@ -58,7 +58,7 @@ send a sync and check the echo (up to three attempts). **verified**
 
 | Id | Meaning | Arguments / notes |
 |---|---|---|
-| 10 | sync / hello | reply `0A C8` + ASCII `turzx_00` **verified** (and bytes that change with every connection on the 9.2"; the 5.2" answers a firmware version `turzx_0001_0015` at `[8:]`, as jijiechen/turing-monitor reads it; Libre Panel logs what follows `turzx_` when it connects) |
+| 10 | sync / hello | reply `0A C8` + ASCII `turzx_00` **verified** (and bytes that change with every connection on the 9.2"; a 9.2" names itself `turzx_0001_0015` (issue 52), as the 5.2" does at `[8:]`, which jijiechen/turing-monitor reads as its firmware version; Libre Panel logs what follows `turzx_` when it connects) |
 | 14 | brightness | `[8]` = 0–102 (percent × 1.02) |
 | 15 | frame rate | `[8]` = fps; also sets the panel's own playback rate |
 | 17 | H.264 block size | reply 0 on the 9.2" → default 202752 **verified** |
@@ -405,13 +405,13 @@ application's folder (`usr/data/...`; `/usr/data` fails).
 
 | Cmd | | |
 |---|---|---|
-| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named, so only names below `usr/data/` are sent |
+| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named, so only names below `usr/data/` are sent. **Not sent in this version** (see *The folder is small* below) |
 | 42 | delete a file | taking `usr/data/boot.jpg` away brings the factory logo back |
 | 98 | a file's size | little endian at `[8:12]`; checked after every write |
 | 99 | list a folder | 20 pieces of 512 bytes from a 0x2800-byte buffer; it reads the name only at the first, so all 20 are fetched every time; it creates a missing folder |
 | 113 | show a JPEG of the panel's | the boot logo, at once |
 | 110 | play a clip | clears the framebuffer and keeps the name in the settings **in memory**; never with an empty name |
-| 125 | save the settings | `[8:14]` brightness (0–102), start mode (2: the clip `cfg+6` names), 0, rotation, 0, offline (0: dim and stop 10 s after the PC is gone); saved with the clip's name |
+| 125 | save the settings | `[8:14]` brightness (0–102), start mode (2: the clip `cfg+6` names; 0: as the panel came), 0, rotation, 0, offline (0: dim and stop 10 s after the PC is gone); saved with the clip's name, into `usr/data/app.cfg` |
 
 - **The boot logo** is drawn in the framebuffer's orientation (480×1920 on the
   9.2", turned as the frames are), JPEG quality 88. The JPEG path draws into a
@@ -426,12 +426,69 @@ application's folder (`usr/data/...`; `/usr/data` fails).
 - **Writing it:** 40 `usr/data/standby.h264`, 98 to check, 15 = 30, 110 with the
   name (it plays at once), 125 `[brightness, 2, 0, 0, 0, 0]`. The clip that was
   there cannot be read back first: the protocol has no file read.
-- **A file the panel kept:** a 9.2" mounted upside down answered 98 with the size of
-  the clip it had (Circuit's upright, 701,830 bytes) after 40 with the one turned
-  round (706,912): it kept the old one (for want of room for both at once, or still
-  busy with it: not known). 0.9.1 then took it away with 42 and wrote it again with
-  40; after its start screen was written with 0.9.1, that 9.2" kept restarting (on
-  USB and gone again, without end), whether through that step is not known yet.
-  **Never delete a file to write it again**, the standby clip above all: Libre
-  Panel says what the panel has and leaves it.
+
+### The folder is small, and the settings are in it
+
+What a 9.2" (firmware `turzx_0001_0015`) told through the log of the app that wrote
+to it (issue 52). Every number is from that log; what the panel does inside is not
+known.
+
+- **`usr/data` as the panel came** holds `app.cfg` and `boot.sign`. `app.cfg` is the
+  panel's own settings (what 125 saves); the start screen's files go beside it.
+- **It holds about 0.7 MB**, not the 1 MiB a file may have. With a standby clip of
+  701,830 bytes in it, a boot logo of 126,833 bytes ended at 16,384: 40 was answered
+  as ever, 98 said what was really there.
+- **Once it is full, the panel takes no file**: for five days each 40 was answered
+  within the time the transfer takes (about 35 ms for 700 KB; a write that happens
+  takes 1.2 to 2.9 s) and nothing changed, whether the new file was larger or
+  smaller than the one there. 98 then says the old file's size: Libre Panel read
+  that as "the panel kept the file it had", and where the new clip was as long as
+  the old one, as written.
+- **0.9.1 forced a clip in**: a 40 with 706,912 bytes ended at 704,512; 0.9.1 took
+  that away (42) and wrote again, and 98 said 706,912. Then 15, 110 and 125: the
+  settings saved into a folder with no room left. The panel showed frames for ten
+  more seconds, until Windows shut down. Since its next start it is on the USB for
+  about 2 s and gone for 1, without end, with no picture, on a charger as well.
+- **42 does delete** on that panel: after it 98 says none for a boot logo that was
+  there, twice in that log.
+
+So, for whatever is written to a panel again: the room is the folder's, not the
+file's; it is not known per panel and cannot be asked (100 is the card's); the
+settings need some of it; a write that ends early leaves a file cut off; and a
+size that matches proves nothing where the old file was as long. **Libre Panel
+writes no file to a panel** until that is solved (`LIBRE_PANEL_PANEL_WRITES=
+at-my-own-risk` in the environment switches it on for who looks into it on a panel
+of their own). It never deleted a file to write it again before 0.9.1 and does not
+after it.
+
+For a panel in that state, `libre-panel start-screen remove-clip --wait` takes the
+clip off the moment the panel is on the USB (10 until it is answered once, then 42,
+111, 98): see [configuration](../CONFIGURATION.md#the-panels-start-screen). The
+settings are saved with start mode 0 (125) only once the clip is off, and only with
+`default-start` or where `app.cfg` is there and empty. Whether a panel in that
+state still takes a command is not known.
+
+### Which panel, which maker: what is known where
+
+A command is known for the panel it was seen on, not for its neighbours.
+
+- **The vendor id `1CBE` is not one maker's.** Lian Li's screens carry it too
+  (`A088`, `A092`, `A034`, `A068`) and speak a protocol of their own; nothing on
+  this page is theirs. This page is the TURZX family's: the product ids at its top.
+- **Within the family, models and firmwares may differ.** The file commands (40,
+  42, 98, 99, 113) and 125 are SPUR II's reading of the 8.8"'s firmware; they were
+  seen to work on the 9.2" (SPUR II's own, and the one of issue 52 with firmware
+  `turzx_0001_0015`, by its log: 40 wrote files, 98 said their sizes, 99 listed the
+  folder, 42 deleted, 125 with start mode 2 was taken). On the family's other
+  models (1.6" to 12.3", the Jonsbo TF3's pump screen, another maker's) they are
+  untried. `libre-panel start-screen` sends its steps to the 9.2" alone.
+- **Other projects describe other panels.** turing-smart-screen-python
+  (`lcd_comm_turing_usb.py`), phstudy/turing-smart-screen-cli and
+  jijiechen/turing-monitor (a 5.2" that names itself `turzx_0001_0015` too) upload
+  a file as the vendor app does: 38 opens it, 39 sends it in pieces. They call 40
+  with a path and no length "delete file" and 98 "play file", send 13 and 41 bare
+  before a video, and use 42 nowhere; in their 125 the start mode is 0 for the
+  panel's default, 1 for a picture, 2 for a video. None of that was checked on a
+  9.2". The one thing Libre Panel takes from there is start mode 0 in
+  `libre-panel start-screen default-start`, and it says so.
 

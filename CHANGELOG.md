@@ -1,26 +1,37 @@
 # Changelog
 
-## 0.9.2 — 2026-11-14
+## 0.9.2 — 2026-11-15
 
-A hotfix for 0.9.1: a 9.2" kept restarting after its start screen was written with 0.9.1,
-whose new step deletes a file the panel kept and writes it again. That step is taken back: the
-boot logo and the standby clip are written as in 0.9.0. Coming from 0.8? Everything 0.9 brought
-follows below: a third less memory, up to 38 % less processor and a quicker start, with the
-same pictures on the panel, pixel for pixel.
+A hotfix for 0.9.1: a 9.2" has kept restarting since its start screen was written with 0.9.1.
+Its log shows why: the panel keeps its start screen in a small folder beside its own
+settings, and the clip filled it. **Libre Panel writes no start screen for now**, and has a
+command for a panel in that state. Coming from 0.8? Everything 0.9 brought follows below: a
+third less memory, up to 38 % less processor and a quicker start, with the same pictures on
+the panel, pixel for pixel.
 
 **Fixed**
-- **Nothing on the panel is deleted to be written again.** Where the panel kept the file it
-  had in place of a new one, 0.9.1 deleted the old file and wrote the new one a second time.
-  A 9.2" kept restarting after its start screen was written with 0.9.1: it shows up on USB and
-  is gone again, without end. Until that is understood, Libre Panel writes as 0.9.0 did: where
-  the panel keeps the file it had, it says so and leaves it as it is.
+- **No file is written to a panel.** The folder a TURZX USB panel keeps its boot logo and
+  standby clip in holds its own settings too, and on a 9.2" it has room for about 0.7 MB,
+  less than one clip may have. With the Circuit clip in it (701,830 bytes) the panel took
+  no file any more, and Libre Panel read that as "the panel kept the file it had". 0.9.1
+  deleted that file and wrote a clip of 706,912 bytes, which filled the folder to the last
+  byte; its settings were saved into it, and it has not got through a start since: on USB
+  for two seconds and gone again, without end. Until Libre Panel can tell how much fits on a
+  panel, *Put on the panel* is switched off. What is on the panel can still be asked, and
+  the boot logo taken off.
+- **Nothing on the panel is deleted to be written again**, as 0.9.1 did.
 
 **Added**
 - **`libre-panel start-screen`, for a panel that keeps restarting.** With the app quit,
-  `libre-panel start-screen` says what the panel holds, and `libre-panel start-screen
-  remove-logo` takes its boot logo off, the factory logo again. `--wait` waits for the panel
-  and acts the moment it is on the USB, each step said with the time since it came. It opens
-  the panel without the video's start, which plays the standby clip.
+  `libre-panel start-screen remove-clip --wait` waits for the panel and, the moment it is on
+  the USB, takes its standby clip off, which makes room in its folder, and checks that it
+  is off. `remove-logo` takes the boot logo off, `default-start` saves the panel's settings
+  with the start as it came, `factory` does all three, and without a word it says what the
+  panel holds. Each line says the milliseconds since the panel came, a step the panel
+  accepted is not sent again the next time it comes, and nothing is written to the panel's
+  files. The steps go to the Turing 9.2" alone, the panel they were seen to work on, and
+  only after it has answered as a TURZX panel does. It is tried on a simulated panel;
+  whether a panel in that state still takes a command is not known yet.
 
 ## 0.9.1 — 2026-11-14
 

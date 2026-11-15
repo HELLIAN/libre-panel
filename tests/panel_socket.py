@@ -1,7 +1,8 @@
 """The simulated TURZX panel of fake_panel.py behind a socket, for Libre Panel's engine.
 
 ``libre-panel-engine panel --link tcp:HOST:PORT`` talks to it instead of USB (engine/src/link.rs,
-TcpLink): "W" len timeout data is a bulk write, answered "K" or "E" len text; "R" len timeout
+TcpLink): "W" len timeout data is a bulk write, answered "K", "T" (not taken in time, a panel
+that is deaf) or "E" len text; "R" len timeout
 is a bulk read, answered "D" len data, "T" (nothing in time) or "E" len text (u32 little endian
 each). The panel checks every packet as it does for the Python driver, so a test of the
 engine sees what the panel was sent, exactly as one of devices/turzx_usb.py does.
@@ -88,6 +89,8 @@ class PanelSocket:
         except AssertionError as exc:
             self.errors.append(str(exc))
             return self._failed(f"the panel refused it: {exc}")
+        except usb.core.USBTimeoutError:
+            return b"T"  # (the panel did not take it in time)
         except usb.core.USBError as exc:
             return self._failed(str(exc))
         return b"K"

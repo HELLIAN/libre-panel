@@ -613,6 +613,13 @@ coarser where a look moves everywhere, finer where it leaves room), and in full 
 whose decoder shows every stream so (the 9.2" and the 12.3", or `video_range = "full"`): in
 limited range their black was grey.
 
+**Writing is switched off in 0.9.2.** The panel keeps both files in a small folder beside
+its own settings: on a 9.2" it holds about 0.7 MB, less than one clip may have. A clip
+filled such a folder to the last byte, and that panel has kept restarting since (issue 52).
+Until Libre Panel can tell how much fits on a panel, *Put on the panel* is greyed out; the
+card still shows both pictures, downloads them, says what is on the panel and takes the
+boot logo off. What follows describes the writing as it was and will be.
+
 - **Put on the panel** writes one, after a question: the panel's themes pause, the panel
   shows what was written (the logo at once, the clip playing), and *Show the themes again*
   brings them back. The boot logo appears at the next power-on; the panel starts with the
@@ -621,8 +628,9 @@ limited range their black was grey.
   touched and shows again.
 - **The standby clip replaces** the one the panel has (`usr/data/standby.h264`, the vendor
   app's name); that one cannot be read back first. Where the panel keeps the one it had (a
-  9.2" did when a larger one came), Libre Panel says so and leaves it: it never deletes a file
-  to write it again. Where `video.local_clip` is empty, the video mode is then told this name.
+  9.2" did once its folder was full), Libre Panel says so and leaves it: it never deletes a
+  file to write it again. Where `video.local_clip` is empty, the video mode is then told this
+  name.
 - **With more panels** the card is the one of the panel chosen at the top (*Panel 1 |
   Panel 2*): its own logo and clip, in its size and the way it is mounted, written to that
   panel alone, and a clip there is named in its own `[[panels]]` `video`, never in another's.
@@ -630,11 +638,29 @@ limited range their black was grey.
   found it.
 - **What is on the panel** lists its folder and the sizes of both files.
 - **A panel that keeps restarting** (on USB and gone again, without end) is reached from the
-  terminal, with the app quit: `libre-panel start-screen` says what it holds, and
-  `libre-panel start-screen remove-logo` takes its boot logo off, the factory logo again.
+  terminal, with the app quit:
+  - `libre-panel start-screen` says what the panel holds;
+  - `libre-panel start-screen remove-clip` takes its standby clip off, which makes room in
+    its folder, and asks that it is off. Where the panel's settings file (`app.cfg`) is
+    there and empty afterwards, its settings are saved anew;
+  - `libre-panel start-screen remove-logo` takes its boot logo off, the factory logo again;
+  - `libre-panel start-screen default-start` saves the panel's settings with the start as
+    it came (no clip), once no clip is on it;
+  - `libre-panel start-screen factory` does all three.
+
   With `--wait` each waits for the panel (up to 600 s, or the seconds given) and acts the
-  moment it is on the USB, each step said with the time since it came. Neither starts the
-  video, whose start plays the standby clip.
+  moment it is on the USB: a step it accepted is not sent again the next time it comes, and
+  every line says the milliseconds since it came, so the run tells how long the panel is
+  there and how far it gets. It ends when the panel stays, or says how often it came and
+  what is done. None of them starts the video, whose start plays the standby clip, and none
+  writes a file.
+
+  The steps go to the Turing 9.2" alone, the panel they were seen to work on: the vendor id
+  is shared by other makers' panels with other protocols, and the family's other models may
+  take a command for something else. The first thing sent is the sync, and nothing follows
+  where the answer is no TURZX panel's. Saving the settings with the start as the panel
+  came is the one thing here no 9.2" was seen to take: the value comes from notes on other
+  models of the family.
 - **Mounted upside down** (`rotate = 180`), the panel gets both turned round, as its frames.
 - **JPEG** and **H.264** download the files as the panel takes them.
 

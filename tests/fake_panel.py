@@ -76,6 +76,19 @@ class FakePanel:
         self.shown: list[str] = []
         self.saved: list[bytes] = []
         self._piece = 0
+        # what the panel names itself in its answer to the sync
+        self.hello = b"turzx_00"
+        # a panel whose program is not running: it is on the bus and takes no packet
+        self.deaf = False
+        # files a 42 does not take off (it is accepted all the same), and commands that are
+        # taken and never answered
+        self.kept_files: set[str] = set()
+        self.unanswered: set[int] = set()
+        # commands after which the panel leaves the bus at once, without an answer, as one
+        # whose program ends there (each once), and whether a read fails then, as a panel
+        # that is gone fails it (else it times out, as one that restarts does)
+        self.leaves_once: set[int] = set()
+        self.gone_reads_fail = False
 
     @property
     def present(self) -> bool:
@@ -113,6 +126,9 @@ class FakePanel:
         if not self.present or self.fail_next_writes:
             self.fail_next_writes = max(0, self.fail_next_writes - 1)
             raise usb.core.USBError("No such device (it may have been disconnected)", errno=19)
+        if self.deaf:
+            time.sleep(min(timeout, 20) / 1000)
+            raise usb.core.USBTimeoutError("Operation timed out")
         data = bytes(data)
         plain = decode_packet(data[:512])  # checks trailer and magic
         cmd = plain[0]
@@ -145,7 +161,7 @@ class FakePanel:
             used = sum(len(data) for data in self.files.values())
             if self.room is None or used + size <= self.room:
                 self.files[name] = payload
-        if cmd == 42:
+        if cmd == 42 and name not in self.kept_files:
             self.files.pop(name, None)
         if cmd == 113:
             assert name in self.files, f"{name} shown but not there"
@@ -161,7 +177,7 @@ class FakePanel:
         if cmd == 14:
             assert 0 <= plain[8] <= 102
             self.brightness.append(plain[8])
-        reply = bytearray(bytes([cmd, ACK]) + (b"turzx_00" if cmd == 10 else b"")).ljust(512, b"\0")
+        reply = bytearray(bytes([cmd, ACK]) + (self.hello if cmd == 10 else b"")).ljust(512, b"\0")
         if cmd == 110:
             size = struct.unpack(">I", plain[8:12])[0]
             name = bytes(plain[16 : 16 + size])
@@ -200,6 +216,13 @@ class FakePanel:
         if cmd == 11:
             self._restart()  # gone before it answers
             return
+        if cmd in self.leaves_once:
+            self.leaves_once.discard(cmd)
+            self.away_until = time.monotonic() + self.restart_away_s
+            self.pending = []
+            return
+        if cmd in self.unanswered:
+            return
         self.pending.append(bytes(reply))
 
     # endpoint IN
@@ -207,6 +230,8 @@ class FakePanel:
         import usb.core
 
         assert length >= READ_LEN, "read at least 1024 bytes or the ZLP stays in the pipe"
+        if not self.present and self.gone_reads_fail:
+            raise usb.core.USBError("No such device (it may have been disconnected)", errno=19)
         if not self.present or not self.pending:
             raise usb.core.USBTimeoutError("Operation timed out")
         return self.pending.pop(0)

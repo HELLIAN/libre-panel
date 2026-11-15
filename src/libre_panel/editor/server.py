@@ -1755,6 +1755,8 @@ class EditorHandler(BaseHTTPRequestHandler):
                 "runs_panel": self.controls is not None,
                 "names": {"logo": panel_files.BOOT_LOGO, "clip": panel_files.STANDBY_CLIP},
                 "designs": list(bootscreen.designs()),  # the looks, Libre Panel's own first
+                # (whether files are written to a panel: not in this version, issue 52)
+                "writes": panel_files.writes_on(),
             }
         )
 
@@ -2315,6 +2317,10 @@ class EditorHandler(BaseHTTPRequestHandler):
             return self._error(f"panel {n}: there is no such panel")
         device, where = place
         way = self._mounted(n)
+        if action in ("logo", "clip") and not panel_files.writes_on():
+            # (nothing is written in this version: said before the themes are paused for it)
+            return self._json({"error": panel_files.writes_off(), "paused": False},
+                              HTTPStatus.CONFLICT)  # fmt: skip
         paused = False
         if self.controls is not None:
             self.controls.act("pause")  # the panels are free for this, and stay so

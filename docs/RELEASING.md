@@ -37,6 +37,17 @@ git tag v0.1.0
 git push origin main v0.1.0
 ```
 
+### What a panel keeps: tried on the panel first
+
+Whatever a release changes in what goes to a panel's own storage (a file written or
+deleted, its settings saved: on TURZX USB panels 40, 42, 125 and 13, on others what does
+the like) is run on a real panel of that model before the release, by a person, and the
+changelog names the panel and its firmware. The simulated panels prove what Libre Panel
+sends, never what a panel does with it: 0.9.1 passed every test and left a 9.2" restarting
+without end (issue 52), because the room in its folder was assumed, not measured. Where no
+such panel is at hand, the change waits, or ships switched off. A command for a panel that
+is already in that state (`libre-panel start-screen`) may ship untried on it, and says so.
+
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the
 workflow fills that release in.

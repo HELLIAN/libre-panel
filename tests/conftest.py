@@ -50,6 +50,16 @@ def _hang_guard():
         faulthandler.cancel_dump_traceback_later()
 
 
+@pytest.fixture
+def panel_writes(monkeypatch):
+    """Writing files to a panel switched on, as who looks into issue 52 switches it on. It is
+    off in this version (a clip filled a 9.2"'s folder, which holds its settings too, and it
+    has kept restarting since); what is sent once it is on again stays tested through this."""
+    from libre_panel.devices import panel_files
+
+    monkeypatch.setenv(panel_files.WRITES_ENV, panel_files.WRITES_WORD)
+
+
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
     """Every test gets its own config/user-themes directory."""

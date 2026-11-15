@@ -54,6 +54,7 @@ mod plugins;
 mod presence;
 mod previews;
 mod psutil;
+mod rescue;
 mod sensors;
 mod server;
 mod services;
@@ -123,11 +124,16 @@ Libre Panel
   libre-panel notify TEXT [--title T] [--seconds S] [--icon NAME] [--level info|warning|error]
                                 a notice on the panel of the running app
   libre-panel devices           the drivers, serial ports and USB panels there are
-  libre-panel start-screen [look|remove-logo] [--wait [S]]
+  libre-panel start-screen [look] [remove-clip] [remove-logo] [default-start] [factory]
+                           [--wait [S]]
                                 a TURZX USB panel's own screens, the app quit first: what it
-                                holds (look), or its boot logo taken off, the factory logo
-                                again (remove-logo); --wait: up to S seconds (600) for the
-                                panel, acting the moment it comes (one that keeps restarting)
+                                holds (look), its standby clip taken off (remove-clip), its
+                                boot logo taken off, the factory logo again (remove-logo),
+                                its settings saved with the start as it came
+                                (default-start), all three (factory); the steps on the
+                                Turing 9.2\" only;
+                                --wait: up to S seconds (600) for the panel, acting the
+                                moment it comes (one that keeps restarting)
   libre-panel udev-rules        the Linux udev rule for the panels' access
   libre-panel location NAME     latitude and longitude for the weather
   libre-panel version
@@ -1210,21 +1216,19 @@ fn candidates(vid: Option<u16>, pid: Option<u16>, serial: Option<&str>) -> Strin
     format!("  -> {}", ids.join(" / "))
 }
 
-/// `devices` (cli.py's _cmd_devices): the drivers, and the serial ports and USB panels there
-/// are, each with the panels its ids may be.
-/// `libre-panel start-screen [look|remove-logo] [--wait [S]]`: a TURZX USB panel's own screens
-/// from the terminal, for one that keeps restarting (start_screen::rescue): what it holds, or
-/// its boot logo taken off; said as it goes, into the log as well. Not while the app runs (it
-/// has the panel, and its video's start plays the standby clip).
+/// `libre-panel start-screen [look] [remove-clip] [remove-logo] [default-start] [factory]
+/// [--wait [S]]`: a TURZX USB panel's own screens from the terminal, for one that keeps
+/// restarting (rescue.rs): the steps named, in rescue.rs's order, then what the panel holds;
+/// said as it goes, into the log as well. Not while the app runs (it has the panel, and its
+/// video's start plays the standby clip).
 fn start_screen_command(args: &[String]) -> Result<i32, String> {
-    use start_screen::Rescue;
-    let mut what = Rescue::Look;
+    let mut actions = Vec::new();
+    let mut words: Vec<&str> = Vec::new(); // (what was asked for, as it was typed)
     let mut wait = None;
     let mut rest = args.iter().peekable();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
-            "look" => what = Rescue::Look,
-            "remove-logo" => what = Rescue::RemoveLogo,
+            "look" => {}
             "--wait" => {
                 let seconds = match rest.peek().map(|value| value.parse::<f64>()) {
                     Some(Ok(seconds)) if seconds.is_finite() && seconds >= 0.0 => {
@@ -1235,7 +1239,13 @@ fn start_screen_command(args: &[String]) -> Result<i32, String> {
                 };
                 wait = Some(std::time::Duration::from_secs_f64(seconds));
             }
-            other => return Err(format!("start-screen: unrecognized argument {other}")),
+            word => match rescue::actions_named(word) {
+                Some(named) => {
+                    actions.extend_from_slice(named);
+                    words.push(word);
+                }
+                None => return Err(format!("start-screen: unrecognized argument {word}")),
+            },
         }
     }
     let home = Home::find()?;
@@ -1246,6 +1256,9 @@ fn start_screen_command(args: &[String]) -> Result<i32, String> {
                 .into(),
         );
     }
+    // (what the settings are saved with, where they are: the panel's brightness as set)
+    let brightness = lp_config::load_config(&home.config_file(), lp_config::platform())
+        .map_or(70, |config| config.device.brightness);
     let _ = logs::to_file(); // (what it does goes into the log too, for a report)
     let mut say = |line: &str| {
         println!("{line}");
@@ -1255,15 +1268,15 @@ fn start_screen_command(args: &[String]) -> Result<i32, String> {
             &format!("start screen: {line}"),
         );
     };
-    let asked = match what {
-        Rescue::Look => "look",
-        Rescue::RemoveLogo => "remove-logo",
+    let asked = match words.is_empty() {
+        true => "look".to_string(),
+        false => words.join(" "),
     };
     say(&format!(
         "Libre Panel {}: start-screen {asked}",
         lp_py::VERSION
     ));
-    match start_screen::rescue(what, wait, &mut say) {
+    match rescue::run(&actions, wait, brightness, &mut say) {
         Ok(()) => {
             say("done");
             Ok(0)
@@ -1275,6 +1288,8 @@ fn start_screen_command(args: &[String]) -> Result<i32, String> {
     }
 }
 
+/// `devices` (cli.py's _cmd_devices): the drivers, and the serial ports and USB panels there
+/// are, each with the panels its ids may be.
 fn devices_command() {
     println!("drivers: auto, turzx, virtual");
     let ports = lp_devices::serial::ports();

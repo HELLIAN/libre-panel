@@ -3321,6 +3321,84 @@ def test_the_start_screen_is_told_drawn_and_made_as_server_py_does(servers: Any)
         assert ours[0] == theirs[0] and json.loads(ours[2]) == json.loads(theirs[2]), path
 
 
+def _start_screen_of(program: Any) -> tuple[Any, Any]:
+    """POST /api/start-screen and GET of the editor `program` just started: `post(payload)`
+    gives the status and what it said, `get(path)` the body of a 200."""
+    assert program.stdout is not None
+    address = program.stdout.readline().split(" running at ")[1].split()[0]
+    port = int(address.split(":")[2].split("/")[0])
+    token = address.split("#token=")[1]
+
+    def post(payload: Any) -> tuple[str, Any]:
+        body = json.dumps(payload)
+        request = _get(
+            "/api/start-screen",
+            f"X-Libre-Panel: {token}",
+            "Content-Type: application/json",
+            f"Content-Length: {len(body)}",
+            method="POST",
+            body=body,
+        )
+        request = request.replace("{host}", f"127.0.0.1:{port}")
+        status, _, answer = _asked(port, request.encode("utf-8"))
+        return status.split(" ", 2)[1], json.loads(answer)
+
+    def get(path: str) -> bytes:
+        request = _get(path, f"X-Libre-Panel: {token}")
+        request = request.replace("{host}", f"127.0.0.1:{port}")
+        status, _, answer = _asked(port, request.encode("utf-8"))
+        assert status.split(" ", 2)[1] == "200", (status, answer[:200])
+        return answer
+
+    return post, get
+
+
+def test_nothing_is_written_to_a_panel_in_this_version(tmp_path: Path) -> None:
+    """Issue 52: a 9.2" kept restarting, for good, after its start screen was written, and what
+    on the panel does that is not known. Until it is, the app writes no file to a panel: the
+    boot logo and the standby clip are refused in panel_files.py's words before the panel is
+    opened, the card is told so, and what the panel holds and the boot logo taken off stay."""
+    from libre_panel.devices import panel_files
+
+    words = (
+        "Writing to the panel is switched off in this version. The panel keeps its start "
+        'screen in a small folder beside its own settings, and a 9.2" kept restarting once '
+        "that folder was full. Writing comes back when Libre Panel can tell how much fits."
+    )
+    rig = Rig(tmp_path)
+    try:
+        rig.config(
+            'theme = "slate"\nlanguage = "en"\n[device]\ndriver = "turzx"\n'
+            'model = "turing-9.2-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
+        )
+        rig.fake.files = {panel_files.BOOT_LOGO: b"logo", panel_files.STANDBY_CLIP: b"clip"}
+        env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
+               **_libraries(), **rig.env()}  # fmt: skip
+        env.pop(panel_files.WRITES_ENV, None)
+        with subprocess.Popen([str(_program()), "editor", "--port", "0"], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              encoding="utf-8") as program:  # fmt: skip
+            try:
+                post, get = _start_screen_of(program)
+                assert json.loads(get("/api/start-screen"))["writes"] is False
+                for action in ("logo", "clip"):
+                    assert post({"action": action}) == (
+                        "409", {"error": words, "paused": False}), action  # fmt: skip
+                assert rig.fake.commands == []  # (the panel was not even opened)
+                status, said = post({"action": "state"})
+                assert status == "200" and said["boot_logo"] == 4 and said["standby_clip"] == 4
+                status, said = post({"action": "remove-logo"})
+                assert status == "200" and said["boot_logo"] == 0, said
+                assert set(rig.fake.files) == {panel_files.STANDBY_CLIP}
+                assert not {40, 110, 113, 125} & set(rig.fake.commands), rig.fake.commands
+            finally:
+                program.send_signal(signal.SIGINT) if os.name != "nt" else program.terminate()
+                stderr = program.communicate(timeout=30)[1]
+                assert "panicked" not in stderr, stderr
+    finally:
+        rig.close()
+
+
 def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
     tmp_path: Path,
 ) -> None:
@@ -3343,38 +3421,17 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
             'theme = "slate"\nlanguage = "en"\n[device]\ndriver = "turzx"\n'
             'model = "turing-9.2-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
         )
+        # (writing to a panel is switched off in this version, issue 52: what is sent when it
+        # is on again is asked for here as who looks into it does)
         env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
-               **_libraries(), **rig.env()}  # fmt: skip
+               **_libraries(), **rig.env(),
+               panel_files.WRITES_ENV: panel_files.WRITES_WORD}  # fmt: skip
         with subprocess.Popen([str(_program()), "editor", "--port", "0"], env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               encoding="utf-8") as program:  # fmt: skip
             try:
-                assert program.stdout is not None
-                address = program.stdout.readline().split(" running at ")[1].split()[0]
-                port = int(address.split(":")[2].split("/")[0])
-                token = address.split("#token=")[1]
-
-                def post(payload: Any) -> tuple[str, Any]:
-                    body = json.dumps(payload)
-                    request = _get(
-                        "/api/start-screen",
-                        f"X-Libre-Panel: {token}",
-                        "Content-Type: application/json",
-                        f"Content-Length: {len(body)}",
-                        method="POST",
-                        body=body,
-                    )
-                    request = request.replace("{host}", f"127.0.0.1:{port}")
-                    status, _, answer = _asked(port, request.encode("utf-8"))
-                    return status.split(" ", 2)[1], json.loads(answer)
-
-                def get(path: str) -> bytes:
-                    request = _get(path, f"X-Libre-Panel: {token}")
-                    request = request.replace("{host}", f"127.0.0.1:{port}")
-                    status, _, answer = _asked(port, request.encode("utf-8"))
-                    assert status.split(" ", 2)[1] == "200", (status, answer[:200])
-                    return answer
-
+                post, get = _start_screen_of(program)
+                assert json.loads(get("/api/start-screen"))["writes"] is True
                 model = panel_files.model_of("turing-9.2-usb")
                 status, said = post({"action": "state"})
                 assert status == "200", said

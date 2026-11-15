@@ -2993,7 +2993,8 @@
     "Icon in the notification area": "Icono en el área de notificación",
     "Icon in the tray": "Icono en la bandeja",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "Su menú muestra cómo va el panel, cambia de tema y cierra Libre Panel. Desactivado: Libre Panel se abre desde el menú Inicio o tu lista de aplicaciones.",
-    "Libre Panel runs in the background.": "Libre Panel se ejecuta en segundo plano."
+    "Libre Panel runs in the background.": "Libre Panel se ejecuta en segundo plano.",
+    "Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.": "La escritura en el panel está desactivada en esta versión. El panel guarda su pantalla de inicio en una carpeta pequeña, junto a sus propios ajustes, y un 9.2\" no dejaba de reiniciarse una vez llena esa carpeta. La escritura volverá cuando Libre Panel sepa cuánto cabe."
   },
   "fields": {
     "night": "noche",

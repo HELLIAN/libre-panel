@@ -89,6 +89,9 @@ export function StartScreenCard() {
     setHeld(false);
   };
   const writing = Boolean(busy);
+  // nothing is written to a panel in this version (a 9.2" kept restarting after its start screen
+  // was written): the pictures show and download, the factory logo can come back
+  const writes = info.writes !== false;
   const more = (config.panels || []).length > 0; // more panels: this card is the one chosen at the top
   // a panel mounted upside down: its logo and clip are written turned round, as its frames are
   const turned = (panel > 1 ? (config.panels || [])[panel - 2]?.rotate : config.device?.rotate) === 180;
@@ -108,7 +111,10 @@ export function StartScreenCard() {
     ${chosen && !chosen.measured
       ? html`<${Note}>${t("Measured on the 9.2\"; this panel has the same firmware, but writing to it has not been tried yet.")}<//>`
       : null}
-    ${turned
+    ${!writes
+      ? html`<${Note}>${t("Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.")}<//>`
+      : null}
+    ${turned && writes
       ? html`<${Note}>${t("The panel is mounted upside down: the logo and the clip are written turned round, so that they are upright on it. Write them again when you turn the panel round.")}<//>`
       : null}
     <div class="fan-look-tiles boot-look-tiles" role="radiogroup" aria-label=${t("Look of the start screen")}>
@@ -128,7 +134,7 @@ export function StartScreenCard() {
     <div class="boot-tiles">
       <${Tile} title=${t("Boot logo")} text=${t("When the panel is switched on. The factory logo stays on the panel and can always come back.")}
         picture=${endpoints.startScreenPicture(model, "logo", 960, way, panel, design)} upright=${way === "portrait"}>
-        <button type="button" class="btn btn-primary" disabled=${writing}
+        <button type="button" class="btn btn-primary" disabled=${writing || !writes}
           onClick=${() => run("logo", {
             title: t("Write the boot logo to the panel?"),
             message: t("It shows when the panel is switched on. The factory logo is not touched: \"Factory logo again\" brings it back."),
@@ -144,7 +150,7 @@ export function StartScreenCard() {
       <//>
       <${Tile} title=${t("Standby clip")} text=${t("When the PC starts, until Libre Panel shows its themes: {motion}.", { motion: lookMotion(design) })}
         picture=${endpoints.startScreenPicture(model, "clip", 960, way, panel, design)} upright=${way === "portrait"}>
-        <button type="button" class="btn btn-primary" disabled=${writing}
+        <button type="button" class="btn btn-primary" disabled=${writing || !writes}
           onClick=${() => run("clip", {
             title: t("Write the standby clip to the panel?"),
             message: t("It replaces the clip the panel plays when the PC starts ({name}); the one there now cannot be read back first. The panel is set to start with it.", { name: info.names.clip }),
