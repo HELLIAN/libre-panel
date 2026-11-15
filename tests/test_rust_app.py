@@ -310,14 +310,16 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
 ) -> None:
     """`libre-panel start-screen` (issue 52): what a TURZX panel holds, asked without the
     video's start (no 110: it plays the standby clip); the sync is the first thing sent, and
-    nothing follows where the answer is no TURZX panel's. `remove-clip` takes the standby
-    clip off (42: room in the panel's folder, which holds its settings too), stops the clip
-    it may be playing and asks that the clip is off; `remove-logo` takes the boot logo off.
+    nothing follows where the answer is no TURZX panel's. `remove-clip` stops the clip the
+    panel may be playing (111, as the app does at each of its starts: a file was only ever
+    seen taken off a panel that was not playing it), takes the standby clip off (42) and
+    asks that the clip is off; `remove-logo` takes the boot logo off.
     The settings are saved with the start as the panel came (125, start mode 0) only once
     the clip is off, and only where that is asked for (`default-start`) or the panel's
     settings file is there and empty. A step goes to the 9.2" alone, the model it was seen
-    to work on. Nothing is written to the panel's files, and nothing goes while the app
-    runs."""
+    to work on, whatever model is named; a look is at any panel of the family, with
+    `--model` at that model and no other. Nothing is written to the panel's files, and
+    nothing goes while the app runs."""
     from libre_panel.devices.panel_files import BOOT_LOGO, STANDBY_CLIP
     from libre_panel.devices.turzx_usb import brightness_arg
     from libre_panel.instance import InstanceLock
@@ -335,8 +337,12 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
         fake.saved.clear()
         done = rig.run("start-screen", *words, **more)
         lines = _said(done.stdout)
-        asked = " ".join(words) or "look"
+        steps = [word for n, word in enumerate(words)
+                 if "--model" not in (word, words[n - 1] if n else "")]  # fmt: skip
+        asked = " ".join(steps) or "look"
         assert lines[0].startswith("Libre Panel ") and lines[0].endswith(f": start-screen {asked}")
+        if lines[1].startswith("not done: "):  # (no panel was taken)
+            return done.returncode, lines[1:]
         assert lines[1] == "[1] on the bus: the simulated panel", (done.stdout, done.stderr)
         return done.returncode, lines[2:]
 
@@ -357,8 +363,8 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
     assert run("remove-clip") == (0, [
         "[1] open",
         "[1] sync (10): firmware turzx_00",
-        f"[1] {off}: accepted",
         "[1] stop the clip it may be playing (111): accepted",
+        f"[1] {off}: accepted",
         f"[1] {STANDBY_CLIP} (98): none",
         f"[1] {SETTINGS} (98): 96 bytes",
         "[1] the panel's settings file has 96 bytes: its settings are left as they are "
@@ -369,28 +375,27 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
         "[1] usr/data holds app.cfg, boot.jpg, boot.sign",
         "done",
     ])  # fmt: skip
-    assert fake.commands == [10, 42, 111, *LOOK[1:]]
+    assert fake.commands == [10, 111, 42, *LOOK[1:]]
     assert set(fake.files) == {SETTINGS, BOOT_LOGO, BOOT_SIGN} and fake.saved == []
     # the settings saved where that is asked for: the clip is asked to be off first
     code, lines = run("default-start")
-    assert code == 0 and lines[2:5] == [
-        "[1] stop the clip it may be playing (111): accepted",
+    assert code == 0 and lines[2:4] == [
         f"[1] {STANDBY_CLIP} (98): none",
         f"[1] {save}: accepted",
     ]
-    assert fake.commands == [10, 111, 98, 125, *LOOK[2:]] and fake.saved == [saved]
+    assert fake.commands == [10, 98, 125, *LOOK[2:]] and fake.saved == [saved]
     # ... and never beside a clip
     fake.files = _folder(clip=2000, logo=1000)
     code, lines = run("default-start")
     assert code == 1 and 125 not in fake.commands and fake.saved == []
-    assert lines[4] == (
+    assert lines[3] == (
         f"[1] {save}: not sent, the standby clip is on the panel (2000 bytes; remove-clip "
         "takes it off)"
     )
     assert lines[-1] == "not done: the panel did not accept: default-start"
-    # all three: the files first, then the settings
+    # all three: the clip stopped, the files, then the settings
     code, lines = run("factory")
-    assert code == 0 and fake.commands == [10, 42, 42, 111, 98, 98, 125, *LOOK[3:]]
+    assert code == 0 and fake.commands == [10, 111, 42, 42, 98, 98, 125, *LOOK[3:]]
     assert set(fake.files) == {SETTINGS, BOOT_SIGN} and fake.saved == [saved]
     assert lines[-2:] == ["[1] usr/data holds app.cfg, boot.sign", "done"]
     # a settings file that is there and empty: saved anew, though it was not asked for (the
@@ -398,7 +403,7 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
     fake.files = _folder(clip=2000, settings=0)
     code, lines = run("remove-clip")
     assert code == 0 and fake.saved == [saved]
-    assert fake.commands == [10, 42, 111, 98, 98, *[99] * 20, 125, 98, 98, 98, 112]
+    assert fake.commands == [10, 111, 42, 98, 98, *[99] * 20, 125, 98, 98, 98, 112]
     assert lines[5:9] == [
         f"[1] {SETTINGS} (98): 0 bytes",
         "[1] usr/data holds app.cfg, boot.sign",
@@ -418,7 +423,7 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
     fake.kept_files = {STANDBY_CLIP}
     code, lines = run("remove-clip", "default-start")
     assert code == 1 and fake.saved == [] and 125 not in fake.commands
-    assert fake.commands == [10, 42, 111, 98, 42, 98, *LOOK[2:]]
+    assert fake.commands == [10, 111, 42, 98, 42, 98, *LOOK[2:]]
     assert lines[5:9] == [
         f"[1] {off}: accepted, but the panel still has the file (3000 bytes)",
         f"[1] {off}: accepted",
@@ -433,6 +438,30 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
     assert (code, fake.commands) == (1, [])
     assert lines == ['not done: these steps are known on the Turing 9.2" only; this panel is a '
                      'Turing 8.8": nothing was sent to it']  # fmt: skip
+    # ... nor with its model named: a step is for the 9.2", whatever is asked for
+    code, lines = run("remove-clip", "--model", "turing-8.8-usb", LP_ENGINE_MODEL="turing-8.8-usb")
+    assert (code, fake.commands) == (1, [])
+    assert lines == ['not done: these steps are known on the Turing 9.2" only: nothing is sent '
+                     'to a Turing 8.8"']  # fmt: skip
+    # a look is at any panel of the family (the app asks the same of each of them) ...
+    code, lines = run(LP_ENGINE_MODEL="turing-8.8-usb")
+    assert (code, fake.commands) == (0, LOOK)
+    # ... and where several are on the PC, at the model named and no other
+    code, lines = run("--model", "turing-8.8-usb", LP_ENGINE_MODEL="turing-8.8-usb")
+    assert (code, fake.commands) == (0, LOOK)
+    code, lines = run("--model", "turing-12.3-usb")
+    assert (code, fake.commands) == (1, [])
+    assert lines == ['not done: no Turing 12.3" is on the bus (a Turing 9.2" is: another panel, '
+                     "nothing was sent to it)"]  # fmt: skip
+    fake.files = _folder(clip=3000)
+    code, lines = run("remove-clip", "--model", "turing-9.2-usb")
+    assert (code, fake.commands) == (0, [10, 111, 42, *LOOK[1:]])
+    assert STANDBY_CLIP not in fake.files
+    # a panel of another maker under the same USB vendor id is no TURZX panel
+    fake.commands.clear()
+    wrong = rig.run("start-screen", "--model", "lianli-universal-9.2")
+    assert wrong.returncode != 0 and fake.commands == []
+    assert "start-screen: --model: lianli-universal-9.2 is no TURZX USB panel" in wrong.stderr
     # ... and one that does not answer the sync as a TURZX panel does is sent nothing more
     fake.hello = b"other_00"
     code, lines = run("remove-clip")
@@ -456,9 +485,9 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
 
 def _waiting(rig: Rig, *words: str, **more: str) -> subprocess.Popen[str]:
     """`libre-panel start-screen WORDS --wait`, running (the panel watched for half a second
-    before it is said to stay)."""
+    before it is said to stay, where no other time is given)."""
     env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
-           **_libraries(), **rig.env(LP_ENGINE_STAY_MS="500", **more)}  # fmt: skip
+           **_libraries(), **rig.env(**{"LP_ENGINE_STAY_MS": "500", **more})}  # fmt: skip
     return subprocess.Popen([str(_program()), "start-screen", *words], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             encoding="utf-8")  # fmt: skip
@@ -501,8 +530,11 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     end): the panel is waited for and taken the moment it is on the bus. A step whose answer
     did not come is sent again the next time the panel comes, what it accepted or said is
     not; once no step is open the panel is only watched. One that stays is said to; one that
-    still leaves, that takes no packet, that cannot be opened in time, or that never comes
-    is said so, with how long it was on the bus."""
+    still leaves, that takes no packet or that never comes is said so, with how long it was
+    on the bus; one that cannot be opened in time is waited for until the time is over.
+    One that restarts at its clip's end stays once the clip is stopped, which is the first
+    thing remove-clip does. Another panel of the family on the same PC
+    is told and sent nothing."""
     from libre_panel.devices.panel_files import STANDBY_CLIP
     from libre_panel.devices.turzx_usb import brightness_arg
 
@@ -526,7 +558,7 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         fake.unplugged = False
         out, err = waiting.communicate(timeout=60)
     assert waiting.returncode == 0, (out, err)
-    assert fake.commands == [10, 42, 42, 111, 98, 125, *LOOK[2:], 112]
+    assert fake.commands == [10, 111, 42, 111, 42, 98, 125, *LOOK[2:], 112]
     assert set(fake.files) == {SETTINGS, BOOT_SIGN} and fake.saved == [saved]
     lines = _said(out)
     assert lines[1:5] == [
@@ -535,11 +567,13 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         "[1] open",
         "[1] sync (10): firmware turzx_00",
     ]
-    assert lines[5].startswith(f"[1] {off}: taken after ")
-    assert lines[6:10] == [
+    assert lines[5] == "[1] stop the clip it may be playing (111): accepted"
+    assert lines[6].startswith(f"[1] {off}: taken after ")
+    assert lines[7:12] == [
         "[1] left the bus (it was there for N ms)",
         "[2] on the bus: the simulated panel",
         "[2] open",
+        "[2] stop the clip it may be playing (111): accepted",
         f"[2] {off}: accepted",
     ]
     assert lines[-3:] == [
@@ -558,7 +592,7 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         out, err = waiting.communicate(timeout=60)
     stop.set()
     assert waiting.returncode == 1, (out, err)
-    assert fake.commands == [10, 42, 111, *LOOK[1:]] and fake.saved == []
+    assert fake.commands == [10, 111, 42, *LOOK[1:]] and fake.saved == []
     lines = _said(out)
     assert re.fullmatch(
         r"not done: the panel came 6 times and did not stay \(on the bus for \d+(?: to \d+)? ms\); "
@@ -585,22 +619,35 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         r"; it answered nothing; 0 of 2 steps are done \(not: remove-clip\)",
         lines[-1],
     ), lines[-1]
-    # one the system never has ready to be opened while it is there: said so
+    # one the system never has ready to be opened while it is there: waited for until the
+    # time is over (a system that sets the panel up anew may need many of its comings), told
+    # of line by line eight times, then once for every twenty
     _away(rig)
     stop = _comes_and_goes(rig, 0.15, 0.1)
-    with _waiting(rig, "remove-clip", "--wait", "60", LP_ENGINE_LINK="tcp:127.0.0.1:9") as waiting:
+    with _waiting(rig, "remove-clip", "--wait", "12", LP_ENGINE_LINK="tcp:127.0.0.1:9") as waiting:
         out, err = waiting.communicate(timeout=60)
     stop.set()
     assert waiting.returncode == 1 and fake.commands == []
     lines = _said(out)
     assert lines[3].startswith("[1] left the bus before it could be opened (")
+    assert len([line for line in lines if line.endswith("on the bus: the simulated panel")]) == 8
+    assert lines[18] == (
+        "the panel keeps leaving before the system has it ready to be opened: from here on "
+        "one line for every 20 times it comes"
+    )
     assert re.fullmatch(
-        r"not done: the panel came 12 times and did not stay \(on the bus for \d+(?: to \d+)? ms\)"
+        r"\[28\] not opened yet: it came 20 more times and left before it could be opened "
+        r"\(cannot reach 127\.0\.0\.1:9: .+\)",
+        lines[19],
+    ), lines[19]
+    came = re.fullmatch(
+        r"not done: the panel came (\d+) times and did not stay \(on the bus for \d+ to \d+ ms\)"
         r"; it answered nothing; 0 of 2 steps are done \(not: remove-clip\); it could not be "
         r"opened once \(cannot reach 127\.0\.0\.1:9: .+\): the system did not have it ready in "
         r"time",
         lines[-1],
-    ), lines[-1]
+    )
+    assert came and int(came[1]) > 28, lines[-1]
     # one that does not come: said so, in time; the other USB devices' coming and going is
     # told meanwhile (a panel that comes back as something else shows there)
     _away(rig)
@@ -623,6 +670,76 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         "USB: 1cbe:00ff (ports 1.2) left",
         'USB: 1f3a:efe8 "USB Device(VID_1f3a_PID_efe8)" (ports 1.2) came',
         "not done: the panel was not on the bus in 2 s",
+    ]
+    # a panel that starts, plays its clip and restarts at the clip's end (what the 9.2" of
+    # issue 52 may be doing: it is on the USB for about as long as its clip is). A look
+    # leaves it as it is, and tells how long it stays each time ...
+    fake.files = _folder(clip=706912)
+    fake.leaves_once = set()
+    # (watched for longer than the clip is, as a panel is: 20 s and more)
+    fake.clip_s, fake.restart_away_s = 0.6, 0.2
+    fake.commands.clear()
+    with _waiting(rig, "--wait", "30", LP_ENGINE_STAY_MS="1500") as waiting:
+        time.sleep(0.5)
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    assert waiting.returncode == 1, (out, err)
+    assert fake.commands == LOOK and STANDBY_CLIP in fake.files
+    came = re.fullmatch(
+        r"not done: the panel came 6 times and did not stay \(on the bus for (\d+) to (\d+) ms\)",
+        _said(out)[-1],
+    )
+    assert came and 100 <= int(came[1]) <= int(came[2]) <= 1200, _said(out)[-1]
+    # ... and remove-clip stops the clip before anything else: the panel stays, and its file
+    # comes off at the first asking (the simulated panel does not let go of a file it plays)
+    _away(rig)
+    fake.clip_s = 1.0
+    fake.commands.clear()
+    with _waiting(rig, "remove-clip", "--wait", "60", LP_ENGINE_STAY_MS="1500") as waiting:
+        time.sleep(0.5)
+        assert waiting.poll() is None and fake.commands == []
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    assert waiting.returncode == 0, (out, err)
+    assert fake.commands == [10, 111, 42, *LOOK[1:], 112] and STANDBY_CLIP not in fake.files
+    lines = _said(out)
+    assert not [line for line in lines if line.startswith("[2]")]
+    assert lines[-2:] == [stays.replace("answering 0 s", "answering 2 s"), "done"]
+    fake.clip_s, fake.restart_away_s = None, 0.4
+    _away(rig)
+    # two panels of the family on one PC (a 12.3" beside the 9.2"): a step waits for the 9.2"
+    # and goes to it alone; the other is told, and nothing is sent to it
+    fake.files = _folder(clip=5000)
+    fake.leaves_once = set()
+    fake.commands.clear()
+    others.write_text("1cbe:0123|ports 1.2|\n", encoding="utf-8")
+    with _waiting(rig, "remove-clip", "--wait", "60", LP_ENGINE_OTHERS=str(others)) as waiting:
+        time.sleep(0.5)
+        assert waiting.poll() is None and fake.commands == []
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    assert waiting.returncode == 0, (out, err)
+    assert fake.commands == [10, 111, 42, *LOOK[1:], 112] and STANDBY_CLIP not in fake.files
+    lines = [re.sub(r"^USB \+\d+\.\d s: ", "USB: ", line) for line in _said(out)]
+    assert lines[1:4] == [
+        "waiting up to 60 s for the panel: plug it in, or let it come back",
+        'USB: 1cbe:0123 Turing 12.3" (ports 1.2) is on the bus: another panel, nothing is sent '
+        "to it",
+        "[1] on the bus: the simulated panel",
+    ]
+    assert lines[-2:] == [stays, "done"]
+    # ... and where the 9.2" does not come, the other panel is left alone all the same
+    fake.commands.clear()
+    with _waiting(rig, "remove-clip", "--wait", "1", LP_ENGINE_MODEL="turing-12.3-usb") as waiting:
+        out, err = waiting.communicate(timeout=60)
+    assert waiting.returncode == 1 and fake.commands == []
+    lines = [re.sub(r"^USB \+\d+\.\d s: ", "USB: ", line) for line in out.splitlines()]
+    assert lines[1:] == [
+        "waiting up to 1 s for the panel: plug it in, or let it come back",
+        'USB: 1cbe:0123 Turing 12.3" (simulated) is on the bus: another panel, nothing is sent '
+        "to it",
+        'not done: the panel was not on the bus in 1 s (a Turing 12.3" was: another panel, '
+        "nothing was sent to it)",
     ]
 
 

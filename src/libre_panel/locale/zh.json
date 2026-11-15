@@ -2994,7 +2994,7 @@
     "Icon in the tray": "托盘图标",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "其菜单显示面板状态、切换主题并退出 Libre Panel。关闭时：从开始菜单或应用列表打开 Libre Panel。",
     "Libre Panel runs in the background.": "Libre Panel 在后台运行。",
-    "Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.": "此版本已关闭向面板写入。面板把启动画面存放在一个很小的文件夹里，与它自身的设置放在一起；一台 9.2\" 面板在该文件夹写满后不断重启。待 Libre Panel 能判断可容纳多少后，将恢复写入。"
+    "Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.": "此版本已关闭向面板写入。一台 9.2\" 面板的启动画面存储空间用尽，此后不断重启；在其他面板上，同样的文件一直写入正常。待 Libre Panel 能判断一台面板可容纳多少后，将恢复写入。"
   },
   "fields": {
     "night": "夜晚",

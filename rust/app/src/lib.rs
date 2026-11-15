@@ -125,13 +125,14 @@ Libre Panel
                                 a notice on the panel of the running app
   libre-panel devices           the drivers, serial ports and USB panels there are
   libre-panel start-screen [look] [remove-clip] [remove-logo] [default-start] [factory]
-                           [--wait [S]]
+                           [--wait [S]] [--model ID]
                                 a TURZX USB panel's own screens, the app quit first: what it
                                 holds (look), its standby clip taken off (remove-clip), its
                                 boot logo taken off, the factory logo again (remove-logo),
                                 its settings saved with the start as it came
                                 (default-start), all three (factory); the steps on the
-                                Turing 9.2\" only;
+                                Turing 9.2\" only; --model: the panel of that model where
+                                several are connected (turing-12.3-usb);
                                 --wait: up to S seconds (600) for the panel, acting the
                                 moment it comes (one that keeps restarting)
   libre-panel udev-rules        the Linux udev rule for the panels' access
@@ -1217,18 +1218,27 @@ fn candidates(vid: Option<u16>, pid: Option<u16>, serial: Option<&str>) -> Strin
 }
 
 /// `libre-panel start-screen [look] [remove-clip] [remove-logo] [default-start] [factory]
-/// [--wait [S]]`: a TURZX USB panel's own screens from the terminal, for one that keeps
-/// restarting (rescue.rs): the steps named, in rescue.rs's order, then what the panel holds;
-/// said as it goes, into the log as well. Not while the app runs (it has the panel, and its
-/// video's start plays the standby clip).
+/// [--wait [S]] [--model ID]`: a TURZX USB panel's own screens from the terminal, for one that
+/// keeps restarting (rescue.rs): the steps named, in rescue.rs's order, then what the panel
+/// holds; said as it goes, into the log as well. Not while the app runs (it has the panel, and
+/// its video's start plays the standby clip).
 fn start_screen_command(args: &[String]) -> Result<i32, String> {
     let mut actions = Vec::new();
     let mut words: Vec<&str> = Vec::new(); // (what was asked for, as it was typed)
     let mut wait = None;
+    let mut model = None;
     let mut rest = args.iter().peekable();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "look" => {}
+            "--model" => {
+                let id = rest
+                    .next()
+                    .ok_or("start-screen: --model needs a model's id")?;
+                let found = start_screen::model_of(id)
+                    .ok_or_else(|| format!("start-screen: --model: {id} is no TURZX USB panel"))?;
+                model = Some(found.id);
+            }
             "--wait" => {
                 let seconds = match rest.peek().map(|value| value.parse::<f64>()) {
                     Some(Ok(seconds)) if seconds.is_finite() && seconds >= 0.0 => {
@@ -1276,7 +1286,7 @@ fn start_screen_command(args: &[String]) -> Result<i32, String> {
         "Libre Panel {}: start-screen {asked}",
         lp_py::VERSION
     ));
-    match rescue::run(&actions, wait, brightness, &mut say) {
+    match rescue::run(&actions, wait, brightness, model, &mut say) {
         Ok(()) => {
             say("done");
             Ok(0)

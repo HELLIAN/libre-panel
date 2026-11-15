@@ -2994,7 +2994,7 @@
     "Icon in the tray": "Icône dans la barre",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "Son menu montre l'état du panneau, change de thème et quitte Libre Panel. Désactivé : Libre Panel s'ouvre depuis le menu Démarrer ou ta liste d'applications.",
     "Libre Panel runs in the background.": "Libre Panel tourne en arrière-plan.",
-    "Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.": "L'écriture sur le panneau est désactivée dans cette version. Le panneau garde son écran de démarrage dans un petit dossier, à côté de ses propres paramètres, et un 9.2\" redémarrait sans cesse une fois ce dossier plein. L'écriture reviendra quand Libre Panel saura combien il peut contenir."
+    "Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.": "L'écriture sur le panneau est désactivée dans cette version. Un 9.2\" a manqué de place pour son écran de démarrage et redémarre sans cesse depuis ; sur d'autres panneaux, les mêmes fichiers ont été écrits sans problème. L'écriture reviendra quand Libre Panel saura combien un panneau peut contenir."
   },
   "fields": {
     "night": "nuit",

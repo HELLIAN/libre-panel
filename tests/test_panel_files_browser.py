@@ -12,9 +12,9 @@ from test_app_browser import app_url, browser_page, choose_theme  # noqa: E402, 
 
 PANEL_SWITCH = "Which panel Start and Status show and Design edits"
 WRITES_OFF = (
-    "Writing to the panel is switched off in this version. The panel keeps its start screen in "
-    'a small folder beside its own settings, and a 9.2" kept restarting once that folder was '
-    "full. Writing comes back when Libre Panel can tell how much fits."
+    'Writing to the panel is switched off in this version. One 9.2" ran out of room for its '
+    "start screen and has kept restarting since; on other panels the same files were written "
+    "without trouble. Writing comes back when Libre Panel can tell how much fits on a panel."
 )
 
 

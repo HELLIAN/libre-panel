@@ -613,12 +613,14 @@ coarser where a look moves everywhere, finer where it leaves room), and in full 
 whose decoder shows every stream so (the 9.2" and the 12.3", or `video_range = "full"`): in
 limited range their black was grey.
 
-**Writing is switched off in 0.9.2.** The panel keeps both files in a small folder beside
-its own settings: on a 9.2" it holds about 0.7 MB, less than one clip may have. A clip
-filled such a folder to the last byte, and that panel has kept restarting since (issue 52).
-Until Libre Panel can tell how much fits on a panel, *Put on the panel* is greyed out; the
-card still shows both pictures, downloads them, says what is on the panel and takes the
-boot logo off. What follows describes the writing as it was and will be.
+**Writing is switched off in 0.9.2.** Both files go where the panel keeps its own settings,
+and on one 9.2" the room there ran out: files ended early or were not taken, 0.9.1 forced a
+clip in, and that panel has kept restarting since (issue 52). On other panels, a 9.2" and a
+12.3" among them, the same files were written for months without trouble, and a panel
+cannot be asked how much room it has. Until Libre Panel can tell how much fits on a panel,
+*Put on the panel* is greyed out; the card still shows both pictures, downloads them, says
+what is on the panel and takes the boot logo off. What follows describes the writing as it
+was and will be.
 
 - **Put on the panel** writes one, after a question: the panel's themes pause, the panel
   shows what was written (the logo at once, the clip playing), and *Show the themes again*
@@ -628,7 +630,7 @@ boot logo off. What follows describes the writing as it was and will be.
   touched and shows again.
 - **The standby clip replaces** the one the panel has (`usr/data/standby.h264`, the vendor
   app's name); that one cannot be read back first. Where the panel keeps the one it had (a
-  9.2" did once its folder was full), Libre Panel says so and leaves it: it never deletes a
+  9.2" did once it had no room left), Libre Panel says so and leaves it: it never deletes a
   file to write it again. Where `video.local_clip` is empty, the video mode is then told this
   name.
 - **With more panels** the card is the one of the panel chosen at the top (*Panel 1 |
@@ -640,9 +642,9 @@ boot logo off. What follows describes the writing as it was and will be.
 - **A panel that keeps restarting** (on USB and gone again, without end) is reached from the
   terminal, with the app quit:
   - `libre-panel start-screen` says what the panel holds;
-  - `libre-panel start-screen remove-clip` takes its standby clip off, which makes room in
-    its folder, and asks that it is off. Where the panel's settings file (`app.cfg`) is
-    there and empty afterwards, its settings are saved anew;
+  - `libre-panel start-screen remove-clip` stops the clip the panel may be playing, takes
+    it off, which makes room, and asks that it is off. Where the panel's settings file
+    (`app.cfg`) is there and empty afterwards, its settings are saved anew;
   - `libre-panel start-screen remove-logo` takes its boot logo off, the factory logo again;
   - `libre-panel start-screen default-start` saves the panel's settings with the start as
     it came (no clip), once no clip is on it;
@@ -652,8 +654,10 @@ boot logo off. What follows describes the writing as it was and will be.
   moment it is on the USB: a step it accepted is not sent again the next time it comes, and
   every line says the milliseconds since it came, so the run tells how long the panel is
   there and how far it gets. It ends when the panel stays, or says how often it came and
-  what is done. None of them starts the video, whose start plays the standby clip, and none
-  writes a file.
+  what is done. A panel that leaves before the system has it ready to be opened is waited
+  for until the time is over: Windows may need many of its comings to set up a panel it
+  has not seen before. None of them starts the video, whose start plays the standby clip,
+  and none writes a file.
 
   The steps go to the Turing 9.2" alone, the panel they were seen to work on: the vendor id
   is shared by other makers' panels with other protocols, and the family's other models may
@@ -661,12 +665,18 @@ boot logo off. What follows describes the writing as it was and will be.
   where the answer is no TURZX panel's. Saving the settings with the start as the panel
   came is the one thing here no 9.2" was seen to take: the value comes from notes on other
   models of the family.
+
+  With more TURZX panels on the PC, a step waits for the 9.2" and goes to no other, and a
+  look takes the 9.2" first. `--model` names the panel to take (`libre-panel start-screen
+  --model turing-12.3-usb` looks at a 12.3" beside it); the run's lines tell of the other
+  panel, and nothing is sent to it.
 - **Mounted upside down** (`rotate = 180`), the panel gets both turned round, as its frames.
 - **JPEG** and **H.264** download the files as the panel takes them.
 
 It works only on a click, never while themes run, and writes only below `usr/data/`, at most
 1 MiB a file, checking each file's size afterwards ([protocol](protocol/turzx-usb.md#the-panels-own-screens)).
-It was measured on the 9.2"; the other USB panels share its firmware but have not been tried.
+It was measured on the 9.2" and has been used on a 12.3"; the family's other USB panels share
+the firmware but have not been tried.
 A panel kept on power while the PC is off shows neither again after a restart of the PC: it
 keeps its last picture.
 

@@ -405,7 +405,7 @@ application's folder (`usr/data/...`; `/usr/data` fails).
 
 | Cmd | | |
 |---|---|---|
-| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named, so only names below `usr/data/` are sent. **Not sent in this version** (see *The folder is small* below) |
+| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named, so only names below `usr/data/` are sent. **Not sent in this version** (see *The room on a panel is not known* below) |
 | 42 | delete a file | taking `usr/data/boot.jpg` away brings the factory logo back |
 | 98 | a file's size | little endian at `[8:12]`; checked after every write |
 | 99 | list a folder | 20 pieces of 512 bytes from a 0x2800-byte buffer; it reads the name only at the first, so all 20 are fetched every time; it creates a missing folder |
@@ -427,44 +427,61 @@ application's folder (`usr/data/...`; `/usr/data` fails).
   name (it plays at once), 125 `[brightness, 2, 0, 0, 0, 0]`. The clip that was
   there cannot be read back first: the protocol has no file read.
 
-### The folder is small, and the settings are in it
+### The room on a panel is not known
 
-What a 9.2" (firmware `turzx_0001_0015`) told through the log of the app that wrote
-to it (issue 52). Every number is from that log; what the panel does inside is not
-known.
+What one 9.2" (firmware `turzx_0001_0015`) told through the log of the app that
+wrote to it (issue 52). Every number is from that log; what the panel does inside
+is not known. On other panels, a 9.2" and a 12.3" among them, the same files were
+written for months without any of this: what is different on that panel (its
+firmware, its store, what else is in it) is not known either.
 
-- **`usr/data` as the panel came** holds `app.cfg` and `boot.sign`. `app.cfg` is the
+- **`usr/data` as that panel came** held `app.cfg` and `boot.sign`. `app.cfg` is the
   panel's own settings (what 125 saves); the start screen's files go beside it.
-- **It holds about 0.7 MB**, not the 1 MiB a file may have. With a standby clip of
-  701,830 bytes in it, a boot logo of 126,833 bytes ended at 16,384: 40 was answered
-  as ever, 98 said what was really there.
-- **Once it is full, the panel takes no file**: for five days each 40 was answered
+- **The room ran out.** After a clip of 149,040 bytes, a logo of 48,334 (deleted
+  again) and four writes of a 701,830-byte clip within three weeks, a boot logo of
+  126,833 bytes ended at 16,384: 40 was answered as ever, 98 said what was really
+  there. Whether that panel holds about 0.7 MB in all, or more and does not give
+  room back at once where a file is replaced or deleted, the log does not tell:
+  two days later that logo was deleted (42; 98 said none), and the next logo
+  written got no byte at all.
+- **A panel without room takes no file**: for five days each 40 was answered
   within the time the transfer takes (about 35 ms for 700 KB; a write that happens
   takes 1.2 to 2.9 s) and nothing changed, whether the new file was larger or
   smaller than the one there. 98 then says the old file's size: Libre Panel read
   that as "the panel kept the file it had", and where the new clip was as long as
   the old one, as written.
-- **0.9.1 forced a clip in**: a 40 with 706,912 bytes ended at 704,512; 0.9.1 took
-  that away (42) and wrote again, and 98 said 706,912. Then 15, 110 and 125: the
-  settings saved into a folder with no room left. The panel showed frames for ten
-  more seconds, until Windows shut down. Since its next start it is on the USB for
-  about 2 s and gone for 1, without end, with no picture, on a charger as well.
+- **0.9.1 forced a clip in**: a 40 with 706,912 bytes took 2.4 s and ended at
+  704,512, which is the old clip's 701,830 bytes rounded up to whole blocks of
+  4 KiB; 0.9.1 took that away (42) and wrote again, and 98 said 706,912. Then 15,
+  110 and 125: the settings saved with that clip as the start. The panel showed
+  frames for ten more seconds, until Windows shut down. Since its next start it is
+  on the USB for about 2 s and gone for 1, without end, with no picture, on a
+  charger as well.
+- **Why it restarts is not known.** Two things fit. Its settings went into a store
+  with no room, and it fails on them. Or the clip's end is not on the panel as it
+  was sent (98 says the size the panel has for the file, not what it can read),
+  and the panel fails where its player gets there: the clip is 66 pictures, 2.2 s
+  at the panel's 30 a second, about as long as the panel stays on the USB. Then
+  the panel is itself for those two seconds and takes commands, as it does while
+  it plays its clip before each start of the app.
 - **42 does delete** on that panel: after it 98 says none for a boot logo that was
-  there, twice in that log.
+  there, twice in that log. It was never sent for a clip the panel was playing.
 
-So, for whatever is written to a panel again: the room is the folder's, not the
-file's; it is not known per panel and cannot be asked (100 is the card's); the
-settings need some of it; a write that ends early leaves a file cut off; and a
-size that matches proves nothing where the old file was as long. **Libre Panel
-writes no file to a panel** until that is solved (`LIBRE_PANEL_PANEL_WRITES=
-at-my-own-risk` in the environment switches it on for who looks into it on a panel
-of their own). It never deleted a file to write it again before 0.9.1 and does not
-after it.
+So, for whatever is written to a panel again: how much room a panel has is not
+known, is not the same on every panel and cannot be asked (100 is the card's);
+the settings are in the same place; a write that ends early leaves a file cut
+off; and a size that matches proves nothing where the old file was as long, and
+may not prove that the file can be read. **Libre Panel writes no file to a
+panel** until that is solved (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the
+environment switches it on for who looks into it on a panel of their own). It
+never deleted a file to write it again before 0.9.1 and does not after it.
 
-For a panel in that state, `libre-panel start-screen remove-clip --wait` takes the
-clip off the moment the panel is on the USB (10 until it is answered once, then 42,
-111, 98): see [configuration](../CONFIGURATION.md#the-panels-start-screen). The
-settings are saved with start mode 0 (125) only once the clip is off, and only with
+For a panel in that state, `libre-panel start-screen remove-clip --wait` acts the
+moment the panel is on the USB: 10 until it is answered once, then 111 (the clip
+it may be playing stopped, as the app does at each of its starts), 42 for the clip
+and 98 to see that it is off: see
+[configuration](../CONFIGURATION.md#the-panels-start-screen). The settings are
+saved with start mode 0 (125) only once the clip is off, and only with
 `default-start` or where `app.cfg` is there and empty. Whether a panel in that
 state still takes a command is not known.
 
@@ -479,9 +496,14 @@ A command is known for the panel it was seen on, not for its neighbours.
   42, 98, 99, 113) and 125 are SPUR II's reading of the 8.8"'s firmware; they were
   seen to work on the 9.2" (SPUR II's own, and the one of issue 52 with firmware
   `turzx_0001_0015`, by its log: 40 wrote files, 98 said their sizes, 99 listed the
-  folder, 42 deleted, 125 with start mode 2 was taken). On the family's other
-  models (1.6" to 12.3", the Jonsbo TF3's pump screen, another maker's) they are
-  untried. `libre-panel start-screen` sends its steps to the 9.2" alone.
+  folder, 42 deleted, 125 with start mode 2 was taken). On a 12.3" the app's
+  writing (99, 40, 98, 113, 110, 125 with start mode 2) has been in use for months
+  as well; 42 is not known there. On the family's other models (1.6" to 8.8", the
+  Jonsbo TF3's pump screen, another maker's) they are untried. And two panels of
+  one model need not be alike: the 9.2" of issue 52 ran out of room where others
+  never did. `libre-panel start-screen` sends its steps to the 9.2" alone, also
+  where another panel of the family is on the same PC: that one is told, not
+  touched (`--model` names the panel a look is at).
 - **Other projects describe other panels.** turing-smart-screen-python
   (`lcd_comm_turing_usb.py`), phstudy/turing-smart-screen-cli and
   jijiechen/turing-monitor (a 5.2" that names itself `turzx_0001_0015` too) upload

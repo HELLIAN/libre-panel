@@ -112,7 +112,7 @@ export function StartScreenCard() {
       ? html`<${Note}>${t("Measured on the 9.2\"; this panel has the same firmware, but writing to it has not been tried yet.")}<//>`
       : null}
     ${!writes
-      ? html`<${Note}>${t("Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.")}<//>`
+      ? html`<${Note}>${t("Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.")}<//>`
       : null}
     ${turned && writes
       ? html`<${Note}>${t("The panel is mounted upside down: the logo and the clip are written turned round, so that they are upright on it. Write them again when you turn the panel round.")}<//>`

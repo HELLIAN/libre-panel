@@ -2,18 +2,27 @@
 //! that restarts over and over after its start screen was written (issue 52): on the USB for
 //! a moment, gone again, without end.
 //!
-//! What that panel's log told: the folder that holds the start screen (`usr/data`) holds the
-//! panel's own settings too (`app.cfg`), and it is small, about 0.7 MB on that 9.2". A
-//! standby clip of 706,912 bytes filled it to the last byte; the settings were saved into
-//! the full folder (125), and the panel did not get through its next start. So the clip is
-//! taken off, which makes room.
+//! What that panel's log told (a 9.2", firmware `turzx_0001_0015`): the start screen's
+//! files go to `usr/data`, where the panel's own settings are too (`app.cfg`). On that
+//! panel the room there ran out: a boot logo ended at 16,384 bytes, later files were not
+//! taken at all, and a clip written over the one it had ended at 704,512 bytes. 0.9.1 then
+//! took the old clip away and wrote the new one again; the panel said it had all 706,912
+//! bytes, its settings were saved (125), and from its next start it has been on the USB for
+//! about 2 s and gone for 1, over and over. Why is not known. Two things fit: its settings
+//! went into a store without room; or the clip's end is not on the panel as it was sent,
+//! and the panel fails where its player gets there (the clip is 66 pictures, 2.2 s at the
+//! panel's 30 a second: about as long as the panel stays). Either way the clip is what is
+//! taken off. On other panels, a 9.2" and a 12.3" among them, the same files were written
+//! for months without trouble: what is different on that panel is not known either.
 //!
 //! **Which panels.** The vendor id 1CBE is shared by panels of several makers with protocols
 //! of their own (Lian Li's are no TURZX panels), and the TURZX family's models and firmwares
 //! may differ in what a command does. So: only a panel of the TURZX USB family is taken
 //! (lp_devices::turzx_direct), the sync is the first thing it is sent and its answer must be
-//! a TURZX panel's (`0A C8`, `turzx_`), and a step is sent only to a model it was seen to
-//! work on (start_screen::MEASURED: the 9.2"). Every command sent here is one the 9.2" of
+//! a TURZX panel's (`0A C8`, `turzx_`), and for a step only a model it was seen to work on
+//! is taken (start_screen::MEASURED: the 9.2"). With several of the family's panels on one
+//! PC the 9.2" is the one taken, or the model named (`--model`); another panel on the bus is
+//! told in the run's lines and sent nothing. Every command sent here is one the 9.2" of
 //! issue 52 had taken from Libre Panel before, by its log (10, 42, 98, 99, 111, 112, 125),
 //! but for one value: 125's start mode 0, which its log does not have (it had 2). That it
 //! is the panel's default comes from other projects' notes on other models of the family
@@ -29,11 +38,11 @@
 //! What is sent, in this order whatever the order asked in:
 //!
 //! - 10, until it is answered once.
-//! - `remove-clip`: 42 `usr/data/standby.h264`.
+//! - `remove-clip`: 111, the clip the panel may be playing stopped (as the app does at each
+//!   of its starts), then 42 `usr/data/standby.h264`.
 //! - `remove-logo`: 42 `usr/data/boot.jpg` (as *Factory logo again*).
-//! - 111: the clip the panel may be playing stopped.
-//! - 98 for the files taken off (a file is off when the panel says it has none) and for
-//!   `usr/data/app.cfg`.
+//! - 98 for the files taken off (a file is off when the panel says it has none; one that is
+//!   still there is taken off once more) and for `usr/data/app.cfg`.
 //! - 125 with start mode 0 (the settings saved with the start as the panel came), once the
 //!   clip is off, never into a folder it still fills: with `default-start`, or after
 //!   `remove-clip` where `app.cfg` is there and empty.
@@ -45,7 +54,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use lp_devices::turzx::{brightness_arg, firmware_of};
-use lp_devices::turzx_direct::{self as direct, Direct, Other, Trouble};
+use lp_devices::turzx_direct::{self as direct, Direct, Other, Trouble, Which};
 
 use crate::start_screen::{
     checked_name, file_args, names_in, BOOT_LOGO, FOLDER, MEASURED, STANDBY_CLIP,
@@ -91,6 +100,17 @@ const FRUITLESS: u32 = 12;
 const SENDS: u32 = 6;
 /// How often a file may still be there after the panel accepted its taking off.
 const KEPT: u32 = 2;
+/// How long a file the panel still has is left before it is taken off once more (a player
+/// that was just stopped may hold its file a moment longer).
+const AGAIN_AFTER: Duration = Duration::from_millis(200);
+/// How long an opening that failed is left before the next: each one asks for the panel's
+/// descriptors, which the hub may ask of the panel itself, and the panel is starting.
+const OPEN_AGAIN: Duration = Duration::from_millis(5);
+/// How many times in a row a panel that leaves before it could be opened is told of line by
+/// line; after that, one line for every `UNOPENED_EVERY` times it comes. (It is waited for
+/// all the same: a system that has to set the panel up anew may need many of its comings.)
+const UNOPENED_SHOWN: u32 = 8;
+const UNOPENED_EVERY: u32 = 20;
 /// How often a panel that is on the bus and cannot be opened is tried.
 const NOT_OPENED: u32 = 3;
 /// How often a panel is taken anew at once, each time it is on the bus, after a transfer
@@ -224,8 +244,12 @@ fn undone(steps: &[Step]) -> Option<String> {
 
 /// Where the panel is looked for: the USB bus, or the tests' simulated panel.
 enum Bus {
-    Usb,
+    Usb {
+        /// which panel is taken of several
+        which: Which,
+    },
     Test {
+        which: Which,
         link: String,
         /// a file that is there while the simulated panel is on the bus (None: always)
         present: Option<PathBuf>,
@@ -244,10 +268,11 @@ enum Found {
 }
 
 impl Bus {
-    fn new() -> Bus {
+    fn new(which: Which) -> Bus {
         let env = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
         match env("LP_ENGINE_LINK") {
             Some(link) => Bus::Test {
+                which,
                 link,
                 present: env("LP_ENGINE_PRESENT").map(PathBuf::from),
                 others: env("LP_ENGINE_OTHERS").map(PathBuf::from),
@@ -256,34 +281,61 @@ impl Bus {
                     .map(Duration::from_millis),
                 model: env("LP_ENGINE_MODEL").unwrap_or_else(|| "turing-9.2-usb".to_string()),
             },
-            None => Bus::Usb,
+            None => Bus::Usb { which },
         }
     }
 
     fn there(&self) -> Option<Found> {
         match self {
-            Bus::Usb => direct::seen().map(Found::Usb),
-            Bus::Test { present, .. } => present
-                .as_ref()
-                .is_none_or(|file| file.exists())
-                .then_some(Found::Test),
+            Bus::Usb { which } => direct::seen(which).map(Found::Usb),
+            Bus::Test { .. } => self.scan().0,
         }
+    }
+
+    /// A TURZX USB panel that is on the bus and is not the one taken, as it is called.
+    fn another(&self) -> Option<String> {
+        let (_, others) = self.scan();
+        (others.into_iter().find(|other| other.panel)).map(|other| other.name)
     }
 
     /// The panel, and every other device on the bus, in one look.
     fn scan(&self) -> (Option<Found>, Vec<Other>) {
         match self {
-            Bus::Usb => {
-                let (panel, others) = direct::scan();
+            Bus::Usb { which } => {
+                let (panel, others) = direct::scan(which);
                 (panel.map(Found::Usb), others)
             }
-            Bus::Test { others, .. } => {
+            Bus::Test {
+                which,
+                present,
+                others,
+                model,
+                ..
+            } => {
                 let text = others
                     .as_ref()
                     .and_then(|file| std::fs::read_to_string(file).ok())
                     .unwrap_or_default();
-                let others = text.lines().filter_map(other_of).collect();
-                (self.there(), others)
+                let mut others: Vec<Other> = text.lines().filter_map(other_of).collect();
+                // (the simulated panel is taken as one on the bus is: its model first where
+                // it is asked for, any model where no other is ruled out)
+                let on_bus = present.as_ref().is_none_or(|file| file.exists());
+                let taken = !which.only || which.models.contains(&model.as_str());
+                if on_bus && !taken {
+                    let pid = lp_devices::turzx::usb_models()
+                        .find(|(_, known)| known.id == model.as_str())
+                        .map(|(pid, _)| pid);
+                    if let Some(pid) = pid {
+                        let place = "simulated".to_string();
+                        others.push(Other::new(
+                            lp_devices::turzx::VENDOR_ID,
+                            pid,
+                            place,
+                            String::new(),
+                        ));
+                    }
+                }
+                ((on_bus && taken).then_some(Found::Test), others)
             }
         }
     }
@@ -292,8 +344,8 @@ impl Bus {
     fn model(&self, found: &Found) -> Option<(String, String)> {
         let model = match (self, found) {
             (Bus::Test { model, .. }, _) => lp_devices::models::find_model(model)?,
-            (Bus::Usb, Found::Usb(seen)) => seen.model()?,
-            (Bus::Usb, Found::Test) => return None,
+            (Bus::Usb { .. }, Found::Usb(seen)) => seen.model()?,
+            (Bus::Usb { .. }, Found::Test) => return None,
         };
         Some((model.id.to_string(), model.label()))
     }
@@ -301,8 +353,8 @@ impl Bus {
     fn open(&self, found: &Found) -> Result<Direct, String> {
         match (self, found) {
             (Bus::Test { link, .. }, _) => Direct::test(link),
-            (Bus::Usb, Found::Usb(seen)) => seen.open(),
-            (Bus::Usb, Found::Test) => Err("no panel".into()),
+            (Bus::Usb { .. }, Found::Usb(seen)) => seen.open(),
+            (Bus::Usb { .. }, Found::Test) => Err("no panel".into()),
         }
     }
 }
@@ -311,12 +363,12 @@ impl Bus {
 fn other_of(line: &str) -> Option<Other> {
     let mut parts = line.splitn(3, '|');
     let (vid, pid) = parts.next()?.split_once(':')?;
-    Some(Other {
-        vid: u16::from_str_radix(vid, 16).ok()?,
-        pid: u16::from_str_radix(pid, 16).ok()?,
-        place: parts.next()?.to_string(),
-        name: parts.next().unwrap_or_default().to_string(),
-    })
+    Some(Other::new(
+        u16::from_str_radix(vid, 16).ok()?,
+        u16::from_str_radix(pid, 16).ok()?,
+        parts.next()?.to_string(),
+        parts.next().unwrap_or_default().to_string(),
+    ))
 }
 
 fn named(found: &Found) -> String {
@@ -484,7 +536,12 @@ impl Visit<'_> {
     }
 
     fn line(&mut self, text: &str) {
-        let line = format!("[{}] +{} ms: {text}", self.number, self.ms());
+        self.line_at(self.ms(), text);
+    }
+
+    /// A line for the moment `ms` after the panel came.
+    fn line_at(&mut self, ms: u128, text: &str) {
+        let line = format!("[{}] +{ms} ms: {text}", self.number);
         (self.say)(&line);
     }
 
@@ -618,12 +675,15 @@ struct Diary {
     /// the devices at the last look (None: not looked yet)
     seen: Option<Vec<Other>>,
     lines: u32,
+    /// a TURZX USB panel that was on the bus and was not the one taken, as it is called
+    another: Option<String>,
 }
 
 fn device_said(device: &Other) -> String {
-    let name = match device.name.is_empty() {
-        true => String::new(),
-        false => format!(" \"{}\"", device.name),
+    let name = match (device.name.is_empty(), device.panel) {
+        (true, _) => String::new(),
+        (false, true) => format!(" {}", device.name), // (its model: Turing 12.3")
+        (false, false) => format!(" \"{}\"", device.name),
     };
     format!(
         "{:04x}:{:04x}{name} ({})",
@@ -631,14 +691,23 @@ fn device_said(device: &Other) -> String {
     )
 }
 
+/// What is said of a panel on the bus that is not the one taken.
+const LEFT_ALONE: &str = "another panel, nothing is sent to it";
+
 impl Diary {
     fn note(&mut self, now: Vec<Other>, say: &mut dyn FnMut(&str)) {
+        if self.another.is_none() {
+            self.another = (now.iter().find(|device| device.panel)).map(|d| d.name.clone());
+        }
         let mut lines = Vec::new();
         match &self.seen {
             // the first look: only what the makers of these panels have on the bus
             None => {
                 for device in now.iter().filter(|device| RELATED.contains(&device.vid)) {
-                    lines.push(format!("{} is on the bus", device_said(device)));
+                    lines.push(match device.panel {
+                        true => format!("{} is on the bus: {LEFT_ALONE}", device_said(device)),
+                        false => format!("{} is on the bus", device_said(device)),
+                    });
                 }
             }
             Some(before) if *before == now => return,
@@ -647,7 +716,10 @@ impl Diary {
                     lines.push(format!("{} left", device_said(device)));
                 }
                 for device in now.iter().filter(|device| !before.contains(device)) {
-                    lines.push(format!("{} came", device_said(device)));
+                    lines.push(match device.panel {
+                        true => format!("{} came: {LEFT_ALONE}", device_said(device)),
+                        false => format!("{} came", device_said(device)),
+                    });
                 }
             }
         }
@@ -701,23 +773,57 @@ pub fn run(
     actions: &[Action],
     wait: Option<Duration>,
     brightness: i64,
+    model: Option<&'static str>,
     say: &mut dyn FnMut(&str),
 ) -> Result<(), String> {
-    let bus = Bus::new();
     let mut steps = plan(actions, brightness)?;
+    let called = |id: &str| {
+        lp_devices::models::find_model(id).map_or_else(|| id.to_string(), |model| model.label())
+    };
+    if let Some(id) = model.filter(|id| !steps.is_empty() && !MEASURED.contains(id)) {
+        return Err(format!(
+            "these steps are known on the Turing 9.2\" only: nothing is sent to a {}",
+            called(id)
+        ));
+    }
+    // which panel of several: the model asked for and no other; else the 9.2", and for a
+    // step no other (the family's other models, and other makers' panels in it, may take
+    // the command for something else)
+    let bus = Bus::new(match model {
+        Some(id) => Which {
+            models: vec![id],
+            only: true,
+        },
+        None => Which {
+            models: MEASURED.to_vec(),
+            only: !steps.is_empty(),
+        },
+    });
     // (a packet is stamped with the local time: the zone is read now, not when the panel
     // comes; reading it took tens of milliseconds of the first packet's time)
     let _ = lp_devices::turzx_packet::now_stamp();
     let mut known = Known::default();
     let Some(limit) = wait else {
         let Some(found) = bus.there() else {
-            return Err(lp_i18n::t("No TURZX USB panel found"));
+            return Err(match (model, bus.another()) {
+                (Some(id), Some(other)) => format!(
+                    "no {} is on the bus (a {other} is: another panel, nothing was sent to it)",
+                    called(id)
+                ),
+                (Some(id), None) => format!("no {} is on the bus", called(id)),
+                (None, Some(other)) => format!(
+                    "these steps are known on the Turing 9.2\" only; this panel is a {other}: \
+                     nothing was sent to it"
+                ),
+                (None, None) => lp_i18n::t("No TURZX USB panel found"),
+            });
         };
         let came = Came {
             number: 1,
             since: Instant::now(),
             waited: None,
             again: false,
+            hush: false,
         };
         let visited = visit(&bus, found, &came, &mut steps, &mut known, None, say);
         return match visited.outcome {
@@ -764,6 +870,44 @@ struct Stay {
     answers: u32,
     /// how often a transfer failed in this stay while it was on the bus
     lost: u32,
+    /// it was opened in this stay
+    opened: bool,
+    /// why it could not be opened, the last time that was tried
+    unopened: String,
+}
+
+/// The stays in a row in which the panel could not be opened: told of line by line at
+/// first, then once in a while. They do not count as stays without an answer: the system
+/// may need many of the panel's comings until it has it ready, and the panel is waited for
+/// until the time given is over.
+#[derive(Default)]
+struct Unopened {
+    run: u32,
+}
+
+impl Unopened {
+    /// Whether the panel's next coming is told only once it is opened.
+    fn hush(&self) -> bool {
+        self.run >= UNOPENED_SHOWN
+    }
+
+    /// A stay is over in which the panel could not be opened.
+    fn once_more(&mut self, number: u32, why: &str, say: &mut dyn FnMut(&str)) {
+        self.run += 1;
+        if self.run == UNOPENED_SHOWN {
+            say(&format!(
+                "the panel keeps leaving before the system has it ready to be opened: from \
+                 here on one line for every {UNOPENED_EVERY} times it comes"
+            ));
+        } else if self.run > UNOPENED_SHOWN
+            && (self.run - UNOPENED_SHOWN).is_multiple_of(UNOPENED_EVERY)
+        {
+            say(&format!(
+                "[{number}] not opened yet: it came {UNOPENED_EVERY} more times and left \
+                 before it could be opened ({why})"
+            ));
+        }
+    }
 }
 
 /// When a run that waits has seen enough.
@@ -804,6 +948,7 @@ fn wait_for(
         began,
         seen: None,
         lines: 0,
+        another: None,
     };
     let mut number = 0; // (how often the panel came)
     let mut stay: Option<Stay> = None;
@@ -814,6 +959,7 @@ fn wait_for(
     let mut never_opened = None; // (why, as long as it could not be opened once)
     let mut opened = false;
     let mut mute = false; // (on the bus without an answer, the last time it was met)
+    let mut unopened_run = Unopened::default();
     loop {
         let (found, others) = bus.scan();
         diary.note(others, say);
@@ -821,8 +967,13 @@ fn wait_for(
             // (it left between two tries: that stay is over)
             if let Some(over) = stay.take() {
                 lives.push(over.since.elapsed().as_millis());
-                if !tally.goes_on(over.answers, steps) {
-                    break;
+                if !over.opened {
+                    unopened_run.once_more(over.number, &over.unopened, say);
+                } else {
+                    unopened_run.run = 0;
+                    if !tally.goes_on(over.answers, steps) {
+                        break;
+                    }
                 }
             }
             mute = false;
@@ -840,6 +991,8 @@ fn wait_for(
                 since: Instant::now(),
                 answers: 0,
                 lost: 0,
+                opened: false,
+                unopened: String::new(),
             }
         });
         let came = Came {
@@ -847,11 +1000,16 @@ fn wait_for(
             since: now.since,
             waited: Some(now.since.duration_since(began)),
             again,
+            hush: unopened_run.hush(),
         };
         let watch = stay_for(bus, &lives);
         let visited = visit(bus, found, &came, steps, known, Some(watch), say);
         replies += visited.replies;
         now.answers += visited.replies;
+        match &visited.unopened {
+            Some(why) => now.unopened.clone_from(why),
+            None => now.opened = true,
+        }
         match visited.unopened {
             Some(why) if !opened => never_opened = Some(why),
             Some(_) => {}
@@ -875,10 +1033,18 @@ fn wait_for(
             }
             Outcome::Left(ms) => {
                 lives.push(ms);
-                let answers = now.answers;
-                stay = None;
-                if !tally.goes_on(answers, steps) {
-                    break;
+                let over = stay.take();
+                match over {
+                    Some(over) if !over.opened => {
+                        unopened_run.once_more(over.number, &over.unopened, say);
+                    }
+                    Some(over) => {
+                        unopened_run.run = 0;
+                        if !tally.goes_on(over.answers, steps) {
+                            break;
+                        }
+                    }
+                    None => {}
                 }
             }
             Outcome::Lost(_) => {
@@ -917,10 +1083,11 @@ fn wait_for(
         }
     }
     if number == 0 {
-        return Err(format!(
-            "the panel was not on the bus in {} s",
-            limit.as_secs()
-        ));
+        let mut said = format!("the panel was not on the bus in {} s", limit.as_secs());
+        if let Some(other) = diary.another {
+            said += &format!(" (a {other} was: another panel, nothing was sent to it)");
+        }
+        return Err(said);
     }
     let mut said = verdict(number, &lives, replies, mute, steps);
     if let Some(why) = never_opened {
@@ -1023,6 +1190,8 @@ struct Came {
     waited: Option<Duration>,
     /// it is taken anew in the same stay (after a transfer that failed)
     again: bool,
+    /// its coming is told only once it is opened (it left before that many times in a row)
+    hush: bool,
 }
 
 /// One visit of the panel that is on the bus since `came.since`: opened, the steps not yet
@@ -1044,14 +1213,22 @@ fn visit(
         replies: 0,
         late: Vec::new(),
     };
+    // (its coming: said at once, or only once it is opened where it has left before that
+    // many times in a row)
+    let mut held = None;
     if !came.again {
         let waited = came.waited.map_or_else(String::new, |waited| {
             format!(", {:.1} s into the wait", waited.as_secs_f64())
         });
-        at.line(&format!("on the bus: {}{waited}", named(&found)));
+        let line = format!("on the bus: {}{waited}", named(&found));
+        match came.hush {
+            true => held = Some((at.ms(), line)),
+            false => at.line(&line),
+        }
     }
     // a step only to a model it was seen to work on: the family's other models, and other
-    // makers' panels in it, may take the command for something else
+    // makers' panels in it, may take the command for something else. (The bus takes no
+    // other panel for a step; this is the last word before anything is sent.)
     if !steps.is_empty() {
         let model = bus.model(&found);
         if !model
@@ -1070,8 +1247,8 @@ fn visit(
             };
         }
     }
-    // opened: tried again at once while it is there (Windows lists a device before its
-    // driver has started)
+    // opened: tried again every few milliseconds while it is there (Windows lists a device
+    // before its driver has started)
     let mut tries = 0u32;
     let mut failed = String::new();
     let opening = Instant::now();
@@ -1081,14 +1258,16 @@ fn visit(
             Ok(link) => break link,
             Err(why) => failed = why,
         }
-        if tries.is_multiple_of(16) {
+        if tries.is_multiple_of(8) {
             match bus.there() {
                 Some(now) => found = now, // (as the system has it now)
                 None => {
                     let ms = at.ms();
-                    at.line(&format!(
-                        "left the bus before it could be opened ({tries} tries; {failed})"
-                    ));
+                    if held.is_none() {
+                        at.line(&format!(
+                            "left the bus before it could be opened ({tries} tries; {failed})"
+                        ));
+                    }
                     return Visited {
                         outcome: Outcome::Left(ms),
                         replies: 0,
@@ -1098,6 +1277,9 @@ fn visit(
             }
         }
         if opening.elapsed() >= OPEN_FOR {
+            if let Some((ms, line)) = held.take() {
+                at.line_at(ms, &line);
+            }
             at.line(&format!("not opened in {} s: {failed}", OPEN_FOR.as_secs()));
             return Visited {
                 outcome: Outcome::NotOpened(failed.clone()),
@@ -1105,8 +1287,11 @@ fn visit(
                 unopened: Some(failed),
             };
         }
-        std::thread::yield_now();
+        std::thread::sleep(OPEN_AGAIN);
     };
+    if let Some((ms, line)) = held.take() {
+        at.line_at(ms, &line);
+    }
     match tries {
         1 => at.line("open"),
         tries => at.line(&format!(
@@ -1115,11 +1300,11 @@ fn visit(
         )),
     }
     // the sync first, until the panel has answered it once as a TURZX panel does; then what
-    // was asked for: the files taken off (room in the panel's folder), the clip it may be
-    // playing stopped, the files' sizes asked, and the settings saved where that is asked
-    // for or needed. Then what the panel holds (asked once: `known`). A transfer that fails
-    // ends the visit: the panel has left the bus, or is taken anew. Once no step is open, a
-    // visit sends nothing of this: it watches whether the panel stays by itself.
+    // was asked for: the clip it may be playing stopped, the files taken off, their sizes
+    // asked, and the settings saved where that is asked for or needed. Then what the panel
+    // holds (asked once: `known`). A transfer that fails ends the visit: the panel has left
+    // the bus, or is taken anew. Once no step is open, a visit sends nothing of this: it
+    // watches whether the panel stays by itself.
     let mut reading = true; // (false: the panel takes no packets; nothing more is sent)
     'talk: {
         macro_rules! told {
@@ -1211,8 +1396,20 @@ fn visit(
             known.spoken = true;
         }
         settle(steps, known, &mut at); // (a file the panel said it has not: nothing to send)
-        let open = steps.iter().any(|step| step.state == State::Open);
         for round in 0..2 {
+            // the clip the panel may be playing is stopped before its file is taken off: a
+            // file was only ever seen taken off a panel that was not playing it (the app
+            // stops the clip at each of its starts, 110 then 111), and a panel that fails
+            // at its clip's end stays up once the clip has stopped
+            let clip_open = (steps.iter())
+                .any(|step| step.file == Some(STANDBY_CLIP) && step.state == State::Open);
+            if clip_open && round == 0 {
+                let what = "stop the clip it may be playing (111)";
+                told!(at.command(&mut link, CMD_STOP_LOCAL, &[], what, &how, REPLY_MS));
+            }
+            if round > 0 {
+                std::thread::sleep(AGAIN_AFTER);
+            }
             for step in steps.iter_mut().filter(|step| step.file.is_some()) {
                 if step.state != State::Open {
                     continue;
@@ -1241,11 +1438,6 @@ fn visit(
                 }
             }
             give_up_what_waits(steps, &mut at);
-            let open = open && steps.iter().any(|step| step.state == State::Open);
-            if open && round == 0 {
-                let what = "stop the clip it may be playing (111)";
-                told!(at.command(&mut link, CMD_STOP_LOCAL, &[], what, &how, REPLY_MS));
-            }
             // (the sizes of the files that are taken off: a file is off when the panel says so)
             for name in [STANDBY_CLIP, BOOT_LOGO] {
                 if steps.iter().any(|step| step.file == Some(name)) {

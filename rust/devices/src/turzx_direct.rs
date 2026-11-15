@@ -24,26 +24,57 @@ pub struct Seen {
     info: nusb::DeviceInfo,
 }
 
-/// The first panel of a TURZX USB model that is on the bus now; None for none, or where the
-/// system cannot list its USB devices.
-pub fn seen() -> Option<Seen> {
-    nusb::list_devices()
-        .wait()
-        .ok()?
-        .find(|d| d.vendor_id() == VENDOR_ID && usb::model_of(d.product_id()).is_some())
-        .map(|info| Seen { info })
+/// Which panel is taken where several TURZX USB panels are on the bus.
+#[derive(Clone, Debug, Default)]
+pub struct Which {
+    /// the models taken first, by the catalogue's ids (none: the first panel there is)
+    pub models: Vec<&'static str>,
+    /// no panel of another model is taken
+    pub only: bool,
 }
 
-/// A USB device on the bus that is no TURZX USB panel Libre Panel knows: what the system
-/// says of it, for the log of a panel that does not come back as itself.
+/// The panel to take that is on the bus now; None for none, or where the system cannot list
+/// its USB devices.
+pub fn seen(which: &Which) -> Option<Seen> {
+    scan(which).0
+}
+
+/// A USB device on the bus that is not the panel taken: what the system says of it, for the
+/// log of a panel that does not come back as itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Other {
     pub vid: u16,
     pub pid: u16,
     /// its ports from the root hub
     pub place: String,
-    /// the name it gives itself, where the system has one
+    /// the name it gives itself, where the system has one; a TURZX USB panel's as the
+    /// catalogue calls its model
     pub name: String,
+    /// a TURZX USB panel (one that is not the one taken)
+    pub panel: bool,
+}
+
+/// The TURZX USB model a device is by its ids; None for any other device, another maker's
+/// under the same vendor id among them.
+fn model_by(vid: u16, pid: u16) -> Option<&'static PanelModel> {
+    match vid == VENDOR_ID {
+        true => usb::model_of(pid),
+        false => None,
+    }
+}
+
+impl Other {
+    /// A device as the bus tells it (`name`: what it calls itself).
+    pub fn new(vid: u16, pid: u16, place: String, name: String) -> Other {
+        let model = model_by(vid, pid);
+        Other {
+            vid,
+            pid,
+            place,
+            name: model.map_or(name, |model| model.label()),
+            panel: model.is_some(),
+        }
+    }
 }
 
 fn ports_of(info: &nusb::DeviceInfo) -> String {
@@ -51,25 +82,34 @@ fn ports_of(info: &nusb::DeviceInfo) -> String {
     format!("ports {}", ports.join("."))
 }
 
-/// What is on the bus now, in one look: the first panel of a TURZX USB model, and every
-/// other device. (None, nothing) where the system cannot list its USB devices.
-pub fn scan() -> (Option<Seen>, Vec<Other>) {
+/// What is on the bus now, in one look: the TURZX USB panel to take (`which`), and every
+/// other device, a TURZX panel that is not taken among them under its model's name. (None,
+/// nothing) where the system cannot list its USB devices.
+pub fn scan(which: &Which) -> (Option<Seen>, Vec<Other>) {
     let Ok(devices) = nusb::list_devices().wait() else {
         return (None, Vec::new());
     };
+    let devices: Vec<nusb::DeviceInfo> = devices.collect();
+    let model = |info: &nusb::DeviceInfo| model_by(info.vendor_id(), info.product_id());
+    let wanted =
+        |info: &nusb::DeviceInfo| model(info).is_some_and(|model| which.models.contains(&model.id));
+    let taken = (devices.iter().position(wanted)).or_else(|| match which.only {
+        true => None,
+        false => devices.iter().position(|info| model(info).is_some()),
+    });
     let (mut panel, mut others) = (None, Vec::new());
-    for info in devices {
-        let known = info.vendor_id() == VENDOR_ID && usb::model_of(info.product_id()).is_some();
-        if known && panel.is_none() {
+    for (n, info) in devices.into_iter().enumerate() {
+        if Some(n) == taken {
             panel = Some(Seen { info });
             continue;
         }
-        others.push(Other {
-            vid: info.vendor_id(),
-            pid: info.product_id(),
-            place: ports_of(&info),
-            name: info.product_string().unwrap_or_default().trim().to_string(),
-        });
+        let name = info.product_string().unwrap_or_default().trim().to_string();
+        others.push(Other::new(
+            info.vendor_id(),
+            info.product_id(),
+            ports_of(&info),
+            name,
+        ));
     }
     (panel, others)
 }

@@ -22,13 +22,14 @@ sent from here, and 110 only with the clip's real name (an empty one, saved, wou
 standby clip for good).
 
 **Writing is switched off** (:func:`writes_on`, issue 52). ``usr/data`` holds the panel's own
-settings too (``app.cfg``) and is small: on a 9.2" about 0.7 MB, not the 1 MiB a file may
-have. A standby clip of 701,830 bytes left it 16 KiB; from then on the panel took no file any
-more and answered each write at once, which this module read as "the panel kept the file it
-had". 0.9.1 deleted that file and wrote a clip of 706,912 bytes, which filled the folder to
-the last byte; the settings were saved into it (125), and the panel has not got through a
-start since. Until Libre Panel can tell how much room a panel has, no file is written to one:
-asking what it holds and taking the boot logo off stay.
+settings too (``app.cfg``), and on one 9.2" the room there ran out: a boot logo ended at
+16 KiB, and from then on that panel took no file and answered each write at once, which this
+module read as "the panel kept the file it had". 0.9.1 deleted that file and wrote the clip
+again: the panel said it had all 706,912 bytes, the settings were saved (125), and the panel
+has not got through a start since. On other panels, a 9.2" and a 12.3" among them, the same
+files were written for months without trouble, and a panel cannot be asked how much room it
+has. Until Libre Panel can tell, no file is written to one: asking what it holds and taking
+the boot logo off stay.
 """
 
 from __future__ import annotations
@@ -87,10 +88,11 @@ CMD_SAVE_SETTINGS = 125
 START_WITH_CLIP = 2  # the settings' start mode: play the clip they name
 NEVER = frozenset({11, 12, 13})  # restart, halt, and the other save of the settings
 
-# Writing a file to a panel is switched off (issue 52). The folder the start screen is written
-# to holds the panel's own settings too and is small (about 0.7 MB on a 9.2"): a standby clip
-# filled it to the last byte, and that panel has kept restarting since. Until Libre Panel can
-# tell how much room a panel has, it writes nothing there. Who looks into it on a panel of
+# Writing a file to a panel is switched off (issue 52). The files go where the panel keeps its
+# own settings, and on one 9.2" the room there ran out: files ended early or were not taken,
+# 0.9.1 forced a clip in, and that panel has kept restarting since. On other panels the same
+# files were written for months without trouble, and a panel cannot be asked how much room it
+# has. Until Libre Panel can tell, it writes nothing there. Who looks into it on a panel of
 # their own sets this in the environment, at their own risk.
 WRITES_ENV = "LIBRE_PANEL_PANEL_WRITES"
 WRITES_WORD = "at-my-own-risk"
@@ -105,9 +107,10 @@ def writes_on() -> bool:
 def writes_off() -> str:
     """Why nothing is written, as the app says it."""
     return t(
-        "Writing to the panel is switched off in this version. The panel keeps its start "
-        'screen in a small folder beside its own settings, and a 9.2" kept restarting once '
-        "that folder was full. Writing comes back when Libre Panel can tell how much fits."
+        'Writing to the panel is switched off in this version. One 9.2" ran out of room for '
+        "its start screen and has kept restarting since; on other panels the same files were "
+        "written without trouble. Writing comes back when Libre Panel can tell how much fits "
+        "on a panel."
     )
 
 
@@ -276,8 +279,8 @@ class PanelFiles:
     def write(self, name: str, data: bytes) -> None:
         """Write a file, and check that it has the size it should. A file the panel kept in
         place of the new one is left as it is and said: never taken away to write again
-        (0.9.1 did so, and so got a clip in that filled the panel's folder to the last byte:
-        that 9.2" has kept restarting since)."""
+        (0.9.1 did so on a 9.2" that had no room left, and that panel has kept restarting
+        since)."""
         if not writes_on():
             raise DeviceError(writes_off())
         raw = checked_name(name)

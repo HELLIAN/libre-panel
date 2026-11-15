@@ -27,6 +27,9 @@ class Unplugged(Exception):
     """Stands in for usb.core.USBError."""
 
 
+STANDBY_CLIP = "usr/data/standby.h264"  # (the panel's standby clip)
+
+
 class FakePanel:
     RING = 5
     MAX_BLOCK = 202752
@@ -89,11 +92,35 @@ class FakePanel:
         # that is gone fails it (else it times out, as one that restarts does)
         self.leaves_once: set[int] = set()
         self.gone_reads_fail = False
+        # a panel that plays its standby clip, as one set to start with it does: it does not
+        # let the clip's file go while it plays it (42 is accepted, the file stays), and 111
+        # stops the playing. With ``clip_s`` it restarts at the clip's end for as long as it
+        # plays: on the bus for that long, off it for ``restart_away_s``, and playing again
+        # when it is back
+        self.plays_clip = False
+        self.clip_s: float | None = None
+        self._plays_since: float | None = None
 
     @property
     def present(self) -> bool:
         """On the bus (not unplugged, not in the middle of a restart)."""
+        self._clip_end()
         return not self.unplugged and time.monotonic() >= self.away_until
+
+    def _clip_end(self) -> None:
+        """The restart of a panel that fails at its clip's end (``clip_s``)."""
+        now = time.monotonic()
+        if self.clip_s is None or self.unplugged:
+            self._plays_since = None
+            return
+        if now < self.away_until:
+            return
+        if self._plays_since is None:  # it is back: it plays its clip from the start
+            self._plays_since = now
+            self.plays_clip = STANDBY_CLIP in self.files
+        elif self.plays_clip and now - self._plays_since >= self.clip_s:
+            self.away_until = now + self.restart_away_s
+            self._plays_since, self.pending = None, []
 
     def _restart(self) -> None:
         self.restarts += 1
@@ -161,8 +188,11 @@ class FakePanel:
             used = sum(len(data) for data in self.files.values())
             if self.room is None or used + size <= self.room:
                 self.files[name] = payload
-        if cmd == 42 and name not in self.kept_files:
+        playing = self.plays_clip and cmd == 42 and name == STANDBY_CLIP
+        if cmd == 42 and name not in self.kept_files and not playing:
             self.files.pop(name, None)
+        if cmd == 111:
+            self.plays_clip = False
         if cmd == 113:
             assert name in self.files, f"{name} shown but not there"
             self.shown.append(name)

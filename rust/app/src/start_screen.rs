@@ -32,10 +32,11 @@ const JPEG_STEPS: [(i64, bool); 6] = [
 const CLIP_CRF: i64 = 20;
 const CLIP_CRF_MIN: i64 = 17;
 const CLIP_CRF_MAX: i64 = 30;
-/// Writing a file to a panel is switched off (issue 52). The folder the start screen is
-/// written to holds the panel's own settings too and is small (about 0.7 MB on a 9.2"): a
-/// standby clip filled it to the last byte, and that panel has kept restarting since. Until
-/// Libre Panel can tell how much room a panel has, it writes nothing there. Who looks into it
+/// Writing a file to a panel is switched off (issue 52). The files go where the panel keeps
+/// its own settings, and on one 9.2" the room there ran out: files ended early or were not
+/// taken, 0.9.1 forced a clip in, and that panel has kept restarting since. On other panels
+/// the same files were written for months without trouble, and a panel cannot be asked how
+/// much room it has. Until Libre Panel can tell, it writes nothing there. Who looks into it
 /// on a panel of their own sets this in the environment, at their own risk (panel_files.py
 /// WRITES_ENV).
 pub const WRITES_ENV: &str = "LIBRE_PANEL_PANEL_WRITES";
@@ -50,9 +51,10 @@ pub fn writes_on() -> bool {
 /// writes_off: why nothing is written, as the app says it.
 pub fn writes_off() -> String {
     lp_i18n::t(
-        "Writing to the panel is switched off in this version. The panel keeps its start \
-         screen in a small folder beside its own settings, and a 9.2\" kept restarting once \
-         that folder was full. Writing comes back when Libre Panel can tell how much fits.",
+        "Writing to the panel is switched off in this version. One 9.2\" ran out of room for \
+         its start screen and has kept restarting since; on other panels the same files were \
+         written without trouble. Writing comes back when Libre Panel can tell how much fits \
+         on a panel.",
     )
 }
 

@@ -3361,9 +3361,10 @@ def test_nothing_is_written_to_a_panel_in_this_version(tmp_path: Path) -> None:
     from libre_panel.devices import panel_files
 
     words = (
-        "Writing to the panel is switched off in this version. The panel keeps its start "
-        'screen in a small folder beside its own settings, and a 9.2" kept restarting once '
-        "that folder was full. Writing comes back when Libre Panel can tell how much fits."
+        'Writing to the panel is switched off in this version. One 9.2" ran out of room for '
+        "its start screen and has kept restarting since; on other panels the same files were "
+        "written without trouble. Writing comes back when Libre Panel can tell how much fits "
+        "on a panel."
     )
     rig = Rig(tmp_path)
     try:

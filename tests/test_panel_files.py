@@ -19,9 +19,9 @@ from libre_panel.render import bootscreen
 
 NINE = get_model("turing-9.2-usb")
 WRITES_OFF = (
-    "Writing to the panel is switched off in this version. The panel keeps its start screen in "
-    'a small folder beside its own settings, and a 9.2" kept restarting once that folder was '
-    "full. Writing comes back when Libre Panel can tell how much fits."
+    'Writing to the panel is switched off in this version. One 9.2" ran out of room for its '
+    "start screen and has kept restarting since; on other panels the same files were written "
+    "without trouble. Writing comes back when Libre Panel can tell how much fits on a panel."
 )
 
 
@@ -339,10 +339,10 @@ def test_a_file_is_at_most_a_mebibyte_and_has_the_size_it_should():
 
 
 def test_a_file_the_panel_kept_is_left_as_it_is():
-    """A 9.2" kept its standby clip when another one came (its folder was full, and it took
-    no file any more): the error says what the panel has, and nothing is taken away to be
-    written again (0.9.1 did so, and so filled that folder to the last byte: the 9.2" has kept
-    restarting since); where the new one fits beside the old one, it is written at once."""
+    """A 9.2" kept its standby clip when another one came (it had no room left, and took no
+    file any more): the error says what the panel has, and nothing is taken away to be
+    written again (0.9.1 did so, and that 9.2" has kept restarting since); where the new one
+    fits beside the old one, it is written at once."""
     old, new = b"o" * 700, b"n" * 710
     clip = (F.STANDBY_CLIP, 0)
     panel = FakePanel({F.STANDBY_CLIP: old}, room=1000)

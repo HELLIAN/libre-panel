@@ -2994,7 +2994,7 @@
     "Icon in the tray": "トレイのアイコン",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "メニューでパネルの状態の確認、テーマの切り替え、Libre Panel の終了ができます。オフ：Libre Panel はスタートメニューまたはアプリ一覧から開きます。",
     "Libre Panel runs in the background.": "Libre Panel はバックグラウンドで動作します。",
-    "Writing to the panel is switched off in this version. The panel keeps its start screen in a small folder beside its own settings, and a 9.2\" kept restarting once that folder was full. Writing comes back when Libre Panel can tell how much fits.": "このバージョンではパネルへの書き込みを停止しています。パネルは起動画面を、自身の設定と同じ小さなフォルダーに保存しており、9.2\" のパネルが、そのフォルダーがいっぱいになった後に再起動を繰り返したためです。どれだけ入るかを Libre Panel が判断できるようになり次第、再開します。"
+    "Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.": "このバージョンではパネルへの書き込みを停止しています。ある 9.2\" のパネルで起動画面用の空き容量がなくなり、それ以降再起動を繰り返しているためです。ほかのパネルでは同じファイルを問題なく書き込めていました。パネルにどれだけ入るかを Libre Panel が判断できるようになり次第、再開します。"
   },
   "fields": {
     "night": "夜",
