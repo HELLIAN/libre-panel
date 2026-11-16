@@ -533,7 +533,7 @@ function DisplayCard() {
         value=${chosen ?? brightness}
         min=${0}
         max=${100}
-        step=${5}
+        step=${1}
         format=${(value) => `${value} %`}
         onCommit=${choose}
       />
@@ -709,7 +709,7 @@ function AwayBrightness({ level }) {
     saveSettings({ "device.away_brightness": value }).finally(() => setChosen(null));
   };
   return html`<${SettingRow} class="away-brightness" title=${t("Brightness while you are away")}>
-    <${Slider} label=${t("Brightness while you are away")} value=${chosen ?? level} min=${0} max=${100} step=${5}
+    <${Slider} label=${t("Brightness while you are away")} value=${chosen ?? level} min=${0} max=${100} step=${1}
       format=${(value) => (value ? `${value} %` : t("dark"))} onCommit=${choose} />
   <//>`;
 }
@@ -742,7 +742,7 @@ function NightFields({ device }) {
           <${CommitField} class="time" label=${t("Night ends")} value=${device.night_to} placeholder="07:00"
             onCommit=${(text) => saveSettings({ "device.night_to": text })} />
         </div>`}
-    <${Slider} label=${t("Brightness at night")} value=${chosen ?? level} min=${0} max=${100} step=${5}
+    <${Slider} label=${t("Brightness at night")} value=${chosen ?? level} min=${0} max=${100} step=${1}
       format=${(value) => (value ? `${value} %` : t("dark"))} onCommit=${choose} />
   <//>`;
 }
@@ -1028,11 +1028,11 @@ function MoreSettings({ n, panel, video, models, themes, companion, chosen, onBr
     <//>
     ${panel.follow_brightness !== false
       ? html`<${SettingRow} title=${t("Difference")}>
-          <${Slider} label=${t("Difference")} value=${panel.brightness_offset || 0} min=${-30} max=${30} step=${5}
+          <${Slider} label=${t("Difference")} value=${panel.brightness_offset || 0} min=${-30} max=${30} step=${1}
             format=${(value) => `${value > 0 ? "+" : ""}${value} %`} onCommit=${(value) => onChange({ brightness_offset: value })} />
         <//>`
       : html`<${SettingRow} title=${t("Brightness")}>
-          <${Slider} label=${t("Brightness")} value=${chosen ?? panel.brightness} min=${0} max=${100} step=${5}
+          <${Slider} label=${t("Brightness")} value=${chosen ?? panel.brightness} min=${0} max=${100} step=${1}
             format=${(value) => `${value} %`} onCommit=${onBrightness} />
         <//>`}
     <${SettingRow} title=${t("Upside down")}>

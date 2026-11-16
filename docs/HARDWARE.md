@@ -37,7 +37,8 @@ motion (the video mode is for the TURZX USB panels). The panel test's speed chec
   JONSBO, Hongtai, VMAX, Lian Li, Thermalright, BeadaPanel, NZXT and Thermaltake (and the
   Turing 1.6" and 2.1" USB panels) the protocol comes from other projects' notes and captures
   and from the makers' own sources: nobody has run them with Libre Panel yet, but for the
-  JONSBO ZC-360's screens as panels of their own, which are supported (#13).
+  JONSBO ZC-360's screens as panels of their own (#13) and the JONSBO DS339 (#46), which
+  are supported.
 - **planned** — the panel is in the catalog (editor menu, sizes), the driver is
   not written yet. Design themes now; they will work once the driver lands.
 
@@ -97,7 +98,7 @@ Same electronics, different sticker:
 | `usbpcmonitor-3.5`, `usbpcmonitor-5`, `usbpcmonitor-7` | UsbPCMonitor | 480×320, 800×480, 1024×600 | Turing rev. A (USB id 1a86:5722) | unverified; a UsbPCMonitor 5" with the serial number CT21INCH is a rev. C panel: `turing-5` |
 | `xuanfang-3.5` | XuanFang rev. B / flagship | 480×320 | rev. B | unverified |
 | `kipye-3.5` | Kipye Qiye | 480×320 | rev. D | unverified |
-| `weact-3.5`, `weact-0.96` | WeAct Studio Display FS V1 | 480×320, 160×80 | WeAct | unverified |
+| `weact-3.5`, `weact-0.96` | WeAct Studio Display FS V1 | 480×320, 160×80 | WeAct | the 0.96": **supported**, pictures and brightness, as an owner reports (0.9.0, Windows); the 3.5": unverified |
 
 **What the newer panels cannot do.** *Settings → Panel* says it under the panel's name, and
 the panel lists show it when you point at one.
@@ -107,7 +108,7 @@ the panel lists show it when you point at one.
 | JONSBO ZC-360 | yes | no | its own (0–100) | yes | the three screens take their pictures one after the other: some 8 a second when all three change |
 | JONSBO TF3-360SC pump, Turing 1.6" and 2.1" USB | yes | not proven | its own | yes | TURZX USB panels inside |
 | JONSBO DS916 | yes | no | none: dimming darkens the picture | no: it shows its own animation again | whole JPEG pictures; fine detail may soften |
-| JONSBO DS339, VMAX 4.6" | no: choose the model | no | none: dimming darkens the picture | yes: turned off | on Windows the maker's driver, which its app installs |
+| JONSBO DS339, VMAX 4.6" | no: choose the model | no | none: dimming darkens the picture | yes: turned off | on Windows both of its USB interfaces need the WinUSB driver ([how](#jonsbo-ds916-and-ds339)) |
 | Hongtai / Jungle Leopard | yes | no | its own (0–100) | no: it shows its own animation again | whole JPEG pictures of at most 80 KB over a serial port: a few a second, and a busy picture loses detail |
 | Lian Li | yes | no | its own (0–100) | not known yet | whole JPEG pictures; close L-Connect while Libre Panel runs |
 | Thermalright Trofeo Vision | yes | no | none: dimming darkens the picture | no: it shows its own picture again | whole JPEG pictures; close TRCC while Libre Panel runs |
@@ -169,7 +170,9 @@ a TURZX panel comes from the notes of the MIT-licensed
 ### JONSBO DS916 and DS339
 
 Neither has a TURZX controller inside; their protocols come from the JONSBO drivers of
-[InfoPanel](https://github.com/habibrehmansg/infopanel) (GPL-3.0). Both are unverified.
+[InfoPanel](https://github.com/habibrehmansg/infopanel) (GPL-3.0). The DS339 runs, as its
+owner reports ([#46](https://github.com/syntensa/libre-panel/issues/46)); the DS916 is
+unverified.
 
 - **DS916** (9.16", 1920×462, `device.model = "jonsbo-ds916"`, or found by `auto`): a USB
   serial port (`33c3:f101`) that takes whole JPEG pictures. It shows Lumen like the 9.2" bars.
@@ -179,10 +182,27 @@ Neither has a TURZX controller inside; their protocols come from the JONSBO driv
   it shows its own animation.
 - **DS339** (3.39", 960×376, `device.model = "jonsbo-ds339"`): a USB display chip, the
   MacroSilicon MS9132 (`345f:9132`). USB-to-HDMI adapters have the same chip, so `auto` never
-  opens it; choose the model in *Settings → Panel*. On Windows its pictures need the driver
-  that JONSBO's app installs (install the app once, then close it); on Linux,
+  opens it; choose the model in *Settings → Panel*. On Linux,
   `libre-panel system-setup --linux` gives your user access to it. The brightness goes into
   the pixels; quitting with `dark_on_quit` turns it off.
+
+  **On Windows both of its USB interfaces need the WinUSB driver.** Libre Panel (from 0.9)
+  talks to USB devices through WinUSB alone, and the DS339 does not come with it: an owner's
+  panel had `libusb0` on its video interface and Windows' HID driver (`HidUsb`) on the other,
+  and Libre Panel said `incompatible driver is installed for this interface`. Set once with
+  [Zadig](https://zadig.akeo.ie), it ran:
+
+  1. Quit Libre Panel and JONSBO's app, and start Zadig.
+  2. *Options → List All Devices*.
+  3. Choose `msusb video (Interface 3)`, set the driver on the right to *WinUSB* and press
+     *Replace Driver*.
+  4. Do the same for `usb extscreen (Interface 0)`.
+  5. Start Libre Panel again and choose the DS339 in *Settings → Panel*.
+
+  JONSBO's own app talks to the panel through the drivers that were there before, so expect
+  it not to find the panel afterwards. To go back, uninstall both entries in Windows'
+  Device Manager (with *Attempt to remove the driver for this device*), replug the panel
+  and, if its app still does not find it, install that app again.
 
 ## Hongtai / Jungle Leopard
 
@@ -200,7 +220,8 @@ region or screen timeouts, or switch the pump's motor.
 
 The VMAX 4.6" (960×320) is a MacroSilicon MS9132 USB display chip like the JONSBO DS339's and
 runs on the same driver: choose `vmax-4.6` (*Settings → Panel*); `auto` does not open the chip.
-Unverified.
+On Windows its two USB interfaces need the WinUSB driver as [the DS339's](#jonsbo-ds916-and-ds339)
+do. Unverified.
 
 ## Thermalright Trofeo Vision
 
@@ -452,7 +473,9 @@ touches firmware.
 
 **Windows:** USB (V1.x) panels come with the WinUSB driver bound through
 their descriptors; no Zadig needed. `pip install "libre-panel[usb]"` also
-installs a bundled libusb.
+installs a bundled libusb. Two kinds of panel do need the WinUSB driver set by hand, once,
+with [Zadig](https://zadig.akeo.ie): the JONSBO DS339 and the VMAX 4.6"
+([both of their interfaces](#jonsbo-ds916-and-ds339)), and Waveshare's 2.8" as a USB display.
 
 **Linux:** your user needs permission to use the panel. *Start* offers it as one click while the
 panel cannot be used (and *Settings → Sensors* always has it): your system asks for the
