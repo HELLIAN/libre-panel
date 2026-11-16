@@ -155,7 +155,7 @@
         <li><a href="#game"><img src="images/tile-game.png" width="600" height="300" loading="lazy" decoding="async" alt="Arena, the game screen: the frame rate large with its 1% low and frame time, and its course"><span><b>Game mode</b><small>An entrance for every game, the frame rate with its lows, a report after the round.</small></span></a></li>
         <li><a href="#screens"><img src="images/tile-screens.png" width="600" height="300" loading="lazy" decoding="async" alt="Encore: the cover large, the track, the artist and the album"><span><b>Music, weather and time</b><small>Encore, Nimbus and Almanac, which take over while music plays or you are away.</small></span></a></li>
         <li><a href="#screens-in-turn"><img src="images/tile-screens-in-turn.png" width="600" height="300" loading="lazy" decoding="async" alt="Nimbus opening from a line of light, as one screen follows another"><span><b>Screens in turn</b><small>Five minutes this, ten minutes that, and round again.</small></span></a></li>
-        <li><a href="#start-screen"><img src="images/tile-start-screen.png" width="600" height="300" loading="lazy" decoding="async" alt="The panel's boot logo in Libre Panel's look: its mark and its name"><span><b>The panel's own start screen</b><small>Its boot logo and standby clip in Libre Panel's look, with one click.</small></span></a></li>
+        <li><a href="#start-screen"><img src="images/tile-start-screen.png" width="600" height="300" loading="lazy" decoding="async" alt="The panel's boot logo in Libre Panel's look: its mark and its name"><span><b>The panel's own start screen</b><small>Its boot logo and standby clip in Libre Panel's look. Putting them on is off since 0.9.2.</small></span></a></li>
         <li><a href="#bars-on-end"><img src="images/tile-vertical.png" width="600" height="300" loading="lazy" decoding="async" alt="Libre Panel's screens for a bar on end, side by side"><span><b>Bars on end</b><small>Mounted upright? Every screen is laid out anew, not turned.</small></span></a></li>
         <li><a href="#ai"><img src="images/tile-agents.png" width="600" height="300" loading="lazy" decoding="async" alt="Agents: Claude Code working, with how much of five hours and seven days is used"><span><b>What your AI tools are doing</b><small>Claude Code and Codex: working, waiting for you, and the plan's limits.</small></span></a></li>
         <li><a href="#sizes"><img src="images/tile-sizes.png" width="600" height="300" loading="lazy" decoding="async" alt="Studio on a bar, and Slate, Libre Default, Orbit, Column and Pico on the smaller panels"><span><b>Every panel size</b><small>From the 0.96" stick to the 12.3" screen, round and portrait ones too.</small></span></a></li>
@@ -416,10 +416,10 @@
         <div class="feature-copy">
           <div><span class="label">Start screen</span><h3>The panel's own start, in Libre Panel's look</h3></div>
           <div class="copy">
-            <p>TURZX USB panels show a logo of their own when they are switched on and play a clip when the PC starts. Libre Panel draws both for the size of your panel and puts them on it with one click.</p>
+            <p>TURZX USB panels show a logo of their own when they are switched on and play a clip when the PC starts. Libre Panel draws both for the size of your panel and gives you their files. <b>Putting them on the panel is switched off since 0.9.2</b>: one 9.2" ran out of room for its start screen and has kept restarting since, while on other panels the same files were written without trouble.</p>
             <details class="more">
               <summary>More<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-            <p>Both show before any app talks to the panel, and Libre Panel asks before it puts them on. Settings → Panel → Start screen. The factory logo stays on the panel and comes back with another click.</p>
+            <p>Both show before any app talks to the panel. Settings → Panel → Start screen shows the looks and what is on your panel, and takes a boot logo off again: the factory logo stays on the panel and comes back. Writing comes back when Libre Panel can tell how much fits on a panel.</p>
             </details>
           </div>
         </div>
@@ -824,6 +824,8 @@
             <li><b>Turing / TURZX</b><span class="chip chip-quiet">USB, video mode</span><span class="desc">8.8", 9.2", 12.3"</span></li>
             <li><b>Turing Smart Screen</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5", 8.8"</span></li>
             <li><b>JONSBO ZC-360</b><span class="chip chip-quiet">USB</span><span class="desc">each screen its own panel</span></li>
+            <li><b>JONSBO DS339</b><span class="chip chip-quiet">USB</span><span class="desc">3.39"</span></li>
+            <li><b>WeAct Display FS V1</b><span class="chip chip-quiet">COM port</span><span class="desc">0.96"</span></li>
             <li><b>Waveshare USB Monitor</b><span class="chip chip-quiet">USB</span><span class="desc">2.8", as a USB display</span></li>
           </ul>
         </div>
@@ -836,8 +838,8 @@
             <li><b>UsbPCMonitor</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5", 5", 7"</span></li>
             <li><b>XuanFang</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5"</span></li>
             <li><b>Kipye Qiye</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5"</span></li>
-            <li><b>WeAct Display FS V1</b><span class="chip chip-quiet">COM port</span><span class="desc">0.96", 3.5"</span></li>
-            <li><b>JONSBO</b><span class="chip chip-quiet">USB</span><span class="desc">ZC-360 as one picture, TF3-360SC, DS916, DS339</span></li>
+            <li><b>WeAct Display FS V1</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5"</span></li>
+            <li><b>JONSBO</b><span class="chip chip-quiet">USB</span><span class="desc">ZC-360 as one picture, TF3-360SC, DS916</span></li>
             <li><b>VMAX</b><span class="chip chip-quiet">USB</span><span class="desc">4.6"</span></li>
             <li><b>Hongtai / Jungle Leopard</b><span class="chip chip-quiet">COM port</span><span class="desc">Chill Arc 360, MSI EZ Display and more</span></li>
             <li><b>Lian Li</b><span class="chip chip-quiet">USB</span><span class="desc">Universal Screen, HydroShift II, OLED Curve</span></li>
@@ -951,7 +953,7 @@
       </ol>
       <div class="python">
         <p>With Python instead:</p>
-<pre><code>pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.0"
+<pre><code>pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.3"
 libre-panel tray               <span class="c"># the background app with its tray icon</span>
 libre-panel doctor             <span class="c"># check your panel, write a report</span></code></pre>
       </div>
@@ -1015,9 +1017,11 @@ libre-panel doctor             <span class="c"># check your panel, write a repor
         </details>
         <details>
           <summary>Can it harm my panel?<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-          <div class="answer"><p>Libre Panel sends display commands only: pictures, brightness, video. It
-            never touches the firmware and stores nothing on the panel; firmware updates stay the
-            vendor app's job.</p></div>
+          <div class="answer"><p>Showing themes uses display commands only: pictures, brightness, video.
+            Libre Panel never touches the firmware. The one thing it ever stored on a panel was a
+            start screen, on a click, and that did harm once: a 9.2" has kept restarting since its
+            start screen was written with 0.9.1. Since 0.9.2 Libre Panel writes no file to a panel
+            (<a href="#start-screen">more</a>). Firmware updates stay the vendor app's job.</p></div>
         </details>
         <details>
           <summary>Does it run on macOS?<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>

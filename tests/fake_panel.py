@@ -27,6 +27,28 @@ class Unplugged(Exception):
     """Stands in for usb.core.USBError."""
 
 
+STANDBY_CLIP = "usr/data/standby.h264"  # (the panel's standby clip)
+
+
+def echo_of(packet: bytes) -> list[bytes]:
+    """What a port in a terminal's line mode sends back of a packet, in the pieces it comes
+    in: control bytes written out (^X), a line's end as CR LF, a rubbed-out letter as BS,
+    space, BS. None of them is a reply; the first begins as the sync's reply does (0A C8),
+    as a piece may."""
+    out = bytearray()
+    for byte in packet:
+        if byte in (0x0A, 0x0D):
+            out += b"\r\n"
+        elif byte == 0x7F:
+            out += b"\x08 \x08"
+        elif byte < 0x20:
+            out += bytes([0x5E, 0x40 + byte])
+        else:
+            out.append(byte)
+    pieces = [bytes(out[at : at + 61]) for at in range(0, len(out), 61)]
+    return [b"\x0a\xc8" + pieces[0][:10], *pieces]
+
+
 class FakePanel:
     RING = 5
     MAX_BLOCK = 202752
@@ -76,11 +98,78 @@ class FakePanel:
         self.shown: list[str] = []
         self.saved: list[bytes] = []
         self._piece = 0
+        # what the panel names itself in its answer to the sync
+        self.hello = b"turzx_00"
+        # a panel whose program is not running: it is on the bus and takes no packet
+        self.deaf = False
+        # files a 42 does not take off (it is accepted all the same), and commands that are
+        # taken and never answered
+        self.kept_files: set[str] = set()
+        self.unanswered: set[int] = set()
+        # commands after which the panel leaves the bus at once, without an answer, as one
+        # whose program ends there (each once), and whether a read fails then, as a panel
+        # that is gone fails it (else it times out, as one that restarts does)
+        self.leaves_once: set[int] = set()
+        self.gone_reads_fail = False
+        # a panel that plays its standby clip, as one set to start with it does: it does not
+        # let the clip's file go while it plays it (42 is accepted, the file stays), and 111
+        # stops the playing. With ``clip_s`` it restarts at the clip's end for as long as it
+        # plays: on the bus for that long, off it for ``restart_away_s``, and playing again
+        # when it is back
+        self.plays_clip = False
+        self.clip_s: float | None = None
+        self._plays_since: float | None = None
+        # a panel whose program does not read what is sent: its endpoint takes that many
+        # packets each time it is on the bus and no more (the next one waits until the time
+        # given is over, and fails when the panel leaves), and none is answered. None: it
+        # reads
+        self.takes: int | None = None
+        self._taken = 0
+        # a panel whose program is up only ``wakes_s`` after it came: what it is sent before
+        # that waits in its endpoint and is answered then, in order
+        self.wakes_s: float | None = None
+        self._since: float | None = None
+        self._dozing: list[bytes] = []
+        # a panel that starts as a 9.2" was measured to: its port takes nothing for
+        # ``opens_s`` after the panel came (a packet waits), then sends back what it gets,
+        # unread, until ``cooked_s`` after it came (a port that no program has set up yet
+        # echoes); what comes after that is read (and answered from ``wakes_s`` on). The
+        # commands of the packets it sent back are kept in ``unread``
+        self.opens_s: float | None = None
+        self.cooked_s: float | None = None
+        self.unread: list[int] = []
 
     @property
     def present(self) -> bool:
         """On the bus (not unplugged, not in the middle of a restart)."""
-        return not self.unplugged and time.monotonic() >= self.away_until
+        self._clip_end()
+        there = not self.unplugged and time.monotonic() >= self.away_until
+        if not there:  # (it comes back as after power-on: its endpoint empty, its program down)
+            self._taken, self._since, self._dozing = 0, None, []
+        elif self._since is None:
+            self._since = time.monotonic()
+        return there
+
+    def _dozes(self) -> bool:
+        """Its program is not up yet (``wakes_s`` after it came)."""
+        if self.wakes_s is None or self._since is None:
+            return False
+        return time.monotonic() - self._since < self.wakes_s
+
+    def _clip_end(self) -> None:
+        """The restart of a panel that fails at its clip's end (``clip_s``)."""
+        now = time.monotonic()
+        if self.clip_s is None or self.unplugged:
+            self._plays_since = None
+            return
+        if now < self.away_until:
+            return
+        if self._plays_since is None:  # it is back: it plays its clip from the start
+            self._plays_since = now
+            self.plays_clip = STANDBY_CLIP in self.files
+        elif self.plays_clip and now - self._plays_since >= self.clip_s:
+            self.away_until = now + self.restart_away_s
+            self._plays_since, self.pending = None, []
 
     def _restart(self) -> None:
         self.restarts += 1
@@ -113,7 +202,38 @@ class FakePanel:
         if not self.present or self.fail_next_writes:
             self.fail_next_writes = max(0, self.fail_next_writes - 1)
             raise usb.core.USBError("No such device (it may have been disconnected)", errno=19)
+        if self.deaf:
+            time.sleep(min(timeout, 20) / 1000)
+            raise usb.core.USBTimeoutError("Operation timed out")
         data = bytes(data)
+        if self.opens_s is not None:  # (its port is not open yet: the packet waits)
+            until = time.monotonic() + timeout / 1000
+            while self._since is not None and time.monotonic() - self._since < self.opens_s:
+                if not self.present:
+                    gone = "No such device (it may have been disconnected)"
+                    raise usb.core.USBError(gone, errno=19)
+                if time.monotonic() >= until:
+                    raise usb.core.USBTimeoutError("Operation timed out")
+                time.sleep(0.002)
+        cooked = self.cooked_s is not None and self._since is not None
+        if cooked and time.monotonic() - self._since < self.cooked_s:
+            # (open, and no program has set it up: what it gets comes back and is not read)
+            self.commands.append(decode_packet(data[:512])[0])
+            self.unread.append(self.commands[-1])
+            self.pending.extend(echo_of(data[:512]))
+            return
+        if self.takes is not None:  # (nothing reads: its endpoint takes so many, the rest wait)
+            if self._taken >= self.takes:
+                until = time.monotonic() + timeout / 1000
+                while time.monotonic() < until:
+                    if not self.present:
+                        gone = "No such device (it may have been disconnected)"
+                        raise usb.core.USBError(gone, errno=19)
+                    time.sleep(0.005)
+                raise usb.core.USBTimeoutError("Operation timed out")
+            self._taken += 1
+            self.commands.append(decode_packet(data[:512])[0])
+            return
         plain = decode_packet(data[:512])  # checks trailer and magic
         cmd = plain[0]
         self.commands.append(cmd)
@@ -145,8 +265,11 @@ class FakePanel:
             used = sum(len(data) for data in self.files.values())
             if self.room is None or used + size <= self.room:
                 self.files[name] = payload
-        if cmd == 42:
+        playing = self.plays_clip and cmd == 42 and name == STANDBY_CLIP
+        if cmd == 42 and name not in self.kept_files and not playing:
             self.files.pop(name, None)
+        if cmd == 111:
+            self.plays_clip = False
         if cmd == 113:
             assert name in self.files, f"{name} shown but not there"
             self.shown.append(name)
@@ -161,7 +284,7 @@ class FakePanel:
         if cmd == 14:
             assert 0 <= plain[8] <= 102
             self.brightness.append(plain[8])
-        reply = bytearray(bytes([cmd, ACK]) + (b"turzx_00" if cmd == 10 else b"")).ljust(512, b"\0")
+        reply = bytearray(bytes([cmd, ACK]) + (self.hello if cmd == 10 else b"")).ljust(512, b"\0")
         if cmd == 110:
             size = struct.unpack(">I", plain[8:12])[0]
             name = bytes(plain[16 : 16 + size])
@@ -200,6 +323,18 @@ class FakePanel:
         if cmd == 11:
             self._restart()  # gone before it answers
             return
+        if cmd in self.leaves_once:
+            self.leaves_once.discard(cmd)
+            self.away_until = time.monotonic() + self.restart_away_s
+            self.pending = []
+            return
+        if cmd in self.unanswered:
+            return
+        if self._dozes():
+            self._dozing.append(bytes(reply))
+            return
+        self.pending.extend(self._dozing)  # (up: what it was sent meanwhile is answered first)
+        self._dozing.clear()
         self.pending.append(bytes(reply))
 
     # endpoint IN
@@ -207,6 +342,11 @@ class FakePanel:
         import usb.core
 
         assert length >= READ_LEN, "read at least 1024 bytes or the ZLP stays in the pipe"
+        if not self.present and self.gone_reads_fail:
+            raise usb.core.USBError("No such device (it may have been disconnected)", errno=19)
+        if self._dozing and not self._dozes():
+            self.pending.extend(self._dozing)
+            self._dozing.clear()
         if not self.present or not self.pending:
             raise usb.core.USBTimeoutError("Operation timed out")
         return self.pending.pop(0)

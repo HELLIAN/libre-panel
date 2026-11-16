@@ -273,5 +273,17 @@ def test_the_models_of_both():
     assert nine.size("landscape") == (1920, 462) and default_theme(nine) == "lumen"
     assert three.size("landscape") == (960, 376) and default_theme(three) == "libre-default"
     assert models_for_usb(0x33C3, 0xF101) == [nine] and three in models_for_usb(0x345F, 0x9132)
-    assert nine.driver == three.driver == "unverified"
+    # (the DS339 runs, as its owner reports: #46 and 0.9.0 on Windows)
+    assert (nine.driver, three.driver) == ("unverified", "supported")
     assert ms9132.edid_size(edid(376, 960)) == (376, 960) and ms9132.edid_size(bytes(128)) is None
+
+
+def test_the_ds339_says_which_driver_it_needs_on_windows():
+    """An owner's DS339 had libusb0 on its video interface and Windows' HID driver on the
+    other: Libre Panel 0.9 could not open it ("incompatible driver is installed for this
+    interface") until both had WinUSB. The error names that, on Windows alone."""
+    wrong = "incompatible driver is installed for this interface"
+    assert "WinUSB" in ms9132.driver_hint(wrong, True)
+    assert ms9132.driver_hint(wrong, False) == ""
+    assert ms9132.driver_hint("[Errno 110] Operation timed out", True) == ""
+    assert "Zadig" in ms9132.driver_hint("Operation not supported or unimplemented", True)

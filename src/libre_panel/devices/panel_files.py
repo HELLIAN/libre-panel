@@ -16,16 +16,27 @@ does comes from SPUR II's reading of the 8.8"'s firmware and its measurements on
 
 Its safeguards: only on the person's own action, never while the panel shows themes (the
 app pauses it first); names only below ``usr/data/``, relative, without ``..``; at most
-1 MiB a file; after writing, the size is asked and compared (where the panel kept the file it
-had, that one is taken away and the new one written again). 12 (halt), 13 and 11 are never
+1 MiB a file; after writing, the size is asked and compared (a file the panel kept is left as
+it is: nothing is taken away to be written again). 12 (halt), 13 and 11 are never
 sent from here, and 110 only with the clip's real name (an empty one, saved, would lose the
 standby clip for good).
+
+**Writing is switched off** (:func:`writes_on`, issue 52). ``usr/data`` holds the panel's own
+settings too (``app.cfg``), and on one 9.2" the room there ran out: a boot logo ended at
+16 KiB, and from then on that panel took no file and answered each write at once, which this
+module read as "the panel kept the file it had". 0.9.1 deleted that file and wrote the clip
+again: the panel said it had all 706,912 bytes, the settings were saved (125), and the panel
+has not got through a start since. On other panels, a 9.2" and a 12.3" among them, the same
+files were written for months without trouble, and a panel cannot be asked how much room it
+has. Until Libre Panel can tell, no file is written to one: asking what it holds and taking
+the boot logo off stay.
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import os
 import struct
 import subprocess
 from collections.abc import Callable
@@ -76,6 +87,31 @@ CMD_SHOW_JPEG = 113
 CMD_SAVE_SETTINGS = 125
 START_WITH_CLIP = 2  # the settings' start mode: play the clip they name
 NEVER = frozenset({11, 12, 13})  # restart, halt, and the other save of the settings
+
+# Writing a file to a panel is switched off (issue 52). The files go where the panel keeps its
+# own settings, and on one 9.2" the room there ran out: files ended early or were not taken,
+# 0.9.1 forced a clip in, and that panel has kept restarting since. On other panels the same
+# files were written for months without trouble, and a panel cannot be asked how much room it
+# has. Until Libre Panel can tell, it writes nothing there. Who looks into it on a panel of
+# their own sets this in the environment, at their own risk.
+WRITES_ENV = "LIBRE_PANEL_PANEL_WRITES"
+WRITES_WORD = "at-my-own-risk"
+
+
+def writes_on() -> bool:
+    """Whether files are written to a panel: not in this version, but for who asks for it in
+    the environment (``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk``)."""
+    return os.environ.get(WRITES_ENV) == WRITES_WORD
+
+
+def writes_off() -> str:
+    """Why nothing is written, as the app says it."""
+    return t(
+        'Writing to the panel is switched off in this version. One 9.2" ran out of room for '
+        "its start screen and has kept restarting since; on other panels the same files were "
+        "written without trouble. Writing comes back when Libre Panel can tell how much fits "
+        "on a panel."
+    )
 
 
 def models() -> list[PanelModel]:
@@ -241,20 +277,17 @@ class PanelFiles:
         return 0 if size == 0xFFFFFFFF else size
 
     def write(self, name: str, data: bytes) -> None:
-        """Write a file, and check that it has the size it should. Where the panel kept the
-        file it had (a 9.2" kept its standby clip when a larger one came, it seems where there
-        is no room for both at once), that one is taken away and the new one written again."""
+        """Write a file, and check that it has the size it should. A file the panel kept in
+        place of the new one is left as it is and said: never taken away to write again
+        (0.9.1 did so on a 9.2" that had no room left, and that panel has kept restarting
+        since)."""
+        if not writes_on():
+            raise DeviceError(writes_off())
         raw = checked_name(name)
         if not data or len(data) > MAX_FILE:
             raise DeviceError(f"{name}: a file is 1 byte to 1 MiB, not {len(data)}")
         self._command(CMD_WRITE_FILE, file_args(raw, len(data)), data, timeout_ms=20000)
         written = self.size(name)
-        if written not in (len(data), 0):
-            log.info("start screen: the panel kept the %s it had (%d bytes, not %d): taken "
-                     "away, written again", name, written, len(data))  # fmt: skip
-            self.delete(name)
-            self._command(CMD_WRITE_FILE, file_args(raw, len(data)), data, timeout_ms=20000)
-            written = self.size(name)
         if written != len(data):
             raise DeviceError(f"{name}: the panel has {written} bytes of it, not {len(data)}")
 
@@ -353,6 +386,8 @@ class StartScreen:
         where: Where = FIRST, design: str = bootscreen.DEFAULT,
     ) -> dict[str, Any]:  # fmt: skip
         """The boot logo written and shown (it shows at the next cold start)."""
+        if not writes_on():
+            raise DeviceError(writes_off())
 
         def job(files: PanelFiles, found: PanelModel) -> dict[str, Any]:
             data = logo_jpeg(found, orientation=orientation, design=design)
@@ -382,6 +417,8 @@ class StartScreen:
         from libre_panel.devices.h264 import find_ffmpeg
         from libre_panel.devices.turzx_video import full_range
 
+        if not writes_on():
+            raise DeviceError(writes_off())
         ffmpeg = self.ffmpeg() if self.ffmpeg else find_ffmpeg()
 
         def job(files: PanelFiles, found: PanelModel) -> dict[str, Any]:

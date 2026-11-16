@@ -218,8 +218,14 @@ when you stop.
 
 TURZX USB panels show a logo of their own when they are switched on and play a clip when the PC
 starts. Libre Panel draws both in the look you choose (its own, Aurora, Pulse, Circuit, Night,
-Levels or Dark) for your panel's size, as finely as the panel can show them, and puts them on
-it with one click; the factory logo comes back with another.
+Levels or Dark) for your panel's size, as finely as the panel can show them, and gives you
+their files.
+
+**Putting them on the panel is switched off since 0.9.2.** One 9.2" ran out of room for its
+start screen and has kept restarting since; on other panels the same files were written
+without trouble. Writing comes back when Libre Panel can tell how much fits on a panel. What
+is on a panel can still be asked, and a boot logo taken off again: the panel then shows its
+factory logo.
 
 ### Every size, round and upright
 
@@ -320,12 +326,12 @@ nothing while no theme shows it.
 |---|---|---|---|
 | **Turing / TURZX** | 8.8", 9.2", 12.3" | 1.6", 2.1" round, 2.8" round, 4.6", 5.2", 8" | USB, video mode |
 | **Turing Smart Screen** | 3.5", 8.8" | 2.1" round, 5" | COM port |
-| **JONSBO** | ZC-360, each screen its own panel | ZC-360 as one picture, TF3-360SC, DS916, DS339 | USB |
+| **JONSBO** | ZC-360, each screen its own panel; DS339 | ZC-360 as one picture, TF3-360SC, DS916 | USB |
 | **Waveshare USB Monitor** | 2.8", as a USB display | – | USB |
 | **UsbPCMonitor** | – | 3.5", 5", 7" | COM port |
 | **XuanFang** | – | 3.5" | COM port |
 | **Kipye Qiye** | – | 3.5" | COM port |
-| **WeAct Display FS V1** | – | 0.96", 3.5" | COM port |
+| **WeAct Display FS V1** | 0.96" | 3.5" | COM port |
 | **VMAX** | – | 4.6" | USB |
 | **Hongtai / Jungle Leopard** | – | Chill Arc 360, MSI EZ Display and more | COM port |
 | **Lian Li** | – | Universal Screen, HydroShift II, OLED Curve | USB |
@@ -441,7 +447,7 @@ administrator rights.
 ### With Python
 
 ```bash
-pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.0"
+pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.3"
 libre-panel tray                    # the background app with its tray icon; opens its window
 libre-panel autostart enable        # start it whenever you log in
 ```
@@ -554,13 +560,12 @@ from outside the kernel, which Libre Panel does not install. More:
 
 Video mode is for the TURZX USB panels, which have a video decoder. The Windows and Linux
 downloads carry the [ffmpeg](https://ffmpeg.org) it needs, so you only name the panel's
-standby clip, as the vendor app shows it, in *Settings → Panel*, or put Libre Panel's own
-standby clip on the panel under *Settings → Panel → Start screen*, which names it for you. On
-the 9.2" it then turns itself on; on the other TURZX USB panels set it to *on* to try it. With
-a pip install, install ffmpeg yourself (Windows: `winget install ffmpeg`; Linux: your
-distribution's package) or name it in the same place. Video mode saves nothing on the panel;
-only the Start screen writes to it, on a click. The serial panels get still frames, with only
-the changed parts sent ([details](docs/CONFIGURATION.md#video)).
+standby clip, as the vendor app shows it, in *Settings → Panel*. On the 9.2" it then turns
+itself on; on the other TURZX USB panels set it to *on* to try it. With a pip install, install
+ffmpeg yourself (Windows: `winget install ffmpeg`; Linux: your distribution's package) or name
+it in the same place. Video mode saves nothing on the panel, and since 0.9.2 Libre Panel
+writes no file to a panel at all ([why](#the-panels-own-start-screen)). The serial panels get
+still frames, with only the changed parts sent ([details](docs/CONFIGURATION.md#video)).
 </details>
 
 <details>
@@ -588,10 +593,10 @@ guesses hit new programs that are not signed, as Libre Panel's are not yet. To b
 your file is the one built here:
 
 - **Its SHA-256** is the one in `SHA256SUMS` on the release's page. In PowerShell:
-  `Get-FileHash .\libre-panel-0.9.0-windows-x64-setup.exe` (Linux: `sha256sum -c SHA256SUMS`).
+  `Get-FileHash .\libre-panel-0.9.3-windows-x64-setup.exe` (Linux: `sha256sum -c SHA256SUMS`).
 - **Where it was built:** from 0.8.0 on, GitHub signs for every download that this
   repository's release workflow built it, and from which commit:
-  `gh attestation verify libre-panel-0.9.0-windows-x64-setup.exe --repo syntensa/libre-panel`.
+  `gh attestation verify libre-panel-0.9.3-windows-x64-setup.exe --repo syntensa/libre-panel`.
 
 When it is, allow it in *Windows Security → Virus & threat protection → Protection history*
 (*Actions → Allow on device*), run the setup again, and report the file to Microsoft as a false
@@ -607,9 +612,11 @@ downloads is planned.
 <summary><b>Can it harm my panel?</b></summary>
 <br>
 
-Libre Panel sends display commands only: pictures, brightness, video. It never touches the
-firmware; it stores nothing on the panel but a start screen you put there yourself, and
-firmware updates stay the vendor app's job.
+Showing themes uses display commands only: pictures, brightness, video. Libre Panel never
+touches the firmware. The one thing it ever stored on a panel was a start screen, on a click,
+and that did harm once: a 9.2" has kept restarting since its start screen was written with
+0.9.1. Since 0.9.2 Libre Panel writes no file to a panel
+([more](#the-panels-own-start-screen)). Firmware updates stay the vendor app's job.
 </details>
 
 <details>

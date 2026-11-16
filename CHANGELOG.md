@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.9.3 — 2026-11-16
+
+A hotfix for 0.9.2: `libre-panel start-screen`, the command for a panel that keeps
+restarting, now copes with how a 9.2" starts, measured on a sound one. And three things an
+owner asked for: the JONSBO DS339's driver on Windows, the WeAct 0.96" confirmed, the
+brightness in steps of 1 %. Coming from 0.8? Everything 0.9 brought follows below: a third
+less memory, up to 38 % less processor and a quicker start, with the same pictures on the
+panel, pixel for pixel.
+
+**Fixed**
+- **`libre-panel start-screen` took a starting panel's echo for an answer.** A sound 9.2"
+  (the firmware of the panel of issue 52), plugged in while the command waited, showed how
+  such a panel starts: its port takes nothing for 0.3 s, then sends back what it gets in
+  pieces that are no reply (it is open, and the panel's program has not set it up yet), and
+  the panel answers from 0.66 s on, each command within 2 to 3 ms. 0.9.2 counted those
+  pieces as answers: a panel that never answers would have filled the screen with them,
+  would not have been said to answer nothing, and a look at it could have ended with
+  "done". They are no answer now, told once each time the panel comes (how much, and how it
+  begins), and the last line says what the panel's port did: whether it took what was sent,
+  and whether it sent it back unread.
+- **The sync is the first thing sent each time the panel comes**, again every 300 ms while
+  it is unanswered and 100 ms after one that came back. 0.9.2 sent a step that was still
+  open first when the panel came again: into the port's echo, where it is lost. A step
+  follows the sync's answer.
+- **What the app's thirteen syncs say.** By its log the panel of issue 52 answered none of
+  them, each sent once. One sync in a starting panel's first two thirds of a second is lost
+  on a sound panel too, so that is less than it looked, and more than nothing: thirteen in a
+  row are not lost that way on a panel that answers through its two seconds. The chance is
+  small still; the command now tells how far that panel's port gets.
+
+**Added**
+- **The JONSBO DS339 runs, and says which driver it needs on Windows** (its owner's report,
+  [#46](https://github.com/syntensa/libre-panel/issues/46)). Libre Panel 0.9 talks to USB
+  devices through WinUSB alone, and the DS339 comes without it: "incompatible driver is
+  installed for this interface". Both of its interfaces take WinUSB once with Zadig; the
+  error now says so, and [the hardware guide](docs/HARDWARE.md#jonsbo-ds916-and-ds339) has
+  the steps.
+- **The WeAct Display FS 0.96" is confirmed**: pictures and brightness, by the same owner.
+
+**Changed**
+- **The brightness in steps of 1 %** (it was 5): the panel's, the one at night and while
+  you are away, and a second panel's own or its difference to the first.
+
+## 0.9.2 — 2026-11-15
+
+A hotfix for 0.9.1: one 9.2" has kept restarting since its start screen was written with
+0.9.1. Its log shows that the panel had run out of room for these files and that 0.9.1
+forced the clip in. **Libre Panel writes no start screen for now**, and has a command for a
+panel in that state. Coming from 0.8? Everything 0.9 brought follows below: a
+third less memory, up to 38 % less processor and a quicker start, with the same pictures on
+the panel, pixel for pixel.
+
+**Fixed**
+- **No file is written to a panel.** A TURZX USB panel keeps its boot logo and standby clip
+  where its own settings are, and on one 9.2" the room there ran out: a boot logo ended at
+  16,384 bytes, later files were not taken at all, and Libre Panel read that as "the panel
+  kept the file it had". 0.9.1 deleted that file and wrote the clip again; the panel said
+  it had all 706,912 bytes, its settings were saved, and it has not got through a start
+  since: on USB for two seconds and gone again, without end. On other panels, a 9.2" and a
+  12.3" among them, the same files have been written for months without trouble. What is
+  different on that panel is not known yet, and a panel cannot be asked how much room it
+  has: until Libre Panel can tell, *Put on the panel* is switched off. What is on the panel
+  can still be asked, and the boot logo taken off.
+- **Nothing on the panel is deleted to be written again**, as 0.9.1 did.
+
+**Added**
+- **`libre-panel start-screen`, for a panel that keeps restarting.** With the app quit,
+  `libre-panel start-screen remove-clip --wait` waits for the panel and, the moment it is on
+  the USB, stops the clip it may be playing, takes the clip off and checks that it is
+  off. `remove-logo` takes the boot logo off, `default-start` saves the panel's settings
+  with the start as it came, `factory` does all three, and without a word it says what the
+  panel holds. Each line says the milliseconds since the panel came, a step the panel
+  accepted is not sent again the next time it comes, and nothing is written to the panel's
+  files. The steps go to the Turing 9.2" alone, the panel they were seen to work on, and
+  only after it has answered as a TURZX panel does; another TURZX panel on the same PC is
+  told and sent nothing (`--model` names the panel to look at). It is tried on a simulated
+  panel only, and the chance is small: by its log, that panel answered the app nothing
+  after it began to restart. The command is there the moment the panel comes, goes on
+  until its time is over and says to the millisecond how far each coming gets.
+
 ## 0.9.1 — 2026-11-14
 
 A hotfix for 0.9.0, Libre Panel rewritten in Rust: a standby clip the panel kept in place of the
@@ -8,11 +88,12 @@ less memory, up to 38 % less processor and a quicker start, with the same pictur
 pixel for pixel.
 
 **Fixed**
-- **A standby clip the panel kept in place of the new one is written again.** A 9.2" mounted
-  upside down kept the upright Circuit clip it had when the one turned round came, 5 KB
-  larger, and the start screen stopped with "the panel has 701830 bytes of it, not 706912".
-  It seems to write a file anew only where there is room for both at once. Where the panel
-  keeps the file it had, Libre Panel now takes that one away and writes the new one again.
+- **A standby clip the panel kept in place of the new one is written again** (taken back in
+  0.9.2). A 9.2" mounted upside down kept the upright Circuit clip it had when the one turned
+  round came, 5 KB larger, and the start screen stopped with "the panel has 701830 bytes of
+  it, not 706912". It seems to write a file anew only where there is room for both at once.
+  Where the panel keeps the file it had, Libre Panel now takes that one away and writes the
+  new one again.
 - **The start screen's files to keep are turned round too** on a panel mounted upside down,
   as they are written to it (the JPEG and the H.264 were upright).
 

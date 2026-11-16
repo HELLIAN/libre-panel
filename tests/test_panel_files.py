@@ -18,6 +18,16 @@ from libre_panel.devices.models import get_model
 from libre_panel.render import bootscreen
 
 NINE = get_model("turing-9.2-usb")
+WRITES_OFF = (
+    'Writing to the panel is switched off in this version. One 9.2" ran out of room for its '
+    "start screen and has kept restarting since; on other panels the same files were written "
+    "without trouble. Writing comes back when Libre Panel can tell how much fits on a panel."
+)
+
+
+# (writing to a panel is switched off in this version, issue 52; what is sent when it is on
+# again stays tested: these tests ask for it as who looks into it does)
+pytestmark = pytest.mark.usefixtures("panel_writes")
 
 
 class FakePanel:
@@ -328,31 +338,99 @@ def test_a_file_is_at_most_a_mebibyte_and_has_the_size_it_should():
             files._command(never)
 
 
-def test_a_file_the_panel_kept_is_taken_away_and_written_again(caplog):
-    """A 9.2" kept its standby clip when a larger one came, it seems where there was no room
-    for both at once: the old one is taken away and the new one written again; where it fits
-    beside the old one, it is written at once; where it fits nowhere, the panel has none."""
+def test_a_file_the_panel_kept_is_left_as_it_is():
+    """A 9.2" kept its standby clip when another one came (it had no room left, and took no
+    file any more): the error says what the panel has, and nothing is taken away to be
+    written again (0.9.1 did so, and that 9.2" has kept restarting since); where the new one
+    fits beside the old one, it is written at once."""
     old, new = b"o" * 700, b"n" * 710
     clip = (F.STANDBY_CLIP, 0)
     panel = FakePanel({F.STANDBY_CLIP: old}, room=1000)
-    with caplog.at_level("INFO", logger="libre_panel.devices.panel_files"):
+    with pytest.raises(DeviceError, match="the panel has 700 bytes of it, not 710"):
         F.PanelFiles(panel).write(F.STANDBY_CLIP, new)
-    assert panel.files[F.STANDBY_CLIP] == new
-    assert panel.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip), (42, *clip),
-                          (40, F.STANDBY_CLIP, 710), (98, *clip)]  # fmt: skip
-    assert ("the panel kept the usr/data/standby.h264 it had (700 bytes, not 710): taken away, "
-            "written again") in caplog.text  # fmt: skip
+    assert panel.files[F.STANDBY_CLIP] == old
+    assert panel.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]  # (no 42)
     roomy = FakePanel({F.STANDBY_CLIP: old}, room=1410)
     F.PanelFiles(roomy).write(F.STANDBY_CLIP, new)
     assert roomy.files[F.STANDBY_CLIP] == new
     assert roomy.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]
-    full = FakePanel({F.STANDBY_CLIP: old}, room=705)
-    with pytest.raises(DeviceError, match="the panel has 0 bytes of it, not 710"):
-        F.PanelFiles(full).write(F.STANDBY_CLIP, new)
-    none = FakePanel(room=705)  # (nothing kept: nothing taken away)
-    with pytest.raises(DeviceError, match="the panel has 0 bytes of it, not 710"):
-        F.PanelFiles(none).write(F.STANDBY_CLIP, new)
-    assert none.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]
+    for cmd, *_ in panel.sent + roomy.sent:
+        assert cmd != 42
+
+
+def test_nothing_is_written_to_a_panel_in_this_version(isolated_home, monkeypatch):
+    """A 9.2" kept restarting, for good, after its start screen was written (issue 52), and
+    what on the panel does that is not known. Until it is, no file goes to a panel: neither
+    job opens it or makes anything, the lowest layer refuses too, and the app says so before
+    it pauses the themes. What the panel holds is still asked and the boot logo still taken
+    off; only the word in the environment switches writing on."""
+    import threading
+
+    from libre_panel.editor.server import make_server
+
+    for word in (None, "1", "true", "AT-MY-OWN-RISK"):
+        monkeypatch.delenv(F.WRITES_ENV, raising=False)
+        if word is not None:
+            monkeypatch.setenv(F.WRITES_ENV, word)
+        assert not F.writes_on(), word
+    monkeypatch.delenv(F.WRITES_ENV)
+    opened = []
+
+    def opener(asked):
+        opened.append(asked)
+        return panel, asked or NINE
+
+    def no_ffmpeg():
+        raise AssertionError("nothing is made for a clip that is not written")
+
+    panel = FakePanel({F.BOOT_LOGO: b"logo", F.STANDBY_CLIP: b"clip"})
+    screen = F.StartScreen(opener=opener, ffmpeg=no_ffmpeg)
+    for write in (screen.write_logo, lambda: screen.write_clip(60)):
+        with pytest.raises(DeviceError) as refused:
+            write()
+        assert str(refused.value) == WRITES_OFF
+    assert opened == [] and panel.sent == []  # the panel was not even opened
+    with pytest.raises(DeviceError) as refused:  # nor does the layer under them write
+        F.PanelFiles(panel).write(F.BOOT_LOGO, b"new logo")
+    assert str(refused.value) == WRITES_OFF and panel.sent == []
+    assert panel.files == {F.BOOT_LOGO: b"logo", F.STANDBY_CLIP: b"clip"}
+    # what the panel holds, and its boot logo taken off: as before
+    assert screen.state()["boot_logo"] == 4
+    panel.sent.clear()
+    assert screen.remove_logo() == {"model": NINE.id, "boot_logo": 0}
+    assert panel.sent == [(42, F.BOOT_LOGO, 0), (98, F.BOOT_LOGO, 0)]
+
+    class Controls:
+        def __init__(self):
+            self.acts = []
+
+        def act(self, action, value=None):
+            self.acts.append(action)
+            return {}
+
+        def snapshot(self):
+            return {"panel": {}}
+
+    controls = Controls()
+    srv = make_server(port=0, controls=controls)
+    srv.editor_state.start_screen_jobs = screen
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        assert request(port, "GET", "/api/start-screen")[1]["writes"] is False
+        panel.sent.clear()
+        for action in ("logo", "clip"):
+            status, data = request(port, "POST", "/api/start-screen", {"action": action})
+            assert (status, data) == (409, {"error": WRITES_OFF, "paused": False}), action
+        assert controls.acts == [] and panel.sent == []  # the themes were not paused for it
+        status, data = request(port, "POST", "/api/start-screen", {"action": "state"})
+        assert status == 200 and data["standby_clip"] == 4 and controls.acts == ["pause"]
+        monkeypatch.setenv(F.WRITES_ENV, F.WRITES_WORD)
+        assert request(port, "GET", "/api/start-screen")[1]["writes"] is True
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        srv.editor_state.close()
 
 
 def test_the_boot_logo_is_written_shown_and_taken_away_again():

@@ -185,7 +185,7 @@ function Running({ app, onClose }) {
       <${Slider}
         label=${t("Brightness")}
         value=${app.brightness ?? 0}
-        step=${5}
+        step=${1}
         format=${(v) => `${v} %`}
         onCommit=${(value) => appAction("brightness", value)}
       />

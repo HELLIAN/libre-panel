@@ -41,6 +41,7 @@ application); the HID interface needs none.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from typing import Any
 
@@ -58,6 +59,25 @@ from libre_panel.devices.models import PanelModel, get_model
 from libre_panel.i18n import t
 
 log = logging.getLogger(__name__)
+
+
+def driver_hint(error: str, windows: bool) -> str:
+    """What to do where Windows has another driver than WinUSB on the chip's interfaces (the
+    USB layer says the driver is incompatible or the operation not supported); "" else."""
+    said = error.lower()
+    wrong = (
+        "incompatible driver",
+        "deviceinterfaceguid",
+        "could not determine driver",
+        "not supported",
+    )
+    if not windows or not any(word in said for word in wrong):
+        return ""
+    return t(
+        "On Windows its two USB interfaces (0 and 3) need the WinUSB driver: set it once with "
+        "Zadig; the hardware guide has the steps."
+    )
+
 
 VENDOR_ID = 0x345F
 PRODUCT_ID = 0x9132
@@ -258,8 +278,11 @@ class Ms9132Display(Display):
         except usb.core.USBError as exc:
             self.close()
             self.counters.usb_errors += 1
+            error = str(exc)
+            hint = driver_hint(error, sys.platform == "win32")
+            said = f"{error}. {hint}" if hint else error
             raise DeviceError(
-                t("the {panel} did not start: {error}", panel=self.model.label, error=exc)
+                t("the {panel} did not start: {error}", panel=self.model.label, error=said)
             ) from exc
         except BaseException:
             self.close()

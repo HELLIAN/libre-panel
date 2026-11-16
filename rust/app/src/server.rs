@@ -2965,6 +2965,13 @@ fn start_screen_action(state: &State, exchange: &mut Exchange) {
     let way = mounted(state, n);
     // (a panel mounted upside down gets its start screen turned round, as its frames)
     let turned = device.rotate == 180;
+    if ["logo", "clip"].contains(&action.as_str()) && !screen::writes_on() {
+        // (nothing is written in this version: said before the themes are paused for it)
+        let mut told = lp_py::Dict::default();
+        told.insert("error".into(), Value::Str(screen::writes_off()));
+        told.insert("paused".into(), Value::Bool(false));
+        return exchange.json(&Value::Dict(told), 409);
+    }
     let mut paused = false;
     if let Some(app) = state.controls.upgrade() {
         let _ = app.act("pause", &Value::None); // (the panels are free for this, and stay so)

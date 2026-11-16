@@ -357,7 +357,7 @@ export function PanelCard() {
           <label class="panel-card-brightness">
             <${Icon} name="sun" size=${16} />
             <span>${t("Brightness")}</span>
-            <${Slider} label=${t("Brightness")} value=${app.brightness ?? 0} step=${5} format=${(v) => `${v} %`}
+            <${Slider} label=${t("Brightness")} value=${app.brightness ?? 0} step=${1} format=${(v) => `${v} %`}
               onCommit=${(value) => appAction("brightness", value)} />
           </label>
           <span class="grow"></span>

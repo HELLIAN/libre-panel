@@ -750,6 +750,11 @@ _CONFIRMED: set[str] = {
     # its USB display image: themes with live readings at 60 fps, upright and its backlight at
     # full since 0.7.5, through cold starts and sleep; an owner's reports (#30, #33, Linux)
     "waveshare-2.8-udisp",
+    # pictures and its brightness: an owner's report (0.9.0, Windows)
+    "weact-0.96",
+    # runs since 0.9.0 with the start its owner found for it (#46), on Windows once both of
+    # its USB interfaces have the WinUSB driver: the owner's report
+    "jonsbo-ds339",
 }
 # What the panels whose drivers were written from other projects' notes cannot do (their
 # drivers say why); each begins with what all of them share: nobody has run them yet.
@@ -759,11 +764,13 @@ _JPEG_SERIAL = (
     "second, no smooth motion, and a busy picture loses detail. When Libre Panel quits, the "
     "panel shows its own animation again."
 )
+# (Libre Panel's own USB layer talks to WinUSB alone on Windows: the maker's drivers, libusb0
+# on the video interface and Windows' HID driver on the other, are not enough for it)
 _MS9132 = (
-    'Not yet seen on the hardware. "Detect automatically" does not find it (USB-to-HDMI '
-    "adapters have the same chip): choose it by hand. On Windows it needs the maker's driver, "
-    "which comes with the maker's program. It has no backlight control: dimming darkens the "
-    "picture. No smooth motion."
+    '"Detect automatically" does not find it (USB-to-HDMI adapters have the same chip): '
+    "choose it by hand. On Windows its two USB interfaces need the WinUSB driver, set once "
+    "with Zadig (the hardware guide says how). It has no backlight control: dimming darkens "
+    "the picture. No smooth motion."
 )
 _LIANLI = (
     "Not yet seen on the hardware. It takes whole JPEG pictures: no smooth motion. Close "
@@ -803,7 +810,7 @@ _LIMITS = {
         "When Libre Panel quits, the panel shows its own animation again."
     ),
     "jonsbo-ds339": _MS9132,
-    "vmax-4.6": _MS9132,
+    "vmax-4.6": f"{_UNSEEN} {_MS9132}",
     "hongtai-480x960": _JPEG_SERIAL,
     "hongtai-1920x462": _JPEG_SERIAL,
     "lianli-universal-8.8": _LIANLI,

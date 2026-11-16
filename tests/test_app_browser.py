@@ -3671,9 +3671,9 @@ def test_settings_panel(app_url, isolated_home, monkeypatch):
 
         slider = page.get_by_role("slider", name="Brightness", exact=True)
         slider.focus()
+        slider.press("ArrowLeft")  # (a step is 1 %)
         slider.press("ArrowLeft")
-        slider.press("ArrowLeft")
-        waits_for(page, lambda: settings_config().device.brightness == 50)
+        waits_for(page, lambda: settings_config().device.brightness == 58)
         page.get_by_role("switch", name="Upside down").click()
         waits_for(page, lambda: settings_config().device.rotate == 180)
         page.get_by_role("switch", name="Upside down").click()

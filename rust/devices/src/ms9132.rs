@@ -54,6 +54,34 @@ fn ds339(report: [u8; 8]) -> [u8; 8] {
     }
 }
 
+/// driver_hint: what to do where Windows has another driver than WinUSB on the chip's
+/// interfaces (the USB layer says the driver is incompatible, or the operation not
+/// supported); None else. An owner's DS339 had libusb0 on its video interface (3) and
+/// Windows' HID driver on the other (0), and ran once both had WinUSB.
+pub fn driver_hint(error: &str, windows: bool) -> Option<String> {
+    let said = error.to_lowercase();
+    let wrong = [
+        "incompatible driver",
+        "deviceinterfaceguid",
+        "could not determine driver",
+        "not supported",
+    ];
+    (windows && wrong.iter().any(|word| said.contains(word))).then(|| {
+        lp_i18n::t(
+            "On Windows its two USB interfaces (0 and 3) need the WinUSB driver: set it once \
+             with Zadig; the hardware guide has the steps.",
+        )
+    })
+}
+
+/// An error's text with the driver's hint after it, where there is one.
+fn hinted(error: String, windows: bool) -> String {
+    match driver_hint(&error, windows) {
+        Some(hint) => format!("{error}. {hint}"),
+        None => error,
+    }
+}
+
 fn report(data: &[u8]) -> [u8; 8] {
     let mut out = [0u8; 8];
     out[..data.len()].copy_from_slice(data);
@@ -340,7 +368,8 @@ impl Ms9132 {
     }
 
     pub fn open(&mut self) -> Result<()> {
-        let (io, _) = usb_link::take(VENDOR_ID, &[PRODUCT_ID], &self.model.label())?;
+        let (io, _) = usb_link::take(VENDOR_ID, &[PRODUCT_ID], &self.model.label())
+            .map_err(|e| DeviceError(hinted(e.0, cfg!(windows))))?;
         self.open_on(Box::new(io))
     }
 
@@ -386,7 +415,10 @@ impl Ms9132 {
             self.keeper.with(|kept| kept.inner.counters.usb_errors += 1);
             return Err(DeviceError(tf(
                 "the {panel} did not start: {error}",
-                &[("panel", &label), ("error", &e.to_string())],
+                &[
+                    ("panel", &label),
+                    ("error", &hinted(e.to_string(), cfg!(windows))),
+                ],
             )));
         }
         self.keeper.start();
@@ -500,5 +532,24 @@ impl Driver for Ms9132 {
 impl Drop for Ms9132 {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hint for a wrong driver comes on Windows alone, for what the USB layer says of one.
+    #[test]
+    fn the_driver_hint_comes_where_windows_has_the_wrong_driver() {
+        let wrong = "incompatible driver is installed for this interface";
+        assert!(driver_hint(wrong, true).is_some_and(|hint| hint.contains("WinUSB")));
+        assert!(driver_hint(wrong, false).is_none());
+        let unset = "Could not find DeviceInterfaceGUIDs in registry. WinUSB driver may not be \
+                     correctly installed for this interface.";
+        assert!(driver_hint(unset, true).is_some());
+        assert!(driver_hint("[Errno 110] Operation timed out", true).is_none());
+        assert_eq!(hinted("no answer".to_string(), true), "no answer");
+        assert!(hinted(wrong.to_string(), true).starts_with(&format!("{wrong}. ")));
     }
 }

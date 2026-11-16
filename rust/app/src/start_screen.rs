@@ -32,6 +32,32 @@ const JPEG_STEPS: [(i64, bool); 6] = [
 const CLIP_CRF: i64 = 20;
 const CLIP_CRF_MIN: i64 = 17;
 const CLIP_CRF_MAX: i64 = 30;
+/// Writing a file to a panel is switched off (issue 52). The files go where the panel keeps
+/// its own settings, and on one 9.2" the room there ran out: files ended early or were not
+/// taken, 0.9.1 forced a clip in, and that panel has kept restarting since. On other panels
+/// the same files were written for months without trouble, and a panel cannot be asked how
+/// much room it has. Until Libre Panel can tell, it writes nothing there. Who looks into it
+/// on a panel of their own sets this in the environment, at their own risk (panel_files.py
+/// WRITES_ENV).
+pub const WRITES_ENV: &str = "LIBRE_PANEL_PANEL_WRITES";
+pub const WRITES_WORD: &str = "at-my-own-risk";
+
+/// writes_on: whether files are written to a panel: not in this version, but for who asks
+/// for it in the environment.
+pub fn writes_on() -> bool {
+    std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
+}
+
+/// writes_off: why nothing is written, as the app says it.
+pub fn writes_off() -> String {
+    lp_i18n::t(
+        "Writing to the panel is switched off in this version. One 9.2\" ran out of room for \
+         its start screen and has kept restarting since; on other panels the same files were \
+         written without trouble. Writing comes back when Libre Panel can tell how much fits \
+         on a panel.",
+    )
+}
+
 /// How many of the app's pictures and of the files are kept (lru_cache's maxsize).
 const PICTURES_KEPT: usize = 16;
 const FILES_KEPT: usize = 4;
@@ -330,7 +356,7 @@ fn clip_h264(ffmpeg: &std::path::Path, frames: &[Image], full: bool) -> Result<V
 
 // -- on the panel -------------------------------------------------------------------------------
 
-const FOLDER: &str = "usr/data";
+pub(crate) const FOLDER: &str = "usr/data";
 const LIST_PIECES: usize = 20;
 const PIECE: usize = 512;
 const ACK: u8 = 0xC8;
@@ -378,7 +404,7 @@ pub fn checked_name(name: &str) -> Result<Vec<u8>, String> {
     Ok(raw.to_vec())
 }
 
-fn file_args(name: &[u8], size: usize) -> Vec<u8> {
+pub(crate) fn file_args(name: &[u8], size: usize) -> Vec<u8> {
     let mut args = (name.len() as u32).to_be_bytes().to_vec();
     args.extend_from_slice(&(size as u32).to_be_bytes());
     args.extend_from_slice(name);
@@ -506,11 +532,14 @@ impl PanelFiles<'_> {
         Ok(if size == u32::MAX { 0 } else { i64::from(size) })
     }
 
-    /// write: a file written, and checked that it has the size it should. Where the panel
-    /// kept the file it had (a 9.2" kept its standby clip when a larger one came, it seems
-    /// where there is no room for both at once), that one is taken away and the new one
-    /// written again.
+    /// write: a file written, and checked that it has the size it should. A file the panel
+    /// kept in place of the new one is left as it is and said: never taken away to write
+    /// again (0.9.1 did so, and so got a clip in that filled the panel's folder to the last
+    /// byte: that 9.2" has kept restarting since).
     fn write(&self, name: &str, data: &[u8]) -> Result<(), String> {
+        if !writes_on() {
+            return Err(writes_off());
+        }
         let raw = checked_name(name)?;
         if data.is_empty() || data.len() > MAX_FILE {
             return Err(format!(
@@ -519,17 +548,7 @@ impl PanelFiles<'_> {
             ));
         }
         self.command(CMD_WRITE_FILE, &file_args(&raw, data.len()), data, 20000)?;
-        let mut written = self.size(name)?;
-        if written != data.len() as i64 && written != 0 {
-            note(&format!(
-                "start screen: the panel kept the {name} it had ({written} bytes, not {}): \
-                 taken away, written again",
-                data.len()
-            ));
-            self.delete(name)?;
-            self.command(CMD_WRITE_FILE, &file_args(&raw, data.len()), data, 20000)?;
-            written = self.size(name)?;
-        }
+        let written = self.size(name)?;
         if written != data.len() as i64 {
             return Err(format!(
                 "{name}: the panel has {written} bytes of it, not {}",
@@ -640,6 +659,9 @@ pub fn write_logo(
     place: &Where,
     design: &str,
 ) -> Result<Dict, String> {
+    if !writes_on() {
+        return Err(writes_off());
+    }
     with_panel(model, place, |files, found| {
         let picture = boot::boot_logo(env, found, way, design, 1.0).map_err(|e| e.0)?;
         let data = logo_jpeg(&as_mounted(picture, turned))?;
@@ -679,6 +701,9 @@ pub fn write_clip(
     design: &str,
     video_range: &str,
 ) -> Result<Dict, String> {
+    if !writes_on() {
+        return Err(writes_off());
+    }
     let ffmpeg = lp_devices::h264::find_ffmpeg("")?;
     with_panel(model, place, |files, found| {
         let frames = boot::standby_frames(env, found, None, way, design, 1.0).map_err(|e| e.0)?;
@@ -766,6 +791,8 @@ pub fn state(told: &Told) -> Value {
         "designs".into(),
         Value::List(boot::DESIGNS.iter().map(|d| text(d)).collect()),
     );
+    // (whether files are written to a panel: not in this version, issue 52)
+    answer.insert("writes".into(), Value::Bool(writes_on()));
     Value::Dict(answer)
 }
 
