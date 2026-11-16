@@ -510,9 +510,18 @@ def test_a_file_of_the_size_the_panel_has_is_told_by_the_time_it_took(monkeypatc
     assert F.unwritten(706_912, 0.050) and not F.unwritten(706_912, 1.25)
     assert F.unwritten(360_000, 0.040) and not F.unwritten(360_000, 0.6)
     assert not F.unwritten(149_040, 0.22)  # (the fastest write in that panel's log)
-    # every clip is told so, the smallest too (Dark's on the 9.2"); Dark's boot logos are not
-    assert F.unwritten(45_000, 0.003) and not F.unwritten(45_000, 0.064)
+    # every clip is told so, the smallest too (Dark's on a 9.2" on end, turned round); Dark's
+    # boot logos are not
+    assert F.unwritten(44_206, 0.003) and not F.unwritten(44_206, 0.048)
     assert not F.unwritten(14_289, 0.001) and not F.unwritten(21_952, 0.001)
+    # each write of 0.9.4rc1 on a sound 9.2" and 12.3", and how long the panel took: all
+    # written, the quickest (44,931 bytes in 48 ms) at under a quarter of the rate
+    measured = [
+        (319_122, 0.568), (113_393, 0.209), (44_931, 1.764), (44_931, 0.048), (113_393, 0.195),
+        (319_122, 0.564), (485_481, 1.306), (485_481, 1.115), (141_864, 0.321), (141_864, 0.157),
+    ]  # fmt: skip
+    assert not [write for write in measured if F.unwritten(*write)]
+    assert F.unwritten(44_931, 0.011) and F.unwritten(141_864, 0.035)  # (four times as fast)
 
 
 def test_a_file_that_ended_early_is_taken_off_again():

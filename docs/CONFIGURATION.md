@@ -625,12 +625,14 @@ panel gets what is known to fit:
 | 9.2" | 360,000 | 120,000 | 480,000 bytes | two thirds of the 718,000 that filled one |
 | 12.3" | 500,000 | 150,000 | 650,000 bytes | four fifths of the 817,587 one has held for weeks |
 
-The looks come to 433,000 to 454,000 bytes on the 9.2" and to 569,000 to 634,000 on the 12.3"
-(Dark: 59,000 and 96,000), and look as they did: against the files of 0.9.0 the clips are at
-most 1.8 dB apart (at 49.7 dB or better) and the boot logos at most 2.4 dB (at 45.5 dB or
-better). Nothing is made coarser than that. **Levels**, whose thousands of small lights took
-1.4 MB on a 9.2", is therefore not written to either: chosen, the card says so, and gives no
-file of it.
+The looks come to 401,000 to 454,000 bytes on the 9.2" and to 537,000 to 634,000 on the 12.3",
+whichever way the panel is mounted (Dark: 59,000 and 96,000), and look as they did: against
+the files of 0.9.0 the clips are at most 1.8 dB apart (at 49.7 dB or better) and the boot
+logos at most 2.5 dB (at 45.5 dB or better). One clip is the exception: Aurora's on a panel
+mounted on end takes the coarsest step there is, 46.8 dB on the 9.2" where 0.9.0's had 49.6
+(47.4 and 49.2 on the 12.3"), and its finest rays are softer. Nothing is made coarser than
+that. **Levels**, whose thousands of small lights took 1.4 MB on a 9.2", is therefore not
+written to either: chosen, the card says so, and gives no file of it.
 
 **Only the 9.2" and the 12.3" are written to**, the models it has been done on. For the
 family's other panels *Put on the panel* is greyed out, since how much room they have is not
@@ -690,15 +692,15 @@ made for the 9.2"'s room, by the pixels.)
   knows that a panel which said nothing a dozen times says nothing the next time); after
   eight such comings they are told of in one line for every twenty.
 
-  The sync is the first thing sent each time the panel comes, and a step follows its
-  answer. A panel that starts reads nothing at first: a sound 9.2" took nothing for 0.3 s,
-  then sent back what it got, unread (its port is open before its program has set it up),
-  and answered from 0.66 s on. So the sync is sent again every 300 ms while it is not
-  answered, and 100 ms after one that came back; what comes back and is no answer is told
-  once each time the panel comes (`not read: the panel's port sent it back`) and counts as
-  none. The lines say whether the panel took each sync: an endpoint can take a packet or
-  two by itself, the ones after only where something on the panel reads. No step starts
-  the video, whose start plays the standby clip, and none writes a file.
+  The sync is the first thing sent each time the panel comes, and a step follows its answer.
+  A panel that starts reads nothing at first: a sound 9.2" took nothing for 0.3 s, then sent
+  back what it got, unread (its port is open before its program has set it up), and answered
+  the next sync, sent 100 ms after that, at 0.42 s. So the sync is sent again every 300 ms
+  while it is not answered, and 100 ms after one that came back; what comes back and is no
+  answer is told once each time the panel comes (`not read: the panel's port sent it back`)
+  and counts as none. The lines say whether the panel took each sync: an endpoint can take a
+  packet or two by itself, the ones after only where something on the panel reads. No step
+  starts the video, whose start plays the standby clip, and none writes a file.
 
   The steps go to the Turing 9.2" alone, the panel they were seen to work on: the vendor id
   is shared by other makers' panels with other protocols, and the family's other models may

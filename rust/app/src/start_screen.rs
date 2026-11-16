@@ -45,13 +45,15 @@ pub const UNFIT: [(&str, &[&str]); 2] = [
     ("turing-9.2-usb", &["levels"]),
     ("turing-12.3-usb", &["levels"]),
 ];
-/// A write that happens takes its time (a 9.2": 1.2 to 2.9 s for 700 KB), one the panel does
-/// not take is over when the transfer is (30 to 50 ms for 700 KB): a file of some size that
-/// was answered faster than this many bytes a second was not written.
+/// A write that happens takes its time (the 9.2" of issue 52: 1.2 to 2.9 s for 700 KB; a sound
+/// 9.2" and 12.3" wrote 45 to 485 KB at 0.94 MB a second at the most, 0.9.4rc1), one the panel
+/// does not take is over when the transfer is (30 to 50 ms for 700 KB, 14 MB a second and
+/// more): a file of some size that was answered faster than this many bytes a second was not
+/// written.
 const WRITE_RATE_MOST: usize = 4_000_000;
 /// (below it the transfer's own time says nothing. On the 9.2" and the 12.3" every clip is
-/// larger: the smallest, Dark's on the 9.2", has 45,000 bytes; only Dark's boot logos are
-/// smaller, and after a logo nothing is saved on the panel)
+/// larger: the smallest, Dark's on the 9.2", has about 44,000 bytes; only Dark's boot logos
+/// are smaller, and after a logo nothing is saved on the panel)
 const WRITE_TIMED_FROM: usize = 32 * 1024;
 /// Files are written to the models it has been done on (ROOM). Who looks into it on another
 /// panel of their own sets this in the environment, at their own risk (panel_files.py
@@ -1109,9 +1111,31 @@ mod tests {
         assert!(!unwritten(706_912, Duration::from_millis(1250)));
         assert!(unwritten(360_000, Duration::from_millis(40)));
         assert!(!unwritten(360_000, Duration::from_millis(600)));
-        // (the smallest clip, Dark's on the 9.2": told too)
-        assert!(unwritten(45_000, Duration::from_millis(3)));
-        assert!(!unwritten(45_000, Duration::from_millis(64)));
+        // (the smallest clip, Dark's on a 9.2" on end, turned round: told too)
+        assert!(unwritten(44_206, Duration::from_millis(3)));
+        assert!(!unwritten(44_206, Duration::from_millis(48)));
+        // (each write of 0.9.4rc1 on a sound 9.2" and 12.3", and how long the panel took: all
+        // written, the quickest, 44,931 bytes in 48 ms, at under a quarter of the rate)
+        let measured = [
+            (319_122, 568),
+            (113_393, 209),
+            (44_931, 1764),
+            (44_931, 48),
+            (113_393, 195),
+            (319_122, 564),
+            (485_481, 1306),
+            (485_481, 1115),
+            (141_864, 321),
+            (141_864, 157),
+        ];
+        for (size, ms) in measured {
+            assert!(
+                !unwritten(size, Duration::from_millis(ms)),
+                "{size} in {ms} ms"
+            );
+        }
+        assert!(unwritten(44_931, Duration::from_millis(11)));
+        assert!(unwritten(141_864, Duration::from_millis(35)));
         // (the fastest write in that panel's log: 149 KB in under 220 ms)
         assert!(!unwritten(149_040, Duration::from_millis(220)));
         // (a small file's transfer says nothing: Dark's boot logo)

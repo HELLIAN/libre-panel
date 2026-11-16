@@ -157,7 +157,7 @@
         <li><a href="#game"><img src="../images/tile-game.png" width="600" height="300" loading="lazy" decoding="async" alt="Arena, der Spielbildschirm: die FPS groß mit 1-%-Low und Frametime, dazu ihr Verlauf"><span><b>Spielmodus</b><small>Ein Auftritt für jedes Spiel, die FPS mit ihren Lows, ein Bericht nach der Runde.</small></span></a></li>
         <li><a href="#screens"><img src="../images/tile-screens.png" width="600" height="300" loading="lazy" decoding="async" alt="Encore: das Cover groß, Titel, Künstler und Album"><span><b>Musik, Wetter und Uhrzeit</b><small>Encore, Nimbus und Almanac, die übernehmen, wenn Musik läuft oder du weg bist.</small></span></a></li>
         <li><a href="#screens-in-turn"><img src="../images/tile-screens-in-turn.png" width="600" height="300" loading="lazy" decoding="async" alt="Nimbus öffnet sich aus einer Lichtlinie, wenn ein Bildschirm auf den anderen folgt"><span><b>Abfolge</b><small>Fünf Minuten dies, zehn Minuten das, und wieder von vorn.</small></span></a></li>
-        <li><a href="#start-screen"><img src="../images/tile-start-screen.png" width="600" height="300" loading="lazy" decoding="async" alt="Das Bootlogo des Panels im Look von Libre Panel: sein Zeichen und sein Name"><span><b>Der eigene Startbildschirm des Panels</b><small>Sein Bootlogo und Standby-Clip im Look von Libre Panel. Das Aufspielen ist seit 0.9.2 aus.</small></span></a></li>
+        <li><a href="#start-screen"><img src="../images/tile-start-screen.png" width="600" height="300" loading="lazy" decoding="async" alt="Das Bootlogo des Panels im Look von Libre Panel: sein Zeichen und sein Name"><span><b>Der eigene Startbildschirm des Panels</b><small>Sein Bootlogo und Standby-Clip im Look von Libre Panel, auf dem 9,2" und dem 12,3" mit einem Klick.</small></span></a></li>
         <li><a href="#bars-on-end"><img src="../images/tile-vertical.png" width="600" height="300" loading="lazy" decoding="async" alt="Die Bildschirme von Libre Panel für eine hochkant stehende Leiste, nebeneinander"><span><b>Leisten hochkant</b><small>Hochkant montiert? Jeder Bildschirm wird neu angeordnet statt gedreht.</small></span></a></li>
         <li><a href="#ai"><img src="../images/tile-agents.png" width="600" height="300" loading="lazy" decoding="async" alt="Agents: Claude Code arbeitet, mit dem verbrauchten Anteil von fünf Stunden und sieben Tagen"><span><b>Was deine KI-Werkzeuge gerade tun</b><small>Claude Code und Codex: arbeitet, wartet auf dich, und die Limits des Abos.</small></span></a></li>
         <li><a href="#sizes"><img src="../images/tile-sizes.png" width="600" height="300" loading="lazy" decoding="async" alt="Studio auf einer Leiste, dazu Slate, Libre Default, Orbit, Column und Pico auf den kleineren Panels"><span><b>Jede Panelgröße</b><small>Vom 0,96"-Stick bis zum 12,3"-Display, auch runde und hochkant.</small></span></a></li>
@@ -418,10 +418,10 @@
         <div class="feature-copy">
           <div><span class="label">Startbildschirm</span><h3>Der eigene Start des Panels, im Look von Libre Panel</h3></div>
           <div class="copy">
-            <p>TURZX-USB-Panels zeigen beim Einschalten ein eigenes Logo und spielen beim Start des PCs einen Clip. Libre Panel zeichnet beides passend zur Größe deines Panels und gibt dir die Dateien dazu. <b>Das Aufspielen aufs Panel ist seit 0.9.2 abgeschaltet</b>: Einem 9,2"-Panel ging der Platz für seinen Startbildschirm aus, und es startet seitdem immer wieder neu; auf anderen Panels wurden dieselben Dateien ohne Probleme geschrieben.</p>
+            <p>TURZX-USB-Panels zeigen beim Einschalten ein eigenes Logo und spielen beim Start des PCs einen Clip. Libre Panel zeichnet beides passend zur Größe deines Panels und gibt dir die Dateien dazu. <b>Auf dem 9,2" und dem 12,3" spielt Libre Panel sie auf das Panel</b>, auf einen Klick: Die Dateien werden für einen Platz gemacht, der sicher da ist, und jedes Schreiben wird davor und danach geprüft.</p>
             <details class="more">
               <summary>Mehr<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-            <p>Beides erscheint, bevor irgendeine App mit dem Panel spricht. Einstellungen → Panel → Startbildschirm zeigt die Looks und was auf deinem Panel liegt, und entfernt ein Bootlogo wieder: Das Werkslogo bleibt auf dem Panel und kommt zurück. Das Schreiben kommt zurück, wenn Libre Panel weiß, wie viel auf ein Panel passt.</p>
+            <p>Beides erscheint, bevor irgendeine App mit dem Panel spricht. Einstellungen → Panel → Startbildschirm zeigt die Looks und was auf deinem Panel liegt, schreibt Bootlogo und Standby-Clip und entfernt ein Bootlogo wieder: Das Werkslogo bleibt auf dem Panel und kommt zurück. Einem 9,2"-Panel ging mit 0.9.1 der Platz für seinen Startbildschirm aus, und es startet seitdem immer wieder neu; deshalb wird auf einem Panel nichts mehr gelöscht, um Platz zu schaffen, und für die anderen Panels der Familie bleibt das Schreiben aus: Wie viel Platz sie haben, ist nicht bekannt.</p>
             </details>
           </div>
         </div>
@@ -969,7 +969,7 @@
       </ol>
       <div class="python">
         <p>Mit Python:</p>
-<pre><code>pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.3"
+<pre><code>pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.4"
 libre-panel tray               <span class="c"># die Hintergrund-App mit Tray-Symbol</span>
 libre-panel doctor             <span class="c"># das Panel prüfen, Bericht schreiben</span></code></pre>
       </div>
@@ -1038,10 +1038,12 @@ libre-panel doctor             <span class="c"># das Panel prüfen, Bericht schr
         <details>
           <summary>Kann es meinem Panel schaden?<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
           <div class="answer"><p>Für Themes sendet Libre Panel nur Anzeigebefehle: Bilder, Helligkeit,
-            Video. Die Firmware fasst es nie an. Das Einzige, was es je auf einem Panel gespeichert
-            hat, war ein Startbildschirm, auf einen Klick, und das hat einmal geschadet: Ein
+            Video. Die Firmware fasst es nie an. Das Einzige, was es je auf einem Panel speichert,
+            ist ein Startbildschirm, auf einen Klick, und das hat einmal geschadet: Ein
             9,2"-Panel startet immer wieder neu, seit sein Startbildschirm mit 0.9.1 geschrieben
-            wurde. Seit 0.9.2 schreibt Libre Panel keine Datei mehr auf ein Panel
+            wurde, das eine Datei auf ein Panel zwang, auf dem kein Platz mehr war. Seit 0.9.4
+            schreibt Libre Panel nur auf das 9,2" und das 12,3", Dateien für einen Platz, der
+            sicher da ist, und prüft jedes Schreiben davor und danach
             (<a href="#start-screen">mehr</a>). Firmware-Updates bleiben Sache der
             Hersteller-App.</p></div>
         </details>

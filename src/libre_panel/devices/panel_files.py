@@ -112,14 +112,16 @@ UNFIT: dict[str, tuple[str, ...]] = {
     "turing-9.2-usb": ("levels",),
     "turing-12.3-usb": ("levels",),
 }
-# A write that happens takes its time: a 9.2" took 1.2 to 2.9 s for 700 KB and 0.1 s for 48 KB.
-# One that the panel does not take is over when the transfer is: 30 to 50 ms for 700 KB. So a
-# file of some size that was answered faster than this many bytes a second was not written,
-# which matters where the panel has a file of that very size already
+# A write that happens takes its time: the 9.2" of issue 52 took 1.2 to 2.9 s for 700 KB and
+# 0.1 s for 48 KB, and a sound 9.2" and 12.3" wrote 45 to 485 KB at 0.94 MB a second at the
+# most (0.9.4rc1). One that the panel does not take is over when the transfer is: 30 to 50 ms
+# for 700 KB, 14 MB a second and more. So a file of some size that was answered faster than
+# this many bytes a second was not written, which matters where the panel has a file of that
+# very size already
 WRITE_RATE_MOST = 4_000_000
 # (below it the transfer's own time says nothing. On the 9.2" and the 12.3" every clip is
-# larger: the smallest, Dark's on the 9.2", has 45,000 bytes; only Dark's boot logos are
-# smaller, and after a logo nothing is saved on the panel)
+# larger: the smallest, Dark's on the 9.2", has about 44,000 bytes; only Dark's boot logos
+# are smaller, and after a logo nothing is saved on the panel)
 WRITE_TIMED_FROM = 32 * 1024
 
 CMD_WRITE_FILE = 40

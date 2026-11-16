@@ -19,17 +19,17 @@
 //! this command waited): it is on the bus and can be opened at once; its port takes nothing
 //! for 0.3 s; the first packet it takes then comes back in pieces that are no answer (a
 //! port that no program has set up yet sends back what it gets, as a terminal does: control
-//! bytes written out as `^X`), and is lost; from 0.66 s on the panel answers, each command
-//! within 2 to 3 ms, and plays its clip meanwhile (112 said so at 0.67 s). So one sync sent
-//! at the first moment is lost on a sound panel too, and a step sent first would be: the
-//! sync is sent at every coming, again and again until it is answered, and only then a
-//! step. What comes back and is no answer is told once a visit (how much, and how it begins)
-//! and counts as no answer.
+//! bytes written out as `^X`), and is lost; the next sync, sent 100 ms after that, was
+//! answered at 0.42 s, the commands after it within 66 ms (most within 2), and the panel
+//! plays its clip meanwhile (112 said so at 0.53 s). So one sync sent at the first moment is
+//! lost on a sound panel too, and a step sent first would be: the sync is sent at every
+//! coming, again and again until it is answered, and only then a step. What comes back and
+//! is no answer is told once a visit (how much, and how it begins) and counts as no answer.
 //!
 //! **What to expect.** The app (0.9.1) opened that panel thirteen times while it came and
 //! went, and its sync was not answered once; of its looks every five seconds in the hours
 //! after, not one ended with a panel in use. The app sent the sync once each time and
-//! waited two seconds. On a sound panel only a sync of the first two thirds of a second is
+//! waited two seconds. On a sound panel only a sync of about the first third of a second is
 //! lost, so thirteen without an answer say that this panel answers in little or none of its
 //! two seconds, and the chance that it takes a command here is small. What this command has
 //! over the app's tries: it is there the moment the panel comes (the app started its engine
@@ -115,8 +115,9 @@ const SYNC_AGAIN_MS: u64 = 300;
 /// ... and how soon after one that came back unread: the panel's port is open then and its
 /// program has not set it up yet (a port sends back what it gets until one has), so that
 /// sync is lost and the next is not waited with. A 9.2" that starts was measured so: its
-/// port took the first sync 308 ms after the panel came and sent it back, and the panel
-/// answered the next one 656 ms after it came.
+/// port took the first sync 318 ms after the panel came and sent it back, and the panel
+/// answered the next one, sent 100 ms after that, 422 ms after it came (with 300 ms, as
+/// 0.9.2 waited, 656 ms after it came).
 const SYNC_SOON_MS: u64 = 100;
 /// How many of the first bytes that came back and are no answer are said.
 const NOISE_HEAD: usize = 48;
