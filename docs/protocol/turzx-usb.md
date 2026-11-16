@@ -469,7 +469,11 @@ firmware, its store, what else is in it) is not known either.
   time), and of the app's looks every five seconds in between, not one ended with
   a panel in use. So the panel was not seen to take a command in its two seconds.
   Whether it takes none, or took none at the moments the app tried, that log does
-  not tell.
+  not tell. The app sent the sync once at each opening and waited two seconds: on
+  a sound panel a sync of the first two thirds of a second is lost
+  ([below](#a-92-as-it-starts)), so one or the other of the thirteen may have been
+  lost that way; all of them would not be on a panel that answers through the
+  rest of its two seconds.
 - **42 does delete** on that panel: after it 98 says none for a boot logo that was
   there, twice in that log. It was never sent for a clip the panel was playing.
 
@@ -483,22 +487,51 @@ environment switches it on for who looks into it on a panel of their own). It
 never deleted a file to write it again before 0.9.1 and does not after it.
 
 For a panel in that state, `libre-panel start-screen remove-clip --wait` acts the
-moment the panel is on the USB: 10 until it is answered once (sent again every
-300 ms while it is not: an endpoint can take a packet or two by itself, so whether
-the panel goes on taking them tells whether anything on it reads what is sent), then
+moment the panel is on the USB: 10 each time the panel comes, until it is answered
+(sent again every 300 ms while it is not, and 100 ms after one that the panel's
+port sent back: an endpoint can take a packet or two by itself, so whether the
+panel goes on taking them tells whether anything on it reads what is sent), then
 111 (the clip it may be playing stopped, as the app does at each of its starts),
 42 for the clip and 98 to see that it is off: see
 [configuration](../CONFIGURATION.md#the-panels-start-screen). The settings are
 saved with start mode 0 (125) only once the clip is off, and only with
 `default-start` or where `app.cfg` is there and empty. It waits for the panel
-until its time is over, however often the panel comes without an answer.
+until its time is over, however often the panel comes without an answer. What
+comes back and is no answer (a port's echo) is told once each time the panel
+comes and counts as none; a step is sent only after the sync's answer.
 
 The chance is small: that panel answered the app nothing after it began to
 restart. What the command has over the app's tries is that it is there the moment
 the panel comes (the app looked every five seconds, and started its engine
-first), that it goes on for as long as it is given, and that it says to the
-millisecond how far each coming gets: whether the panel can be opened, whether it
-takes what is sent, whether it answers.
+first), that it sends the sync again until it is answered, that it goes on for as
+long as it is given, and that it says to the millisecond how far each coming
+gets: whether the panel can be opened, whether its port takes what is sent,
+whether the port sends it back unread, whether the panel answers.
+
+### A 9.2" as it starts
+
+Measured on a sound 9.2" with that firmware (`turzx_0001_0015`), plugged in on
+Windows while `libre-panel start-screen --wait` (0.9.2) watched the bus. The
+times are since the panel was on the bus.
+
+| | |
+|---|---|
+| 0 ms | it is listed with the WinUSB driver and can be opened |
+| until 308 ms | its port takes nothing: a packet sent waits |
+| 308 ms | the port takes the sync and sends it back, eleven pieces at 309 ms that are no reply: control bytes written out (`^X`: `5E 5A`), `^R` with CR LF and the line again, BS space BS. A terminal's line mode does that with what it gets: the port is open, and the panel's program has not set it up yet. That sync is lost |
+| 656 ms | the next sync (sent at 611 ms) is answered: `0A C8`, the request's time stamp, `turzx_0001_0015` |
+| from then | each command is answered within 2 to 3 ms |
+| 670 ms | 112 says the panel's own clip is playing (`[8]` = 1); 98 and 99 are answered while it plays |
+| 20.7 s | still there, still answering |
+
+So whatever a sound panel is sent in its first two thirds of a second is lost,
+and what an app sees of a panel that restarts depends on when it sends: the sync
+goes first at every coming and again until it is answered.
+
+What two sound panels held then, by 98 and 99: the 9.2" `app.cfg` (132 bytes),
+`boot.sign` (0), `boot.jpg` (14,287) and `standby.h264` (51,296), the Dark look;
+a 12.3" (firmware `turzx_0001_0026`) `app.cfg` (136), `boot.sign` (0), `boot.jpg`
+(223,833) and `standby.h264` (593,754), Circuit.
 
 ### Which panel, which maker: what is known where
 

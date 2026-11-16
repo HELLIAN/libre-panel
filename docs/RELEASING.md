@@ -49,7 +49,9 @@ on a 9.2" and a 12.3" for months, and 0.9.1's change was for a panel that had no
 which neither of them was. A change made for a state is tried on a panel in that state.
 Where no such panel is at hand, the change waits, or ships switched off. A command for a
 panel that is already in that state (`libre-panel start-screen`) may ship untried on it,
-and says so.
+and says so. What can be tried of it on a sound panel is tried: its look with `--wait`, the
+panel plugged in while it waits, shows how the command meets a panel that starts (so
+0.9.2's was found to take a starting panel's echo for an answer).
 
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the

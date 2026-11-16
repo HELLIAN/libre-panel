@@ -613,7 +613,7 @@ coarser where a look moves everywhere, finer where it leaves room), and in full 
 whose decoder shows every stream so (the 9.2" and the 12.3", or `video_range = "full"`): in
 limited range their black was grey.
 
-**Writing is switched off in 0.9.2.** Both files go where the panel keeps its own settings,
+**Writing is switched off since 0.9.2.** Both files go where the panel keeps its own settings,
 and on one 9.2" the room there ran out: files ended early or were not taken, 0.9.1 forced a
 clip in, and that panel has kept restarting since (issue 52). On other panels, a 9.2" and a
 12.3" among them, the same files were written for months without trouble, and a panel
@@ -654,14 +654,21 @@ was and will be.
   moment it is on the USB: a step it accepted is not sent again the next time it comes, and
   every line says the milliseconds since it came, so the run tells how long the panel is
   there and how far it gets. It ends when the panel stays, or when its time is over: then
-  it says how often the panel came and what is done. A panel that leaves before the system
-  has it ready to be opened, or that says nothing, is waited for all that time (Windows may
-  need many of a panel's comings to set it up, and nobody knows that a panel which said
-  nothing a dozen times says nothing the next time); after eight such comings they are
-  told of in one line for every twenty. While the sync is not answered it is sent again
-  every 300 ms, and the line says whether the panel took each one: an endpoint can take
-  a packet or two by itself, the ones after only where something on the panel reads. No
-  step starts the video, whose start plays the standby clip, and none writes a file.
+  it says how often the panel came, what is done and what the panel's port did. A panel
+  that leaves before the system has it ready to be opened, or that says nothing, is waited
+  for all that time (Windows may need many of a panel's comings to set it up, and nobody
+  knows that a panel which said nothing a dozen times says nothing the next time); after
+  eight such comings they are told of in one line for every twenty.
+
+  The sync is the first thing sent each time the panel comes, and a step follows its
+  answer. A panel that starts reads nothing at first: a sound 9.2" took nothing for 0.3 s,
+  then sent back what it got, unread (its port is open before its program has set it up),
+  and answered from 0.66 s on. So the sync is sent again every 300 ms while it is not
+  answered, and 100 ms after one that came back; what comes back and is no answer is told
+  once each time the panel comes (`not read: the panel's port sent it back`) and counts as
+  none. The lines say whether the panel took each sync: an endpoint can take a packet or
+  two by itself, the ones after only where something on the panel reads. No step starts
+  the video, whose start plays the standby clip, and none writes a file.
 
   The steps go to the Turing 9.2" alone, the panel they were seen to work on: the vendor id
   is shared by other makers' panels with other protocols, and the family's other models may

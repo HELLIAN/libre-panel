@@ -30,6 +30,25 @@ class Unplugged(Exception):
 STANDBY_CLIP = "usr/data/standby.h264"  # (the panel's standby clip)
 
 
+def echo_of(packet: bytes) -> list[bytes]:
+    """What a port in a terminal's line mode sends back of a packet, in the pieces it comes
+    in: control bytes written out (^X), a line's end as CR LF, a rubbed-out letter as BS,
+    space, BS. None of them is a reply; the first begins as the sync's reply does (0A C8),
+    as a piece may."""
+    out = bytearray()
+    for byte in packet:
+        if byte in (0x0A, 0x0D):
+            out += b"\r\n"
+        elif byte == 0x7F:
+            out += b"\x08 \x08"
+        elif byte < 0x20:
+            out += bytes([0x5E, 0x40 + byte])
+        else:
+            out.append(byte)
+    pieces = [bytes(out[at : at + 61]) for at in range(0, len(out), 61)]
+    return [b"\x0a\xc8" + pieces[0][:10], *pieces]
+
+
 class FakePanel:
     RING = 5
     MAX_BLOCK = 202752
@@ -111,6 +130,14 @@ class FakePanel:
         self.wakes_s: float | None = None
         self._since: float | None = None
         self._dozing: list[bytes] = []
+        # a panel that starts as a 9.2" was measured to: its port takes nothing for
+        # ``opens_s`` after the panel came (a packet waits), then sends back what it gets,
+        # unread, until ``cooked_s`` after it came (a port that no program has set up yet
+        # echoes); what comes after that is read (and answered from ``wakes_s`` on). The
+        # commands of the packets it sent back are kept in ``unread``
+        self.opens_s: float | None = None
+        self.cooked_s: float | None = None
+        self.unread: list[int] = []
 
     @property
     def present(self) -> bool:
@@ -179,6 +206,22 @@ class FakePanel:
             time.sleep(min(timeout, 20) / 1000)
             raise usb.core.USBTimeoutError("Operation timed out")
         data = bytes(data)
+        if self.opens_s is not None:  # (its port is not open yet: the packet waits)
+            until = time.monotonic() + timeout / 1000
+            while self._since is not None and time.monotonic() - self._since < self.opens_s:
+                if not self.present:
+                    gone = "No such device (it may have been disconnected)"
+                    raise usb.core.USBError(gone, errno=19)
+                if time.monotonic() >= until:
+                    raise usb.core.USBTimeoutError("Operation timed out")
+                time.sleep(0.002)
+        cooked = self.cooked_s is not None and self._since is not None
+        if cooked and time.monotonic() - self._since < self.cooked_s:
+            # (open, and no program has set it up: what it gets comes back and is not read)
+            self.commands.append(decode_packet(data[:512])[0])
+            self.unread.append(self.commands[-1])
+            self.pending.extend(echo_of(data[:512]))
+            return
         if self.takes is not None:  # (nothing reads: its endpoint takes so many, the rest wait)
             if self._taken >= self.takes:
                 until = time.monotonic() + timeout / 1000

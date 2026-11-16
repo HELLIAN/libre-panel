@@ -483,6 +483,25 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
         lines[1],
     ), lines[1]
     assert lines[-1] == "not done: the panel is on the bus and does not answer"
+    # ... and so is one whose port sends back what it gets (a port does until the panel's
+    # program has set it up): what comes back is no answer, however it begins (the first
+    # piece begins as the sync's answer does), and is told once
+    fake.cooked_s = 1e9
+    code, lines = run()
+    fake.cooked_s = None
+    assert code == 1 and set(fake.commands) == {10} and fake.unread == fake.commands
+    fake.unread.clear()
+    assert re.fullmatch(
+        r"\[1\] sync \(10\): not read: the panel's port sent it back \(11 pieces, \d+ bytes, "
+        r'beginning 0a c8 [0-9a-f ]+; as text "[^"]+"\)',
+        lines[1],
+    ), lines[1]
+    assert re.fullmatch(
+        r"\[1\] sync \(10\): sent (\d+) times, each taken after \d+(?: to \d+)? ms, \1 of them "
+        r"sent back unread, no answer in \d+ ms",
+        lines[2],
+    ), lines[2]
+    assert lines[3:] == ["not done: the panel is on the bus and does not answer"]
     # a word that is no step
     fake.commands.clear()
     wrong = rig.run("start-screen", "write-logo")
@@ -545,7 +564,9 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     still leaves, that takes no packet or that never comes is said so, with how long it was
     on the bus; one that cannot be opened in time, or says nothing, is waited for until the
     time is over, and the sync is sent again while it is there and unanswered (whether the
-    panel takes the next ones tells whether anything on it reads).
+    panel takes the next ones tells whether anything on it reads). The sync is the first
+    thing sent each time the panel comes: a panel that starts reads nothing at first (its
+    port takes nothing, then sends back what it gets), so a step sent first would be lost.
     One that restarts at its clip's end stays once the clip is stopped, which is the first
     thing remove-clip does. Another panel of the family on the same PC
     is told and sent nothing."""
@@ -561,7 +582,7 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     )
     off = f"take the standby clip off (42 {STANDBY_CLIP})"
     # away: waited for; its program ends as the clip goes (no answer): the next time it comes
-    # the step is sent again (the sync is not), the settings follow, and it stays
+    # the step is sent again, after the sync, the settings follow, and it stays
     fake.files = _folder(clip=706912)
     fake.leaves_once, fake.gone_reads_fail, fake.restart_away_s = {42}, True, 0.4
     _away(rig)
@@ -572,7 +593,7 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         fake.unplugged = False
         out, err = waiting.communicate(timeout=60)
     assert waiting.returncode == 0, (out, err)
-    assert fake.commands == [10, 111, 42, 111, 42, 98, 125, *LOOK[2:], 112]
+    assert fake.commands == [10, 111, 42, 10, 111, 42, 98, 125, *LOOK[2:], 112]
     assert set(fake.files) == {SETTINGS, BOOT_SIGN} and fake.saved == [saved]
     lines = _said(out)
     assert lines[1:5] == [
@@ -583,10 +604,11 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     ]
     assert lines[5] == "[1] stop the clip it may be playing (111): accepted"
     assert lines[6].startswith(f"[1] {off}: taken after ")
-    assert lines[7:12] == [
+    assert lines[7:13] == [
         "[1] left the bus (it was there for N ms)",
         "[2] on the bus: the simulated panel",
         "[2] open",
+        "[2] sync (10): firmware turzx_00",
         "[2] stop the clip it may be playing (111): accepted",
         f"[2] {off}: accepted",
     ]
@@ -637,13 +659,14 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     )
     assert re.fullmatch(
         r"\[28\] no answer yet: it came 20 more times, was opened and left without an answer "
-        r"\(on the bus for \d+(?: to \d+)? ms\)",
+        r"\(on the bus for \d+(?: to \d+)? ms; its port took nothing that was sent\)",
         lines[told + 1],
     ), lines[told + 1]
     came = re.fullmatch(
         r"not done: the panel came (\d+) times and did not stay "
         r"\(on the bus for \d+(?: to \d+)? ms\)"
-        r"; it answered nothing; 0 of 2 steps are done \(not: remove-clip\)",
+        r"; it answered nothing \(its port took nothing that was sent\); 0 of 2 steps are done "
+        r"\(not: remove-clip\)",
         lines[-1],
     )
     assert came and int(came[1]) > 28, lines[-1]
@@ -659,8 +682,10 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     fake.unanswered = set()
     assert waiting.returncode == 1 and set(fake.commands) == {10} and fake.saved == []
     lines = _said(out)
+    # (the panel's leaving shows on the bus, or as a read that fails: whichever is first)
     assert re.fullmatch(
-        r"\[1\] sync \(10\): sent 2 times, each taken after \d+(?: to \d+)? ms, not answered",
+        r"\[1\] sync \(10\): sent 2 times, each taken after \d+(?: to \d+)? ms, "
+        r"(?:not answered|then no answer \(.+\))",
         lines[4],
     ), lines[4]
     # (the leaving is told when it happens, not when the next sync is due)
@@ -737,11 +762,13 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
         lines[4],
     )
     assert quiet and 5900 <= int(quiet[1]) <= 7000, lines[4]
-    assert lines[5:] == [
-        "[1] still on the bus, and it has not answered",
-        "not done: the panel is on the bus and does not answer; it answered nothing; 0 of 2 "
-        "steps are done (not: remove-clip)",
-    ]
+    assert lines[5] == "[1] still on the bus, and it has not answered"
+    assert re.fullmatch(
+        r"not done: the panel is on the bus and does not answer; it answered nothing \(its port "
+        r"took what was sent after \d+ ms\); 0 of 2 steps are done \(not: remove-clip\)",
+        lines[6],
+    ), lines[6:]
+    assert len(lines) == 7
     # one whose program is up only a moment after it came (what it was sent meanwhile waits
     # in its endpoint): the sync sent again is answered, the answers to the others are passed
     # over, and the steps follow
@@ -764,6 +791,97 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     ), lines[4]
     assert lines[5] == "[1] stop the clip it may be playing (111): accepted"
     assert lines[-2:] == [stays, "done"]
+    # one that starts as a sound 9.2" was measured to: its port takes nothing at first (the
+    # sync waits), then sends back what it gets, unread (the sync goes out again sooner),
+    # and the panel answers a moment later. What came back is told once and is no answer;
+    # the steps follow the sync's answer, and none of them was sent into the port's echo
+    fake.files = _folder(clip=706912)
+    fake.opens_s, fake.cooked_s, fake.wakes_s = 0.3, 0.45, 0.65
+    _away(rig)
+    fake.commands.clear()
+    with _waiting(rig, "remove-clip", "--wait", "60") as waiting:
+        time.sleep(0.5)
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    assert waiting.returncode == 0, (out, err)
+    syncs, back = fake.commands.count(10), len(fake.unread)
+    assert back in (1, 2) and set(fake.unread) == {10} and back < syncs <= back + 2
+    assert fake.commands == [10] * syncs + [111, 42, *LOOK[1:], 112]
+    assert STANDBY_CLIP not in fake.files
+    lines = _said(out)
+    assert re.fullmatch(
+        r"\[1\] sync \(10\): not read: the panel's port sent it back \(11 pieces, \d+ bytes, "
+        r'beginning 0a c8 [0-9a-f ]+; as text "[^"]+"\)',
+        lines[4],
+    ), lines[4]
+    answered = re.fullmatch(
+        rf"\[1\] sync \(10\): firmware turzx_00 \[[0-9a-f ]+\] \(sent {syncs} times, each taken "
+        rf"after \d+ to (\d+) ms, {back} of them sent back unread; answered after (\d+) ms\)",
+        lines[5],
+    )
+    assert answered and 250 <= int(answered[1]) <= 400, lines[5]
+    assert 600 <= int(answered[2]) <= 1000, lines[5]
+    assert lines[6] == "[1] stop the clip it may be playing (111): accepted"
+    assert lines[-2:] == [stays, "done"]
+    # ... and one that left as its clip went and comes back the same way: the step that is
+    # still open follows the sync's answer the second time too
+    fake.files = _folder(clip=706912)
+    fake.unread.clear()
+    fake.leaves_once = {42}
+    _away(rig)
+    fake.commands.clear()
+    with _waiting(rig, "remove-clip", "--wait", "60") as waiting:
+        time.sleep(0.5)
+        fake.unplugged = False
+        out, err = waiting.communicate(timeout=60)
+    assert waiting.returncode == 0, (out, err)
+    assert set(fake.unread) == {10} and STANDBY_CLIP not in fake.files
+    assert [cmd for cmd in fake.commands if cmd != 10] == [111, 42, 111, 42, *LOOK[1:], 112]
+    fake.opens_s = fake.cooked_s = fake.wakes_s = None
+    fake.unread.clear()
+    # one whose port only ever sends back what it gets and that never answers (a program
+    # that opens its port and is gone before it reads): no answer, so its comings are told
+    # of line by line eight times and then once for every twenty, with what its port did,
+    # and no step is sent
+    fake.files = _folder(clip=706912)
+    fake.opens_s, fake.cooked_s = 0.05, 1e9
+    _away(rig)
+    fake.commands.clear()
+    stop = _comes_and_goes(rig, 0.25, 0.1)
+    with _waiting(rig, "remove-clip", "--wait", "12") as waiting:
+        out, err = waiting.communicate(timeout=60)
+    stop.set()
+    fake.opens_s = fake.cooked_s = None
+    assert waiting.returncode == 1 and set(fake.commands) == {10}, (out, err)
+    assert fake.unread == fake.commands and STANDBY_CLIP in fake.files
+    fake.unread.clear()
+    lines = _said(out)
+    assert lines[4].startswith("[1] sync (10): not read: the panel's port sent it back (11 pieces")
+    assert re.fullmatch(
+        r"\[1\] sync \(10\): sent (\d+) times, each taken after \d+ to \d+ ms, \1 of them sent "
+        r"back unread, (?:not answered|then no answer \(.+\))",
+        lines[5],
+    ), lines[5]
+    assert len([line for line in lines if line.endswith("on the bus: the simulated panel")]) == 8
+    told = lines.index(
+        "the panel keeps leaving without an answer: from here on one line for every 20 times "
+        "it comes, until the time is over (Ctrl+C ends it sooner)"
+    )
+    assert re.fullmatch(
+        r"\[28\] no answer yet: it came 20 more times, was opened and left without an answer "
+        r"\(on the bus for \d+ to \d+ ms; its port took what was sent in 20 of them, first after "
+        r"\d+ to \d+ ms, and sent it back unread in 20\)",
+        lines[told + 1],
+    ), lines[told + 1]
+    came = re.fullmatch(
+        r"not done: the panel came (\d+) times and did not stay \(on the bus for \d+ to \d+ ms\)"
+        r"; it answered nothing \(its port took what was sent in (\d+) of the (\d+) times it was "
+        r"opened, first after \d+ to \d+ ms, and sent it back unread in (\d+)\); 0 of 2 steps "
+        r"are done \(not: remove-clip\)",
+        lines[-1],
+    )
+    assert came and int(came[1]) > 28 and came[2] == came[4], lines[-1]
+    assert int(came[1]) - 1 <= int(came[3]) <= int(came[1]), lines[-1]
     # one the system never has ready to be opened while it is there: waited for until the
     # time is over (a system that sets the panel up anew may need many of its comings), told
     # of line by line eight times, then once for every twenty

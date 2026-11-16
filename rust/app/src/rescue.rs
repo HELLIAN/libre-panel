@@ -15,15 +15,29 @@
 //! taken off. On other panels, a 9.2" and a 12.3" among them, the same files were written
 //! for months without trouble: what is different on that panel is not known either.
 //!
+//! **How a sound 9.2" starts** (measured on one with the same firmware, plugged in while
+//! this command waited): it is on the bus and can be opened at once; its port takes nothing
+//! for 0.3 s; the first packet it takes then comes back in pieces that are no answer (a
+//! port that no program has set up yet sends back what it gets, as a terminal does: control
+//! bytes written out as `^X`), and is lost; from 0.66 s on the panel answers, each command
+//! within 2 to 3 ms, and plays its clip meanwhile (112 said so at 0.67 s). So one sync sent
+//! at the first moment is lost on a sound panel too, and a step sent first would be: the
+//! sync is sent at every coming, again and again until it is answered, and only then a
+//! step. What comes back and is no answer is told once a visit (how much, and how it begins)
+//! and counts as no answer.
+//!
 //! **What to expect.** The app (0.9.1) opened that panel thirteen times while it came and
 //! went, and its sync was not answered once; of its looks every five seconds in the hours
-//! after, not one ended with a panel in use. So the panel was not seen to take a command in
-//! its two seconds, and the chance that it takes one here is small. What this command has
+//! after, not one ended with a panel in use. The app sent the sync once each time and
+//! waited two seconds. On a sound panel only a sync of the first two thirds of a second is
+//! lost, so thirteen without an answer say that this panel answers in little or none of its
+//! two seconds, and the chance that it takes a command here is small. What this command has
 //! over the app's tries: it is there the moment the panel comes (the app started its engine
-//! first), it goes on for as long as it is given, and it says to the millisecond how far
-//! each coming gets: whether the panel can be opened, whether it takes what is sent (an
-//! endpoint can take a packet or two by itself; the ones after only where something on the
-//! panel reads), and whether it answers.
+//! first), it sends the sync again until it is answered, it goes on for as long as it is
+//! given, and it says to the millisecond how far each coming gets: whether the panel can be
+//! opened, whether its port takes what is sent (an endpoint can take a packet or two by
+//! itself; the ones after only where something on the panel reads), whether the port sends
+//! it back unread, and whether the panel answers.
 //!
 //! **Which panels.** The vendor id 1CBE is shared by panels of several makers with protocols
 //! of their own (Lian Li's are no TURZX panels), and the TURZX family's models and firmwares
@@ -43,12 +57,13 @@
 //! moment it is on the bus; a packet waits until the panel takes it. Then what the panel
 //! holds is asked, and how long it stays is watched. Every line says the milliseconds since
 //! the panel came, so that a run tells how long it is there and how far it gets. A step the
-//! panel accepted is not sent again the next time it comes; the rest is. A wait goes on
-//! until its time is over, however often the panel comes without an answer.
+//! panel accepted is not sent again the next time it comes; the rest is, after the sync. A
+//! wait goes on until its time is over, however often the panel comes without an answer.
 //!
 //! What is sent, in this order whatever the order asked in:
 //!
-//! - 10, until it is answered once: sent again every 300 ms while it is not.
+//! - 10, each time the panel comes, until it is answered: sent again every 300 ms while it
+//!   is not, and 100 ms after one that the panel's port sent back.
 //! - `remove-clip`: 111, the clip the panel may be playing stopped (as the app does at each
 //!   of its starts), then 42 `usr/data/standby.h264`.
 //! - `remove-logo`: 42 `usr/data/boot.jpg` (as *Factory logo again*).
@@ -97,6 +112,14 @@ const REPLY_MS: u64 = 1500;
 /// reply's time): whether the panel takes the next packets tells whether anything on it
 /// reads what is sent, which one packet cannot tell (an endpoint can take one by itself).
 const SYNC_AGAIN_MS: u64 = 300;
+/// ... and how soon after one that came back unread: the panel's port is open then and its
+/// program has not set it up yet (a port sends back what it gets until one has), so that
+/// sync is lost and the next is not waited with. A 9.2" that starts was measured so: its
+/// port took the first sync 308 ms after the panel came and sent it back, and the panel
+/// answered the next one 656 ms after it came.
+const SYNC_SOON_MS: u64 = 100;
+/// How many of the first bytes that came back and are no answer are said.
+const NOISE_HEAD: usize = 48;
 /// How often the bus is looked at while the panel is waited for, and while it is watched.
 /// (A look asks the system about every USB device: often enough for a panel that is there
 /// for two seconds, and no more.)
@@ -417,6 +440,59 @@ fn accepted(reply: &[u8]) -> bool {
     reply.get(1) == Some(&ACK) || reply.get(8) == Some(&ACK)
 }
 
+/// Whether a packet is a TURZX panel's answer to the sync: the sync's number, the mark, and
+/// the firmware's name (`turzx_...`).
+fn sync_answer(reply: &[u8]) -> bool {
+    reply.first() == Some(&CMD_SYNC) && reply.get(1) == Some(&ACK) && !firmware_of(reply).is_empty()
+}
+
+/// Whether a packet is an answer to the sync that is no TURZX panel's: a whole reply that
+/// begins as the sync's does and names no TURZX firmware. (A piece of what a port sends back
+/// may begin with any bytes; it is no whole reply.)
+fn foreign_answer(reply: &[u8]) -> bool {
+    reply.len() == PIECE
+        && reply.first() == Some(&CMD_SYNC)
+        && reply.get(1) == Some(&ACK)
+        && firmware_of(reply).is_empty()
+}
+
+/// Whether a packet reads as the answer to a command sent here: its number, then the mark.
+fn reply_like(reply: &[u8]) -> bool {
+    const SENT: [u8; 6] = [
+        CMD_SYNC,
+        CMD_DELETE_FILE,
+        CMD_FILE_SIZE,
+        CMD_STOP_LOCAL,
+        CMD_LOCAL_PLAYING,
+        CMD_SAVE_SETTINGS,
+    ];
+    reply.len() >= 8
+        && reply.get(1) == Some(&ACK)
+        && reply.first().is_some_and(|cmd| SENT.contains(cmd))
+}
+
+/// Whether bytes read as what a port in a terminal's line mode sends back of what it gets:
+/// control bytes written out (`^X`), a line's end as CR LF, a rubbed-out letter (BS, space,
+/// BS). A port is in that mode until a program has set it up.
+fn echo_like(piece: &[u8]) -> bool {
+    piece
+        .windows(2)
+        .any(|pair| (pair[0] == b'^' && (0x40..=0x5F).contains(&pair[1])) || pair == b"\r\n")
+        || piece.windows(3).any(|three| three == b"\x08 \x08")
+}
+
+/// Bytes as text: the letters as they are, a dot for every other byte.
+fn text_of(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|&byte| match byte {
+            b'"' | b'\\' => '.',
+            0x20..=0x7E => char::from(byte),
+            _ => '.',
+        })
+        .collect()
+}
+
 fn how(reply: &[u8]) -> String {
     match accepted(reply) {
         true => "accepted".to_string(),
@@ -483,8 +559,6 @@ enum Said {
 /// visit (a panel that comes every few seconds would fill pages with the same lines).
 #[derive(Default)]
 struct Known {
-    /// it answered the sync as a TURZX panel does
-    spoken: bool,
     clip: Option<Has>,
     logo: Option<Has>,
     settings: Option<Has>,
@@ -497,10 +571,13 @@ struct Known {
 impl Known {
     /// A step was accepted: what the panel holds is asked anew.
     fn changed(&mut self) {
-        *self = Known {
-            spoken: self.spoken,
-            ..Known::default()
-        };
+        *self = Known::default();
+    }
+
+    /// Nothing is left to ask.
+    fn whole(&self) -> bool {
+        let sizes = [self.clip, self.logo, self.settings, self.sign];
+        sizes.iter().all(Option::is_some) && self.playing && self.names.is_some()
     }
 
     fn of(&mut self, name: &str) -> &mut Option<Has> {
@@ -541,6 +618,22 @@ struct Visited {
     unopened: Option<String>,
     /// its lines that were kept back and not said (None: they were said)
     kept: Option<Vec<String>>,
+    /// when the panel first took a packet, ms after it came (None: it took none)
+    took: Option<u128>,
+    /// its port sent back what it was sent
+    echoed: bool,
+}
+
+/// What came back in a row that is no answer.
+struct Noise {
+    /// when its first piece came, ms after the panel came
+    at: u128,
+    pieces: u32,
+    bytes: usize,
+    /// its first bytes
+    head: Vec<u8>,
+    /// it reads as a port sending back what it was sent
+    echo: bool,
 }
 
 /// One visit: the panel on the bus, from the moment it was seen.
@@ -557,6 +650,14 @@ struct Visit<'a> {
     kept: Option<Vec<String>>,
     /// answers still to come to syncs that were sent again before the first was answered
     owed: u32,
+    /// what is coming back that is no answer, until it is said in one line
+    noise: Option<Noise>,
+    /// how often that came in this visit (the first is said with its bytes, the others are
+    /// counted), and how often it read as the port sending back what it was sent
+    bursts: u32,
+    echoes: u32,
+    /// when the panel first took a packet in this visit, ms after it came
+    took: Option<u128>,
 }
 
 impl Visit<'_> {
@@ -585,6 +686,70 @@ impl Visit<'_> {
         }
     }
 
+    /// The panel took a packet.
+    fn taken(&mut self) {
+        let ms = self.ms();
+        self.took.get_or_insert(ms);
+    }
+
+    /// A piece came back that is no answer: kept with the others that come with it.
+    fn heard(&mut self, piece: &[u8]) {
+        let at = self.ms();
+        let noise = self.noise.get_or_insert(Noise {
+            at,
+            pieces: 0,
+            bytes: 0,
+            head: Vec::new(),
+            echo: false,
+        });
+        noise.pieces += 1;
+        noise.bytes += piece.len();
+        let room = NOISE_HEAD.saturating_sub(noise.head.len());
+        noise
+            .head
+            .extend_from_slice(&piece[..piece.len().min(room)]);
+        noise.echo |= echo_like(piece);
+    }
+
+    /// What came back that is no answer is over: said in one line the first time in a visit
+    /// (how much it was and how it begins, as bytes and as text: a panel that says something
+    /// of itself there is read), counted after that.
+    fn noise_over(&mut self, what: &str) {
+        let Some(noise) = self.noise.take() else {
+            return;
+        };
+        self.bursts += 1;
+        self.echoes += u32::from(noise.echo);
+        if self.bursts > 1 {
+            return;
+        }
+        let kind = match noise.echo {
+            true => "not read: the panel's port sent it back",
+            false => "what came back is no answer",
+        };
+        let pieces = match noise.pieces {
+            1 => "1 piece".to_string(),
+            pieces => format!("{pieces} pieces"),
+        };
+        self.line_at(
+            noise.at,
+            &format!(
+                "{what}: {kind} ({pieces}, {} bytes, beginning {}; as text \"{}\")",
+                noise.bytes,
+                hex(&noise.head, 24),
+                text_of(&noise.head)
+            ),
+        );
+    }
+
+    /// How what came back in this visit is called where the syncs are counted.
+    fn back_said(&self) -> &'static str {
+        match self.echoes == self.bursts {
+            true => "sent back unread",
+            false => "followed by what is no answer",
+        }
+    }
+
     /// The visit is over (`unopened`: why the panel could not be opened in it).
     fn ended(&mut self, outcome: Outcome, unopened: Option<String>) -> Visited {
         Visited {
@@ -592,6 +757,8 @@ impl Visit<'_> {
             replies: self.replies,
             unopened,
             kept: self.kept.take(),
+            took: self.took,
+            echoed: self.echoes > 0,
         }
     }
 
@@ -626,6 +793,7 @@ impl Visit<'_> {
             };
         }
         let taken = began.elapsed().as_millis();
+        self.taken();
         let wait = match self.replies {
             0 => patience.max(FIRST_REPLY_MS),
             _ => patience,
@@ -640,6 +808,7 @@ impl Visit<'_> {
             };
             match got {
                 Ok(reply) if reply.first() == Some(&cmd) => {
+                    self.noise_over(what);
                     self.answered();
                     let answered = began.elapsed().as_millis();
                     self.line(&format!(
@@ -650,10 +819,11 @@ impl Visit<'_> {
                     return Said::Reply(reply);
                 }
                 // (the answer to a sync that was sent again: nothing new)
-                Ok(other) if self.owed > 0 && other.first() == Some(&CMD_SYNC) => {
+                Ok(other) if self.owed > 0 && sync_answer(&other) => {
                     self.owed -= 1;
                 }
-                Ok(other) => {
+                Ok(other) if reply_like(&other) => {
+                    self.noise_over(what);
                     self.answered();
                     self.line(&format!(
                         "{what}: an answer to something else came first [{}]",
@@ -661,7 +831,10 @@ impl Visit<'_> {
                     ));
                     self.late.push(other);
                 }
+                // (no answer to anything: what the panel's port sends back, most likely)
+                Ok(other) => self.heard(&other),
                 Err(Trouble::Silent) => {
+                    self.noise_over(what);
                     let waited = asked.elapsed().as_millis();
                     self.line(&format!(
                         "{what}: taken after {taken} ms, no answer in {waited} ms"
@@ -669,6 +842,7 @@ impl Visit<'_> {
                     return Said::Quiet;
                 }
                 Err(Trouble::Failed(why)) => {
+                    self.noise_over(what);
                     self.line(&format!(
                         "{what}: taken after {taken} ms, then no answer ({why})"
                     ));
@@ -681,30 +855,35 @@ impl Visit<'_> {
     /// The sync, until the panel answers it: sent again every `SYNC_AGAIN_MS` while no
     /// answer comes, for `patience` in all. A panel whose program is not reading takes
     /// at most a packet or two into its endpoint: so whether it goes on taking them tells
-    /// whether anything on it reads what is sent. (The app's own sync was not answered once
-    /// in thirteen openings of the panel of issue 52 after it began to restart.)
+    /// whether anything on it reads what is sent. What comes back and is no answer is no
+    /// answer: a port that no program has set up yet sends back what it gets, as a 9.2"
+    /// that starts was measured to for a third of a second. A sync that came back so was
+    /// not read, and the next goes out `SYNC_SOON_MS` after it. (The app sent its sync once
+    /// each time it opened the panel of issue 52 after that began to restart, thirteen
+    /// times, and got no answer: one sync at the wrong moment is lost on a sound panel too.)
     fn greet(&mut self, link: &mut Direct, bus: &Bus, patience: Duration) -> Said {
         let what = "sync (10)";
         let began = Instant::now();
         let until = began + patience;
         let mut taken: Vec<u128> = Vec::new(); // (how long the panel took to take each)
+        let mut back = 0u32; // (how many of them came back, or brought what is no answer)
+        let mut fresh = 0u32; // (the syncs since the last of those: each may be answered yet)
         loop {
             let sending = Instant::now();
             if let Err(trouble) = link.send(CMD_SYNC, &[], TAKE_MS) {
                 let ms = sending.elapsed().as_millis();
+                let sent = sent_said(&taken, back, self.back_said());
                 let said = match (&trouble, taken.is_empty()) {
                     (Trouble::Silent, true) => {
                         format!("the panel did not take the packet in {ms} ms")
                     }
                     (Trouble::Failed(why), true) => format!("not sent ({why})"),
-                    (Trouble::Silent, false) => format!(
-                        "{}, not answered; the next was not taken in {ms} ms",
-                        sent_said(&taken)
-                    ),
+                    (Trouble::Silent, false) => {
+                        format!("{sent}, not answered; the next was not taken in {ms} ms")
+                    }
                     (Trouble::Failed(why), false) => format!(
-                        "{}, not answered; the next was not taken: the transfer failed \
-                         after {ms} ms ({why})",
-                        sent_said(&taken)
+                        "{sent}, not answered; the next was not taken: the transfer failed \
+                         after {ms} ms ({why})"
                     ),
                 };
                 self.line(&format!("{what}: {said}"));
@@ -714,7 +893,11 @@ impl Visit<'_> {
                 };
             }
             taken.push(sending.elapsed().as_millis());
-            let again = (Instant::now() + Duration::from_millis(SYNC_AGAIN_MS)).min(until);
+            self.taken();
+            fresh += 1;
+            let sent = Instant::now();
+            let mut again = (sent + Duration::from_millis(SYNC_AGAIN_MS)).min(until);
+            let mut came_back = false;
             loop {
                 let left = again.saturating_duration_since(Instant::now()).as_millis() as u64;
                 let got = match left {
@@ -722,15 +905,21 @@ impl Visit<'_> {
                     left => link.read(left),
                 };
                 match got {
-                    Ok(reply) if reply.first() == Some(&CMD_SYNC) => {
+                    Ok(reply) if sync_answer(&reply) || foreign_answer(&reply) => {
+                        self.noise_over(what);
                         self.answered();
-                        self.owed = taken.len() as u32 - 1;
+                        // (an answer after what was no answer: none of the syncs before
+                        // it is owed one)
+                        self.owed = fresh.saturating_sub(1);
                         let answered = began.elapsed().as_millis();
-                        let how = match taken.as_slice() {
-                            [taken] => {
+                        let how = match (taken.as_slice(), back) {
+                            ([taken], 0) => {
                                 format!("taken after {taken} ms, answered after {answered} ms")
                             }
-                            _ => format!("{}; answered after {answered} ms", sent_said(&taken)),
+                            _ => format!(
+                                "{}; answered after {answered} ms",
+                                sent_said(&taken, back, self.back_said())
+                            ),
                         };
                         self.line(&format!(
                             "{what}: {} [{}] ({how})",
@@ -739,41 +928,46 @@ impl Visit<'_> {
                         ));
                         return Said::Reply(reply);
                     }
+                    // what is no answer: the sync as the panel's port sends it back, most
+                    // likely. That sync was not read, and the next is sent sooner
                     Ok(other) => {
-                        self.answered();
-                        self.line(&format!(
-                            "{what}: an answer to something else came first [{}]",
-                            hex(&other, 12)
-                        ));
-                        self.late.push(other);
+                        self.heard(&other);
+                        if !came_back {
+                            came_back = true;
+                            back += 1;
+                            fresh = 0;
+                            again = again.min(sent + Duration::from_millis(SYNC_SOON_MS));
+                        }
                     }
                     Err(Trouble::Silent) => {
-                        // (a read the system ended early, as it does where the panel is
-                        // leaving: the next sync waits its time all the same, and the bus
-                        // is looked at meanwhile, so that a leaving is told when it happens)
-                        while Instant::now() < again {
-                            if bus.there().is_none() {
-                                self.line(&format!("{what}: {}, not answered", sent_said(&taken)));
-                                return Said::Broke;
-                            }
-                            let rest = again.saturating_duration_since(Instant::now());
-                            std::thread::sleep(LOOK.min(rest));
+                        if Instant::now() >= again {
+                            break;
                         }
-                        break;
+                        // (a read that ended before its time, as the system ends one where
+                        // the panel is leaving: the bus is looked at, so that a leaving is
+                        // told when it happens, and the answer is read for on)
+                        if bus.there().is_none() {
+                            self.noise_over(what);
+                            let sent = sent_said(&taken, back, self.back_said());
+                            self.line(&format!("{what}: {sent}, not answered"));
+                            return Said::Broke;
+                        }
+                        let rest = again.saturating_duration_since(Instant::now());
+                        std::thread::sleep(LOOK.min(rest));
                     }
                     Err(Trouble::Failed(why)) => {
-                        self.line(&format!(
-                            "{what}: {}, then no answer ({why})",
-                            sent_said(&taken)
-                        ));
+                        self.noise_over(what);
+                        let sent = sent_said(&taken, back, self.back_said());
+                        self.line(&format!("{what}: {sent}, then no answer ({why})"));
                         return Said::Broke;
                     }
                 }
             }
+            self.noise_over(what);
             if Instant::now() >= until {
+                let sent = sent_said(&taken, back, self.back_said());
                 self.line(&format!(
-                    "{what}: {}, no answer in {} ms",
-                    sent_said(&taken),
+                    "{what}: {sent}, no answer in {} ms",
                     began.elapsed().as_millis()
                 ));
                 return Said::Quiet;
@@ -798,34 +992,44 @@ impl Visit<'_> {
                 }
             };
         }
-        match link.read(REPLY_MS) {
-            Ok(reply) => {
-                self.answered();
-                Said::Reply(reply)
-            }
-            Err(Trouble::Silent) => {
-                self.line(&format!("{what}: no answer in {REPLY_MS} ms"));
-                Said::Quiet
-            }
-            Err(Trouble::Failed(why)) => {
-                self.line(&format!("{what}: no answer ({why})"));
-                Said::Broke
+        self.taken();
+        loop {
+            match link.read(REPLY_MS) {
+                // (the answer to a sync that was sent again: no piece of the listing)
+                Ok(reply) if self.owed > 0 && sync_answer(&reply) => self.owed -= 1,
+                Ok(reply) => {
+                    self.answered();
+                    return Said::Reply(reply);
+                }
+                Err(Trouble::Silent) => {
+                    self.line(&format!("{what}: no answer in {REPLY_MS} ms"));
+                    return Said::Quiet;
+                }
+                Err(Trouble::Failed(why)) => {
+                    self.line(&format!("{what}: no answer ({why})"));
+                    return Said::Broke;
+                }
             }
         }
     }
 }
 
 /// How the panel took the syncs sent to it: "taken after 2 ms", or "sent 5 times, each
-/// taken after 0 to 2 ms".
-fn sent_said(taken: &[u128]) -> String {
+/// taken after 0 to 2 ms"; and how many of them came `back` (`called`: "sent back unread").
+fn sent_said(taken: &[u128], back: u32, called: &str) -> String {
     let (least, most) = (
         taken.iter().min().copied().unwrap_or(0),
         taken.iter().max().copied().unwrap_or(0),
     );
-    match taken.len() {
+    let sent = match taken.len() {
         0 | 1 => format!("taken after {least} ms"),
         count if least == most => format!("sent {count} times, each taken after {least} ms"),
         count => format!("sent {count} times, each taken after {least} to {most} ms"),
+    };
+    match (back, taken.len()) {
+        (0, _) => sent,
+        (_, 0 | 1) => format!("{sent} and {called}"),
+        (back, _) => format!("{sent}, {back} of them {called}"),
     }
 }
 
@@ -1053,6 +1257,71 @@ struct Stay {
     unopened: String,
     /// the lines of its visits that are kept back until it answers
     kept: Vec<String>,
+    /// when it first took a packet in this stay, ms after it came (None: it took none)
+    took: Option<u128>,
+    /// its port sent back what it was sent
+    echoed: bool,
+}
+
+/// What the panel's port did in the stays it was opened in: how often it took what it was
+/// sent (and when it first did, ms after the panel came), and how often it sent that back.
+#[derive(Clone, Copy, Default)]
+struct Ports {
+    opened: u32,
+    took: u32,
+    first: Option<(u128, u128)>,
+    echoed: u32,
+}
+
+impl Ports {
+    fn add(&mut self, took: Option<u128>, echoed: bool) {
+        self.opened += 1;
+        if let Some(ms) = took {
+            self.took += 1;
+            self.first = Some(match self.first {
+                None => (ms, ms),
+                Some((least, most)) => (least.min(ms), most.max(ms)),
+            });
+        }
+        self.echoed += u32::from(echoed);
+    }
+
+    /// "its port took what was sent in 20 of them, first after 301 to 322 ms, and sent it
+    /// back unread in 20" (`of`: "them", or what the stays are called).
+    fn said(&self, of: &str) -> String {
+        if self.took == 0 {
+            return "its port took nothing that was sent".to_string();
+        }
+        let first = match self.first {
+            None => String::new(),
+            Some((least, most)) if least == most => format!(", first after {least} ms"),
+            Some((least, most)) => format!(", first after {least} to {most} ms"),
+        };
+        let back = match self.echoed {
+            0 => String::new(),
+            echoed => format!(", and sent it back unread in {echoed}"),
+        };
+        format!(
+            "its port took what was sent in {} of {of}{first}{back}",
+            self.took
+        )
+    }
+
+    /// The same of all the stays the panel was opened in, for the run's last line.
+    fn summed(&self) -> String {
+        match (self.opened, self.took) {
+            (1, 1) => {
+                let first =
+                    (self.first).map_or_else(String::new, |(ms, _)| format!(" after {ms} ms"));
+                let back = match self.echoed {
+                    0 => "",
+                    _ => ", and sent it back unread",
+                };
+                format!("its port took what was sent{first}{back}")
+            }
+            (opened, _) => self.said(&format!("the {opened} times it was opened")),
+        }
+    }
 }
 
 /// Which of a visit's lines are kept back, for a panel that has come many times in a row
@@ -1084,6 +1353,8 @@ struct Quiet {
     why: String,
     open: u32,
     lives: Option<(u128, u128)>,
+    /// what the panel's port did in those it was opened in
+    ports: Ports,
 }
 
 impl Quiet {
@@ -1097,8 +1368,16 @@ impl Quiet {
     }
 
     /// A stay without an answer is over: the panel was on the bus for `ms`; `shut`: why it
-    /// could not be opened (None: it was).
-    fn once_more(&mut self, number: u32, ms: u128, shut: Option<&str>, say: &mut dyn FnMut(&str)) {
+    /// could not be opened (None: it was); `port`: when it first took a packet, and whether
+    /// its port sent back what it was sent.
+    fn once_more(
+        &mut self,
+        number: u32,
+        ms: u128,
+        shut: Option<&str>,
+        port: (Option<u128>, bool),
+        say: &mut dyn FnMut(&str),
+    ) {
         self.run += 1;
         self.opened += u32::from(shut.is_none());
         if self.run < TOLD_EACH {
@@ -1129,15 +1408,19 @@ impl Quiet {
                     None => (ms, ms),
                     Some((least, most)) => (least.min(ms), most.max(ms)),
                 });
+                self.ports.add(port.0, port.1);
             }
         }
         if !(self.run - TOLD_EACH).is_multiple_of(TOLD_EVERY) {
             return;
         }
+        let ports = self.ports.said("them");
         let lives = match self.lives {
             None => String::new(),
-            Some((least, most)) if least == most => format!(" (on the bus for {least} ms)"),
-            Some((least, most)) => format!(" (on the bus for {least} to {most} ms)"),
+            Some((least, most)) if least == most => {
+                format!(" (on the bus for {least} ms; {ports})")
+            }
+            Some((least, most)) => format!(" (on the bus for {least} to {most} ms; {ports})"),
         };
         say(&match (self.shut, self.open) {
             (_, 0) => format!(
@@ -1159,6 +1442,7 @@ impl Quiet {
             ),
         });
         (self.shut, self.open, self.lives) = (0, 0, None);
+        self.ports = Ports::default();
     }
 }
 
@@ -1203,7 +1487,7 @@ fn stay_over(
     match over.answers {
         0 => {
             let shut = (!over.opened).then_some(over.unopened.as_str());
-            quiet.once_more(over.number, ms, shut, say);
+            quiet.once_more(over.number, ms, shut, (over.took, over.echoed), say);
         }
         _ => *quiet = Quiet::default(),
     }
@@ -1236,6 +1520,7 @@ fn wait_for(
     let mut opened = false;
     let mut mute = false; // (on the bus without an answer, the last time it was met)
     let mut quiet = Quiet::default();
+    let mut ports = Ports::default(); // (what its port did in the stays it was opened in)
     loop {
         let (found, others) = bus.scan();
         diary.note(others, say);
@@ -1244,6 +1529,9 @@ fn wait_for(
             if let Some(over) = stay.take() {
                 let ms = over.since.elapsed().as_millis();
                 lives.push(ms);
+                if over.opened {
+                    ports.add(over.took, over.echoed);
+                }
                 if !stay_over(&over, ms, &mut quiet, &mut tally, steps, say) {
                     break;
                 }
@@ -1266,6 +1554,8 @@ fn wait_for(
                 opened: false,
                 unopened: String::new(),
                 kept: Vec::new(),
+                took: None,
+                echoed: false,
             }
         });
         let came = Came {
@@ -1284,6 +1574,8 @@ fn wait_for(
         let visited = visit(bus, found, &came, steps, known, Some(watch), say);
         replies += visited.replies;
         now.answers += visited.replies;
+        now.took = now.took.or(visited.took);
+        now.echoed |= visited.echoed;
         // (lines kept back: said with the stay's first answer; never where the panel leaves
         // without one; at once where it stays on the bus and says nothing, cannot be opened
         // while it is there, or is no panel for this)
@@ -1324,6 +1616,9 @@ fn wait_for(
             Outcome::Left(ms) => {
                 lives.push(ms);
                 if let Some(over) = stay.take() {
+                    if over.opened {
+                        ports.add(over.took, over.echoed);
+                    }
                     if !stay_over(&over, ms, &mut quiet, &mut tally, steps, say) {
                         break;
                     }
@@ -1371,7 +1666,11 @@ fn wait_for(
         }
         return Err(said);
     }
-    let mut said = verdict(number, &lives, replies, mute, steps);
+    // (a stay that is not over: the panel is on the bus still)
+    if let Some(now) = stay.as_ref().filter(|now| now.opened) {
+        ports.add(now.took, now.echoed);
+    }
+    let mut said = verdict(number, &lives, replies, mute, &ports, steps);
     if let Some(why) = never_opened {
         said += &format!(
             "; it could not be opened once ({why}): the system did not have it ready in time"
@@ -1381,7 +1680,14 @@ fn wait_for(
 }
 
 /// What is said of a panel that came and did not stay, or stays without an answer.
-fn verdict(number: u32, lives: &[u128], replies: u32, mute: bool, steps: &[Step]) -> String {
+fn verdict(
+    number: u32,
+    lives: &[u128],
+    replies: u32,
+    mute: bool,
+    ports: &Ports,
+    steps: &[Step],
+) -> String {
     let mut said = match mute {
         true => "the panel is on the bus and does not answer".to_string(),
         false => format!("the panel came {} and did not stay", times(number)),
@@ -1394,6 +1700,10 @@ fn verdict(number: u32, lives: &[u128], replies: u32, mute: bool, steps: &[Step]
     }
     if replies == 0 {
         said += "; it answered nothing";
+        // (what its port did tells how far the panel's program gets)
+        if ports.opened > 0 {
+            said += &format!(" ({})", ports.summed());
+        }
     }
     if !steps.is_empty() {
         let done = (steps.iter())
@@ -1494,6 +1804,10 @@ fn visit(
         late: Vec::new(),
         kept: (came.hush == Hush::UntilAnswer).then(|| came.carried.clone()),
         owed: 0,
+        noise: None,
+        bursts: 0,
+        echoes: 0,
+        took: None,
     };
     // (its coming: said at once, or only once it is opened where it has left before that
     // many times in a row)
@@ -1569,14 +1883,17 @@ fn visit(
             named(&found)
         )),
     }
-    // the sync first, until the panel has answered it once as a TURZX panel does; then what
-    // was asked for: the clip it may be playing stopped, the files taken off, their sizes
-    // asked, and the settings saved where that is asked for or needed. Then what the panel
-    // holds (asked once: `known`). A transfer that fails ends the visit: the panel has left
-    // the bus, or is taken anew. Once no step is open, a visit sends nothing of this: it
-    // watches whether the panel stays by itself.
+    // the sync first, each time the panel comes, until it answers it as a TURZX panel does
+    // (a panel that starts reads nothing at first: what it is sent then is lost, so a step
+    // is never the first thing sent); then what was asked for: the clip it may be playing
+    // stopped, the files taken off, their sizes asked, and the settings saved where that is
+    // asked for or needed. Then what the panel holds (asked once: `known`). A transfer that
+    // fails ends the visit: the panel has left the bus, or is taken anew. Once no step is
+    // open and nothing is left to ask, a visit sends nothing of this: it watches whether the
+    // panel stays by itself.
     let mut reading = true; // (false: the panel takes no packets; nothing more is sent)
     let mut silent = false; // (the sync was not answered in all the time it had)
+    let mut greeted = false; // (the sync was answered in this visit)
     'talk: {
         macro_rules! told {
             ($said:expr) => {
@@ -1636,25 +1953,21 @@ fn visit(
                 }
             };
         }
-        if !known.spoken {
-            // (in a wait, for as long as the panel is watched: one that stays longer than
-            // the first answer's time and answers late in its stay is heard)
-            let first = Duration::from_millis(FIRST_REPLY_MS);
-            let patience = watch.map_or(first, |stay| stay.max(first));
-            let Some(reply) = told!(at.greet(&mut link, bus, patience)) else {
-                silent = true;
-                break 'talk; // (not answered: nothing else is sent this time)
-            };
-            if !accepted(&reply) || firmware_of(&reply).is_empty() {
-                let why = format!(
-                    "the panel does not answer the sync as a TURZX panel does ({}): nothing \
-                     was changed on it",
-                    hex(&reply, 16)
-                );
-                return at.ended(Outcome::NotThis(why), None);
-            }
-            known.spoken = true;
+        if !steps.iter().any(|step| step.state == State::Open) && known.whole() {
+            break 'talk; // (nothing to send: the panel is only watched)
         }
+        // (in a wait, for as long as the panel is watched: one that stays longer than the
+        // first answer's time and answers late in its stay is heard)
+        let first = Duration::from_millis(FIRST_REPLY_MS);
+        let patience = watch.map_or(first, |stay| stay.max(first));
+        let Some(reply) = told!(at.greet(&mut link, bus, patience)) else {
+            silent = true;
+            break 'talk; // (not answered: nothing else is sent this time)
+        };
+        if !sync_answer(&reply) {
+            return at.ended(Outcome::NotThis(not_turzx(&reply)), None);
+        }
+        greeted = true;
         settle(steps, known, &mut at); // (a file the panel said it has not: nothing to send)
         for round in 0..2 {
             // the clip the panel may be playing is stopped before its file is taken off: a
@@ -1836,6 +2149,24 @@ fn visit(
         at.line("still on the bus, but it takes no packets");
         return at.ended(Outcome::Mute, None);
     }
+    // (a panel that was only watched this time: the sync first, as at every coming)
+    if !greeted {
+        let first = Duration::from_millis(FIRST_REPLY_MS);
+        match at.greet(&mut link, bus, first) {
+            Said::Reply(reply) if sync_answer(&reply) => {}
+            Said::Reply(reply) => {
+                return at.ended(Outcome::NotThis(not_turzx(&reply)), None);
+            }
+            Said::Broke => {
+                let outcome = broke(bus, &mut at);
+                return at.ended(outcome, None);
+            }
+            Said::Quiet | Said::NotTaken => {
+                at.line("on the bus, but it does not answer");
+                return at.ended(Outcome::Mute, None);
+            }
+        }
+    }
     let what = "still there: is its own clip playing (112)";
     let outcome = match at.command(&mut link, CMD_LOCAL_PLAYING, &[], what, &how, REPLY_MS) {
         Said::Reply(_) => Outcome::Stayed,
@@ -1846,6 +2177,15 @@ fn visit(
         }
     };
     at.ended(outcome, None)
+}
+
+/// What is said of a panel whose answer to the sync is no TURZX panel's.
+fn not_turzx(reply: &[u8]) -> String {
+    format!(
+        "the panel does not answer the sync as a TURZX panel does ({}): nothing was changed \
+         on it",
+        hex(reply, 16)
+    )
 }
 
 /// A transfer failed: the panel has left the bus (the system may list it a moment longer),
