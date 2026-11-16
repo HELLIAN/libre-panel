@@ -326,12 +326,12 @@ nothing while no theme shows it.
 |---|---|---|---|
 | **Turing / TURZX** | 8.8", 9.2", 12.3" | 1.6", 2.1" round, 2.8" round, 4.6", 5.2", 8" | USB, video mode |
 | **Turing Smart Screen** | 3.5", 8.8" | 2.1" round, 5" | COM port |
-| **JONSBO** | ZC-360, each screen its own panel | ZC-360 as one picture, TF3-360SC, DS916, DS339 | USB |
+| **JONSBO** | ZC-360, each screen its own panel; DS339 | ZC-360 as one picture, TF3-360SC, DS916 | USB |
 | **Waveshare USB Monitor** | 2.8", as a USB display | – | USB |
 | **UsbPCMonitor** | – | 3.5", 5", 7" | COM port |
 | **XuanFang** | – | 3.5" | COM port |
 | **Kipye Qiye** | – | 3.5" | COM port |
-| **WeAct Display FS V1** | – | 0.96", 3.5" | COM port |
+| **WeAct Display FS V1** | 0.96" | 3.5" | COM port |
 | **VMAX** | – | 4.6" | USB |
 | **Hongtai / Jungle Leopard** | – | Chill Arc 360, MSI EZ Display and more | COM port |
 | **Lian Li** | – | Universal Screen, HydroShift II, OLED Curve | USB |
@@ -447,7 +447,7 @@ administrator rights.
 ### With Python
 
 ```bash
-pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.2"
+pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.3"
 libre-panel tray                    # the background app with its tray icon; opens its window
 libre-panel autostart enable        # start it whenever you log in
 ```
@@ -593,10 +593,10 @@ guesses hit new programs that are not signed, as Libre Panel's are not yet. To b
 your file is the one built here:
 
 - **Its SHA-256** is the one in `SHA256SUMS` on the release's page. In PowerShell:
-  `Get-FileHash .\libre-panel-0.9.2-windows-x64-setup.exe` (Linux: `sha256sum -c SHA256SUMS`).
+  `Get-FileHash .\libre-panel-0.9.3-windows-x64-setup.exe` (Linux: `sha256sum -c SHA256SUMS`).
 - **Where it was built:** from 0.8.0 on, GitHub signs for every download that this
   repository's release workflow built it, and from which commit:
-  `gh attestation verify libre-panel-0.9.2-windows-x64-setup.exe --repo syntensa/libre-panel`.
+  `gh attestation verify libre-panel-0.9.3-windows-x64-setup.exe --repo syntensa/libre-panel`.
 
 When it is, allow it in *Windows Security → Virus & threat protection → Protection history*
 (*Actions → Allow on device*), run the setup again, and report the file to Microsoft as a false

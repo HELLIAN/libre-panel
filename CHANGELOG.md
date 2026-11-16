@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.3 — 2026-11-16
+
+A hotfix for 0.9.2: `libre-panel start-screen`, the command for a panel that keeps
+restarting, now copes with how a 9.2" starts, measured on a sound one. And three things an
+owner asked for: the JONSBO DS339's driver on Windows, the WeAct 0.96" confirmed, the
+brightness in steps of 1 %. Coming from 0.8? Everything 0.9 brought follows below: a third
+less memory, up to 38 % less processor and a quicker start, with the same pictures on the
+panel, pixel for pixel.
+
+**Fixed**
+- **`libre-panel start-screen` took a starting panel's echo for an answer.** A sound 9.2"
+  (the firmware of the panel of issue 52), plugged in while the command waited, showed how
+  such a panel starts: its port takes nothing for 0.3 s, then sends back what it gets in
+  pieces that are no reply (it is open, and the panel's program has not set it up yet), and
+  the panel answers from 0.66 s on, each command within 2 to 3 ms. 0.9.2 counted those
+  pieces as answers: a panel that never answers would have filled the screen with them,
+  would not have been said to answer nothing, and a look at it could have ended with
+  "done". They are no answer now, told once each time the panel comes (how much, and how it
+  begins), and the last line says what the panel's port did: whether it took what was sent,
+  and whether it sent it back unread.
+- **The sync is the first thing sent each time the panel comes**, again every 300 ms while
+  it is unanswered and 100 ms after one that came back. 0.9.2 sent a step that was still
+  open first when the panel came again: into the port's echo, where it is lost. A step
+  follows the sync's answer.
+- **What the app's thirteen syncs say.** By its log the panel of issue 52 answered none of
+  them, each sent once. One sync in a starting panel's first two thirds of a second is lost
+  on a sound panel too, so that is less than it looked, and more than nothing: thirteen in a
+  row are not lost that way on a panel that answers through its two seconds. The chance is
+  small still; the command now tells how far that panel's port gets.
+
+**Added**
+- **The JONSBO DS339 runs, and says which driver it needs on Windows** (its owner's report,
+  [#46](https://github.com/syntensa/libre-panel/issues/46)). Libre Panel 0.9 talks to USB
+  devices through WinUSB alone, and the DS339 comes without it: "incompatible driver is
+  installed for this interface". Both of its interfaces take WinUSB once with Zadig; the
+  error now says so, and [the hardware guide](docs/HARDWARE.md#jonsbo-ds916-and-ds339) has
+  the steps.
+- **The WeAct Display FS 0.96" is confirmed**: pictures and brightness, by the same owner.
+
+**Changed**
+- **The brightness in steps of 1 %** (it was 5): the panel's, the one at night and while
+  you are away, and a second panel's own or its difference to the first.
+
 ## 0.9.2 — 2026-11-15
 
 A hotfix for 0.9.1: one 9.2" has kept restarting since its start screen was written with
