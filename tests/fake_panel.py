@@ -91,10 +91,17 @@ class FakePanel:
         # the panel's files (40 written, 42 deleted, 98 their size, 99 the folder's listing in
         # 20 pieces of 512 without a header, as the 9.2" sends it), 113 shown, 125 saved
         self.files: dict[str, bytes] = {}
-        # the bytes the panel's folder holds (None: no end): a file is written anew only where
-        # it fits beside the one it replaces, else the panel keeps what it had, as a 9.2" kept
-        # its standby clip when a larger one came
+        # the bytes the panel's folder holds (None: no end). A file that does not fit there
+        # beside the others ends where the room does: a 9.2"'s boot logo ended at 16 KiB, and
+        # its clip at the size of the one it replaced (the room of the file it takes the
+        # place of is free for it). One that gets no room at all is not made
         self.room: int | None = None
+        # a panel that takes no file any more, as that 9.2" did for five days once it was
+        # full: it answers each 40 at once and keeps what it had
+        self.refuses = False
+        # how long a megabyte takes to write (a 9.2": 1.8 to 4 s); what does not fit, and what
+        # a panel that refuses is sent, takes no time. 0: no write takes any
+        self.write_s_per_mb = 0.5
         self.shown: list[str] = []
         self.saved: list[bytes] = []
         self._piece = 0
@@ -262,9 +269,12 @@ class FakePanel:
             assert name.startswith("usr/data"), name
         if cmd == 40:
             assert size == len(payload) and 0 < size <= 1024 * 1024, (size, len(payload))
-            used = sum(len(data) for data in self.files.values())
-            if self.room is None or used + size <= self.room:
-                self.files[name] = payload
+            if not self.refuses:
+                others = sum(len(kept) for other, kept in self.files.items() if other != name)
+                fits = size if self.room is None else max(0, min(size, self.room - others))
+                time.sleep(fits / 1e6 * self.write_s_per_mb)
+                if fits or name in self.files:
+                    self.files[name] = payload[:fits]
         playing = self.plays_clip and cmd == 42 and name == STANDBY_CLIP
         if cmd == 42 and name not in self.kept_files and not playing:
             self.files.pop(name, None)

@@ -607,20 +607,37 @@ Jonsbo TF3's pump), in the look chosen on the card, which shows them as they wil
 | Dark | black, the mark faint in the middle | the mark breathes |
 
 They are drawn in floating point and made 8 bits only at the end, with a dither of a level's
-worth, so that a dark gradient has no bands and a glow no rings. The boot logo is a JPEG of
-quality 95 with every pixel's colour; the clip is as fine as fits in the panel's 1 MiB (crf 20,
-coarser where a look moves everywhere, finer where it leaves room), and in full range on a panel
-whose decoder shows every stream so (the 9.2" and the 12.3", or `video_range = "full"`): in
-limited range their black was grey.
+worth, so that a dark gradient has no bands and a glow no rings. The boot logo is a JPEG with
+every pixel's colour, at quality 95 or the next below that fits its room on the panel (92, 90,
+88, 85); the clip is made at crf 20, and coarser, a step at a time, where it must be to fit
+its room (up to 26); in full range on a panel whose decoder shows every stream so (the 9.2"
+and the 12.3", or `video_range = "full"`): in limited range their black was grey.
 
-**Writing is switched off since 0.9.2.** Both files go where the panel keeps its own settings,
-and on one 9.2" the room there ran out: files ended early or were not taken, 0.9.1 forced a
-clip in, and that panel has kept restarting since (issue 52). On other panels, a 9.2" and a
-12.3" among them, the same files were written for months without trouble, and a panel
-cannot be asked how much room it has. Until Libre Panel can tell how much fits on a panel,
-*Put on the panel* is greyed out; the card still shows both pictures, downloads them, says
-what is on the panel and takes the boot logo off. What follows describes the writing as it
-was and will be.
+**How much goes on a panel.** Both files go where the panel keeps its own settings. How much
+room there is cannot be asked, and one 9.2" was full at about 718,000 bytes of these files: a
+panel that is full takes no file any more, and that one has kept restarting since 0.9.1
+forced a clip in (issue 52). Until then the files were made "as fine as fits in 1 MiB", the
+most the command takes: 615,000 to 875,000 bytes for most looks on a 9.2". Since 0.9.4 a
+panel gets what is known to fit:
+
+| Panel | Standby clip | Boot logo | Together at most | which is |
+|---|---|---|---|---|
+| 9.2" | 360,000 | 120,000 | 480,000 bytes | two thirds of the 718,000 that filled one |
+| 12.3" | 500,000 | 150,000 | 650,000 bytes | four fifths of the 817,587 one has held for weeks |
+
+The looks come to 433,000 to 454,000 bytes on the 9.2" and to 569,000 to 634,000 on the 12.3"
+(Dark: 59,000 and 96,000), and look as they did: against the files of 0.9.0 the clips are at
+most 1.8 dB apart (at 49.7 dB or better) and the boot logos at most 2.4 dB (at 45.5 dB or
+better). Nothing is made coarser than that. **Levels**, whose thousands of small lights took
+1.4 MB on a 9.2", is therefore not written to either: chosen, the card says so, and gives no
+file of it.
+
+**Only the 9.2" and the 12.3" are written to**, the models it has been done on. For the
+family's other panels *Put on the panel* is greyed out, since how much room they have is not
+known; the card still shows both pictures, downloads them, says what is on the panel and
+takes the boot logo off. (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment
+switches writing on there for who looks into it on a panel of their own: the files are then
+made for the 9.2"'s room, by the pixels.)
 
 - **Put on the panel** writes one, after a question: the panel's themes pause, the panel
   shows what was written (the logo at once, the clip playing), and *Show the themes again*
@@ -629,16 +646,29 @@ was and will be.
 - **Factory logo again** takes Libre Panel's boot logo away; the factory logo was never
   touched and shows again.
 - **The standby clip replaces** the one the panel has (`usr/data/standby.h264`, the vendor
-  app's name); that one cannot be read back first. Where the panel keeps the one it had (a
-  9.2" did once it had no room left), Libre Panel says so and leaves it: it never deletes a
-  file to write it again. Where `video.local_clip` is empty, the video mode is then told this
-  name.
+  app's name); that one cannot be read back first. Where `video.local_clip` is empty, the
+  video mode is then told this name.
+- **Every write is checked**, before and after:
+  - before, the panel is asked for the sizes of both files. A file larger than the one it
+    replaces is not sent where both together would be more than the panel's room above. So
+    on a panel that holds a 700 KB clip of 0.9.0, the clip is written first (it becomes
+    smaller), then the logo: the card says so;
+  - after, the size is asked again. A file the panel did not take (it has what it had: a
+    panel that is full answers at once and changes nothing) is said to be not taken, and
+    nothing more is sent: no clip is played, no setting saved. Where the old file has the
+    new one's size, the time tells: that 9.2" wrote 700 KB in 1.2 to 2.9 s and turned them
+    down in 30 to 50 ms;
+  - a file that ended early is taken off again at once, so that the panel is not left full,
+    and the card says how much of it the panel took. Libre Panel never deletes a file in
+    order to write it again.
 - **With more panels** the card is the one of the panel chosen at the top (*Panel 1 |
   Panel 2*): its own logo and clip, in its size and the way it is mounted, written to that
   panel alone, and a clip there is named in its own `[[panels]]` `video`, never in another's.
   Of two panels alike, the second is the second of that model on the USB bus, as its loop
   found it.
-- **What is on the panel** lists its folder and the sizes of both files.
+- **What is on the panel** lists its folder and the sizes of both files, and says when they
+  are larger than Libre Panel writes now (files of 0.7.9 to 0.9.1): they can stay; written
+  again, they become smaller.
 - **A panel that keeps restarting** (on USB and gone again, without end) is reached from the
   terminal, with the app quit:
   - `libre-panel start-screen` says what the panel holds;

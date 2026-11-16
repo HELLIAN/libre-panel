@@ -485,14 +485,16 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
     assert lines[-1] == "not done: the panel is on the bus and does not answer"
     # ... and so is one whose port sends back what it gets (a port does until the panel's
     # program has set it up): what comes back is no answer, however it begins (the first
-    # piece begins as the sync's answer does), and is told once
+    # piece begins as the sync's answer does), and is told once. (A sync comes back in 11
+    # pieces, and in 12 at one moment in 800: the time is in the packet, and its bytes are
+    # written out longer then)
     fake.cooked_s = 1e9
     code, lines = run()
     fake.cooked_s = None
     assert code == 1 and set(fake.commands) == {10} and fake.unread == fake.commands
     fake.unread.clear()
     assert re.fullmatch(
-        r"\[1\] sync \(10\): not read: the panel's port sent it back \(11 pieces, \d+ bytes, "
+        r"\[1\] sync \(10\): not read: the panel's port sent it back \(1[12] pieces, \d+ bytes, "
         r'beginning 0a c8 [0-9a-f ]+; as text "[^"]+"\)',
         lines[1],
     ), lines[1]
@@ -810,7 +812,7 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     assert STANDBY_CLIP not in fake.files
     lines = _said(out)
     assert re.fullmatch(
-        r"\[1\] sync \(10\): not read: the panel's port sent it back \(11 pieces, \d+ bytes, "
+        r"\[1\] sync \(10\): not read: the panel's port sent it back \(1[12] pieces, \d+ bytes, "
         r'beginning 0a c8 [0-9a-f ]+; as text "[^"]+"\)',
         lines[4],
     ), lines[4]
@@ -856,7 +858,8 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     assert fake.unread == fake.commands and STANDBY_CLIP in fake.files
     fake.unread.clear()
     lines = _said(out)
-    assert lines[4].startswith("[1] sync (10): not read: the panel's port sent it back (11 pieces")
+    echoed = r"\[1\] sync \(10\): not read: the panel's port sent it back \(1[12] pieces"
+    assert re.match(echoed, lines[4]), lines[4]
     assert re.fullmatch(
         r"\[1\] sync \(10\): sent (\d+) times, each taken after \d+ to \d+ ms, \1 of them sent "
         r"back unread, (?:not answered|then no answer \(.+\))",

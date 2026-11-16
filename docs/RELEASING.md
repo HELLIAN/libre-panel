@@ -53,6 +53,14 @@ and says so. What can be tried of it on a sound panel is tried: its look with `-
 panel plugged in while it waits, shows how the command meets a panel that starts (so
 0.9.2's was found to take a starting panel's echo for an answer).
 
+0.9.4 writes start screens again, so its candidate (0.9.4rc1) is for exactly this: on a 9.2"
+and a 12.3", *What is on the panel*, both *Put on the panel*, the clip a second time (the
+panel then has a file of that very size, and the time the write took has to say that it was
+written), the panel switched off and on again, *Factory logo again*, and the log's
+`start screen:` lines, which say how long each write took. What it sends to a panel whose room ends before the file does (42 for the file
+that ended early) is a command for that state: it ships untried by us, and the protocol
+notes say what is known of it from the panel of issue 52.
+
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the
 workflow fills that release in.

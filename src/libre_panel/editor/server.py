@@ -1746,6 +1746,12 @@ class EditorHandler(BaseHTTPRequestHandler):
                         "label": m.label,
                         "size": list(m.size(way)),
                         "measured": m.id in panel_files.MEASURED,
+                        # whether its files are written (the models it has been done on), and
+                        # how large they are at most there: the clip's and the logo's bytes
+                        "writes": panel_files.writes_on(m),
+                        "room": dict(zip(("clip", "logo"), panel_files.room(m), strict=True)),
+                        # (the looks known not to fit there finely: not offered for writing)
+                        "unfit": list(panel_files.UNFIT.get(m.id, ())),
                     }  # (the 9.2": where SPUR II measured it all)
                     for m in panel_files.models()
                 ],  # fmt: skip
@@ -1755,8 +1761,6 @@ class EditorHandler(BaseHTTPRequestHandler):
                 "runs_panel": self.controls is not None,
                 "names": {"logo": panel_files.BOOT_LOGO, "clip": panel_files.STANDBY_CLIP},
                 "designs": list(bootscreen.designs()),  # the looks, Libre Panel's own first
-                # (whether files are written to a panel: not in this version, issue 52)
-                "writes": panel_files.writes_on(),
             }
         )
 
@@ -2317,8 +2321,8 @@ class EditorHandler(BaseHTTPRequestHandler):
             return self._error(f"panel {n}: there is no such panel")
         device, where = place
         way = self._mounted(n)
-        if action in ("logo", "clip") and not panel_files.writes_on():
-            # (nothing is written in this version: said before the themes are paused for it)
+        if action in ("logo", "clip") and model is not None and not panel_files.writes_on(model):
+            # (nothing is written to this model: said before the themes are paused for it)
             return self._json({"error": panel_files.writes_off(), "paused": False},
                               HTTPStatus.CONFLICT)  # fmt: skip
         paused = False

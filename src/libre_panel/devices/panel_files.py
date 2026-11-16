@@ -15,21 +15,29 @@ does comes from SPUR II's reading of the 8.8"'s firmware and its measurements on
   clip), rotation, with the name 110 gave.
 
 Its safeguards: only on the person's own action, never while the panel shows themes (the
-app pauses it first); names only below ``usr/data/``, relative, without ``..``; at most
-1 MiB a file; after writing, the size is asked and compared (a file the panel kept is left as
-it is: nothing is taken away to be written again). 12 (halt), 13 and 11 are never
-sent from here, and 110 only with the clip's real name (an empty one, saved, would lose the
-standby clip for good).
+app pauses it first); only the two files, by their names below ``usr/data/``. 12 (halt), 13
+and 11 are never sent from here, and 110 only with the clip's real name (an empty one, saved,
+would lose the standby clip for good).
 
-**Writing is switched off** (:func:`writes_on`, issue 52). ``usr/data`` holds the panel's own
-settings too (``app.cfg``), and on one 9.2" the room there ran out: a boot logo ended at
-16 KiB, and from then on that panel took no file and answered each write at once, which this
-module read as "the panel kept the file it had". 0.9.1 deleted that file and wrote the clip
-again: the panel said it had all 706,912 bytes, the settings were saved (125), and the panel
-has not got through a start since. On other panels, a 9.2" and a 12.3" among them, the same
-files were written for months without trouble, and a panel cannot be asked how much room it
-has. Until Libre Panel can tell, no file is written to one: asking what it holds and taking
-the boot logo off stay.
+**How much is written** (issue 52). ``usr/data`` holds the panel's own settings too
+(``app.cfg``), a panel cannot be asked how much room it has there, and on one 9.2" that room
+ran out at about 718,000 bytes of Libre Panel's files: a boot logo ended at 16 KiB, and for
+five days that panel took no file and answered each write at once. Then a larger clip ended
+early, 0.9.1 took it off and wrote it again, the settings were saved (125), and the panel has
+not got through a start since. The files had grown with 0.7.9, which made them "as fine as
+fits in 1 MiB", the most the command takes: up to 875,000 bytes for one look on a 9.2". So,
+since 0.9.4 (:data:`ROOM`, :meth:`PanelFiles.write`):
+
+- the clip and the logo are made for a room that is two thirds of what that 9.2" held (on
+  the 12.3", four fifths of what one has held for weeks), and never coarser than shows
+  (:data:`CLIP_CRF_MAX`, :data:`JPEG_STEPS`): a look that needs more is not written;
+- before a file goes, the panel is asked for the sizes of both: one that is larger than the
+  file it replaces is not sent where both together would be more than that room;
+- after it, the size is asked again. A file the panel did not take (it has what it had) is
+  said so, and nothing more is sent. One that ended early is taken off again at once (42), so
+  that no panel is left full. Nothing is ever taken away in order to write it a second time;
+- only the 9.2" and the 12.3" are written to, the models it has been done on; another needs
+  ``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`` in the environment.
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ import logging
 import os
 import struct
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -68,15 +77,50 @@ BOOT_LOGO = "usr/data/boot.jpg"
 # the other USB panels share its firmware but have not been tried
 MEASURED = ("turing-9.2-usb",)
 STANDBY_CLIP = VENDOR_CLIP  # the vendor app's name, which the video mode names too
+OURS = (BOOT_LOGO, STANDBY_CLIP)  # the only files written or taken off
 MAX_FILE = 1024 * 1024
 LIST_PIECES = 20
 PIECE = 512
-# the boot logo's JPEG: (quality, subsampling) in turn until it fits (0: a colour every pixel)
-JPEG_STEPS = ((95, 0), (92, 0), (90, 2), (85, 2), (75, 2), (60, 2))
-# the standby clip's x264 crf: this first, then coarser in steps of 2 up to the most where it does
-# not fit in CLIP_ROOM, or the finest where it fills less than half of it
-CLIP_CRF, CLIP_CRF_MIN, CLIP_CRF_MAX = 20, 17, 30
-CLIP_ROOM = MAX_FILE
+# the boot logo's JPEG: its quality in turn until the file fits its room, every pixel with its
+# own colour (a colour for four cost more than it saved: on Circuit's traces 38.7 dB where the
+# same bytes gave 42.1 so). A look that would need less than the last would show it: not made
+JPEG_STEPS = (95, 92, 90, 88, 85)
+# the standby clip's x264 crf: the finest first, then coarser until the clip fits its room, up to
+# the coarsest that does not show; a look that needs more is not made. (Finer than CLIP_CRF only
+# made the file larger: Circuit's clip on the 9.2" was 715 KB at crf 17 and is 395 at 20, 52.8
+# and 51.4 dB.)
+CLIP_CRF, CLIP_CRF_MAX = 20, 26
+# how much smaller a clip gets with each step of the crf, in thousandths (0.85 to 0.89 over
+# the looks): the first guess at the crf that fits
+CLIP_STEP = 870
+
+# How much Libre Panel puts on a panel: the most bytes of the standby clip and of the boot logo
+# (issue 52). Both go where the panel keeps its own settings; how much room there is cannot be
+# asked, and is not the same on every panel. One 9.2" was full at about 718,000 bytes of these
+# files, and what a panel does once it is full is what ended that panel. So the two together
+# stay well below what a panel of the model is known to hold: on the 9.2" two thirds of those
+# 718,000; on the 12.3" four fifths of the 817,587 one has held for weeks. (The files of
+# 0.7.9 to 0.9.1 were up to 875,000 bytes for a look on a 9.2" and 1,150,000 on a 12.3".)
+ROOM: dict[str, tuple[int, int]] = {
+    "turing-9.2-usb": (360_000, 120_000),
+    "turing-12.3-usb": (500_000, 150_000),
+}
+# The looks that do not fit that room finely on a model, known before anything is made: the
+# card says so and offers no writing. Levels is thousands of small lights: its boot logo alone
+# is 491 KB on the 9.2" as finely as the others are made, and its clip 877.
+UNFIT: dict[str, tuple[str, ...]] = {
+    "turing-9.2-usb": ("levels",),
+    "turing-12.3-usb": ("levels",),
+}
+# A write that happens takes its time: a 9.2" took 1.2 to 2.9 s for 700 KB and 0.1 s for 48 KB.
+# One that the panel does not take is over when the transfer is: 30 to 50 ms for 700 KB. So a
+# file of some size that was answered faster than this many bytes a second was not written,
+# which matters where the panel has a file of that very size already
+WRITE_RATE_MOST = 4_000_000
+# (below it the transfer's own time says nothing. On the 9.2" and the 12.3" every clip is
+# larger: the smallest, Dark's on the 9.2", has 45,000 bytes; only Dark's boot logos are
+# smaller, and after a logo nothing is saved on the panel)
+WRITE_TIMED_FROM = 32 * 1024
 
 CMD_WRITE_FILE = 40
 CMD_DELETE_FILE = 42
@@ -88,30 +132,111 @@ CMD_SAVE_SETTINGS = 125
 START_WITH_CLIP = 2  # the settings' start mode: play the clip they name
 NEVER = frozenset({11, 12, 13})  # restart, halt, and the other save of the settings
 
-# Writing a file to a panel is switched off (issue 52). The files go where the panel keeps its
-# own settings, and on one 9.2" the room there ran out: files ended early or were not taken,
-# 0.9.1 forced a clip in, and that panel has kept restarting since. On other panels the same
-# files were written for months without trouble, and a panel cannot be asked how much room it
-# has. Until Libre Panel can tell, it writes nothing there. Who looks into it on a panel of
-# their own sets this in the environment, at their own risk.
+# Files are written to the models it has been done on: the 9.2" and the 12.3" (ROOM). How much
+# room another panel of the family has is not known, so nothing is written to one. Who looks
+# into it on a panel of their own sets this in the environment, at their own risk: the files
+# are then made for the 9.2"'s room, by the pixels.
 WRITES_ENV = "LIBRE_PANEL_PANEL_WRITES"
 WRITES_WORD = "at-my-own-risk"
 
 
-def writes_on() -> bool:
-    """Whether files are written to a panel: not in this version, but for who asks for it in
-    the environment (``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk``)."""
-    return os.environ.get(WRITES_ENV) == WRITES_WORD
+def tried(model: PanelModel | None) -> bool:
+    """Whether start screens have been written to panels of ``model``."""
+    return model is not None and model.id in ROOM
+
+
+def room(model: PanelModel | None) -> tuple[int, int]:
+    """The most bytes of the standby clip and of the boot logo on a panel of ``model``: what
+    :data:`ROOM` says for the models written to; for another (and for none), the 9.2"'s for as
+    many pixels as it has, and never more."""
+    clip, logo = ROOM["turing-9.2-usb"]
+    if model is None:
+        return clip, logo
+    if model.id in ROOM:
+        return ROOM[model.id]
+    most = 1920 * 480
+    share = min(model.native_width * model.native_height, most)
+    return clip * share // most, logo * share // most
+
+
+def writes_on(model: PanelModel | None = None) -> bool:
+    """Whether files are written to a panel of ``model``: to the models it has been done on,
+    and to any for who asks for it in the environment
+    (``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk``)."""
+    return tried(model) or os.environ.get(WRITES_ENV) == WRITES_WORD
 
 
 def writes_off() -> str:
-    """Why nothing is written, as the app says it."""
+    """Why nothing is written to a panel of another model, as the app says it."""
     return t(
-        'Writing to the panel is switched off in this version. One 9.2" ran out of room for '
-        "its start screen and has kept restarting since; on other panels the same files were "
-        "written without trouble. Writing comes back when Libre Panel can tell how much fits "
-        "on a panel."
+        "Writing to this panel is switched off: Libre Panel has written start screens to the "
+        '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
     )
+
+
+def too_fine() -> str:
+    """Why a look is not made for a panel: it would have to be coarser than shows."""
+    return t(
+        "This look has more detail than fits in the room Libre Panel uses on this panel, and "
+        "it is not written coarser: choose another look."
+    )
+
+
+def kilobytes(size: int) -> str:
+    """A file's size as the app says it."""
+    return f"{max(1, (size + 512) // 1024)} KB"
+
+
+def no_room(name: str, other: int) -> str:
+    """Why a file is not sent: with the other one that is on the panel it would be more than
+    Libre Panel puts there (``other``: that one's bytes; it is one of before 0.9.4)."""
+    if name == BOOT_LOGO:
+        return t(
+            "Not written: with the standby clip that is on the panel ({size}), the boot logo "
+            "would be more than Libre Panel puts on this panel. Write the standby clip again "
+            "first: it becomes smaller.",
+            size=kilobytes(other),
+        )
+    return t(
+        "Not written: with the boot logo that is on the panel ({size}), the standby clip "
+        "would be more than Libre Panel puts on this panel. Write the boot logo again first: "
+        "it becomes smaller.",
+        size=kilobytes(other),
+    )
+
+
+def not_taken() -> str:
+    """What is said of a file the panel did not take."""
+    return t(
+        "The panel did not take the file: it has what it had before, and nothing was changed. "
+        "One panel did that when it had no room left."
+    )
+
+
+def cut_off(name: str, written: int, size: int) -> str:
+    """What is said of a file that ended early and was taken off again."""
+    if name == BOOT_LOGO:
+        return t(
+            "The boot logo did not fit: the panel took {written} of {size} bytes. It was taken "
+            "off again, so that the panel is not left full; the factory logo shows at the next "
+            "power-on.",
+            written=written, size=size,
+        )  # fmt: skip
+    return t(
+        "The standby clip did not fit: the panel took {written} of {size} bytes. It was taken "
+        "off again, so that the panel is not left full: the panel has no standby clip now. "
+        "Dark is the smallest look.",
+        written=written, size=size,
+    )  # fmt: skip
+
+
+def still_there(name: str, written: int, size: int, why: str) -> str:
+    """What is said of a file that ended early and could not be taken off again."""
+    return t(
+        "{file} did not fit (the panel took {written} of {size} bytes) and could not be taken "
+        "off again: {why}",
+        file=name, written=written, size=size, why=why,
+    )  # fmt: skip
 
 
 def models() -> list[PanelModel]:
@@ -145,16 +270,18 @@ def logo_jpeg(
 ) -> bytes:  # fmt: skip
     """The boot logo for ``model`` (drawn upright for a bar on end with ``orientation``
     "portrait", in the look ``design``) as the JPEG the panel shows: turned into its
-    framebuffer (480 x 1920 on the 9.2"), at quality 95 with every pixel's colour (a dark
-    gradient's blocks showed at 88 with a colour for four), less where it would not fit."""
+    framebuffer (480 x 1920 on the 9.2"), with every pixel's colour (a dark gradient's blocks
+    showed at 88 with a colour for four), at the finest quality of :data:`JPEG_STEPS` that
+    fits the logo's room on the model (:func:`room`). A picture that would have to be coarser
+    than the last of them is not made."""
     native = to_native(picture or bootscreen.boot_logo(model, orientation, design)).convert("RGB")
-    for quality, subsampling in JPEG_STEPS:
+    most = room(model)[1]
+    for quality in JPEG_STEPS:
         buffer = io.BytesIO()
-        native.save(buffer, format="JPEG", quality=quality, subsampling=subsampling,
-                    optimize=True)  # fmt: skip
-        if buffer.tell() <= MAX_FILE:
+        native.save(buffer, format="JPEG", quality=quality, subsampling=0, optimize=True)
+        if buffer.tell() <= most:
             return buffer.getvalue()
-    raise DeviceError("the boot logo does not fit in 1 MiB")
+    raise DeviceError(too_fine())
 
 
 def clip_command(ffmpeg: str, size: tuple[int, int], crf: int = CLIP_CRF,
@@ -191,8 +318,9 @@ def clip_h264(
 ) -> bytes:
     """The standby clip for ``model`` (upright with ``orientation`` "portrait", in the look
     ``design``, in full range with ``full``): its pictures turned into the framebuffer and
-    encoded as finely as fits in 1 MiB: at crf 20, coarser in steps where it does not fit, and
-    finer where it leaves most of the room."""
+    encoded as finely as fits the clip's room on the model (:func:`room`): at crf
+    :data:`CLIP_CRF`, coarser where that is too much, up to :data:`CLIP_CRF_MAX`. A clip that
+    would have to be coarser is not made."""
     from libre_panel.devices.h264 import slice_count
 
     pictures = frames or bootscreen.standby_frames(model, orientation=orientation, design=design)
@@ -211,16 +339,26 @@ def clip_h264(
             raise DeviceError(f"ffmpeg could not make the standby clip: {done.stderr[-300:]!r}")
         return done.stdout
 
+    most = room(model)[0]
     crf = CLIP_CRF
     data = encoded(crf)
-    while len(data) > CLIP_ROOM and crf < CLIP_CRF_MAX:
-        crf += 2
+    if len(data) > most:
+        guess = len(data)
+        while guess > most and crf < CLIP_CRF_MAX:  # (about 13 % less with each step)
+            crf, guess = crf + 1, guess * CLIP_STEP // 1000
         data = encoded(crf)
-    if len(data) > CLIP_ROOM:
-        raise DeviceError("the standby clip does not fit in 1 MiB")
-    if len(data) < CLIP_ROOM * 0.4 and crf == CLIP_CRF:  # room to spare: finer
-        finer = encoded(CLIP_CRF_MIN)
-        data = finer if len(finer) <= CLIP_ROOM else data
+        if len(data) > most:  # the guess was too fine: coarser, a step at a time
+            while len(data) > most and crf < CLIP_CRF_MAX:
+                crf += 1
+                data = encoded(crf)
+            if len(data) > most:
+                raise DeviceError(too_fine())
+        else:  # or too coarse: the finest that fits
+            while crf - 1 > CLIP_CRF:
+                finer = encoded(crf - 1)
+                if len(finer) > most:
+                    break
+                crf, data = crf - 1, finer
     if slice_count(data) != len(native):  # one slice a picture, or the panel shows nothing
         raise DeviceError("the standby clip came out with more than one slice a picture")
     return data
@@ -229,11 +367,19 @@ def clip_h264(
 # -- on the panel -------------------------------------------------------------------------------
 
 
+def unwritten(size: int, took: float) -> bool:
+    """Whether a file of ``size`` bytes that the panel answered after ``took`` seconds cannot
+    have been written: faster than any write is (:data:`WRITE_RATE_MOST`)."""
+    return size >= WRITE_TIMED_FROM and took * WRITE_RATE_MOST < size
+
+
 @dataclass
 class PanelFiles:
-    """The file commands on an open panel (``transport``: a synced UsbTransport)."""
+    """The file commands on an open panel (``transport``: a synced UsbTransport; ``model``:
+    the panel's, which says how much room its files get)."""
 
     transport: Any
+    model: PanelModel | None = None
 
     def _command(self, cmd: int, args: bytes = b"", payload: bytes = b"",
                  timeout_ms: int = 4000) -> bytes:  # fmt: skip
@@ -277,22 +423,61 @@ class PanelFiles:
         return 0 if size == 0xFFFFFFFF else size
 
     def write(self, name: str, data: bytes) -> None:
-        """Write a file, and check that it has the size it should. A file the panel kept in
-        place of the new one is left as it is and said: never taken away to write again
-        (0.9.1 did so on a 9.2" that had no room left, and that panel has kept restarting
-        since)."""
-        if not writes_on():
+        """Write the boot logo or the standby clip, checked before and after (issue 52: a 9.2"
+        had no room left for one, and 0.9.1 forced it in).
+
+        Before: a file larger than its room on the model is not sent at all; then what the
+        panel has of this file and of the other one. A file larger than the one it replaces
+        is not sent where both together would be more than the room Libre Panel uses on the
+        model. After: the size again. A file the panel did not take (it has
+        what it had: a panel without room answers at once and changes nothing) is said so. A
+        file that ended early is taken off again, so that the panel is not left full, and
+        said so. Nothing is ever taken away in order to write it a second time."""
+        if not writes_on(self.model):
             raise DeviceError(writes_off())
         raw = checked_name(name)
+        if name not in OURS:
+            raise DeviceError(f"{name}: only the boot logo and the standby clip are written")
         if not data or len(data) > MAX_FILE:
             raise DeviceError(f"{name}: a file is 1 byte to 1 MiB, not {len(data)}")
+        most = room(self.model)[name == BOOT_LOGO]
+        if len(data) > most:  # (the files made here never are: nothing else gets through)
+            raise DeviceError(f"{name}: {len(data)} bytes are more than the {most} it gets")
+        beside = STANDBY_CLIP if name == BOOT_LOGO else BOOT_LOGO
+        before, other = self.size(name), self.size(beside)
+        if len(data) > before and len(data) + other > sum(room(self.model)):
+            log.warning("start screen: %s (%d bytes) not sent: %s on the panel has %d",
+                        name, len(data), beside, other)  # fmt: skip
+            raise DeviceError(no_room(name, other))
+        began = time.monotonic()
         self._command(CMD_WRITE_FILE, file_args(raw, len(data)), data, timeout_ms=20000)
-        written = self.size(name)
-        if written != len(data):
-            raise DeviceError(f"{name}: the panel has {written} bytes of it, not {len(data)}")
+        took = time.monotonic() - began
+        after = self.size(name)
+        log.info(
+            "start screen: %s: %d bytes sent, answered after %d ms; the panel had %d bytes of "
+            "it and has %d",
+            name, len(data), round(took * 1000), before, after,
+        )  # fmt: skip
+        if after == len(data) and not (before == after and unwritten(len(data), took)):
+            return
+        if after == before:
+            raise DeviceError(not_taken())
+        try:  # it ended early: off again, so that the panel is not left full
+            self.delete(name)
+            left = self.size(name)
+        except DeviceError as exc:
+            raise DeviceError(still_there(name, after, len(data), str(exc))) from exc
+        if left:
+            raise DeviceError(still_there(name, after, len(data), f"{left} bytes of it stay"))
+        log.warning("start screen: %s ended at %d of %d bytes: taken off again", name, after,
+                    len(data))  # fmt: skip
+        raise DeviceError(cut_off(name, after, len(data)))
 
     def delete(self, name: str) -> None:
-        self._command(CMD_DELETE_FILE, file_args(checked_name(name)))
+        raw = checked_name(name)
+        if name not in OURS:
+            raise DeviceError(f"{name}: only the boot logo and the standby clip are taken off")
+        self._command(CMD_DELETE_FILE, file_args(raw))
 
     def show_jpeg(self, name: str) -> None:
         self._command(CMD_SHOW_JPEG, file_args(checked_name(name)))
@@ -366,17 +551,20 @@ class StartScreen:
                     where: Where = FIRST):  # fmt: skip
         transport, found = self.opener(model) if where == FIRST else self.opener(model, *where)
         try:
-            return job(PanelFiles(transport), found)
+            return job(PanelFiles(transport, found), found)
         finally:
             transport.close()
 
     def state(self, model: PanelModel | None = None, where: Where = FIRST) -> dict[str, Any]:
         def job(files: PanelFiles, found: PanelModel) -> dict[str, Any]:
+            clip, logo = room(found)
             return {
                 "model": found.id,
                 "files": files.noted_listing(),  # (None: the panel did not list them)
                 "boot_logo": files.size(BOOT_LOGO),
                 "standby_clip": files.size(STANDBY_CLIP),
+                # (what Libre Panel writes at most: files of before 0.9.4 may be larger)
+                "room": {"clip": clip, "logo": logo},
             }
 
         return self._with_panel(model, job, where)
@@ -386,10 +574,12 @@ class StartScreen:
         where: Where = FIRST, design: str = bootscreen.DEFAULT,
     ) -> dict[str, Any]:  # fmt: skip
         """The boot logo written and shown (it shows at the next cold start)."""
-        if not writes_on():
-            raise DeviceError(writes_off())
+        if model is not None and not writes_on(model):
+            raise DeviceError(writes_off())  # (said before the panel is opened)
 
         def job(files: PanelFiles, found: PanelModel) -> dict[str, Any]:
+            if not writes_on(found):
+                raise DeviceError(writes_off())
             data = logo_jpeg(found, orientation=orientation, design=design)
             files.noted_listing()  # what is there before, in the log of the panel's folder
             files.write(BOOT_LOGO, data)
@@ -417,11 +607,13 @@ class StartScreen:
         from libre_panel.devices.h264 import find_ffmpeg
         from libre_panel.devices.turzx_video import full_range
 
-        if not writes_on():
-            raise DeviceError(writes_off())
+        if model is not None and not writes_on(model):
+            raise DeviceError(writes_off())  # (said before the panel is opened)
         ffmpeg = self.ffmpeg() if self.ffmpeg else find_ffmpeg()
 
         def job(files: PanelFiles, found: PanelModel) -> dict[str, Any]:
+            if not writes_on(found):
+                raise DeviceError(writes_off())
             data = clip_h264(found, ffmpeg, orientation=orientation, design=design,
                              full=full_range(video_range, found))  # fmt: skip
             files.noted_listing()

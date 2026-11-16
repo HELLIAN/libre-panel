@@ -405,7 +405,7 @@ application's folder (`usr/data/...`; `/usr/data` fails).
 
 | Cmd | | |
 |---|---|---|
-| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named, so only names below `usr/data/` are sent. **Not sent in this version** (see *The room on a panel is not known* below) |
+| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named. Sent for `usr/data/boot.jpg` and `usr/data/standby.h264` alone, to the 9.2" and the 12.3", and never more than a panel is known to hold (see *What goes on a panel* below) |
 | 42 | delete a file | taking `usr/data/boot.jpg` away brings the factory logo back |
 | 98 | a file's size | little endian at `[8:12]`; checked after every write |
 | 99 | list a folder | 20 pieces of 512 bytes from a 0x2800-byte buffer; it reads the name only at the first, so all 20 are fetched every time; it creates a missing folder |
@@ -477,14 +477,73 @@ firmware, its store, what else is in it) is not known either.
 - **42 does delete** on that panel: after it 98 says none for a boot logo that was
   there, twice in that log. It was never sent for a clip the panel was playing.
 
-So, for whatever is written to a panel again: how much room a panel has is not
-known, is not the same on every panel and cannot be asked (100 is the card's);
-the settings are in the same place; a write that ends early leaves a file cut
-off; and a size that matches proves nothing where the old file was as long, and
-may not prove that the file can be read. **Libre Panel writes no file to a
-panel** until that is solved (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the
-environment switches it on for who looks into it on a panel of their own). It
-never deleted a file to write it again before 0.9.1 and does not after it.
+So: how much room a panel has is not known, is not the same on every panel and
+cannot be asked (100 is the card's); the settings are in the same place; a write
+that ends early leaves a file cut off; and a size that matches proves nothing
+where the old file was as long, and may not prove that the file can be read.
+0.9.2 and 0.9.3 wrote no file to a panel. Libre Panel never deleted a file to
+write it again before 0.9.1 and does not after it.
+
+### What goes on a panel
+
+Since 0.9.4 (`devices/panel_files.py`, `rust/app/src/start_screen.rs`):
+
+- **Where the files had grown.** Until 0.7.8 a 9.2" got a clip of about 149,000
+  bytes and a logo of 48,000 (x264 crf 23, JPEG quality 88). 0.7.9 made them "as
+  fine as fits in 1 MiB", which is the most 40 takes and not a panel's room: crf
+  20, and 17 where the clip stayed under 40 % of 1 MiB; quality 95 with every
+  pixel's colour. For a look on a 9.2" that came to 615,000 to 875,000 bytes
+  (Circuit: a clip of 715,000 at crf 17 where crf 20 gives 395,000, with 1.4 dB
+  between them at 52; Levels: 1,369,000), on a 12.3" to 643,000 to 1,150,000
+  (Levels: 1,534,000). The 9.2" of issue 52 had room for about 718,000.
+- **The room a panel's files get**: on the 9.2" 360,000 bytes for the clip and
+  120,000 for the logo, two thirds of what filled one; on the 12.3" 500,000 and
+  150,000, four fifths of the 817,587 bytes one has held for weeks (where its
+  room ends is not known). The clip is made at crf 20 and, where that is too
+  much, a step coarser at a time up to 26; the logo at quality 95, 92, 90, 88 or
+  85, every pixel with its own colour (a colour for four was the worse trade: on
+  Circuit's traces 38.7 dB where the same bytes gave 42.1). A look that would
+  have to be coarser is not made: Levels, on both. What the others come to
+  (ffmpeg 6.1 on Linux; another build's clips are a per cent or two apart), and
+  how close they stay to what was drawn (PSNR; the clip against the lossless
+  clip of its pictures):
+
+  | Look | 9.2": clip | logo | together | 12.3": clip | logo | together |
+  |---|---|---|---|---|---|---|
+  | Libre Panel | 352,645 (51.9 dB; 0.9.0: 606,261, 53.4) | 82,934 (47.1; 127,210, 48.3) | 435,579 | 477,724 (52.2; the same) | 107,531 (47.7; 165,169, 48.7) | 585,255 |
+  | Aurora | 318,482 (49.7; 652,208, 51.1) | 117,959 (49.9; the same) | 436,441 | 465,170 (50.2; 988,183, 51.5) | 103,593 (49.6; 161,725, 50.0) | 568,763 |
+  | Pulse | 349,927 (51.5; 464,168, 52.3) | 103,691 (46.3; 150,737, 47.8) | 453,618 | 491,809 (52.4; 604,690, 52.7) | 124,310 (47.1; 187,968, 48.6) | 616,119 |
+  | Circuit | 319,625 (51.0; 715,341, 52.8) | 113,040 (46.1; 159,776, 47.8) | 432,665 | 492,450 (51.0; 602,822, 51.4) | 141,864 (45.5; 223,833, 47.9) | 634,314 |
+  | Night | 334,693 (52.5; 574,056, 53.3) | 104,757 (48.7; the same) | 439,450 | 440,712 (52.4; 897,818, 53.5) | 137,679 (49.1; the same) | 578,391 |
+  | Dark | 45,000 (70.3; 51,771, 72.0) | 14,289 (65.2; the same) | 59,289 | 73,830 (69.0; 85,817, 70.5) | 21,952 (64.6; the same) | 95,782 |
+
+  Turned round for a panel that is mounted upside down, the clips come out within
+  2 % of these and the logos within 0.1 %, at the same crf and quality.
+
+- **Before 40**, 98 for the file and for the other one. A file larger than the
+  one it replaces is not sent where both together would be more than that room;
+  one that is no larger always goes (a panel that holds a 700 KB clip of 0.9.0
+  gets its clip anew, smaller, and then has room for a logo).
+- **After 40**, 98 again. The size sent: written. The size of before: the panel
+  did not take the file, which is said, and nothing more is sent (no 113, no
+  110, no 125). Where the file of before had the new one's size, the time 40
+  took tells: under a second for 4 MB is no write (that 9.2" answered 30 to
+  50 ms after 700 KB it did not take, and after 1.2 to 2.9 s when it wrote them;
+  below 32 KiB, which on these two panels only Dark's boot logos are, the
+  transfer's own time says nothing, and the file is taken as written).
+- **Any other size: the file ended early**, and the panel is full. 42 takes it
+  off again at once, 98 checks that it is gone, and what the panel took is
+  said. Nothing is written a second time. This is the one command sent to a
+  panel in that state, and it cannot be tried on a sound panel. The panel of
+  issue 52 took 42 in that state twice, by its log: for the boot logo that had
+  ended at 16 KiB (*Factory logo again*, after which it ran for three more
+  days), and for the clip 0.9.1 took away (after which it took the next file
+  and showed frames until its next start). What ended it came after: the larger
+  clip written into the room the delete had made, and the settings saved.
+- **Only the 9.2" and the 12.3"** are written to. Another model of the family
+  needs the word in the environment (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`),
+  for who looks into it on a panel of their own: its files are then made for
+  the 9.2"'s room, by the pixels, and never for more.
 
 For a panel in that state, `libre-panel start-screen remove-clip --wait` acts the
 moment the panel is on the USB: 10 each time the panel comes, until it is answered

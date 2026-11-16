@@ -1520,7 +1520,6 @@
     "It replaces the clip the panel plays when the PC starts ({name}); the one there now cannot be read back first. The panel is set to start with it.": "PC起動時にパネルが再生するクリップ（{name}）を置き換えます。現在入っているクリップは、事前に読み出すことができません。パネルはこのクリップで起動するように設定されます。",
     "It shows when the panel is switched on. The factory logo is not touched: \"Factory logo again\" brings it back.": "パネルの電源を入れたときに表示されます。工場出荷時のロゴはそのまま残り、「工場出荷時のロゴに戻す」で元に戻せます。",
     "Libre Panel's boot logo is taken off the panel.": "Libre Panelの起動ロゴをパネルから削除しました。",
-    "Measured on the 9.2\"; this panel has the same firmware, but writing to it has not been tried yet.": "9.2\"パネルで確認済みです。このパネルも同じファームウェアですが、書き込みはまだ試されていません。",
     "No TURZX USB panel found": "TURZXのUSBパネルが見つかりません",
     "Put on the panel": "パネルに書き込む",
     "Show the themes again": "再びテーマを表示",
@@ -2996,7 +2995,15 @@
     "Icon in the tray": "トレイのアイコン",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "メニューでパネルの状態の確認、テーマの切り替え、Libre Panel の終了ができます。オフ：Libre Panel はスタートメニューまたはアプリ一覧から開きます。",
     "Libre Panel runs in the background.": "Libre Panel はバックグラウンドで動作します。",
-    "Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.": "このバージョンではパネルへの書き込みを停止しています。ある 9.2\" のパネルで起動画面用の空き容量がなくなり、それ以降再起動を繰り返しているためです。ほかのパネルでは同じファイルを問題なく書き込めていました。パネルにどれだけ入るかを Libre Panel が判断できるようになり次第、再開します。"
+    "Writing to this panel is switched off: Libre Panel has written start screens to the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "このパネルへの書き込みは停止しています。Libre Panel が起動画面を書き込んだことがあるのは 9.2\" と 12.3\" のパネルだけで、ほかのパネルにどれだけ空き容量があるかは分かっていないためです。",
+    "This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.": "この外観は、Libre Panel がこのパネルで使う容量に収まらないほど細部が多く、粗くして書き込むこともしません。別の外観を選んでください。",
+    "Not written: with the standby clip that is on the panel ({size}), the boot logo would be more than Libre Panel puts on this panel. Write the standby clip again first: it becomes smaller.": "書き込みませんでした。パネルにあるスタンバイクリップ（{size}）と合わせると、起動ロゴは Libre Panel がこのパネルに置く量を超えます。先にスタンバイクリップを書き直してください。小さくなります。",
+    "Not written: with the boot logo that is on the panel ({size}), the standby clip would be more than Libre Panel puts on this panel. Write the boot logo again first: it becomes smaller.": "書き込みませんでした。パネルにある起動ロゴ（{size}）と合わせると、スタンバイクリップは Libre Panel がこのパネルに置く量を超えます。先に起動ロゴを書き直してください。小さくなります。",
+    "The panel did not take the file: it has what it had before, and nothing was changed. One panel did that when it had no room left.": "パネルはファイルを受け取りませんでした。以前のままで、何も変更されていません。あるパネルでは、空き容量がなくなったときにこうなりました。",
+    "The boot logo did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full; the factory logo shows at the next power-on.": "起動ロゴは収まりませんでした。パネルが受け取ったのは {size} バイト中 {written} バイトです。パネルが満杯のままにならないよう、再び削除しました。次回の電源投入時には工場出荷時のロゴが表示されます。",
+    "The standby clip did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full: the panel has no standby clip now. Dark is the smallest look.": "スタンバイクリップは収まりませんでした。パネルが受け取ったのは {size} バイト中 {written} バイトです。パネルが満杯のままにならないよう、再び削除しました。現在、パネルにスタンバイクリップはありません。ダークが最も小さい外観です。",
+    "{file} did not fit (the panel took {written} of {size} bytes) and could not be taken off again: {why}": "{file} は収まらず（パネルが受け取ったのは {size} バイト中 {written} バイト）、再び削除することもできませんでした: {why}",
+    "The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.": "パネルには、Libre Panel が現在書き込むものより大きいファイルがあります。そのままでも構いません。書き直すと小さくなります。"
   },
   "fields": {
     "night": "夜",

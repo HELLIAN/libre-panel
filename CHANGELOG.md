@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.9.4rc1 — 2026-11-16
+
+The candidate for 0.9.4: start screens are written to the panel again, on the 9.2" and the
+12.3", into a room that is known to be there. It is run on both panels before it is 0.9.4.
+Coming from 0.8? Everything 0.9 brought follows below: a third less memory, up to 38 % less
+processor and a quicker start, with the same pictures on the panel, pixel for pixel.
+
+**Changed**
+- **Start screens are written again, to the 9.2" and the 12.3"** (off since 0.9.2,
+  [#52](https://github.com/syntensa/libre-panel/issues/52)). The 9.2" that has kept restarting
+  had run out of room for these files: it held about 718,000 bytes of them, and since 0.7.9
+  Libre Panel made them "as fine as fits in 1 MiB", which is the most the command takes and
+  not what a panel holds: 615,000 to 875,000 bytes for most looks on a 9.2" (Circuit's clip
+  alone 715,000 at a fineness nobody sees; one step coarser it is 395,000), 643,000 to
+  1,150,000 on a 12.3". Now:
+  - **A panel gets what is known to fit.** The clip and the logo together are at most 480,000
+    bytes on the 9.2", two thirds of what that panel held, and 650,000 on the 12.3", four
+    fifths of what one has held for weeks. The looks come to 433,000 to 454,000 and 569,000
+    to 634,000 bytes (Dark: 59,000 and 96,000).
+  - **They look as they did.** Against 0.9.0's files the clips are at most 1.8 dB apart, at
+    49.7 dB or better, and the boot logos at most 2.4 dB, at 45.5 dB or better. Side by side,
+    their dark areas brightened fourfold, the old and the new are hard to tell apart (the
+    faintest stars of Night are a little softer). Nothing is made coarser than that.
+    **Levels**, whose thousands of small lights took 1.4 MB on a 9.2", is therefore not
+    written; the card says so before you ask for it.
+  - **Asked before.** The sizes of both files on the panel are read first. A file larger than
+    the one it replaces is not sent where both would be more than that room: a panel that
+    holds a 700 KB clip of 0.9.0 gets its clip anew, smaller, before a logo goes beside it.
+  - **Checked after.** A file the panel did not take is said to be not taken, also where the
+    old one has the new one's size: the time it took is looked at (that 9.2" wrote 700 KB in
+    1.2 to 2.9 s and turned them down in 30 to 50 ms; five times a clip was called written
+    that was not). Nothing more is
+    sent then: no clip played, no setting saved.
+  - **Never left full.** A file that ends early is taken off again at once, and said. Nothing
+    is ever deleted in order to write it a second time: that was 0.9.1.
+  - **The family's other panels stay off**: how much room they have is not known.
+- ***What is on the panel*** says when its files are larger than Libre Panel writes now (files
+  of 0.7.9 to 0.9.1): they can stay, and written again they become smaller.
+
 ## 0.9.3 — 2026-11-16
 
 A hotfix for 0.9.2: `libre-panel start-screen`, the command for a panel that keeps

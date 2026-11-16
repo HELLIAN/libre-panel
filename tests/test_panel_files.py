@@ -1,9 +1,10 @@
 """The panel's own screens on a TURZX USB panel: the boot logo and the standby clip in each of
-their looks for every USB panel's size, as finely as the panel shows them, and what is sent to
-put them on it (a fake panel keeps the files and every command)."""
+their looks for every USB panel's size, as finely as fits the room they get on a panel, and
+what is sent to put them on it (a fake panel keeps the files and every command)."""
 
 import io
 import struct
+import time
 from types import SimpleNamespace
 
 import numpy
@@ -18,27 +19,42 @@ from libre_panel.devices.models import get_model
 from libre_panel.render import bootscreen
 
 NINE = get_model("turing-9.2-usb")
+TWELVE = get_model("turing-12.3-usb")
 WRITES_OFF = (
-    'Writing to the panel is switched off in this version. One 9.2" ran out of room for its '
-    "start screen and has kept restarting since; on other panels the same files were written "
-    "without trouble. Writing comes back when Libre Panel can tell how much fits on a panel."
+    "Writing to this panel is switched off: Libre Panel has written start screens to the "
+    '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+)
+TOO_FINE = (
+    "This look has more detail than fits in the room Libre Panel uses on this panel, and it "
+    "is not written coarser: choose another look."
+)
+NOT_TAKEN = (
+    "The panel did not take the file: it has what it had before, and nothing was changed. "
+    "One panel did that when it had no room left."
 )
 
 
-# (writing to a panel is switched off in this version, issue 52; what is sent when it is on
-# again stays tested: these tests ask for it as who looks into it does)
+# (files are written to the 9.2" and the 12.3" alone; the pictures and what is sent are tried
+# on the family's other sizes too, as who looks into one of those switches it on)
 pytestmark = pytest.mark.usefixtures("panel_writes")
 
 
 class FakePanel:
     """A TURZX USB panel's files and settings, and the commands it was sent."""
 
-    def __init__(self, files=None, listing="header", room=None):
+    def __init__(self, files=None, listing="header", room=None, refuses=False, rate=None):
         self.files = dict(files or {})
         self.listing = listing  # "header": [99, ack] in front; "bare": the piece alone (the 9.2")
-        # the bytes its folder holds (None: no end): a file is written anew only where it fits
-        # beside the one it replaces, else the panel keeps what it had (as a 9.2" did)
+        # the bytes its folder holds (None: no end). A file that does not fit there beside the
+        # others ends where the room does (a 9.2"'s boot logo ended at 16 KiB, its clip at the
+        # size of the one it replaced: a file's own room is free for the one in its place)
         self.room = room
+        # a panel that takes no file any more, as that 9.2" did once it was full: it answers
+        # at once and keeps what it had
+        self.refuses = refuses
+        self.rate = rate  # the bytes a second it writes (None: a write takes no time)
+        self.refusal = 0.0  # the seconds its answer takes where it refuses
+        self.wait = time.sleep  # how that time passes (a test with its own clock: its own)
         self.sent = []  # (command, name or args, payload size)
         self.listed = 0
         self.closed = False
@@ -54,11 +70,18 @@ class FakePanel:
             name = self.name_of(args)
             assert name, "a file command with an empty name"
             self.sent.append((cmd, name, len(payload)))
-            if cmd == 40:
+            if cmd == 40 and self.refuses and self.refusal:
+                self.wait(self.refusal)
+            if cmd == 40 and not self.refuses:
                 assert struct.unpack(">I", args[4:8])[0] == len(payload)
-                used = sum(len(data) for data in self.files.values())
-                if self.room is None or used + len(payload) <= self.room:
-                    self.files[name] = payload
+                others = sum(len(data) for other, data in self.files.items() if other != name)
+                fits = len(payload)
+                if self.room is not None:
+                    fits = max(0, min(fits, self.room - others))
+                if self.rate:
+                    self.wait(fits / self.rate)
+                if fits or name in self.files:
+                    self.files[name] = payload[:fits]
             if cmd == 42:
                 self.files.pop(name, None)
         else:
@@ -236,9 +259,67 @@ def test_the_logo_is_a_jpeg_in_the_panels_framebuffer():
     picture = Image.open(io.BytesIO(data))
     assert picture.format == "JPEG" and picture.size == (480, 1920)  # turned as the frames are
     assert JpegImagePlugin.get_sampling(picture) == 0  # every pixel its colour
-    assert len(data) < F.MAX_FILE
+    assert len(data) <= F.room(NINE)[1]
     drawn = numpy.asarray(bootscreen.boot_logo(NINE).rotate(-90, expand=True), float)
     assert numpy.abs(numpy.asarray(picture.convert("RGB"), float) - drawn).mean() < 1.5
+
+
+def _jpeg(picture, quality):
+    buffer = io.BytesIO()
+    F.to_native(picture).convert("RGB").save(buffer, format="JPEG", quality=quality,
+                                             subsampling=0, optimize=True)  # fmt: skip
+    return buffer.getvalue()
+
+
+def test_the_logo_is_as_fine_as_fits_its_room():
+    """The boot logo at the finest quality whose file fits the logo's room on the panel
+    (120,000 bytes on the 9.2", 150,000 on the 12.3"), every pixel with its own colour; a look
+    that would need a quality that shows (Levels, with its thousands of small lights: 491 KB
+    at 95 on the 9.2") is not made coarser, and not made."""
+    for model, design, quality in ((NINE, "aurora", 95), (NINE, "libre-panel", 92),
+                                   (TWELVE, "circuit", 90)):  # fmt: skip
+        picture = bootscreen.boot_logo(model, design=design)
+        data = F.logo_jpeg(model, design=design)
+        assert data == _jpeg(picture, quality), (model.id, design)
+        assert len(data) <= F.room(model)[1], (model.id, design)
+        if quality < 95:  # (the next finer step is too large: that is why it is this one)
+            finer = F.JPEG_STEPS[F.JPEG_STEPS.index(quality) - 1]
+            assert len(_jpeg(picture, finer)) > F.room(model)[1], (model.id, design)
+    for model in (NINE, TWELVE):
+        with pytest.raises(DeviceError) as refused:
+            F.logo_jpeg(model, design="levels")
+        assert str(refused.value) == TOO_FINE
+        coarsest = _jpeg(bootscreen.boot_logo(model, design="levels"), F.JPEG_STEPS[-1])
+        assert len(coarsest) > 2 * F.room(model)[1]  # (not by a little)
+        # what the card is told beforehand is what the logos say: every other look fits
+        fits = []
+        for design in LOOKS:
+            try:
+                fits.append(design) if F.logo_jpeg(model, design=design) else None
+            except DeviceError:
+                pass
+        assert set(LOOKS) - set(fits) == set(F.UNFIT[model.id]) == {"levels"}, model.id
+    assert set(F.UNFIT) == set(F.ROOM)
+
+
+def test_the_room_a_panels_files_get():
+    """How much Libre Panel puts on a panel (issue 52): on the 9.2" two thirds of the 718,000
+    bytes that filled one, on the 12.3" four fifths of the 817,587 one has held for weeks; on
+    a model it has not written to (for who switches that on), the 9.2"'s for as many pixels
+    as it has, and never more."""
+    assert F.room(NINE) == (360_000, 120_000) and F.room(TWELVE) == (500_000, 150_000)
+    assert sum(F.room(NINE)) * 100 // 718_000 == 66
+    assert sum(F.room(TWELVE)) * 100 // 817_587 == 79
+    assert F.room(None) == F.room(NINE)
+    assert F.tried(NINE) and F.tried(TWELVE) and not F.tried(None)
+    for model in F.models():
+        clip, logo = F.room(model)
+        assert 0 < clip <= 500_000 and 0 < logo <= 150_000, model.id
+        if not F.tried(model):
+            assert clip <= 360_000 and logo <= 120_000, model.id
+    assert F.room(get_model("turing-8.8-usb")) == F.room(NINE)  # (as many pixels)
+    assert F.room(get_model("turing-2.8-usb")) == (90_000, 30_000)  # (480 x 480: a quarter)
+    assert F.kilobytes(593_754) == "580 KB" and F.kilobytes(100) == "1 KB"
 
 
 def test_the_clip_is_what_the_panels_decoder_plays():
@@ -251,7 +332,7 @@ def test_the_clip_is_what_the_panels_decoder_plays():
     assert slice_count(data) == bootscreen.CLIP_FRAMES == 44  # one slice a picture
     kinds = [data[start] & 0x1F for start, _end in nal_units(data)]
     assert kinds.count(7) == 4 and kinds.count(5) == 4  # a sequence every 11 pictures
-    assert len(data) < F.MAX_FILE
+    assert len(data) <= F.room(model)[0]
     assert "sliced-threads=0" in " ".join(F.clip_command("ffmpeg", (480, 480)))
     data = F.clip_h264(model, ffmpeg, design="night")  # a longer loop: more sequences
     assert slice_count(data) == bootscreen.design_of("night").frames == 88
@@ -283,21 +364,44 @@ def test_a_full_range_panel_gets_its_clip_in_full_range():
     assert limited.min() >= 14 and full.min() <= 2
 
 
-def test_a_clip_is_made_as_finely_as_it_fits(monkeypatch):
-    sizes = {17: 900_000, 20: 2_000_000, 22: 1_200_000, 24: 700_000}
-    asked = []
+def test_a_clip_is_made_as_finely_as_fits_its_room(monkeypatch):
+    """At crf 20 where that fits the clip's room on the panel (360,000 bytes on the 9.2"), and
+    never finer: at 17 Circuit's clip was 715 KB for 395, with nothing to see for it. Else
+    coarser: first at the crf guessed from how much too large it was (a clip gets about 13 %
+    smaller with each step), then a step at a time until it is the finest that fits. Never
+    coarser than 26, which would show: a look that needs more (Levels) is not made."""
+    sizes, asked = {}, []
 
     def run(command, **kwargs):
         crf = int(command[command.index("-crf") + 1])
         asked.append(crf)
         return SimpleNamespace(returncode=0, stdout=b"\x00" * sizes[crf], stderr=b"")
 
+    def made(model, **now):
+        sizes.clear()
+        sizes.update(now and {int(crf[1:]): size for crf, size in now.items()})
+        asked.clear()
+        return len(F.clip_h264(model, "ffmpeg", [Image.new("RGB", (16, 16))]))
+
     monkeypatch.setattr(F.subprocess, "run", run)
     monkeypatch.setattr("libre_panel.devices.h264.slice_count", lambda data: 1)
-    frame = [Image.new("RGB", (16, 16))]
-    assert len(F.clip_h264(NINE, "ffmpeg", frame)) == 700_000 and asked == [20, 22, 24]
-    sizes[20], asked[:] = 300_000, []
-    assert len(F.clip_h264(NINE, "ffmpeg", frame)) == 900_000 and asked == [20, 17]  # finer
+    assert made(NINE, c20=352_645) == 352_645 and asked == [20]  # it fits: no finer
+    # (Aurora's sizes on the 9.2": 25 is the guess, and 24 is 716 bytes too large)
+    assert made(NINE, c20=652_208, c25=318_482, c24=360_716) == 318_482
+    assert asked == [20, 25, 24]
+    # the guess two steps too coarse: finer until one does not fit
+    assert made(NINE, c20=652_208, c25=300_000, c24=340_000, c23=359_000, c22=400_000) == 359_000
+    assert asked == [20, 25, 24, 23, 22]
+    # the guess too fine: coarser, a step at a time
+    assert made(NINE, c20=652_208, c25=380_000, c26=350_000) == 350_000 and asked == [20, 25, 26]
+    # (the next step after 20 is tried once, not again as "one finer")
+    assert made(NINE, c20=394_704, c21=319_625) == 319_625 and asked == [20, 21]
+    with pytest.raises(DeviceError) as refused:  # Levels' sizes: too much at the coarsest
+        made(NINE, c20=1_084_528, c26=584_548)
+    assert str(refused.value) == TOO_FINE and asked == [20, 26]
+    assert made(TWELVE, c20=477_724) == 477_724 and asked == [20]  # the 12.3" has more room
+    assert made(TWELVE, c20=602_822, c22=410_260, c21=492_450) == 492_450
+    assert asked == [20, 22, 21]
 
 
 # -- on the panel ------------------------------------------------------------------------------
@@ -314,90 +418,235 @@ def test_only_plain_files_below_usr_data_are_written(name):
     assert F.checked_name("usr/data/boot.jpg") == b"usr/data/boot.jpg"
 
 
-def test_a_file_is_at_most_a_mebibyte_and_has_the_size_it_should():
+LOGO, CLIP = (98, F.BOOT_LOGO, 0), (98, F.STANDBY_CLIP, 0)  # a file's size asked
+
+
+def test_a_file_is_asked_for_before_and_after_it_is_written():
+    """What the panel has of the file and of the other one, the file, and its size again; at
+    most 1 MiB, the most the command takes, and never more than the file's room on the model
+    (the files made here never are: nothing else gets through); and only the two files: no
+    other name below usr/data (the panel's own settings are there) is written or taken off."""
     panel = FakePanel()
-    files = F.PanelFiles(panel)
+    files = F.PanelFiles(panel, NINE)
     with pytest.raises(DeviceError, match="1 MiB"):
         files.write(F.BOOT_LOGO, bytes(F.MAX_FILE + 1))
     with pytest.raises(DeviceError):
         files.write(F.BOOT_LOGO, b"")
+    with pytest.raises(DeviceError, match="120001 bytes are more than the 120000 it gets"):
+        files.write(F.BOOT_LOGO, bytes(120_001))
+    with pytest.raises(DeviceError, match="360001 bytes are more than the 360000 it gets"):
+        files.write(F.STANDBY_CLIP, bytes(360_001))
+    with pytest.raises(DeviceError, match="more than the 360000 it gets"):
+        files.write(F.STANDBY_CLIP, bytes(492_450))  # (a 12.3"'s clip: not on a 9.2")
+    with pytest.raises(DeviceError, match="150001 bytes are more than the 150000 it gets"):
+        F.PanelFiles(panel, TWELVE).write(F.BOOT_LOGO, bytes(150_001))
+    for name in ("usr/data/app.cfg", "usr/data/boot.sign", "usr/data/other.jpg"):
+        with pytest.raises(DeviceError, match="only the boot logo and the standby clip"):
+            files.write(name, b"x")
+        with pytest.raises(DeviceError, match="only the boot logo and the standby clip"):
+            files.delete(name)
+    assert panel.sent == []
     files.write(F.BOOT_LOGO, b"x" * 1000)
-    assert files.size(F.BOOT_LOGO) == 1000
-
-    class Short(FakePanel):  # a panel that kept one byte less
-        def command(self, cmd, args=b"", payload=b"", timeout_ms=2000):
-            reply = super().command(cmd, args, payload, timeout_ms)
-            if cmd == 40:
-                self.files[self.name_of(args)] = payload[:-1]
-            return reply
-
-    with pytest.raises(DeviceError, match="999 bytes of it, not 1000"):
-        F.PanelFiles(Short()).write(F.BOOT_LOGO, b"x" * 1000)
+    assert panel.files == {F.BOOT_LOGO: b"x" * 1000}
+    assert panel.sent == [LOGO, CLIP, (40, F.BOOT_LOGO, 1000), LOGO]
+    panel.sent.clear()
+    files.write(F.STANDBY_CLIP, b"c" * 2000)
+    assert panel.sent == [CLIP, LOGO, (40, F.STANDBY_CLIP, 2000), CLIP]
     for never in (11, 12, 13):
         with pytest.raises(DeviceError, match="never sent"):
             files._command(never)
 
 
-def test_a_file_the_panel_kept_is_left_as_it_is():
-    """A 9.2" kept its standby clip when another one came (it had no room left, and took no
-    file any more): the error says what the panel has, and nothing is taken away to be
-    written again (0.9.1 did so, and that 9.2" has kept restarting since); where the new one
-    fits beside the old one, it is written at once."""
-    old, new = b"o" * 700, b"n" * 710
-    clip = (F.STANDBY_CLIP, 0)
-    panel = FakePanel({F.STANDBY_CLIP: old}, room=1000)
-    with pytest.raises(DeviceError, match="the panel has 700 bytes of it, not 710"):
-        F.PanelFiles(panel).write(F.STANDBY_CLIP, new)
-    assert panel.files[F.STANDBY_CLIP] == old
-    assert panel.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]  # (no 42)
-    roomy = FakePanel({F.STANDBY_CLIP: old}, room=1410)
-    F.PanelFiles(roomy).write(F.STANDBY_CLIP, new)
-    assert roomy.files[F.STANDBY_CLIP] == new
-    assert roomy.sent == [(40, F.STANDBY_CLIP, 710), (98, *clip)]
-    for cmd, *_ in panel.sent + roomy.sent:
-        assert cmd != 42
+def test_a_file_the_panel_did_not_take_is_said_and_nothing_more_is_sent():
+    """A 9.2" that was full took no file any more: for five days it answered each write at
+    once and kept what it had, whether the new file was larger or smaller. That is said, in
+    so many words, and nothing is taken away to be written again (0.9.1 did so, and that 9.2"
+    has kept restarting since)."""
+    old = b"o" * 700
+    panel = FakePanel({F.STANDBY_CLIP: old}, refuses=True)
+    files = F.PanelFiles(panel, NINE)
+    for new in (b"n" * 710, b"n" * 500):
+        with pytest.raises(DeviceError) as told:
+            files.write(F.STANDBY_CLIP, new)
+        assert str(told.value) == NOT_TAKEN
+    with pytest.raises(DeviceError) as told:  # (a boot logo: none before, none after)
+        files.write(F.BOOT_LOGO, b"l" * 100)
+    assert str(told.value) == NOT_TAKEN
+    assert panel.files == {F.STANDBY_CLIP: old}
+    assert [cmd for cmd, *_ in panel.sent] == [98, 98, 40, 98] * 3  # (no 42, ever)
 
 
-def test_nothing_is_written_to_a_panel_in_this_version(isolated_home, monkeypatch):
-    """A 9.2" kept restarting, for good, after its start screen was written (issue 52), and
-    what on the panel does that is not known. Until it is, no file goes to a panel: neither
-    job opens it or makes anything, the lowest layer refuses too, and the app says so before
-    it pauses the themes. What the panel holds is still asked and the boot logo still taken
-    off; only the word in the environment switches writing on."""
+def test_a_file_of_the_size_the_panel_has_is_told_by_the_time_it_took(monkeypatch):
+    """Where the panel has a file of the new one's size, the size says nothing: five times a
+    clip was said to be on a 9.2" that had kept the one it had. A write takes its time (1.2
+    to 2.9 s for 700 KB on that panel) and one the panel does not take is over when the
+    transfer is (30 to 50 ms), so a file that was answered faster than any write is was not
+    taken. A small file's transfer says nothing (Dark's boot logo, smaller than any clip): it
+    is taken as written. (The time is the test's own: what the panels here say a write or a
+    refusal takes.)"""
+    now = [0.0]
+    monkeypatch.setattr(F, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    def passes(seconds):
+        now[0] += seconds
+
+    old, new = b"o" * 360_000, b"n" * 360_000  # (the largest clip a 9.2" gets)
+    kept = FakePanel({F.STANDBY_CLIP: old}, refuses=True)
+    # as slowly as that 9.2" turned a file down: 700 KB in 50 ms, so these in 26
+    kept.wait, kept.refusal = passes, 0.026
+    with pytest.raises(DeviceError) as told:
+        F.PanelFiles(kept, NINE).write(F.STANDBY_CLIP, new)
+    assert str(told.value) == NOT_TAKEN and kept.files[F.STANDBY_CLIP] == old
+    assert [cmd for cmd, *_ in kept.sent] == [98, 98, 40, 98]  # (and nothing after)
+    # twice as fast as that 9.2" wrote anything (149 KB in under 220 ms, with what followed)
+    writes = FakePanel({F.STANDBY_CLIP: old}, rate=1_400_000)
+    writes.wait = passes
+    F.PanelFiles(writes, NINE).write(F.STANDBY_CLIP, new)
+    assert writes.files[F.STANDBY_CLIP] == new
+    small = FakePanel({F.BOOT_LOGO: b"o" * 1000}, refuses=True)  # (kept, and not told)
+    small.wait = passes
+    F.PanelFiles(small, NINE).write(F.BOOT_LOGO, b"n" * 1000)
+    assert small.files[F.BOOT_LOGO] == b"o" * 1000
+    assert F.unwritten(706_912, 0.050) and not F.unwritten(706_912, 1.25)
+    assert F.unwritten(360_000, 0.040) and not F.unwritten(360_000, 0.6)
+    assert not F.unwritten(149_040, 0.22)  # (the fastest write in that panel's log)
+    # every clip is told so, the smallest too (Dark's on the 9.2"); Dark's boot logos are not
+    assert F.unwritten(45_000, 0.003) and not F.unwritten(45_000, 0.064)
+    assert not F.unwritten(14_289, 0.001) and not F.unwritten(21_952, 0.001)
+
+
+def test_a_file_that_ended_early_is_taken_off_again():
+    """A panel whose room ran out wrote a boot logo as far as the room went (16 KiB of 127 KB
+    on a 9.2"), and was full from then on. So a file that ends early is taken off again at
+    once (42), which leaves no panel full, and that is said; it is not written a second time.
+    A clip takes the place of the one before it, so its room is that one's and what was free:
+    one that is larger than both ends there, and goes the same way."""
+    clip = b"c" * 700
+    panel = FakePanel({F.STANDBY_CLIP: clip}, room=700 + 1638)
+    with pytest.raises(DeviceError) as told:
+        F.PanelFiles(panel, NINE).write(F.BOOT_LOGO, b"l" * 5000)
+    assert str(told.value) == (
+        "The boot logo did not fit: the panel took 1638 of 5000 bytes. It was taken off again, "
+        "so that the panel is not left full; the factory logo shows at the next power-on."
+    )
+    assert panel.files == {F.STANDBY_CLIP: clip}
+    assert panel.sent == [LOGO, CLIP, (40, F.BOOT_LOGO, 5000), LOGO, (42, F.BOOT_LOGO, 0), LOGO]
+    full = FakePanel({F.STANDBY_CLIP: b"o" * 700, F.BOOT_LOGO: b"l" * 100}, room=804)
+    with pytest.raises(DeviceError) as told:
+        F.PanelFiles(full, NINE).write(F.STANDBY_CLIP, b"n" * 710)
+    assert str(told.value) == (
+        "The standby clip did not fit: the panel took 704 of 710 bytes. It was taken off again, "
+        "so that the panel is not left full: the panel has no standby clip now. Dark is the "
+        "smallest look."
+    )
+    assert full.files == {F.BOOT_LOGO: b"l" * 100}
+    assert [cmd for cmd, *_ in full.sent] == [98, 98, 40, 98, 42, 98]  # (and no second 40)
+
+    class Stuck(FakePanel):  # a panel that does not let the file go
+        def command(self, cmd, args=b"", payload=b"", timeout_ms=2000):
+            if cmd == 42:
+                self.sent.append((cmd, self.name_of(args), 0))
+                return bytes([cmd, 0xC8]) + bytes(510)
+            return super().command(cmd, args, payload, timeout_ms)
+
+    stuck = Stuck({F.STANDBY_CLIP: clip}, room=700 + 1638)
+    with pytest.raises(DeviceError) as told:
+        F.PanelFiles(stuck, NINE).write(F.BOOT_LOGO, b"l" * 5000)
+    assert str(told.value) == (
+        "usr/data/boot.jpg did not fit (the panel took 1638 of 5000 bytes) and could not be "
+        "taken off again: 1638 bytes of it stay"
+    )
+
+
+def test_a_file_is_not_sent_where_both_would_be_more_than_the_panels_room():
+    """A panel written to by 0.7.9 to 0.9.1 may hold a clip of 700 KB. A boot logo beside it
+    would take the panel past the room Libre Panel uses there (on the 9.2" of issue 52 the
+    first 16 KiB of one were the last that fitted): it is not sent, and the app says to write
+    the clip again first, which makes it smaller. A file that is no larger than the one it
+    replaces always goes: that is the way out."""
+    panel = FakePanel({F.STANDBY_CLIP: b"o" * 701_830})
+    files = F.PanelFiles(panel, NINE)
+    with pytest.raises(DeviceError) as told:
+        files.write(F.BOOT_LOGO, b"l" * 113_040)
+    assert str(told.value) == (
+        "Not written: with the standby clip that is on the panel (685 KB), the boot logo would "
+        "be more than Libre Panel puts on this panel. Write the standby clip again first: it "
+        "becomes smaller."
+    )
+    assert panel.sent == [LOGO, CLIP]  # asked, and nothing sent
+    files.write(F.STANDBY_CLIP, b"n" * 319_625)  # smaller than the one there: it goes
+    files.write(F.BOOT_LOGO, b"l" * 113_040)  # and beside that one the logo fits
+    assert {name: len(data) for name, data in panel.files.items()} == {
+        F.STANDBY_CLIP: 319_625, F.BOOT_LOGO: 113_040,
+    }  # fmt: skip
+    old_logo = FakePanel({F.BOOT_LOGO: b"o" * 491_507})  # the other way round
+    with pytest.raises(DeviceError) as told:
+        F.PanelFiles(old_logo, NINE).write(F.STANDBY_CLIP, b"n" * 319_625)
+    assert str(told.value) == (
+        "Not written: with the boot logo that is on the panel (480 KB), the standby clip would "
+        "be more than Libre Panel puts on this panel. Write the boot logo again first: it "
+        "becomes smaller."
+    )
+    twelve = FakePanel({F.STANDBY_CLIP: b"o" * 593_754})  # (what a 12.3" holds of 0.9.0)
+    with pytest.raises(DeviceError, match=r"standby clip that is on the panel \(580 KB\)"):
+        F.PanelFiles(twelve, TWELVE).write(F.BOOT_LOGO, b"l" * 141_864)
+    F.PanelFiles(twelve, TWELVE).write(F.STANDBY_CLIP, b"n" * 492_450)
+    F.PanelFiles(twelve, TWELVE).write(F.BOOT_LOGO, b"l" * 141_864)  # (634,314 of 650,000)
+    assert all(cmd != 42 for cmd, *_ in panel.sent + old_logo.sent + twelve.sent)
+
+
+def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monkeypatch):
+    """Start screens are written to the 9.2" and the 12.3", where it has been done and what
+    fits is known (issue 52). How much room another panel of the family has is not known: for
+    one, neither job opens the panel or makes anything, the lowest layer refuses too, and the
+    app says so before it pauses the themes. What the panel holds is still asked and the boot
+    logo still taken off; only the word in the environment switches writing on there."""
     import threading
 
     from libre_panel.editor.server import make_server
 
+    eight = get_model("turing-8.8-usb")
     for word in (None, "1", "true", "AT-MY-OWN-RISK"):
         monkeypatch.delenv(F.WRITES_ENV, raising=False)
         if word is not None:
             monkeypatch.setenv(F.WRITES_ENV, word)
-        assert not F.writes_on(), word
+        assert not F.writes_on(eight) and not F.writes_on(None), word
+        assert F.writes_on(NINE) and F.writes_on(TWELVE), word
     monkeypatch.delenv(F.WRITES_ENV)
+    written_to = {model.id for model in F.models() if F.writes_on(model)}
+    assert written_to == {"turing-9.2-usb", "turing-12.3-usb"} == set(F.ROOM)
     opened = []
 
     def opener(asked):
         opened.append(asked)
-        return panel, asked or NINE
+        return panel, asked or eight
 
     def no_ffmpeg():
         raise AssertionError("nothing is made for a clip that is not written")
 
     panel = FakePanel({F.BOOT_LOGO: b"logo", F.STANDBY_CLIP: b"clip"})
     screen = F.StartScreen(opener=opener, ffmpeg=no_ffmpeg)
-    for write in (screen.write_logo, lambda: screen.write_clip(60)):
+    for write in (lambda: screen.write_logo(eight), lambda: screen.write_clip(60, eight)):
         with pytest.raises(DeviceError) as refused:
             write()
         assert str(refused.value) == WRITES_OFF
     assert opened == [] and panel.sent == []  # the panel was not even opened
-    with pytest.raises(DeviceError) as refused:  # nor does the layer under them write
-        F.PanelFiles(panel).write(F.BOOT_LOGO, b"new logo")
-    assert str(refused.value) == WRITES_OFF and panel.sent == []
+    # a panel whose model is known only once it is opened: opened, and nothing made or sent
+    found = F.StartScreen(opener=opener, ffmpeg=lambda: "ffmpeg")
+    for write in (found.write_logo, lambda: found.write_clip(60)):
+        with pytest.raises(DeviceError) as refused:
+            write()
+        assert str(refused.value) == WRITES_OFF
+    assert opened == [None, None] and panel.sent == []
+    for files in (F.PanelFiles(panel, eight), F.PanelFiles(panel)):  # nor the layer under them
+        with pytest.raises(DeviceError) as refused:
+            files.write(F.BOOT_LOGO, b"new logo")
+        assert str(refused.value) == WRITES_OFF and panel.sent == []
     assert panel.files == {F.BOOT_LOGO: b"logo", F.STANDBY_CLIP: b"clip"}
-    # what the panel holds, and its boot logo taken off: as before
-    assert screen.state()["boot_logo"] == 4
+    # what the panel holds, and its boot logo taken off: as ever
+    assert screen.state(eight)["boot_logo"] == 4
     panel.sent.clear()
-    assert screen.remove_logo() == {"model": NINE.id, "boot_logo": 0}
+    assert screen.remove_logo(eight) == {"model": eight.id, "boot_logo": 0}
     assert panel.sent == [(42, F.BOOT_LOGO, 0), (98, F.BOOT_LOGO, 0)]
 
     class Controls:
@@ -417,16 +666,24 @@ def test_nothing_is_written_to_a_panel_in_this_version(isolated_home, monkeypatc
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
     try:
-        assert request(port, "GET", "/api/start-screen")[1]["writes"] is False
+        told = {m["id"]: m for m in request(port, "GET", "/api/start-screen")[1]["models"]}
+        assert {name for name, model in told.items() if model["writes"]} == written_to
+        assert told["turing-9.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
+        assert told["turing-12.3-usb"]["room"] == {"clip": 500_000, "logo": 150_000}
+        assert told["turing-8.8-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
+        assert told["turing-9.2-usb"]["unfit"] == told["turing-12.3-usb"]["unfit"] == ["levels"]
+        assert told["turing-8.8-usb"]["unfit"] == []  # (not known for a model not written to)
         panel.sent.clear()
         for action in ("logo", "clip"):
-            status, data = request(port, "POST", "/api/start-screen", {"action": action})
+            status, data = request(port, "POST", "/api/start-screen",
+                                   {"action": action, "model": eight.id})  # fmt: skip
             assert (status, data) == (409, {"error": WRITES_OFF, "paused": False}), action
         assert controls.acts == [] and panel.sent == []  # the themes were not paused for it
         status, data = request(port, "POST", "/api/start-screen", {"action": "state"})
         assert status == 200 and data["standby_clip"] == 4 and controls.acts == ["pause"]
         monkeypatch.setenv(F.WRITES_ENV, F.WRITES_WORD)
-        assert request(port, "GET", "/api/start-screen")[1]["writes"] is True
+        told = request(port, "GET", "/api/start-screen")[1]["models"]
+        assert all(model["writes"] for model in told)
     finally:
         srv.shutdown()
         srv.server_close()
@@ -439,8 +696,9 @@ def test_the_boot_logo_is_written_shown_and_taken_away_again():
     jpeg = panel.files[F.BOOT_LOGO]
     assert answer == {"model": NINE.id, "boot_logo": len(jpeg), "design": "libre-panel"}
     kinds = [cmd for cmd, *_ in panel.sent]
-    assert kinds == [99] * 20 + [40, 98, 113]  # listed (all pieces), written, checked, shown
-    assert panel.sent[20] == (40, F.BOOT_LOGO, len(jpeg)) and panel.closed
+    # listed (all pieces), both sizes asked, written, checked, shown
+    assert kinds == [99] * 20 + [98, 98, 40, 98, 113]
+    assert panel.sent[22] == (40, F.BOOT_LOGO, len(jpeg)) and panel.closed
     panel.sent.clear()
     assert jobs(panel).remove_logo() == {"model": NINE.id, "boot_logo": 0}
     assert panel.sent == [(42, F.BOOT_LOGO, 0), (98, F.BOOT_LOGO, 0)]
@@ -460,6 +718,7 @@ def test_the_standby_clip_is_written_played_and_saved_as_what_the_panel_starts_w
                       "design": "dark"}  # fmt: skip
     after = [entry for entry in panel.sent if entry[0] != 99]
     assert after == [
+        CLIP, LOGO,  # what the panel has of both
         (40, F.STANDBY_CLIP, len(clip)), (98, F.STANDBY_CLIP, 0),
         (15, bytes([30]), 0),  # the rate of a cold start
         (110, F.STANDBY_CLIP, 0),  # played, its name (never an empty one) in the settings
@@ -499,7 +758,7 @@ def test_the_listing_gives_the_names_the_panel_has():
     panel = FakePanel({F.BOOT_LOGO: b"j", F.STANDBY_CLIP: b"c"})
     state = jobs(panel).state()
     assert state == {"model": NINE.id, "files": ["boot.jpg", "standby.h264"], "boot_logo": 1,
-                     "standby_clip": 1}  # fmt: skip
+                     "standby_clip": 1, "room": {"clip": 360_000, "logo": 120_000}}  # fmt: skip
 
 
 # -- in the app --------------------------------------------------------------------------------

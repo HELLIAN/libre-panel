@@ -1520,7 +1520,6 @@
     "It replaces the clip the panel plays when the PC starts ({name}); the one there now cannot be read back first. The panel is set to start with it.": "Zastępuje klip, który panel odtwarza przy starcie PC ({name}); obecnego nie da się wcześniej odczytać. Panel zostanie ustawiony tak, by startował z nim.",
     "It shows when the panel is switched on. The factory logo is not touched: \"Factory logo again\" brings it back.": "Pojawia się po włączeniu panelu. Logo fabryczne pozostaje nietknięte: „Znów logo fabryczne” je przywraca.",
     "Libre Panel's boot logo is taken off the panel.": "Logo startowe Libre Panel zostanie zdjęte z panelu.",
-    "Measured on the 9.2\"; this panel has the same firmware, but writing to it has not been tried yet.": "Zmierzone na panelu 9,2\"; ten panel ma ten sam firmware, ale zapis na nim nie był jeszcze próbowany.",
     "No TURZX USB panel found": "Nie znaleziono panelu USB TURZX",
     "Put on the panel": "Na panel",
     "Show the themes again": "Znów pokaż motywy",
@@ -2996,7 +2995,15 @@
     "Icon in the tray": "Ikona w zasobniku",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "Jego menu pokazuje stan panelu, zmienia motywy i zamyka Libre Panel. Wyłączone: Libre Panel otwierasz z menu Start lub listy aplikacji.",
     "Libre Panel runs in the background.": "Libre Panel działa w tle.",
-    "Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.": "Zapis na panelu jest w tej wersji wyłączony. Na jednym panelu 9.2\" zabrakło miejsca na ekran startowy i od tamtej pory uruchamia się on wciąż od nowa; na innych panelach te same pliki zapisywano bez problemów. Zapis wróci, gdy Libre Panel będzie wiedzieć, ile mieści się na panelu."
+    "Writing to this panel is switched off: Libre Panel has written start screens to the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "Zapis na tym panelu jest wyłączony: Libre Panel zapisywał ekrany startowe tylko na panelach 9.2\" i 12.3\", a ile miejsca ma na nie inny panel, nie wiadomo.",
+    "This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.": "Ten wygląd ma więcej szczegółów, niż mieści się w miejscu, którego Libre Panel używa na tym panelu, a w gorszej jakości nie jest zapisywany: wybierz inny wygląd.",
+    "Not written: with the standby clip that is on the panel ({size}), the boot logo would be more than Libre Panel puts on this panel. Write the standby clip again first: it becomes smaller.": "Nie zapisano: z klipem czuwania, który jest na panelu ({size}), logo startowe przekroczyłoby to, co Libre Panel umieszcza na tym panelu. Najpierw zapisz ponownie klip czuwania: będzie mniejszy.",
+    "Not written: with the boot logo that is on the panel ({size}), the standby clip would be more than Libre Panel puts on this panel. Write the boot logo again first: it becomes smaller.": "Nie zapisano: z logo startowym, które jest na panelu ({size}), klip czuwania przekroczyłby to, co Libre Panel umieszcza na tym panelu. Najpierw zapisz ponownie logo startowe: będzie mniejsze.",
+    "The panel did not take the file: it has what it had before, and nothing was changed. One panel did that when it had no room left.": "Panel nie przyjął pliku: ma to, co miał wcześniej, i nic nie zostało zmienione. Jeden panel zachował się tak, gdy zabrakło mu miejsca.",
+    "The boot logo did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full; the factory logo shows at the next power-on.": "Logo startowe się nie zmieściło: panel przyjął {written} z {size} bajtów. Zostało ponownie zdjęte, żeby panel nie pozostał pełny; przy następnym włączeniu pojawi się logo fabryczne.",
+    "The standby clip did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full: the panel has no standby clip now. Dark is the smallest look.": "Klip czuwania się nie zmieścił: panel przyjął {written} z {size} bajtów. Został ponownie zdjęty, żeby panel nie pozostał pełny: panel nie ma teraz klipu czuwania. Ciemny to najmniejszy wygląd.",
+    "{file} did not fit (the panel took {written} of {size} bytes) and could not be taken off again: {why}": "{file} się nie zmieścił (panel przyjął {written} z {size} bajtów) i nie udało się go ponownie zdjąć: {why}",
+    "The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.": "Na panelu są większe pliki, niż Libre Panel zapisuje teraz. Mogą zostać; zapisane ponownie będą mniejsze."
   },
   "fields": {
     "night": "noc",
