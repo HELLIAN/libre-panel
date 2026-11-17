@@ -1628,6 +1628,7 @@ def test_the_computers_programs_are_those_machine_py_names(tmp_path: Any) -> Non
     cut), how long one has run, how long the system has been up; and whether the registry
     says a program records."""
     import os
+    import re
     import shutil
     import subprocess
     import sys
@@ -1717,9 +1718,12 @@ def test_the_computers_programs_are_those_machine_py_names(tmp_path: Any) -> Non
     # every program that was the same before the look and after it is the one it saw. What
     # changed meanwhile tells nothing: a program that starts another in its place, one that
     # writes its command line anew, and the kernel's workers, which name themselves after the
-    # work they do at the moment ("kworker/u8:2-events_unbound": so of those, the worker)
+    # work they did last or do at the moment ("kworker/u8:2-events_unbound", "kworker/2:1+events",
+    # "kworker/2:1" between: so of those, the worker)
     def steady(name: str, path: str) -> tuple[str, str]:
-        return (name.split("-", 1)[0] if name.startswith("kworker/") and not path else name), path
+        if name.startswith("kworker/") and not path:
+            name = re.split(r"[-+]", name, maxsplit=1)[0]
+        return name, path
 
     then = {pid: steady(program.name, program.path) for pid, program in before.items()}
     kept = {pid: (program.name, program.path) for pid, program in want.items()}
