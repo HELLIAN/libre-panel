@@ -13,6 +13,7 @@ use lp_pixels::{chops, merge, Filter, Image, Mode, Transpose};
 use lp_py::random::Random;
 use lp_py::{Dict, Value};
 
+use crate::canvas::{canvas_duration, canvas_of, light_at, slide, slide_way, wipe_map, Canvas};
 use crate::light::{
     add_light, add_line, draw_tracked, ease_in, ease_out, face, mix, phase, py_max, py_min,
     role_colour, scaled, smooth, tracked_width, whole, Look,
@@ -72,6 +73,9 @@ pub struct Transition {
     /// the new theme's palette, as its context took it (RenderContext.palette)
     palette: Dict,
     kind: Kind,
+    /// where this panel and all of them stand, for one that goes over all the panels as one
+    /// (render/canvas.py take_canvas: a slide, the wipe or the line of light told so)
+    canvas: Option<Canvas>,
 }
 
 enum Kind {
@@ -155,14 +159,17 @@ impl Transition {
             _ => return Transition::plugin(name, params, renderer),
         };
         let name = BUILT_IN.iter().copied().find(|n| *n == name)?;
+        // take_canvas: across the panels, at its own pace there
+        let canvas = canvas_duration(name).and_then(|d| canvas_of(params).map(|c| (d, c)));
         Some(Transition {
             name,
-            duration,
+            duration: canvas.map_or(duration, |(d, _)| d),
             switch,
             toasts,
             from_shown,
             palette: renderer.theme.palette.clone(),
             kind,
+            canvas: canvas.map(|(_, c)| c),
         })
     }
 
@@ -193,6 +200,7 @@ impl Transition {
             from_shown: info.from_shown,
             palette: renderer.theme.palette.clone(),
             kind: Kind::Plugin(played),
+            canvas: None,
         })
     }
 
@@ -206,6 +214,7 @@ impl Transition {
             from_shown: false,
             palette: renderer.theme.palette.clone(),
             kind: Kind::Cut,
+            canvas: None,
         }
     }
 
@@ -230,6 +239,11 @@ impl Transition {
         }
     }
 
+    /// Whether it goes over all the panels as one (render/canvas.py: told where they stand).
+    pub fn on_canvas(&self) -> bool {
+        self.canvas.is_some()
+    }
+
     fn colour(&self, role: &str) -> [i64; 3] {
         role_colour(&self.palette, role)
     }
@@ -251,6 +265,14 @@ impl Transition {
             text: self.colour("text"),
             muted: self.colour("muted"),
         };
+        if let (Some(canvas), Some(way)) = (&self.canvas, slide_way(self.name)) {
+            // (_Slide and _SlideFrom across the panels)
+            return if t >= 1.0 {
+                Ok(new.clone())
+            } else {
+                slide(old, new, t, canvas, way)
+            };
+        }
         match &mut self.kind {
             Kind::Cut => Ok(new.clone()),
             Kind::Fade => chops::blend(old, new, (t * t * (3.0 - 2.0 * t)) as f32).map_err(failed),
@@ -265,10 +287,10 @@ impl Transition {
             }
             Kind::Tube => tube(old, new, t, &colours),
             Kind::Entrance(entrance) => entrance.frame(old, new, t, &colours, renderer),
-            Kind::Masked(masked) => masked.frame(old, new, t),
+            Kind::Masked(masked) => masked.frame(old, new, t, self.canvas.as_ref()),
             Kind::SlideFrom(side) => slide_from(old, new, t, *side),
             Kind::Zoom => zoom(old, new, t, &colours),
-            Kind::LightLine(glow) => light_line(glow, old, new, t, &colours),
+            Kind::LightLine(glow) => light_line(glow, old, new, t, &colours, self.canvas.as_ref()),
             Kind::Glitch => glitch(old, new, t),
             Kind::Tiles => tiles(old, new, t, &colours),
             Kind::Shatter(pieces) => shatter(pieces, old, old_key, new, t, 1.3),
@@ -720,13 +742,24 @@ fn lettering(
 // threshold -------------------------------------------------------------------------------------
 
 impl Masked {
-    fn frame(&mut self, old: &Image, new: &Image, t: f64) -> Result<Image> {
+    /// `canvas`: the wipe's across all the panels (Wipe._map: wipe_map)
+    fn frame(
+        &mut self,
+        old: &Image,
+        new: &Image,
+        t: f64,
+        canvas: Option<&Canvas>,
+    ) -> Result<Image> {
         if t >= 1.0 {
             return Ok(new.clone());
         }
         let size = (new.width(), new.height());
         if self.made.as_ref().is_none_or(|(s, _)| *s != size) {
-            self.made = Some((size, map_of(self.map, size.0, size.1)?));
+            let made = match canvas {
+                Some(canvas) if self.map == Map::Wipe => wipe_map(canvas, size.0, size.1)?,
+                _ => map_of(self.map, size.0, size.1)?,
+            };
+            self.made = Some((size, made));
         }
         let level = smooth(t) * (255.0 + self.soft);
         let lut: Vec<i64> = (0..256)
@@ -881,6 +914,7 @@ fn light_line(
     new: &Image,
     t: f64,
     c: &Colours,
+    canvas: Option<&Canvas>,
 ) -> Result<Image> {
     if t >= 1.0 {
         return Ok(new.clone());
@@ -916,7 +950,11 @@ fn light_line(
     }
     let glow = &kept.as_ref().expect("kept").1;
     let gw = glow.width() as i64;
-    let x = round_int(-(gw as f64) + (w + 2 * gw) as f64 * smooth(t))?;
+    let x = match canvas {
+        // where the line is on its way over all the panels
+        Some(canvas) => light_at(canvas, t, w)?,
+        None => round_int(-(gw as f64) + (w + 2 * gw) as f64 * smooth(t))?,
+    };
     let mut out = rgb(old)?.into_owned();
     if x > 0 {
         let part = crop(&*rgb(new)?, (0, 0, w.min(x), h));

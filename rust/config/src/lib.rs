@@ -317,6 +317,9 @@ pub struct ModeConfig {
 pub struct TransitionsConfig {
     pub default: String,
     pub speed: String,
+    /// a slide, the wipe and the line of light over all the panels as one, where they all
+    /// change at once (render/canvas.py)
+    pub canvas: bool,
     pub occasions: IndexMap<String, String>,
     pub random: Vec<String>,
 }
@@ -326,6 +329,7 @@ impl Default for TransitionsConfig {
         TransitionsConfig {
             default: "fade".into(),
             speed: "normal".into(),
+            canvas: true,
             occasions: OCCASION_TRANSITIONS
                 .iter()
                 .map(|(occasion, name)| (occasion.to_string(), name.to_string()))
@@ -824,6 +828,7 @@ fn transitions(cfg: &mut Config, table: &Table) -> Result<()> {
                     return Err(config_error(format!("{name}: one of {}", listed(&speeds))));
                 }
             }
+            "canvas" => cfg.transitions.canvas = bool_of(value, &name)?,
             "random" => {
                 let names = list_of(value, &name)?;
                 if names.is_empty() || names.len() > 32 {

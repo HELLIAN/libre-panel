@@ -21,6 +21,7 @@ from libre_panel.fonts.fallback import truetype
 from libre_panel.icons import ICON_NAMES, draw_icon
 from libre_panel.plugins.render import RenderContext, ToastStyle, Transition
 from libre_panel.render.band import BandStyle
+from libre_panel.render.canvas import CANVAS_DURATIONS, SLIDE_WAYS, slide, take_canvas
 from libre_panel.render.handovers import HANDOVERS
 from libre_panel.render.light import accent_color, ellipsize, role_value
 from libre_panel.render.scene import SceneFrame
@@ -499,7 +500,13 @@ class _Slide(Transition):
     name = "slide"
     duration = 0.5
 
+    def __init__(self, context: Any = None, params: dict[str, Any] | None = None) -> None:
+        super().__init__(context, params)
+        self.canvas = take_canvas(self)  # (across the panels: render/canvas.py)
+
     def frame(self, old: Image.Image, new: Image.Image, t: float) -> Image.Image:
+        if self.canvas is not None:
+            return new if t >= 1.0 else slide(old, new, t, self.canvas, SLIDE_WAYS[self.name])
         eased = 1 - (1 - t) ** 3
         shift = round(new.width * eased)
         out = Image.new(new.mode, new.size)
@@ -625,12 +632,14 @@ def handover(
     theme_name: str = "",
     pick: Any = random.choice,
     make: Any = None,
+    canvas: dict[str, Any] | None = None,
 ) -> Any:
     """The transition for a switch, from config.toml's [transitions]: the occasion's own (what
     the service asked for, ``asked``, where it is the same transition: it knows the game's
     logo), else what the service asked for, else the default; "random" picks one of its list;
     the speed stretches it. ``leaving``: the switch ends the occasion (the game is over).
-    ``make`` makes it (:func:`transition`)."""
+    ``make`` makes it (:func:`transition`). ``canvas``: where this panel and all of them stand,
+    for one that goes over all the panels as one (render/canvas.py) when they change at once."""
     chosen = config.transitions
 
     def spec_of(name: str) -> Any:
@@ -644,6 +653,9 @@ def handover(
     name = spec[0] if isinstance(spec, tuple) else spec
     if name == RANDOM_TRANSITION:
         spec = spec_of(pick(chosen.random) if chosen.random else "fade")
+    name = spec[0] if isinstance(spec, tuple) else spec
+    if canvas is not None and name in CANVAS_DURATIONS:
+        spec = (name, {**(spec[1] if isinstance(spec, tuple) else {}), "canvas": canvas})
     kind = (make or transition)(spec, context)
     if kind is not None and getattr(kind, "duration", 0):
         kind.duration = kind.duration * TRANSITION_SPEEDS.get(chosen.speed, 1.0)

@@ -179,6 +179,7 @@ fn transitions(t: &TransitionsConfig) -> Value {
     object(vec![
         ("default", text(&t.default)),
         ("speed", text(&t.speed)),
+        ("canvas", flag(t.canvas)),
         ("occasions", names(&t.occasions)),
         ("random", texts(&t.random)),
     ])

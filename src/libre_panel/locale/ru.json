@@ -3010,7 +3010,9 @@
     "Write to a panel no one has tried?": "Записать на панель, которую ещё никто не пробовал?",
     "No one has written start screens to this kind of panel yet. Libre Panel makes the files small and checks the panel before and after, but how much room it has for them is not known. On one 9.2\", files that left it without room stopped it from starting at all, and nothing sent from the PC reached it again (issue 52). Write only if you accept that risk.": "На панели такого типа ещё никто не записывал экраны запуска. Libre Panel делает файлы небольшими и проверяет панель до и после записи, но неизвестно, сколько места для них на ней есть. На одной панели 9.2\" файлы, не оставившие ей места, привели к тому, что она совсем перестала запускаться, и ничто из отправленного компьютером больше до неё не доходило (issue 52). Записывайте, только если готовы принять этот риск.",
     "Write at my own risk": "Записать на свой страх и риск",
-    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Экраны запуска на этой панели ещё никто не пробовал: они записываются на неё, только если вы согласитесь попробовать на свой страх и риск, в Настройки → Панель → Экран запуска."
+    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Экраны запуска на этой панели ещё никто не пробовал: они записываются на неё, только если вы согласитесь попробовать на свой страх и риск, в Настройки → Панель → Экран запуска.",
+    "Across the panels": "Через все панели",
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Сдвиги, шторка и линия света проходят по всем панелям как по одной, через зазор между ними, так, как они стоят в разделе «Другие панели», когда сцена, игра, музыка или простой ПК меняет их все."
   },
   "fields": {
     "night": "ночь",

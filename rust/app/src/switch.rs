@@ -131,6 +131,7 @@ pub fn handover(
     theme_name: &str,
     now: &Moment,
     pick: usize,
+    canvas: Option<&Value>,
 ) -> Option<Transition> {
     let chosen = &config.transitions;
     let spec_of = |name: &str| {
@@ -157,6 +158,12 @@ pub fn handover(
             list.get(pick % list.len().max(1))
                 .map_or("fade", String::as_str),
         );
+    }
+    // (over all the panels as one, where they all change at once: render/canvas.py)
+    if let Some(canvas) = canvas {
+        if lp_render::canvas::canvas_duration(&spec.0).is_some() {
+            spec.1.insert("canvas".into(), canvas.clone());
+        }
     }
     let mut kind = Transition::new(&spec.0, &spec.1, renderer)?;
     if kind.duration != 0.0 {

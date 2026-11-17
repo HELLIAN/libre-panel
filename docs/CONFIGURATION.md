@@ -471,6 +471,7 @@ a card with its name and back. A calm panel (`device.motion`, a USB serial one) 
 [transitions]
 default = "fade"      # every switch that has none of its own
 speed = "normal"      # "fast", "normal", "slow": shorter or longer, each of them
+canvas = true         # with more panels: a slide, the wipe and the light over all of them
 game = ""             # a game starts or ends ("": the game's entrance, with its logo)
 media = "entrance"    # music starts or stops: the cover and the track; "Music ended"
 idle = "fade"         # the PC is at rest (Almanac), or in use again
@@ -498,6 +499,16 @@ random = ["fade", "wipe", "zoom", "iris", "blinds", "dissolve", "light", "tiles"
 | `tiles` | the screen turns over tile by tile |
 | `shatter` | the old screen breaks into pieces that fly apart |
 | `random` | another of `random` each time |
+
+**Over all the panels.** With more than one panel, a slide, the wipe and the line of light go
+over all of them as over one screen where they all change at once: a scene put on or off, a
+game, music or the PC at rest coming or going, and **▶**. The panels stand as *Settings → More
+panels* shows them; the new screen runs through the gap between them, a soft shadow at its
+edge, and each panel draws its part from the same moment on (0.8 s after the change, so that
+each has noticed it and made its new screen; 0.4 s after **▶**). Over all of them it takes a
+little longer than on one (1.25 s, the line of light 1.4 s), the pace stretching it as any
+other. *Across the panels* off (`canvas = false`) plays it on each panel by itself, as does any
+other transition and any switch of one panel alone.
 
 A plugin's transition goes by its name (`myplugin.curtain`, [Plugins](PLUGINS.md)). The old
 setting `transition = "fade"` at the top of `config.toml` still names the default.

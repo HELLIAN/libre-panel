@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**New**
+- **One move over all the panels.** With more than one panel, a slide, the wipe and the line
+  of light now go over all of them as over one screen where they all change at once: a scene
+  put on or off, a game, music or the PC at rest coming or going, and **▶** in *Settings →
+  Transitions*. The new screen pushes in on one panel and runs on through the gap into the
+  next, a soft shadow at its edge; the line of light crosses them all. The panels stand as
+  *Settings → More panels* shows them and begin from one moment, 0.8 s after the change (0.4 s
+  after **▶**). *Settings → Transitions → Across the panels* (`[transitions] canvas`) turns it
+  off. The Rust app draws each frame of it bit for bit as Python does.
+
 ## 0.9.5rc2 — 2026-11-17
 
 The second candidate for 0.9.5: start screens on the family's other panels, for whoever wants

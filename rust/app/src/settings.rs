@@ -628,6 +628,8 @@ impl Settings<'_> {
         let mut transitions = Dict::default();
         transitions.insert("default".into(), text(&config.transition));
         transitions.insert("speed".into(), text(&config.transitions.speed));
+        // (over all the panels as one)
+        transitions.insert("canvas".into(), Value::Bool(config.transitions.canvas));
         for (occasion, name) in &config.transitions.occasions {
             transitions.insert(occasion.clone(), text(name));
         }
@@ -2409,6 +2411,7 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
         "across" => a_text(name, value, 300),
         "transitions.default" => rule_transition(name, value, false),
         "transitions.speed" => choice(name, value, &speeds),
+        "transitions.canvas" => flag(name, value),
         "transitions.random" => rule_random(name, value),
         "device.output" => plain_text(name, value, 260, true).map(Value::Str),
         "device.port" => a_text(name, value, 64),

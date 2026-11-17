@@ -1328,12 +1328,17 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       random(), uniform(), randrange() and getrandbits(), the same numbers). The main loop
       plays them with R5. The tests: 120 themes of other colours, sizes (1x1 to 1920x480,
       either way round) and languages, with up to three switches each (their old frame now
-      and then another), at times on their way, at their ends and past them; and six
-      scenarios for what those seldom meet: the entrance at each turn of its timeline in every
-      kind, on another size and on a panel narrower than its band; every transition at its
-      start, its end and where the line of light is almost at its brightest, a shatter whose
-      old frame changes; the maps and the strip of light kept for a size: 1375 frames to the
-      bit; and random's draws of 132 seeds. The counter-checks put 110 faults into
+      and then another, now and then told where the panels stand), at times on their way, at
+      their ends and past them; and seven scenarios for what those seldom meet: the entrance
+      at each turn of its timeline in every kind, on another size and on a panel narrower than
+      its band; every transition at its start, its end and where the line of light is almost
+      at its brightest, a shatter whose old frame changes; the maps and the strip of light
+      kept for a size; slides, the wipe and the line of light over all the panels as one
+      (render/canvas.py: either of two panels side by side or one above the other, at the
+      times their seams and the line are at the panels' edges, in the gap and beyond, a
+      transition the canvas does not touch, canvases that say nothing sensible, the wipe's map
+      for another size): 1787 frames to the bit, 345 of them over the panels; and random's
+      draws of 132 seeds. The counter-checks put 110 faults into
       transitions.rs and 10 into random.rs: the tests catch 107 and 8 (squares, the early
       light of an entrance's edges, the music's track joined to its text, the room a narrow
       panel leaves and the line almost at its brightest once their scenarios were added; the
@@ -1914,7 +1919,11 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       Almanac, `[modes]`), the mode's frame rate, the pages the loop switches to by itself
       (music while it plays; the PC at rest, by Windows' last input or logind's idle hint),
       the transition of a switch by its occasion (`[transitions]`: its own, the service's,
-      the default, random; its speed) and what a switch does while one plays, the messages
+      the default, random; its speed), a slide, the wipe and the line of light over all the
+      panels as one where they all change at once (a scene, a game, music, the rest, the show
+      on the panel: where each stands as Settings → More panels shows them, and one moment for
+      all, 0.8 s after the change, a scene's from when config.toml was written, the show's
+      0.4 s after it was asked) and what a switch does while one plays, the messages
       (the theme's style; whether one would show, for `notify`), the alarm's edge, the
       events (sample, fresh, theme-changed, panel-connected, -lost, -restarted, quit). The
       services config.toml enables that this build lacks are said. A run with a service of

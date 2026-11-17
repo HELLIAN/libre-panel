@@ -18,6 +18,7 @@ from typing import Any
 from PIL import Image, ImageChops
 
 from libre_panel.plugins.render import Transition
+from libre_panel.render.canvas import SLIDE_WAYS, light_at, slide, take_canvas, wipe_map
 from libre_panel.render.light import add_line, ease_in, ease_out, phase, role_color, smooth
 
 
@@ -60,13 +61,20 @@ def _row(values: bytes, w: int, h: int) -> Image.Image:
 
 
 class Wipe(_Masked):
-    """A soft edge goes across, from the left, and leaves the new screen behind it."""
+    """A soft edge goes across, from the left, and leaves the new screen behind it; across all
+    the panels, as one (render/canvas.py), where it is told where they stand."""
 
     name = "wipe"
     duration = 0.7
     soft = 40
 
+    def __init__(self, context: Any = None, params: dict[str, Any] | None = None) -> None:
+        super().__init__(context, params)
+        self.canvas = take_canvas(self)
+
     def _map(self, w: int, h: int) -> Image.Image:
+        if self.canvas is not None:
+            return wipe_map(self.canvas, w, h)
         return _row(bytes(range(256)), w, h)
 
 
@@ -125,15 +133,22 @@ class Dissolve(_Masked):
 
 
 class _SlideFrom(Transition):
-    """The new screen pushes the old one out, from one side (``side``: where it comes from)."""
+    """The new screen pushes the old one out, from one side (``side``: where it comes from);
+    across all the panels, as one (render/canvas.py), where it is told where they stand."""
 
     api = 1
     duration = 0.6
     side = "right"
 
+    def __init__(self, context: Any = None, params: dict[str, Any] | None = None) -> None:
+        super().__init__(context, params)
+        self.canvas = take_canvas(self)
+
     def frame(self, old: Image.Image, new: Image.Image, t: float) -> Image.Image:
         if t >= 1.0:
             return new
+        if self.canvas is not None:
+            return slide(old, new, t, self.canvas, SLIDE_WAYS[self.name])
         w, h = new.size
         eased = 1 - (1 - t) ** 3
         dx, dy = {"right": (-1, 0), "left": (1, 0), "bottom": (0, -1), "top": (0, 1)}[self.side]
@@ -201,6 +216,7 @@ class LightLine(Transition):
     def __init__(self, context: Any = None, params: dict[str, Any] | None = None) -> None:
         super().__init__(context, params)
         self._glow: tuple[tuple[int, int], Image.Image] | None = None
+        self.canvas = take_canvas(self)  # (across the panels: render/canvas.py)
 
     def _strip(self, w: int, h: int) -> Image.Image:
         """The line's light, upright, made once: a horizontal line drawn along a strip as long
@@ -222,7 +238,10 @@ class LightLine(Transition):
             return new
         w, h = new.size
         glow = self._strip(w, h)
-        x = round(-glow.width + (w + 2 * glow.width) * smooth(t))
+        if self.canvas is not None:  # where the line is on its way over all the panels
+            x = light_at(self.canvas, t, w)
+        else:
+            x = round(-glow.width + (w + 2 * glow.width) * smooth(t))
         out = _rgb(old).copy()
         if x > 0:
             out.paste(_rgb(new).crop((0, 0, min(w, x), h)), (0, 0))

@@ -195,6 +195,7 @@ class PanelProcess:
         quitting = more.quitting() if more.quitting is not None else None
         beats = more.beats.export() if more.beats is not None else {}
         return {"mode": more._mode(), "first": more._look() or "", "places": more.places(),
+                "laid": more.laid(),
                 "quitting": quitting, "identify": identify.left(), "beats": beats,
                 "transition": transition_show.export(),
                 "taken": sorted(base.places_taken() - self._held),
@@ -329,7 +330,8 @@ class _Link:
         self._lock = threading.Lock()
         self._replies: list[tuple[Any, ...]] = []
         self._replied = threading.Condition()
-        self.state: dict[str, Any] = {"mode": None, "first": "", "places": [], "quitting": None}
+        self.state: dict[str, Any] = {"mode": None, "first": "", "places": [], "laid": [],
+                                      "quitting": None}  # fmt: skip
         self.fresh: dict[str, Any] = {}
         self.fresh_images: dict[str, Any] = {}
         self.every_frame = False
@@ -512,7 +514,7 @@ def child(n: int, path: str, conn: Any, logs: Any) -> None:
             n, Path(path), link.stop, link.status, hub,
             quitting=lambda: link.state["quitting"], mode_of=lambda: link.state["mode"],
             look_of=lambda: link.state["first"], places_of=lambda: link.state["places"],
-            beats=link.beats,
+            beats=link.beats, laid_of=lambda: link.state.get("laid", []),
         )  # fmt: skip
     finally:
         link.send(("status", {"state": "stopped"}))

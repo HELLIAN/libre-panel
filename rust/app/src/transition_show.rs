@@ -42,6 +42,21 @@ pub fn asked() -> Option<(u64, String, String)> {
     Some((*number, name.clone(), label.clone()))
 }
 
+/// a show over all the panels as one begins this long after it was asked for, on each
+pub const LEAD_S: f64 = 0.4;
+
+/// lead: how long from now a show over all the panels as one begins (each panel takes the
+/// request in its own time): [`LEAD_S`] after it was asked for; 0 for one not asked.
+pub fn lead(number: u64) -> f64 {
+    let Ok(asked) = ASKED.lock() else {
+        return 0.0;
+    };
+    match asked.as_ref() {
+        Some((n, _, _, when)) if *n == number => (LEAD_S - when.elapsed().as_secs_f64()).max(0.0),
+        _ => 0.0,
+    }
+}
+
 /// done: the panel has shown request `number`: it ends (a newer one stays).
 pub fn done(number: u64) {
     if let Ok(mut asked) = ASKED.lock() {
@@ -78,6 +93,16 @@ impl Show {
             back,
             began: None,
         }
+    }
+
+    /// Whether it goes over all the panels as one (render/canvas.py).
+    pub fn on_canvas(&self) -> bool {
+        self.out.as_ref().is_some_and(Transition::on_canvas)
+    }
+
+    /// It begins at `at` (on the loop's clock): every panel from the same moment.
+    pub fn begin_at(&mut self, at: f64) {
+        self.began = Some(at);
     }
 
     /// How long a way takes (seconds; 0 for a cut).
@@ -117,5 +142,20 @@ impl Show {
             return made.map(Some).map_err(|why| why.0);
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_show_over_all_the_panels_begins_on_each_from_when_it_was_asked() {
+        let number = show("wipe", "Wipe");
+        let wait = lead(number);
+        assert!((wait - LEAD_S).abs() < 0.05, "{wait}");
+        assert_eq!(lead(number + 1), 0.0);
+        done(number);
+        assert_eq!(lead(number), 0.0);
     }
 }

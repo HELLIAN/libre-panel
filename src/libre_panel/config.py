@@ -652,10 +652,13 @@ _TRANSITION_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 @dataclass
 class TransitionsConfig:
     """How the panel goes from one screen to the next ([transitions]): the default, how fast,
-    each occasion's own (TRANSITION_OCCASIONS; "" the default) and what "random" picks from."""
+    each occasion's own (TRANSITION_OCCASIONS; "" the default), what "random" picks from, and
+    whether a slide, the wipe and the line of light go over all the panels as one where they
+    all change at once (``canvas``: render/canvas.py)."""
 
     default: str = "fade"
     speed: str = "normal"
+    canvas: bool = True
     occasions: dict[str, str] = field(default_factory=lambda: dict(OCCASION_TRANSITIONS))
     random: list[str] = field(default_factory=lambda: list(RANDOM_TRANSITIONS))
 
@@ -852,7 +855,8 @@ def _transition_name(value: Any, name: str, empty: bool = False) -> str:
 
 
 def _transitions(cfg: Config, table: dict[str, Any]) -> None:
-    """``[transitions]``: ``default``, ``speed``, each occasion's own and ``random``."""
+    """``[transitions]``: ``default``, ``speed``, ``canvas``, each occasion's own and
+    ``random``."""
     chosen = cfg.transitions
     for key, value in table.items():
         name = f"transitions.{key}"
@@ -862,6 +866,8 @@ def _transitions(cfg: Config, table: dict[str, Any]) -> None:
             chosen.speed = _expect(value, str, name)
             if chosen.speed not in TRANSITION_SPEEDS:
                 raise ConfigError(f"{name}: one of {', '.join(TRANSITION_SPEEDS)}")
+        elif key == "canvas":
+            chosen.canvas = _expect(value, bool, name)
         elif key in TRANSITION_OCCASIONS:
             chosen.occasions[key] = _transition_name(value, name, empty=True)
         elif key == "random":

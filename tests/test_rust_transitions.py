@@ -62,6 +62,8 @@ def _typed(v: Any) -> Any:
         return {"s": v}
     if isinstance(v, list):
         return {"l": [_typed(x) for x in v]}
+    if isinstance(v, dict):
+        return {"d": {k: _typed(x) for k, x in v.items()}}
     return None
 
 
@@ -129,9 +131,32 @@ def _theme(folder: Path, size: tuple[int, int], palette: dict[str, str]) -> None
     (folder / "theme.json").write_text(json.dumps(theme), encoding="utf-8")
 
 
+def _canvas(rng: random.Random) -> dict[str, Any]:
+    """Where a panel and all of them stand (render/canvas.py), as the app tells a transition:
+    mostly two panels side by side or one above the other, this one either of them, now and
+    then any rectangle in any other, or one that says nothing sensible."""
+    w, h, gap = rng.choice([(218.0, 55.0), (55.0, 218.0), (292.0, 110.0), (60.0, 60.0)]) + (
+        rng.choice([0.0, 4.0, 22.5]),
+    )
+    side = rng.random() < 0.5
+    whole = [0.0, 0.0, 2 * w + gap, h] if side else [0.0, 0.0, w, 2 * h + gap]
+    second = rng.random() < 0.5
+    own = [(w + gap) * second, 0.0, w, h] if side else [0.0, (h + gap) * second, w, h]
+    if rng.random() < 0.25:
+        whole = [rng.uniform(-50, 50) for _ in "xy"] + [rng.uniform(1, 600) for _ in "wh"]
+        own = [rng.uniform(-50, 600) for _ in "xy"] + [rng.uniform(1, 300) for _ in "wh"]
+    if rng.random() < 0.2:
+        own = [round(v) for v in own]  # (ints, as a hand-written config may give them)
+    if rng.random() < 0.1:
+        own = rng.choice([[0, 0, 0, 55], [True, 0, 10, 10], [0, 0, 10], [10**400, 0, 1, 1],
+                          [0.0, 0.0, float("inf"), 1.0], [0.0, "a", 1.0, 1.0]])  # fmt: skip
+    return {"own": own, "whole": whole}
+
+
 def _params(rng: random.Random, name: str) -> dict[str, Any] | None:
     if name != "entrance":
-        return rng.choice([None, {}, {"title": "ignored", "kind": "start"}])
+        return rng.choice([None, {}, {"title": "ignored", "kind": "start"},
+                           {"canvas": _canvas(rng)}])  # fmt: skip
     params: dict[str, Any] = {}
     for key, values in (("title", TITLES), ("text", TITLES), ("logo", LOGOS), ("kind", KINDS)):
         if rng.random() < 0.6:
@@ -288,9 +313,39 @@ def _the_line_almost_at_its_brightest() -> tuple[Any, ...]:
     return size, {}, "en", [{"name": "light", "raw": {}, "steps": steps}]
 
 
+def _across_the_panels() -> tuple[Any, ...]:
+    """Slides, the wipe and the line of light told where the panels stand (render/canvas.py),
+    on either of two panels side by side with a gap between them and of two one above the
+    other, at the times their seams and the line are at the panels' edges, in the gap and
+    beyond them; one the canvas does not touch (it keeps its own pace); canvases that say
+    nothing sensible, on which each plays on its panel alone; and the wipe's map made anew for
+    another size."""
+    size = (240, 60)
+    times = (-0.1, 0.0, 0.05, 0.3, 0.45, 0.5, 0.55, 0.7, 0.95, 0.999, 1.0)
+    side = {"whole": [0.0, 0.0, 458.0, 55.0]}
+    above = {"whole": [0.0, 0.0, 218.0, 132.0]}
+    canvases = [{**side, "own": [0.0, 0.0, 218.0, 55.0]}, {**side, "own": [240, 0, 218, 55]},
+                {**above, "own": [0.0, 0.0, 218.0, 55.0]},
+                {**above, "own": [0.0, 77.0, 218.0, 55.0]}]  # fmt: skip
+    wrong = [{"own": [0, 0, 218, 55]}, {"own": [0, 0, -1, 55], **side}, {"own": None, **side},
+             {"own": [False, 0, 218, 55], **side},
+             {"own": [0, 0, 218, 55], "whole": "x"}]  # fmt: skip
+    switches = []
+    for k, name in enumerate(["slide", "slide-right", "slide-up", "slide-down", "wipe", "light"]):
+        for j, canvas in enumerate(canvases + wrong[k % len(wrong) :][:1]):
+            steps = [[_frame(size, "RGB", k), _frame(size, "RGB", 10 + j), _bits(t)] for t in times]
+            switches.append({"name": name, "raw": {"canvas": canvas}, "steps": steps})
+    once = [[_frame(size, "RGB", 1), _frame(size, "RGB", 2), _bits(0.4)]]
+    switches.append({"name": "iris", "raw": {"canvas": canvases[1]}, "steps": once})
+    switches.append({"name": "wipe", "raw": {"canvas": canvases[1]},
+                     "steps": [[_frame(s, "RGB", 3), _frame(s, "RGB", 4), _bits(0.5)]
+                               for s in (size, (60, 240), size)]})  # fmt: skip
+    return size, {"info": "#00ccff"}, "en", switches
+
+
 SCENARIOS = [_entrance_at_its_turns, _entrance_on_another_size, _every_one_at_its_ends,
              _kept_for_another_size, _entrance_on_a_narrow_panel,
-             _the_line_almost_at_its_brightest]  # fmt: skip
+             _the_line_almost_at_its_brightest, _across_the_panels]  # fmt: skip
 
 
 def test_transitions_as_python_draws_them(tmp_path: Path) -> None:

@@ -523,6 +523,7 @@ class Settings:
                 "transitions": {
                     "default": config.transition,
                     "speed": config.transitions.speed,
+                    "canvas": config.transitions.canvas,  # (over all the panels as one)
                     **config.transitions.occasions,
                     "random": list(config.transitions.random),
                 },
@@ -1505,6 +1506,7 @@ RULES: dict[str, Any] = {
     "across": lambda n, v, c: _text(n, v, 300).strip(),
     "transitions.default": _rule_transition,
     "transitions.speed": lambda n, v, c: _choice(n, v, tuple(TRANSITION_SPEEDS)),
+    "transitions.canvas": lambda n, v, c: _flag(n, v),
     **{
         f"transitions.{occasion}": functools.partial(_rule_transition, empty=True)
         for occasion in TRANSITION_OCCASIONS

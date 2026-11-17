@@ -883,6 +883,7 @@ class MainLoop:
         look_of: Callable[[], str] | None = None,
         places_of: Callable[[], list[arrangement.Rect | None]] | None = None,
         beats: fan.Beats | None = None,
+        laid_of: Callable[[], list[arrangement.Rect | None]] | None = None,
     ) -> None:
         self.status = status = status or RunStatus()
         self.host, self.on_config, self.clock = host, on_config, clock
@@ -894,6 +895,9 @@ class MainLoop:
         # where every panel stands (the first panel's first), for its part of the picture
         # across them (config.toml across); set for the first panel's loop by run()
         self.places_of = places_of
+        # where every panel is shown to stand (Settings → More panels: placed or in a row), for
+        # a transition over all of them as one (_canvas); set for the first panel's loop by run()
+        self.laid_of = laid_of
         self.dressed = self._dress(config)  # what the renderer was made in besides its theme
         self.warmup = _Warmup()  # the next theme, built while this one shows
         # the next sample's readings, taken between two frames (run() switches it on; a test
@@ -1087,6 +1091,35 @@ class MainLoop:
         """What this panel's theme is drawn in besides itself: the first panel's look
         (:meth:`_look`) and its part of the picture across the panels (:meth:`_across`)."""
         return self._look(config), self._across(config)
+
+    def _canvas(self, config: Config) -> dict[str, Any] | None:
+        """Where this panel and all of them stand, in millimetres, as Settings → More panels
+        shows them, for a transition over all the panels as one (render/canvas.py); None where
+        ``[transitions] canvas`` is off, or there is no other panel."""
+        if not config.transitions.canvas or self.laid_of is None:
+            return None
+        rects = self.laid_of()
+        index = 0 if self.panel is None else self.panel + 1
+        own = rects[index] if index < len(rects) else None
+        shown = [r for r in rects if r is not None]
+        if own is None or len(shown) < 2:
+            return None
+        left, top = min(r[0] for r in shown), min(r[1] for r in shown)
+        right, bottom = max(r[0] + r[2] for r in shown), max(r[1] + r[3] for r in shown)
+        whole = [float(left), float(top), float(right - left), float(bottom - top)]
+        return {"own": [float(v) for v in own], "whole": whole}
+
+    def _together(self, before: Config, after: Config, occasion: str, leaving: bool) -> float:
+        """How much later this panel's part of a transition over all the panels begins: every
+        panel at the same moment, :data:`SWEEP_LEAD_S` after the change (each notices it in its
+        own time, and warms its theme first). A scene's from the moment config.toml was
+        written; a game's, music's or the rest's from the moment the first panel to come to it
+        did (:func:`_moment`)."""
+        if before.scene != after.scene and after.stamp is not None:
+            begins = after.stamp / 1e9 + SWEEP_LEAD_S  # (on the wall clock)
+        else:
+            begins = _moment((occasion, leaving))
+        return max(0.0, min(SWEEP_LEAD_S, begins - time.time()))
 
     def _sweep(self, before: Config, after: Config) -> float:
         """How much later this panel's transition begins: when every panel's theme changes
@@ -1514,13 +1547,20 @@ class MainLoop:
                         occasion, leaving = _switch_occasion(self.occasion, came)
                         self.occasion = came
                         if policy != "follow" or (host is not None and host.switches != switches):
+                            # all the panels change at once (a scene, a game, music, the rest):
+                            # a slide, the wipe or the line of light goes over them as one
+                            together = before.scene != config.scene or occasion in TOGETHER
+                            canvas = self._canvas(config) if together else None
                             # a calm panel changes at once: a fade is a whole picture a frame
                             kind = None if calm(config, display) else handover(
                                 config, occasion, leaving, chosen, RenderContext(renderer),
                                 snapshot.readings if snapshot is not None else None,
-                                theme.name, make=transition,
+                                theme.name, make=transition, canvas=canvas,
                             )  # fmt: skip
-                            begins = now + self._sweep(before, config)
+                            if getattr(kind, "canvas", None) is not None:
+                                begins = now + self._together(before, config, occasion, leaving)
+                            else:
+                                begins = now + self._sweep(before, config)
                             blend = _begin(kind, last_frame, shown_frame, begins, toasts) or blend
                         if host is not None:
                             switches = host.switches  # this was the switch
@@ -1787,14 +1827,18 @@ class MainLoop:
             still = calm(config, display)  # a calm panel: the card alone
             spec = (name, {"title": label}) if name == "entrance" else name
 
+            canvas = self._canvas(config)  # (every panel shows it at once: over all of them)
+
             def make() -> Any:
                 if still:
                     return None
-                return handover(config, "", False, spec, context, make=transition)
+                return handover(config, "", False, spec, context, make=transition, canvas=canvas)
 
             void, ink = role_color(context, "void"), role_color(context, "text")
             card = transition_show.card(label, frame.size, void, ink)
             self.showing = transition_show.Show(number, frame, card, make)
+            if getattr(self.showing.out, "canvas", None) is not None:  # all from one moment
+                self.showing.began = now + transition_show.lead(number)
         out = self.showing.frame(frame, now)
         if out is None:
             transition_show.done(number)
@@ -2017,7 +2061,7 @@ class _MorePanels:
     def _main(self, n: int, config: Config, stop: threading.Event, status: RunStatus) -> None:
         run_beside(n, config, stop, status, HubView(self.hub), quitting=self.quitting,
                    mode_of=self._mode, look_of=self._look, places_of=self.places,
-                   beats=self.beats)  # fmt: skip
+                   beats=self.beats, laid_of=self.laid)  # fmt: skip
 
     def _mode(self) -> str | None:
         return self.host.mode if self.host is not None else None
@@ -2034,6 +2078,17 @@ class _MorePanels:
             return []
         more = self.status.more
         return arrangement.places(
+            config, [self.status, *(more.get(n) for n in range(len(config.panels)))]
+        )
+
+    def laid(self) -> list[arrangement.Rect | None]:
+        """Where every panel is shown to stand, in millimetres (:func:`arrangement.laid_out`:
+        placed, or in a row beside those that are), in the order of :meth:`places`."""
+        config = self._seen
+        if config is None:
+            return []
+        more = self.status.more
+        return arrangement.laid_out(
             config, [self.status, *(more.get(n) for n in range(len(config.panels)))]
         )
 
@@ -2068,7 +2123,7 @@ def run_beside(
     first panel's ``config``, or the config.toml at that path in the panel's own process
     (panel_process.py), again after a config or theme it cannot show (:attr:`_MorePanels.RETRY_S`)
     and after a bug in it, with ``config.toml`` read anew. ``loop``: :func:`run`'s ``quitting``,
-    ``mode_of``, ``look_of``, ``places_of`` and ``beats``."""
+    ``mode_of``, ``look_of``, ``places_of``, ``laid_of`` and ``beats``."""
     path = config if isinstance(config, Path) else config.path
     while not stop.is_set():
         try:
@@ -2094,6 +2149,25 @@ def run_beside(
 # first to the last, after this long for each to notice it and warm its theme
 SWEEP_S = 0.8
 SWEEP_LEAD_S = 0.8
+# what all the panels change for at once, besides a scene: a game, music, the PC at rest; a
+# transition over all of them as one (render/canvas.py) begins on each at the same moment
+TOGETHER = ("game", "media", "idle")
+MOMENT_KEEP_S = 5.0  # a moment is kept this long after it, for the panels that come to it late
+_moments: dict[Any, float] = {}
+_moments_lock = threading.Lock()
+
+
+def _moment(key: Any) -> float:
+    """When the change ``key`` (its occasion, and whether it leaves it) begins on every panel,
+    on the wall clock: the first panel's loop to come to it sets it, :data:`SWEEP_LEAD_S` from
+    now, and those that come to it after take it."""
+    now = time.time()
+    with _moments_lock:
+        for known, at in list(_moments.items()):
+            if at < now - MOMENT_KEEP_S:
+                del _moments[known]
+        return _moments.setdefault(key, now + SWEEP_LEAD_S)
+
 
 HANG_FILENAME = "libre-panel-hang.log"
 HANG_S = 120.0  # a step of the loop this long is a hang: a whole serial frame takes half a minute
@@ -2223,6 +2297,7 @@ def run(
     places_of: Callable[[], list[arrangement.Rect | None]] | None = None,
     beats: fan.Beats | None = None,
     apart: bool = False,
+    laid_of: Callable[[], list[arrangement.Rect | None]] | None = None,
 ) -> None:
     """Main loop: read sensors at the theme's rate, render at ``config.fps`` so
     values glide between readings, and send only frames that changed. A
@@ -2240,12 +2315,13 @@ def run(
     one of them is this with ``panel``, its place there, and ``hub``, the first panel's readings
     (a :class:`HubView`); the guards and the hang watch are the first panel's loop's alone.
     ``mode_of`` and ``look_of`` say the mode the first panel is in and the theme it shows,
-    ``places_of`` where every panel stands (:meth:`_MorePanels.places`).
+    ``places_of`` where every panel stands (:meth:`_MorePanels.places`), ``laid_of`` where
+    each is shown to stand (:meth:`_MorePanels.laid`).
     """
     stop = stop or threading.Event()
     loop = MainLoop(config, once=once, status=status, host=host, on_config=on_config, hub=hub,
                     panel=panel, mode_of=mode_of, look_of=look_of, places_of=places_of,
-                    beats=beats)  # fmt: skip
+                    beats=beats, laid_of=laid_of)  # fmt: skip
     # the readings between two frames, not in the one that shows them (a panel beside the
     # first takes those of the first, read so there)
     loop.ahead = not once and panel is None
@@ -2260,6 +2336,7 @@ def run(
     )  # fmt: skip
     if more is not None:
         loop.places_of = more.places  # (where the panels stand, as the first panel's config says)
+        loop.laid_of = more.laid
     try:
         if once:
             loop.once()

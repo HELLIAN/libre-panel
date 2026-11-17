@@ -41,6 +41,18 @@ def asked() -> tuple[int, str, str] | None:
         return _asked[:3]
 
 
+LEAD_S = 0.4  # a show over all the panels begins this long after it was asked for, on each
+
+
+def lead(number: int) -> float:
+    """How long from now a show over all the panels as one begins (each panel takes the
+    request in its own time): :data:`LEAD_S` after it was asked for; 0 for one not asked."""
+    with _lock:
+        if _asked is None or _asked[0] != number:
+            return 0.0
+        return max(0.0, _asked[3] + LEAD_S - time.monotonic())
+
+
 def done(number: int) -> None:
     """The panel has shown it: the request ends (a newer one stays)."""
     global _asked

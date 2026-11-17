@@ -3010,7 +3010,9 @@
     "Write to a panel no one has tried?": "Gravar em um painel que ninguém testou?",
     "No one has written start screens to this kind of panel yet. Libre Panel makes the files small and checks the panel before and after, but how much room it has for them is not known. On one 9.2\", files that left it without room stopped it from starting at all, and nothing sent from the PC reached it again (issue 52). Write only if you accept that risk.": "Ninguém gravou ainda telas de inicialização neste tipo de painel. O Libre Panel mantém os arquivos pequenos e verifica o painel antes e depois, mas não se sabe quanto espaço ele tem para elas. Em um 9.2\", arquivos que o deixaram sem espaço fizeram com que ele não iniciasse mais, e nada do que o PC enviava chegava mais até ele (issue 52). Grave só se você aceitar esse risco.",
     "Write at my own risk": "Gravar por minha conta e risco",
-    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Ninguém testou ainda telas de inicialização neste painel: elas só são gravadas nele se você aceitar testar, por sua conta e risco, em Configurações → Painel → Tela de inicialização."
+    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Ninguém testou ainda telas de inicialização neste painel: elas só são gravadas nele se você aceitar testar, por sua conta e risco, em Configurações → Painel → Tela de inicialização.",
+    "Across the panels": "Através dos painéis",
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Os deslizamentos, a varredura e a linha de luz percorrem todos os painéis como um só, atravessando o espaço entre eles, tal como estão em Mais painéis, quando uma cena, um jogo, a música ou o PC em repouso muda todos eles."
   },
   "fields": {
     "night": "noite",

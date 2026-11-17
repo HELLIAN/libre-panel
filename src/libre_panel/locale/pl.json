@@ -3010,7 +3010,9 @@
     "Write to a panel no one has tried?": "Zapisać na panelu, którego nikt nie wypróbował?",
     "No one has written start screens to this kind of panel yet. Libre Panel makes the files small and checks the panel before and after, but how much room it has for them is not known. On one 9.2\", files that left it without room stopped it from starting at all, and nothing sent from the PC reached it again (issue 52). Write only if you accept that risk.": "Nikt jeszcze nie zapisywał ekranów startowych na tym rodzaju panelu. Libre Panel utrzymuje małe pliki i sprawdza panel przed zapisem i po nim, ale nie wiadomo, ile ma na nie miejsca. Na jednym panelu 9.2\" pliki, które nie zostawiły mu miejsca, sprawiły, że w ogóle przestał się uruchamiać, a nic, co wysyłał komputer, już do niego nie docierało (issue 52). Zapisuj tylko wtedy, gdy akceptujesz to ryzyko.",
     "Write at my own risk": "Zapisz na własne ryzyko",
-    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Nikt jeszcze nie wypróbował ekranów startowych na tym panelu: są na nim zapisywane tylko wtedy, gdy zgodzisz się to wypróbować na własne ryzyko, w Ustawienia → Panel → Ekran startowy."
+    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Nikt jeszcze nie wypróbował ekranów startowych na tym panelu: są na nim zapisywane tylko wtedy, gdy zgodzisz się to wypróbować na własne ryzyko, w Ustawienia → Panel → Ekran startowy.",
+    "Across the panels": "Przez wszystkie panele",
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Przesunięcia, wymazanie i linia światła przechodzą przez wszystkie panele jak przez jeden, także przez przerwę między nimi, tak jak stoją w Więcej paneli, gdy scena, gra, muzyka lub odpoczynek komputera zmienia je wszystkie."
   },
   "fields": {
     "night": "noc",

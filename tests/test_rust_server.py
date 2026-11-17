@@ -1916,6 +1916,7 @@ SETTINGS = (  # what is written, a request each: what is refused leaves the file
     {"transitions.default": "tube", "transitions.speed": "slow", "transitions.game": "",
      "transitions.media": "random", "transitions.random": ["fade", "cut", "fade"]},
     {"transitions.default": ""}, {"transitions.speed": "slower"}, {"transitions.other": "cut"},
+    {"transitions.canvas": False}, {"transitions.canvas": True}, {"transitions.canvas": 1},
     {"transitions.random": []}, {"transitions.random": ["nothing"]}, {"transitions.game": 5},
     {"switches.glow": True, "switches.lumen.glow": False}, {"switches.glow": None},
     {"switches.Glow": True}, {"switches.a.b.c": True}, {"switches.glow": "on"},

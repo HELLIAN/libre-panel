@@ -3010,7 +3010,9 @@
     "Write to a panel no one has tried?": "要写入一块还没有人试过的面板吗？",
     "No one has written start screens to this kind of panel yet. Libre Panel makes the files small and checks the panel before and after, but how much room it has for them is not known. On one 9.2\", files that left it without room stopped it from starting at all, and nothing sent from the PC reached it again (issue 52). Write only if you accept that risk.": "还没有人向这类面板写入过启动画面。Libre Panel 会让文件尽量小，并在写入前后检查面板，但不清楚它有多少空间可用。曾有一块 9.2\" 面板因文件占满空间而再也无法启动，电脑发送的任何内容都无法再到达它（issue 52）。只有在你接受这个风险时才写入。",
     "Write at my own risk": "自担风险写入",
-    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "还没有人在这块面板上试过启动画面：只有在你同意自担风险试用时才会写入，位置在 设置 → 面板 → 启动画面。"
+    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "还没有人在这块面板上试过启动画面：只有在你同意自担风险试用时才会写入，位置在 设置 → 面板 → 启动画面。",
+    "Across the panels": "跨越所有面板",
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "推移、擦除和光线会把所有面板当作一块，穿过面板之间的空隙依次划过，位置按“更多面板”中的摆放；在场景、游戏、音乐或电脑空闲让所有面板一起切换时生效。"
   },
   "fields": {
     "night": "夜晚",

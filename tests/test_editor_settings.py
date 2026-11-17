@@ -1261,7 +1261,8 @@ def test_the_settings_that_name_a_program_or_a_file_are_the_ones_locked():
         "sensors.json.update_s",
         "weather.enabled", "weather.units", "weather.update_minutes", "weather.latitude",
         "weather.longitude", "weather.place",
-        "transitions.default", "transitions.speed", "transitions.random", "transitions.game",
+        "transitions.default", "transitions.speed", "transitions.canvas", "transitions.random",
+        "transitions.game",
         "transitions.media", "transitions.idle", "transitions.sequence", "transitions.autopilot",
         "transitions.report", "transitions.manual",
     }  # fmt: skip

@@ -161,8 +161,8 @@ KEYS = [
         "engine_layers", "engine_encoder", "direct", "rest", "pixels", "keyframe_s", "maxrate",
         "ffmpeg", "local_clip", "clip_asked", "nope")),
     *(f"transitions.{key}" for key in (
-        "default", "speed", "game", "media", "idle", "sequence", "autopilot", "report",
-        "manual", "random", "nope")),
+        "default", "speed", "canvas", "game", "media", "idle", "sequence", "autopilot",
+        "report", "manual", "random", "nope")),
     "sensors.providers", "sensors.linux", "hardware.fans", "hardware.cpu_name",
     "hardware.gpu_name", "hardware.memory_name", "hardware.fan_look", "hardware.fan_paint",
     "weather.enabled", "weather.provider", "weather.latitude", "weather.longitude",

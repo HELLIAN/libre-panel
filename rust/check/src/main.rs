@@ -3918,8 +3918,6 @@ fn font_call<F: lp_text::text::TextFace>(
     })
 }
 
-/// A value as the tests give it with its type: `{"f": bits in hex}`, `{"i": decimal}`,
-/// `{"s": text}`, `{"b": bool}`, `{"l": [...]}`; anything else None.
 /// A frame of noise as the tests make it: each byte the top 8 of the low 32 bits of its index
 /// times 2654435761 plus the seed.
 fn noise_frame(spec: &Value) -> Image {
@@ -3937,6 +3935,8 @@ fn noise_frame(spec: &Value) -> Image {
     Image::from_bytes(mode, w, h, data).expect("a frame of its size")
 }
 
+/// A value as the tests give it with its type: `{"f": bits in hex}`, `{"i": decimal}`,
+/// `{"s": text}`, `{"b": bool}`, `{"l": [...]}`, `{"d": {key: ...}}`; anything else None.
 fn typed(v: &Value) -> lp_py::Value {
     if let Some(h) = v["f"].as_str() {
         lp_py::Value::Float(f64::from_bits(u64::from_str_radix(h, 16).unwrap_or(0)))
@@ -3948,6 +3948,8 @@ fn typed(v: &Value) -> lp_py::Value {
         lp_py::Value::Bool(b)
     } else if let Some(l) = v["l"].as_array() {
         lp_py::Value::List(l.iter().map(typed).collect())
+    } else if let Some(d) = v["d"].as_object() {
+        lp_py::Value::Dict(d.iter().map(|(k, v)| (k.clone(), typed(v))).collect())
     } else {
         lp_py::Value::None
     }

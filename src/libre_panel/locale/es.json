@@ -3010,7 +3010,9 @@
     "Write to a panel no one has tried?": "¿Escribir en un panel que nadie ha probado?",
     "No one has written start screens to this kind of panel yet. Libre Panel makes the files small and checks the panel before and after, but how much room it has for them is not known. On one 9.2\", files that left it without room stopped it from starting at all, and nothing sent from the PC reached it again (issue 52). Write only if you accept that risk.": "Nadie ha escrito aún pantallas de inicio en este tipo de panel. Libre Panel mantiene los archivos pequeños y comprueba el panel antes y después, pero no se sabe cuánto espacio tiene para ellas. En un 9.2\", unos archivos que lo dejaron sin espacio hicieron que no volviera a arrancar, y nada de lo que enviaba el PC volvió a llegarle (issue 52). Escribe solo si aceptas ese riesgo.",
     "Write at my own risk": "Escribir bajo mi propio riesgo",
-    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Nadie ha probado aún las pantallas de inicio en este panel: solo se escriben en él si aceptas probarlo, bajo tu propio riesgo, en Ajustes → Panel → Pantalla de inicio."
+    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Nadie ha probado aún las pantallas de inicio en este panel: solo se escriben en él si aceptas probarlo, bajo tu propio riesgo, en Ajustes → Panel → Pantalla de inicio.",
+    "Across the panels": "A través de los paneles",
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Los deslizamientos, el barrido y la línea de luz recorren todos los paneles como uno solo, a través del hueco entre ellos, tal como están en Más paneles, cuando una escena, un juego, la música o el PC en reposo los cambia todos."
   },
   "fields": {
     "night": "noche",

@@ -10,6 +10,7 @@ pub mod boot;
 mod bootlooks;
 pub mod branding;
 mod calendar;
+pub mod canvas;
 pub mod compose;
 pub mod countdown;
 pub mod cover;

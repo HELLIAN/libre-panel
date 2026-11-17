@@ -298,6 +298,9 @@ pub struct MainLoop {
     scenes_same: u64,
     scenes_apart: u64,
     shown_frame: Option<Rc<Image>>,
+    /// the scene of the config.toml read before the last (a scene's change goes over all the
+    /// panels as one: Python's `before`)
+    scene_before: String,
     /// the renderer and its count of frames of the frame the panel showed last, where that
     /// was the theme's frame as drawn (no transition, message, edge or picture over it): the
     /// next such frame of that renderer differs from it only where the renderer says
@@ -356,6 +359,70 @@ pub fn panel_config(config: &Config, n: usize) -> Result<Config, String> {
 
 /// how long the panel found on the USB bus counts before it is looked for again
 const BUS_LOOK_S: u64 = 5;
+
+/// a transition over all the panels as one (render/canvas.rs) begins on each this long after
+/// the change: each notices it in its own time, and warms its theme first
+const SWEEP_LEAD_S: f64 = 0.8;
+/// what all the panels change for at once, besides a scene: a game, music, the PC at rest
+const TOGETHER: [&str; 3] = ["game", "media", "idle"];
+/// a moment is kept this long after it, for the panels that come to it late
+const MOMENT_KEEP_S: f64 = 5.0;
+/// the moments the changes all the panels make at once begin (shared_moment)
+#[allow(clippy::type_complexity)]
+static MOMENTS: Mutex<Vec<((&'static str, bool), f64)>> = Mutex::new(Vec::new());
+
+/// The canvas of the panel `index` of those standing at `rects` (millimetres, the first
+/// panel's first; None for one whose size is not known): `{"own": [x, y, w, h], "whole":
+/// [x, y, w, h]}`, around all of them that are known; None for this one not known, or for
+/// fewer than two known.
+fn canvas_of(rects: &[Option<crate::arrangement::Rect>], index: usize) -> Option<Value> {
+    let own = rects.get(index).copied().flatten()?;
+    let shown: Vec<_> = rects.iter().flatten().copied().collect();
+    if shown.len() < 2 {
+        return None;
+    }
+    let least = |of: fn(&crate::arrangement::Rect) -> f64| {
+        shown.iter().map(of).fold(f64::INFINITY, f64::min)
+    };
+    let most = |of: fn(&crate::arrangement::Rect) -> f64| {
+        shown.iter().map(of).fold(f64::NEG_INFINITY, f64::max)
+    };
+    let (left, top) = (least(|r| r.0), least(|r| r.1));
+    let (right, bottom) = (most(|r| r.0 + r.2), most(|r| r.1 + r.3));
+    let rect = |(x, y, w, h): crate::arrangement::Rect| {
+        Value::List([x, y, w, h].into_iter().map(Value::Float).collect())
+    };
+    let mut canvas = lp_py::Dict::default();
+    canvas.insert("own".into(), rect(own));
+    canvas.insert(
+        "whole".into(),
+        rect((left, top, right - left, bottom - top)),
+    );
+    Some(Value::Dict(canvas))
+}
+
+/// Now on the wall clock, in seconds since 1970.
+fn wall_clock() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// _moment: when the change `key` (its occasion, and whether it leaves it) begins on every
+/// panel, on the wall clock: the first panel's loop to come to it sets it, [`SWEEP_LEAD_S`]
+/// from now, and those that come to it after take it.
+fn shared_moment(key: (&'static str, bool)) -> f64 {
+    let now = wall_clock();
+    let Ok(mut moments) = MOMENTS.lock() else {
+        return now + SWEEP_LEAD_S;
+    };
+    moments.retain(|(_, at)| *at >= now - MOMENT_KEEP_S);
+    if let Some((_, at)) = moments.iter().find(|(known, _)| *known == key) {
+        return *at;
+    }
+    moments.push((key, now + SWEEP_LEAD_S));
+    now + SWEEP_LEAD_S
+}
 
 /// LP_SCENE_CHECK: each frame that goes as its layers compared with the engine's (a check while
 /// measuring: it composes the frame here too).
@@ -495,6 +562,7 @@ impl MainLoop {
         owns: bool,
     ) -> MainLoop {
         let began = company.began;
+        let scene_before = config.scene.clone();
         MainLoop {
             on_bus: std::cell::Cell::new(None),
             env: Env {
@@ -546,6 +614,7 @@ impl MainLoop {
             alarm: AlarmEdge::new(),
             blend: None,
             showing: None,
+            scene_before,
             began_in: None,
             failed_switches: std::collections::HashSet::new(),
             last_frame: None,
@@ -723,6 +792,10 @@ impl MainLoop {
         if self.calm() {
             return;
         }
+        // all the panels change at once (a scene, a game, music, the rest): a slide, the wipe
+        // or the line of light goes over them as one
+        let together = self.scene_before != self.config.scene || TOGETHER.contains(&occasion);
+        let canvas = if together { self.canvas() } else { None };
         let (moment, _) = moment();
         self.blends += 1;
         let kind = switch::handover(
@@ -735,7 +808,13 @@ impl MainLoop {
             &renderer.theme.name,
             &moment,
             self.blends as usize + now.to_bits() as usize,
+            canvas.as_ref(),
         );
+        // (over all of them: on each from the same moment)
+        let begins = match &kind {
+            Some(kind) if kind.on_canvas() => now + self.together(occasion, leaving),
+            _ => now,
+        };
         if self.last_frame.is_none() {
             // (the frame shown last went as its layers: its pixels made now)
             self.last_frame = self
@@ -748,7 +827,7 @@ impl MainLoop {
             kind,
             self.last_frame.as_deref(),
             self.shown_frame.as_deref(),
-            now,
+            begins,
             self.blends,
             self.toasts.as_mut(),
         );
@@ -795,6 +874,7 @@ impl MainLoop {
                     // ([hardware]: the names of this computer's parts and its fans)
                     self.hub().follow_config(&fresh);
                 }
+                self.scene_before = std::mem::take(&mut self.config.scene);
                 self.config = fresh;
                 self.relook = true;
                 self.refused = None;
@@ -1115,11 +1195,28 @@ impl MainLoop {
     /// it was written, where every panel stands and which of them this is; None without a
     /// picture, or while this panel is not placed.
     fn across_now(&self) -> Option<crate::arrangement::Across> {
-        use crate::arrangement::Told;
         if self.config.across.is_empty() {
             return None;
         }
-        // (where every panel stands: the whole config.toml, the first panel's first)
+        let index = self.beside.as_ref().map_or(0, |beside| beside.n + 1);
+        let folder = self
+            .config_file
+            .parent()
+            .map_or_else(lp_config::dirs::config_dir, std::path::Path::to_path_buf);
+        self.arranged(|full, statuses| {
+            let places = crate::arrangement::places(full, statuses);
+            crate::arrangement::across_of(full, &folder, &places, index)
+        })
+        .flatten()
+    }
+
+    /// `then` of the whole config.toml (the first panel's: where every panel stands) and what
+    /// each panel told of itself, the first panel's first; None where it cannot be read.
+    fn arranged<T>(
+        &self,
+        then: impl FnOnce(&Config, &[Option<crate::arrangement::Told>]) -> T,
+    ) -> Option<T> {
+        use crate::arrangement::Told;
         let loaded;
         let full = match &self.beside {
             None => &self.config,
@@ -1147,13 +1244,37 @@ impl MainLoop {
         for each in more {
             statuses.push(each.and_then(|each| each.lock().ok().map(|s| told(&s))));
         }
-        let places = crate::arrangement::places(full, &statuses);
-        let index = self.beside.as_ref().map_or(0, |beside| beside.n + 1);
-        let folder = self
-            .config_file
-            .parent()
-            .map_or_else(lp_config::dirs::config_dir, std::path::Path::to_path_buf);
-        crate::arrangement::across_of(full, &folder, &places, index)
+        Some(then(full, &statuses))
+    }
+
+    /// _canvas: where this panel and all of them stand, in millimetres, as Settings → More
+    /// panels shows them (arrangement::laid_out), for a transition over all the panels as one
+    /// (render/canvas.rs): `{"own": [x, y, w, h], "whole": [x, y, w, h]}`; None where
+    /// `[transitions] canvas` is off, or there is no other panel.
+    fn canvas(&self) -> Option<Value> {
+        if !self.config.transitions.canvas {
+            return None;
+        }
+        let rects = self.arranged(crate::arrangement::laid_out)?;
+        canvas_of(
+            &rects,
+            self.beside.as_ref().map_or(0, |beside| beside.n + 1),
+        )
+    }
+
+    /// _together: how much later this panel's part of a transition over all the panels
+    /// begins: every panel at the same moment, [`SWEEP_LEAD_S`] after the change (each notices
+    /// it in its own time, and warms its theme first). A scene's from the moment config.toml
+    /// was written; a game's, music's or the rest's from the moment the first panel to come to
+    /// it did ([`shared_moment`]).
+    fn together(&self, occasion: &'static str, leaving: bool) -> f64 {
+        let begins = match self.config.stamp {
+            Some(stamp) if self.scene_before != self.config.scene => {
+                stamp as f64 / 1e9 + SWEEP_LEAD_S // (on the wall clock)
+            }
+            _ => shared_moment((occasion, leaving)),
+        };
+        (begins - wall_clock()).clamp(0.0, SWEEP_LEAD_S)
     }
 
     /// The part of the picture across the panels followed: a new one (another picture, a
@@ -1414,6 +1535,7 @@ impl MainLoop {
             // it: at the speed set, one of the list where it is "random")
             let calm = self.calm();
             let (moment, _) = moment();
+            let canvas = self.canvas(); // (every panel shows it at once: over all of them)
             let mut made = |pick: usize| {
                 if calm {
                     return None;
@@ -1437,13 +1559,17 @@ impl MainLoop {
                     &renderer.theme.name,
                     &moment,
                     pick + self.blends as usize,
+                    canvas.as_ref(),
                 )
             };
             let picked = now.to_bits() as usize;
             let (out, back) = (made(picked), made(picked.wrapping_add(1)));
-            self.showing = Some(crate::transition_show::Show::new(
-                number, &frame, card, out, back,
-            ));
+            let mut show = crate::transition_show::Show::new(number, &frame, card, out, back);
+            if show.on_canvas() {
+                // (all from one moment)
+                show.begin_at(now + crate::transition_show::lead(number));
+            }
+            self.showing = Some(show);
         }
         let Some(show) = self.showing.as_mut() else {
             return frame;
@@ -2108,5 +2234,47 @@ impl MainLoop {
             }
         }
         self.close_panel();
+    }
+}
+
+#[cfg(test)]
+mod canvas_tests {
+    use super::*;
+
+    // a 12.3" (293 x 110 mm) and, 30 mm to its right, a 9.2" (227 x 57 mm), their middles level
+    const BIG: (f64, f64, f64, f64) = (0.0, 0.0, 292.5, 109.7);
+    const BAR: (f64, f64, f64, f64) = (322.5, 26.2, 226.7, 56.7);
+
+    fn told(own: (f64, f64, f64, f64), whole: (f64, f64, f64, f64)) -> Option<Value> {
+        let rect = |(x, y, w, h): (f64, f64, f64, f64)| {
+            Value::List([x, y, w, h].into_iter().map(Value::Float).collect())
+        };
+        let mut canvas = lp_py::Dict::default();
+        canvas.insert("own".into(), rect(own));
+        canvas.insert("whole".into(), rect(whole));
+        Some(Value::Dict(canvas))
+    }
+
+    #[test]
+    fn a_panel_is_told_where_it_and_all_of_them_stand() {
+        let whole = (0.0, 0.0, 322.5 + 226.7, 109.7);
+        let rects = [Some(BIG), None, Some(BAR)];
+        assert_eq!(canvas_of(&rects, 0), told(BIG, whole));
+        assert_eq!(canvas_of(&rects, 2), told(BAR, whole)); // ([[panels]][1]: the third)
+        assert_eq!(canvas_of(&rects, 1), None); // (one whose size is not known)
+        assert_eq!(canvas_of(&rects, 3), None);
+        assert_eq!(canvas_of(&[Some(BIG)], 0), None); // (one panel)
+        assert_eq!(canvas_of(&[Some(BIG), None], 0), None);
+    }
+
+    #[test]
+    fn every_panel_begins_a_change_they_all_make_at_the_same_moment() {
+        let first = shared_moment(("media", false));
+        assert!((first - wall_clock() - SWEEP_LEAD_S).abs() < 0.05);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(shared_moment(("media", false)), first); // (the panels after take it)
+        let ending = shared_moment(("media", true)); // (music stops: another change)
+        assert!(ending - first > 0.05, "{ending} {first}");
+        assert_eq!(TOGETHER, ["game", "media", "idle"]);
     }
 }
