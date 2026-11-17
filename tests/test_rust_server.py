@@ -1376,6 +1376,23 @@ def _waited(found: Any, seconds: float) -> Any:
     return None
 
 
+def _screen(size: str) -> tuple[subprocess.Popen[bytes], str]:
+    """An Xvfb of a screen of `size` ("1920x1080x24") and its display's number, once it takes
+    clients. (-displayfd: Xvfb writes the number and its newline apart, and ends where the
+    second finds the pipe closed: so the pipe is read to the newline)"""
+    read, write = os.pipe()
+    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", size],
+                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
+    os.close(write)
+    told = b""
+    try:
+        while not told.endswith(b"\n") and (part := os.read(read, 16)):
+            told += part
+    finally:
+        os.close(read)
+    return screen, told.decode().strip()
+
+
 @pytest.mark.skipif(
     not sys.platform.startswith("linux") or shutil.which("Xvfb") is None,
     reason="the window on a screen of Xvfb's",
@@ -1397,14 +1414,7 @@ def test_the_app_opens_its_window_one_window_and_closes_it_as_window_py_does(
     opened = tmp_path / "browser.txt"
     (tools / "xdg-open").write_text(f'#!/bin/sh\necho "$@" >> {opened}\n', encoding="utf-8")
     (tools / "xdg-open").chmod(0o755)
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1920x1080x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1920x1080x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
            "WAYLAND_DISPLAY": "", **_libraries()}  # fmt: skip
@@ -1471,14 +1481,7 @@ def test_a_window_just_closed_is_opened_anew_by_the_next_start(tmp_path: Path) -
     opened = tmp_path / "browser.txt"
     (tools / "xdg-open").write_text(f'#!/bin/sh\necho "$@" >> {opened}\n', encoding="utf-8")
     (tools / "xdg-open").chmod(0o755)
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1920x1080x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1920x1080x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
            "WAYLAND_DISPLAY": "", "LP_WINDOW_LINGER_S": "30", **_libraries()}  # fmt: skip
@@ -1552,14 +1555,7 @@ def test_the_tray_shows_its_icon_and_its_quit_ends_libre_panel(tmp_path: Path) -
         'output = "panel.png"\n[sensors]\nproviders = []\n',
         encoding="utf-8",
     )
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1280x800x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1280x800x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "WAYLAND_DISPLAY": "", "XDG_CONFIG_HOME": str(tmp_path),
            **_libraries()}  # fmt: skip
@@ -1623,14 +1619,7 @@ def test_the_tray_icon_follows_its_setting_and_comes_back_when_it_ends(tmp_path:
         'output = "panel.png"\n[sensors]\nproviders = []\n',
         encoding="utf-8",
     )
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1280x800x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1280x800x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "WAYLAND_DISPLAY": "", "XDG_CONFIG_HOME": str(tmp_path),
            **_libraries()}  # fmt: skip
