@@ -566,12 +566,16 @@ Since 0.9.4 (`devices/panel_files.py`, `rust/app/src/start_screen.rs`):
   days), and for the clip 0.9.1 took away (after which it took the next file
   and showed frames until its next start). What ended it came after: the larger
   clip written into the room the delete had made, and the settings saved.
-- **Only the 9.2", the 12.3" and the 8.8"** are written to (the 8.8" since
-  0.9.5, with the 9.2"'s room; the first write to one is an owner's). Another
-  model of the family needs the word in the environment
-  (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`), for who looks into it on a panel
-  of their own: its files are then made for the 9.2"'s room, by the pixels, and
-  never for more.
+- **The 9.2", the 12.3" and the 8.8"** are written to (the 8.8" since 0.9.5,
+  with the 9.2"'s room; the first write to one is an owner's). Another model of
+  the family is written to only on its owner's word, given for each write after
+  the app has said what happened to issue 52's panel (`untested: true` with the
+  write; or `LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment): its
+  files are then made for the 9.2"'s room, by the pixels, and never for more, and
+  sent and checked with the same commands. How it went is asked for in the
+  [start screen issue form](https://github.com/syntensa/libre-panel/issues/new?template=start_screen.yml);
+  a model goes on the list of those written to without the question only after
+  such a report from a panel of it.
 - **Run on two sound panels** before 0.9.4 (0.9.4rc1 on Windows, 2026-11-16): a
   9.2" with firmware `turzx_0001_0015`, mounted on end, and a 12.3" with
   `turzx_0001_0026`. Every 40, in the order sent, with the size 98 said before

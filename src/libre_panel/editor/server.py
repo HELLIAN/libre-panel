@@ -1747,8 +1747,12 @@ class EditorHandler(BaseHTTPRequestHandler):
                         "size": list(m.size(way)),
                         "measured": m.id in panel_files.MEASURED,
                         # whether its files are written (the models it has been done on), and
-                        # how large they are at most there: the clip's and the logo's bytes
+                        # how large they are at most there: the clip's and the logo's bytes.
+                        # Another is written to where its owner agrees to try it; one that has
+                        # been seen to start with them is confirmed
                         "writes": panel_files.writes_on(m),
+                        "tried": panel_files.tried(m),
+                        "confirmed": m.id in panel_files.CONFIRMED,
                         "room": dict(zip(("clip", "logo"), panel_files.room(m), strict=True)),
                         # (the looks known not to fit there finely: not offered for writing)
                         "unfit": list(panel_files.UNFIT.get(m.id, ())),
@@ -1761,6 +1765,9 @@ class EditorHandler(BaseHTTPRequestHandler):
                 "runs_panel": self.controls is not None,
                 "names": {"logo": panel_files.BOOT_LOGO, "clip": panel_files.STANDBY_CLIP},
                 "designs": list(bootscreen.designs()),  # the looks, Libre Panel's own first
+                # (where an owner who tried a model says how it went, and this version)
+                "report": panel_files.REPORT_FORM,
+                "version": __version__,
             }
         )
 
@@ -2321,7 +2328,10 @@ class EditorHandler(BaseHTTPRequestHandler):
             return self._error(f"panel {n}: there is no such panel")
         device, where = place
         way = self._mounted(n)
-        if action in ("logo", "clip") and model is not None and not panel_files.writes_on(model):
+        # (a model that has not been tried: its owner agreed in the app, told what may happen)
+        untested = payload.get("untested") is True
+        if action in ("logo", "clip") and model is not None and not panel_files.writes_on(
+                model, untested):  # fmt: skip
             # (nothing is written to this model: said before the themes are paused for it)
             return self._json({"error": panel_files.writes_off(), "paused": False},
                               HTTPStatus.CONFLICT)  # fmt: skip
@@ -2334,12 +2344,12 @@ class EditorHandler(BaseHTTPRequestHandler):
             if action == "state":
                 result = screen.state(model, where)
             elif action == "logo":
-                result = screen.write_logo(model, way, where, design)
+                result = screen.write_logo(model, way, where, design, untested=untested)
             elif action == "remove-logo":
                 result = screen.remove_logo(model, where)
             else:
                 result = screen.write_clip(device.brightness, model, way, where, design,
-                                           device.video_range)  # fmt: skip
+                                           device.video_range, untested=untested)  # fmt: skip
                 # the video mode names the clip it plays: the panel's own, where it went there
                 if not device.video.local_clip and _panel_s(config, n, result):
                     self._name_clip(n)

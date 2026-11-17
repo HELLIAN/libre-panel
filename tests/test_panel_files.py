@@ -22,8 +22,8 @@ NINE = get_model("turing-9.2-usb")
 TWELVE = get_model("turing-12.3-usb")
 EIGHT = get_model("turing-8.8-usb")
 WRITES_OFF = (
-    'Writing to this panel is switched off: Libre Panel writes start screens to the 8.8", '
-    'the 9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+    "No one has tried start screens on this panel yet: they are written to it only where you "
+    "agree to try it, at your own risk, in Settings → Panel → Start screen."
 )
 TOO_FINE = (
     "This look has more detail than fits in the room Libre Panel uses on this panel, and it "
@@ -302,7 +302,21 @@ def test_the_logo_is_as_fine_as_fits_its_room():
             except DeviceError:
                 pass
         assert set(LOOKS) - set(fits) == set(F.UNFIT[model.id]) == {"levels"}, model.id
-    assert set(F.UNFIT) == set(F.ROOM)
+    # a model no one has tried: its looks were measured for its room (the 9.2"'s by the
+    # pixels), both files and both ways mounted, and one is not offered where either would be
+    # too fine. The default look fits every one; the logos say their part here (the clips take
+    # minutes, and were measured once, as for the models above)
+    assert set(F.UNFIT) == {model.id for model in F.models()}
+    for model in F.models():
+        if F.tried(model):
+            continue
+        assert "levels" in F.UNFIT[model.id] and bootscreen.DEFAULT not in F.UNFIT[model.id]
+        assert set(F.UNFIT[model.id]) <= set(LOOKS), model.id
+        for design in LOOKS:
+            try:
+                F.logo_jpeg(model, design=design)
+            except DeviceError:
+                assert design in F.UNFIT[model.id], (model.id, design)
 
 
 def test_the_room_a_panels_files_get():
@@ -634,10 +648,13 @@ def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monk
     fits is known (issue 52), and to the 8.8", the 9.2"'s sibling. How much room another panel
     of the family has is not known: for one (a 5.2" here), neither job opens the panel or makes
     anything, the lowest layer refuses too, and the app says so before it pauses the themes.
-    What the panel holds is still asked and the boot logo still taken off; only the word in the
-    environment switches writing on there."""
+    What the panel holds is still asked and the boot logo still taken off. Writing there is its
+    owner's to choose, each time (``untested``, which the app sends only as true after it has
+    said what may happen), or the word in the environment's; the app says which models have been
+    tried, which confirmed, and where to share how it went."""
     import threading
 
+    from libre_panel import __version__
     from libre_panel.editor.server import make_server
 
     other = get_model("turing-5.2-usb")
@@ -678,6 +695,15 @@ def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monk
             files.write(F.BOOT_LOGO, b"new logo")
         assert str(refused.value) == WRITES_OFF and panel.sent == []
     assert panel.files == {F.BOOT_LOGO: b"logo", F.STANDBY_CLIP: b"clip"}
+    # its owner's word: the gate is passed (here, to an ffmpeg that is looked for after it)
+    assert F.writes_on(other, untested=True) and F.writes_on(None, untested=True)
+
+    def looked_for():
+        raise LookupError("past the gate")
+
+    with pytest.raises(LookupError, match="past the gate"):
+        F.StartScreen(opener=opener, ffmpeg=looked_for).write_clip(60, other, untested=True)
+    assert opened == [None, None] and panel.sent == []
     # what the panel holds, and its boot logo taken off: as ever
     assert screen.state(other)["boot_logo"] == 4
     panel.sent.clear()
@@ -709,15 +735,36 @@ def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monk
         assert told["turing-5.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
         for model in written_to:
             assert told[model]["unfit"] == ["levels"], model
-        assert told["turing-5.2-usb"]["unfit"] == []  # (not known for a model not written to)
+        # (measured for its room too: a look that would be too fine is not offered there)
+        assert told["turing-5.2-usb"]["unfit"] == list(F.UNFIT["turing-5.2-usb"])
+        assert "levels" in told["turing-5.2-usb"]["unfit"]
+        assert {name for name, model in told.items() if model["tried"]} == written_to
+        confirmed = {name for name, model in told.items() if model["confirmed"]}
+        assert confirmed == {"turing-9.2-usb", "turing-12.3-usb"} == set(F.CONFIRMED)
+        state = request(port, "GET", "/api/start-screen")[1]
+        assert state["report"] == F.REPORT_FORM and state["version"] == __version__
         panel.sent.clear()
         for action in ("logo", "clip"):
             status, data = request(port, "POST", "/api/start-screen",
                                    {"action": action, "model": other.id})  # fmt: skip
             assert (status, data) == (409, {"error": WRITES_OFF, "paused": False}), action
         assert controls.acts == [] and panel.sent == []  # the themes were not paused for it
+        # its owner's word is true and nothing else
+        for word in ("yes", 1, "true", None):
+            asked = {"action": "logo", "model": other.id, "untested": word}
+            status, data = request(port, "POST", "/api/start-screen", asked)
+            assert (status, data) == (409, {"error": WRITES_OFF, "paused": False}), word
+        assert controls.acts == [] and panel.sent == []
         status, data = request(port, "POST", "/api/start-screen", {"action": "state"})
         assert status == 200 and data["standby_clip"] == 4 and controls.acts == ["pause"]
+        # with it, the boot logo is made for the 9.2"'s room by the pixels, and written
+        panel.sent.clear()
+        status, data = request(port, "POST", "/api/start-screen",
+                               {"action": "logo", "model": other.id, "untested": True})  # fmt: skip
+        assert status == 200 and data["model"] == other.id, data
+        assert 0 < data["boot_logo"] == len(panel.files[F.BOOT_LOGO]) <= F.room(other)[1]
+        assert [cmd for cmd, *_ in panel.sent][-3:] == [40, 98, 113]
+        panel.files[F.BOOT_LOGO] = b"logo"
         monkeypatch.setenv(F.WRITES_ENV, F.WRITES_WORD)
         told = request(port, "GET", "/api/start-screen")[1]["models"]
         assert all(model["writes"] for model in told)
@@ -725,6 +772,21 @@ def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monk
         srv.shutdown()
         srv.server_close()
         srv.editor_state.close()
+
+
+def test_the_form_to_share_how_it_went_has_the_fields_the_app_fills_in():
+    """The start screen card fills GitHub's issue form in (startscreen.js: the model, the
+    version, the look and what was written): each is a field of the form, which is where
+    REPORT_FORM leads."""
+    import re
+    from pathlib import Path
+
+    assert F.REPORT_FORM.endswith("/issues/new?template=start_screen.yml")
+    root = Path(__file__).resolve().parents[1]
+    form = (root / ".github/ISSUE_TEMPLATE/start_screen.yml").read_text(encoding="utf-8")
+    fields = re.findall(r"^    id: (\S+)$", form, flags=re.MULTILINE)
+    assert {"model", "version", "look", "written"} <= set(fields), fields
+    assert 'title: "Start screen: "' in form and "labels: [hardware]" in form
 
 
 def test_the_boot_logo_is_written_shown_and_taken_away_again():

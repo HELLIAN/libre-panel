@@ -3346,13 +3346,16 @@ def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> 
     """Issue 52: start screens are written to the 9.2" and the 12.3", where what fits is known,
     and to the 8.8", the 9.2"'s sibling. For another panel of the family (a 5.2" here, as many
     pixels as the 9.2") the boot logo and the standby clip are refused in panel_files.py's
-    words before the panel is opened. The card is told which models are written to and how
-    large their files are at most; what the panel holds and the boot logo taken off stay."""
+    words before the panel is opened, unless its owner chose to try it (``untested`` true and
+    nothing else): then the boot logo is written in the 9.2"'s room. The card is told which
+    models are written to, tried and confirmed, how large their files are at most, where to
+    share how it went and the version; what the panel holds and the boot logo taken off stay."""
+    from libre_panel import __version__
     from libre_panel.devices import panel_files
 
     words = (
-        'Writing to this panel is switched off: Libre Panel writes start screens to the 8.8", '
-        'the 9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+        "No one has tried start screens on this panel yet: they are written to it only where you "
+        "agree to try it, at your own risk, in Settings → Panel → Start screen."
     )
     rig = Rig(tmp_path, pid=0x0050)
     try:
@@ -3369,18 +3372,31 @@ def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> 
                               encoding="utf-8") as program:  # fmt: skip
             try:
                 post, get = _start_screen_of(program)
-                told = {m["id"]: m for m in json.loads(get("/api/start-screen"))["models"]}
+                state = json.loads(get("/api/start-screen"))
+                assert state["report"] == panel_files.REPORT_FORM
+                assert state["version"] == __version__
+                told = {m["id"]: m for m in state["models"]}
                 written_to = {name for name, model in told.items() if model["writes"]}
                 assert written_to == {"turing-8.8-usb", "turing-9.2-usb", "turing-12.3-usb"}
+                assert {name for name, model in told.items() if model["tried"]} == written_to
+                confirmed = {name for name, model in told.items() if model["confirmed"]}
+                assert confirmed == {"turing-9.2-usb", "turing-12.3-usb"}
                 assert told["turing-9.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
                 assert told["turing-12.3-usb"]["room"] == {"clip": 500_000, "logo": 150_000}
                 assert told["turing-8.8-usb"]["room"] == told["turing-9.2-usb"]["room"]
                 for model in written_to:
                     assert told[model]["unfit"] == ["levels"], model
-                assert told["turing-5.2-usb"]["unfit"] == []
+                five = list(panel_files.UNFIT["turing-5.2-usb"])  # (measured for its room)
+                assert told["turing-5.2-usb"]["unfit"] == five and "levels" in five
+                for name, model in told.items():  # (every model as panel_files.py has it)
+                    assert model["unfit"] == list(panel_files.UNFIT[name]), name
                 for action in ("logo", "clip"):
                     assert post({"action": action, "model": "turing-5.2-usb"}) == (
                         "409", {"error": words, "paused": False}), action  # fmt: skip
+                for word in ("yes", 1, "true", None):  # (its owner's word is true, nothing else)
+                    assert post({"action": "logo", "model": "turing-5.2-usb",
+                                 "untested": word}) == (
+                        "409", {"error": words, "paused": False}), word  # fmt: skip
                 assert rig.fake.commands == []  # (the panel was not even opened)
                 status, said = post({"action": "state", "model": "turing-5.2-usb"})
                 assert status == "200" and said["boot_logo"] == 4 and said["standby_clip"] == 4
@@ -3390,6 +3406,17 @@ def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> 
                 assert status == "200" and said["boot_logo"] == 0, said
                 assert set(rig.fake.files) == {panel_files.STANDBY_CLIP}
                 assert not {40, 110, 113, 125} & set(rig.fake.commands), rig.fake.commands
+                # its owner chose to try it: the boot logo made for the 9.2"'s room, written
+                model = panel_files.model_of("turing-5.2-usb")
+                status, said = post({"action": "logo", "model": model.id, "untested": True})
+                assert status == "200", said
+                logo = panel_files.logo_jpeg(model)
+                assert said == {"model": model.id, "boot_logo": len(logo),
+                                "design": "libre-panel", "paused": False}  # fmt: skip
+                assert rig.fake.files[panel_files.BOOT_LOGO] == logo
+                assert 0 < len(logo) <= panel_files.room(model)[1]
+                assert rig.fake.shown[-1] == panel_files.BOOT_LOGO
+                assert {40, 113} <= set(rig.fake.commands), rig.fake.commands
             finally:
                 program.send_signal(signal.SIGINT) if os.name != "nt" else program.terminate()
                 stderr = program.communicate(timeout=30)[1]

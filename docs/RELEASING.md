@@ -68,6 +68,18 @@ panel whose room ends before the file does (42 for the file that ended early) is
 for that state: it ships untried by us, and the protocol notes say what is known of it from
 the panel of issue 52.
 
+Two exceptions are the project owner's decisions, and are said wherever they apply. **The
+8.8"** is written to with the 9.2"'s room although no 8.8" was at hand (0.9.5): its maker
+sells the two as one, with the same framebuffer. **Models no one has tried** (the family's
+1.6" to 8" and JONSBO's TF3 pump screen) are written to only by their owners, each time on *Write at my own risk*, after
+the app has said what happened to issue 52's panel; the files are made for the 9.2"'s room and
+sent and checked as on the 9.2". Such a write is its owner's, not a release's: it does not
+count as tried. A model goes into `ROOM` (written to without the question) only after a report
+from a real panel of it, with the firmware and what was written, and into `CONFIRMED` (the card
+no longer asks to share how it went) after a report that it started with both files; the
+changelog names the report. A report that it did not work takes the model's question back to
+a refusal until it is understood.
+
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the
 workflow fills that release in.

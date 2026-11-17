@@ -2995,7 +2995,6 @@
     "Icon in the tray": "トレイのアイコン",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "メニューでパネルの状態の確認、テーマの切り替え、Libre Panel の終了ができます。オフ：Libre Panel はスタートメニューまたはアプリ一覧から開きます。",
     "Libre Panel runs in the background.": "Libre Panel はバックグラウンドで動作します。",
-    "Writing to this panel is switched off: Libre Panel writes start screens to the 8.8\", the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "このパネルへの書き込みは停止しています。Libre Panel が起動画面を書き込むのは 8.8\"、9.2\"、12.3\" のパネルだけで、ほかのパネルにどれだけ空き容量があるかは分かっていないためです。",
     "This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.": "この外観は、Libre Panel がこのパネルで使う容量に収まらないほど細部が多く、粗くして書き込むこともしません。別の外観を選んでください。",
     "Not written: with the standby clip that is on the panel ({size}), the boot logo would be more than Libre Panel puts on this panel. Write the standby clip again first: it becomes smaller.": "書き込みませんでした。パネルにあるスタンバイクリップ（{size}）と合わせると、起動ロゴは Libre Panel がこのパネルに置く量を超えます。先にスタンバイクリップを書き直してください。小さくなります。",
     "Not written: with the boot logo that is on the panel ({size}), the standby clip would be more than Libre Panel puts on this panel. Write the boot logo again first: it becomes smaller.": "書き込みませんでした。パネルにある起動ロゴ（{size}）と合わせると、スタンバイクリップは Libre Panel がこのパネルに置く量を超えます。先に起動ロゴを書き直してください。小さくなります。",
@@ -3003,7 +3002,15 @@
     "The boot logo did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full; the factory logo shows at the next power-on.": "起動ロゴは収まりませんでした。パネルが受け取ったのは {size} バイト中 {written} バイトです。パネルが満杯のままにならないよう、再び削除しました。次回の電源投入時には工場出荷時のロゴが表示されます。",
     "The standby clip did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full: the panel has no standby clip now. Dark is the smallest look.": "スタンバイクリップは収まりませんでした。パネルが受け取ったのは {size} バイト中 {written} バイトです。パネルが満杯のままにならないよう、再び削除しました。現在、パネルにスタンバイクリップはありません。ダークが最も小さい外観です。",
     "{file} did not fit (the panel took {written} of {size} bytes) and could not be taken off again: {why}": "{file} は収まらず（パネルが受け取ったのは {size} バイト中 {written} バイト）、再び削除することもできませんでした: {why}",
-    "The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.": "パネルには、Libre Panel が現在書き込むものより大きいファイルがあります。そのままでも構いません。書き直すと小さくなります。"
+    "The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.": "パネルには、Libre Panel が現在書き込むものより大きいファイルがあります。そのままでも構いません。書き直すと小さくなります。",
+    "No one has tried start screens on this panel yet, and how much room it has for them is not known. You can try it at your own risk: how it went decides whether Libre Panel writes them to this panel for everyone.": "このパネルで起動画面を試した人はまだいません。また、そのための空き容量がどれだけあるかも分かっていません。自己責任で試すことができます。その結果によって、Libre Panel がこのパネルに起動画面を書き込めるようにするかどうかが決まります。",
+    "Start screens are written to this panel as to the 9.2\", its sibling, but no one has said yet how they work on one. If you try it, please share how it went.": "このパネルには、兄弟機である 9.2\" と同じように起動画面を書き込みますが、実際にどう動作するかの報告はまだありません。試したら、結果を共有してください。",
+    "Written. Switch the PC fully off and on again: does the panel show the boot logo when it comes on, and play the clip until Libre Panel starts? Please share how it went, also if it did not work.": "書き込みました。PC の電源をいったん完全に切ってから入れ直してください。電源を入れたときにパネルに起動ロゴが表示され、Libre Panel が起動するまでクリップが再生されますか？うまくいかなかった場合も含めて、結果を共有してください。",
+    "Share how it went": "結果を共有",
+    "Write to a panel no one has tried?": "まだ誰も試していないパネルに書き込みますか？",
+    "No one has written start screens to this kind of panel yet. Libre Panel makes the files small and checks the panel before and after, but how much room it has for them is not known. On one 9.2\", files that left it without room stopped it from starting at all, and nothing sent from the PC reached it again (issue 52). Write only if you accept that risk.": "この種類のパネルに起動画面を書き込んだ人はまだいません。Libre Panel はファイルを小さくし、書き込みの前後にパネルを確認しますが、そのための空き容量がどれだけあるかは分かっていません。ある 9.2\" では、空き容量を使い切ったファイルのせいでパネルがまったく起動しなくなり、PC から送ったものが二度と届かなくなりました（issue 52）。このリスクを受け入れる場合にだけ書き込んでください。",
+    "Write at my own risk": "自己責任で書き込む",
+    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "このパネルで起動画面を試した人はまだいません。設定 → パネル → 起動画面 で、自己責任で試すことに同意した場合にだけ書き込まれます。"
   },
   "fields": {
     "night": "夜",

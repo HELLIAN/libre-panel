@@ -1235,8 +1235,8 @@ def test_a_standby_clip_written_is_named_in_its_own_panel_s_settings(panels, nam
     srv = make_server(port=0, config_path=path)
     written = []
     srv.editor_state.start_screen_jobs = SimpleNamespace(
-        write_clip=lambda brightness, model, mounted, where, *look: (
-            written.append(model)
+        write_clip=lambda brightness, model, mounted, where, *look, untested: (
+            written.append((model, untested))  # (the person did not agree to try a model)
             or {"model": "turing-9.2-usb", "standby_clip": 3, "name": "standby.h264"}
         ),
     )
@@ -1250,6 +1250,7 @@ def test_a_standby_clip_written_is_named_in_its_own_panel_s_settings(panels, nam
         srv.server_close()
         srv.editor_state.close()
     assert status == 200 and body["standby_clip"] == 3 and written
+    assert all(untested is False for _, untested in written)
     video = load_config(path).device.video
     assert (video.local_clip == STANDBY_CLIP) is named and video.clip_asked is named
 
@@ -1267,13 +1268,14 @@ def test_panel_two_gets_its_own_start_screen_and_its_clip_in_its_own_settings(tm
     srv = make_server(port=0, config_path=path)
     asked = []
 
-    def write_clip(brightness, model, mounted, where, *look):
+    def write_clip(brightness, model, mounted, where, *look, untested):
+        assert untested is False  # (the person did not agree to try a model)
         asked.append((brightness, mounted, where))
         return {"model": "turing-9.2-usb", "standby_clip": 3, "name": STANDBY_CLIP}
 
     srv.editor_state.start_screen_jobs = SimpleNamespace(
         write_clip=write_clip,
-        write_logo=lambda model, mounted, where, *look: (
+        write_logo=lambda model, mounted, where, *look, untested: (
             asked.append((mounted, where)) or {"boot_logo": 9}
         ),
     )

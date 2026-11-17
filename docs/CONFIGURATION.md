@@ -647,12 +647,25 @@ clip takes a few seconds more to write for it: the three quarters are made at on
 **The 9.2", the 12.3" and the 8.8" are written to**: the first two are the models it has been
 done on, and the 8.8" gets the 9.2"'s room, since its maker sells the two as one, with the same
 framebuffer (480×1920), and its firmware is where the panel's own start screen was first read.
-0.9.5's candidate is the first to write to one: how it went is welcome in an issue. For the
-family's other panels *Put on the panel* is greyed out, since how much room they have is not
-known; the card still shows both pictures, downloads them, says what is on the panel and takes
-the boot logo off. (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment switches
-writing on there for who looks into it on a panel of their own: the files are then made for the
-9.2"'s room, by the pixels.)
+0.9.5's candidate is the first to write to one, so the card asks whoever does to share how it
+went.
+
+**The family's other panels** (the 1.6" to the 8", and the screen on JONSBO's TF3-360SC pump)
+are written to only where you agree to try it, at your own risk, each time: how much room they
+have is not known. *Put on the panel* first says what happened to the 9.2" of issue 52, whose
+files left it no room, so that it no longer started and nothing sent from the PC reached it
+again, and writes only on *Write at my own risk*. The files are then made for the 9.2"'s room,
+by the pixels, and written and checked exactly as on the 9.2": what is on the panel is asked
+before and after, a file that ends early is taken off again, and nothing is deleted to make
+room. A look whose files would be too fine for that room is not offered there, as Levels is
+offered nowhere: measured for each model, both ways mounted, that is Aurora on the 1.6" to the
+4.6" and the pump screen, Pulse on the 4.6" and Circuit on the 1.6". Afterwards the card asks
+you to switch the PC fully off and on again and to **share how it went** (also when it did not
+work): *Share how it went* opens a GitHub issue form with the model, the version, the look and
+what was written already filled in. A model on which start screens have worked, by such a
+report, is written to like the 9.2" from the next version on, without the question.
+(`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment writes there without the question,
+for who looks into it on a panel of their own.)
 
 - **Put on the panel** writes one, after a question: the panel's themes pause, the panel
   shows what was written (the logo at once, the clip playing), and *Show the themes again*

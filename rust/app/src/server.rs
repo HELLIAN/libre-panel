@@ -2965,7 +2965,12 @@ fn start_screen_action(state: &State, exchange: &mut Exchange) {
     let way = mounted(state, n);
     // (a panel mounted upside down gets its start screen turned round, as its frames)
     let turned = device.rotate == 180;
-    if ["logo", "clip"].contains(&action.as_str()) && model.is_some() && !screen::writes_on(model) {
+    // (a model that has not been tried: its owner agreed in the app, told what may happen)
+    let untested = matches!(payload.get("untested"), Some(Value::Bool(true)));
+    if ["logo", "clip"].contains(&action.as_str())
+        && model.is_some()
+        && !screen::writes_on(model, untested)
+    {
         // (nothing is written to this model: said before the themes are paused for it)
         let mut told = lp_py::Dict::default();
         told.insert("error".into(), Value::Str(screen::writes_off()));
@@ -2986,7 +2991,7 @@ fn start_screen_action(state: &State, exchange: &mut Exchange) {
     };
     let done = match action.as_str() {
         "state" => screen::panel_state(model, &place),
-        "logo" => screen::write_logo(&env, model, way, turned, &place, design),
+        "logo" => screen::write_logo(&env, model, way, turned, &place, design, untested),
         "remove-logo" => screen::remove_logo(model, &place),
         _ => screen::write_clip(
             &env,
@@ -2997,6 +3002,7 @@ fn start_screen_action(state: &State, exchange: &mut Exchange) {
             &place,
             design,
             &device.video_range,
+            untested,
         )
         .and_then(|written| {
             // the video mode names the clip it plays: the panel's own, where it went there

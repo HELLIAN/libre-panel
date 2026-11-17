@@ -2995,7 +2995,6 @@
     "Icon in the tray": "托盘图标",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "其菜单显示面板状态、切换主题并退出 Libre Panel。关闭时：从开始菜单或应用列表打开 Libre Panel。",
     "Libre Panel runs in the background.": "Libre Panel 在后台运行。",
-    "Writing to this panel is switched off: Libre Panel writes start screens to the 8.8\", the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "已关闭向此面板写入：Libre Panel 只向 8.8\"、9.2\" 和 12.3\" 面板写入启动画面，其他面板有多少空间可用尚不清楚。",
     "This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.": "此外观的细节超出了 Libre Panel 在此面板上使用的空间，也不会降低画质写入：请选择其他外观。",
     "Not written: with the standby clip that is on the panel ({size}), the boot logo would be more than Libre Panel puts on this panel. Write the standby clip again first: it becomes smaller.": "未写入：加上面板上现有的待机短片（{size}），开机 Logo 会超出 Libre Panel 在此面板上放置的容量。请先重新写入待机短片：它会变小。",
     "Not written: with the boot logo that is on the panel ({size}), the standby clip would be more than Libre Panel puts on this panel. Write the boot logo again first: it becomes smaller.": "未写入：加上面板上现有的开机 Logo（{size}），待机短片会超出 Libre Panel 在此面板上放置的容量。请先重新写入开机 Logo：它会变小。",
@@ -3003,7 +3002,15 @@
     "The boot logo did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full; the factory logo shows at the next power-on.": "开机 Logo 放不下：面板只接收了 {size} 字节中的 {written} 字节。已将其重新移除，以免面板处于写满状态；出厂 Logo 将在下次通电时显示。",
     "The standby clip did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full: the panel has no standby clip now. Dark is the smallest look.": "待机短片放不下：面板只接收了 {size} 字节中的 {written} 字节。已将其重新移除，以免面板处于写满状态：面板现在没有待机短片。暗色是最小的外观。",
     "{file} did not fit (the panel took {written} of {size} bytes) and could not be taken off again: {why}": "{file} 放不下（面板只接收了 {size} 字节中的 {written} 字节），并且无法重新移除：{why}",
-    "The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.": "面板上的文件比 Libre Panel 现在写入的更大。可以保留；重新写入后会变小。"
+    "The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.": "面板上的文件比 Libre Panel 现在写入的更大。可以保留；重新写入后会变小。",
+    "No one has tried start screens on this panel yet, and how much room it has for them is not known. You can try it at your own risk: how it went decides whether Libre Panel writes them to this panel for everyone.": "还没有人在这块面板上试过启动画面，也不清楚它有多少空间可用。你可以自担风险试一试：结果将决定 Libre Panel 是否为所有人向这款面板写入启动画面。",
+    "Start screens are written to this panel as to the 9.2\", its sibling, but no one has said yet how they work on one. If you try it, please share how it went.": "启动画面会像写入它的同系列型号 9.2\" 那样写入这块面板，但还没有人反馈过它们在这款面板上的效果。如果你试了，请分享结果。",
+    "Written. Switch the PC fully off and on again: does the panel show the boot logo when it comes on, and play the clip until Libre Panel starts? Please share how it went, also if it did not work.": "已写入。请把电脑完全关机后再开机：面板开机时是否显示开机 Logo，并在 Libre Panel 启动前播放短片？请分享结果，没成功也请分享。",
+    "Share how it went": "分享结果",
+    "Write to a panel no one has tried?": "要写入一块还没有人试过的面板吗？",
+    "No one has written start screens to this kind of panel yet. Libre Panel makes the files small and checks the panel before and after, but how much room it has for them is not known. On one 9.2\", files that left it without room stopped it from starting at all, and nothing sent from the PC reached it again (issue 52). Write only if you accept that risk.": "还没有人向这类面板写入过启动画面。Libre Panel 会让文件尽量小，并在写入前后检查面板，但不清楚它有多少空间可用。曾有一块 9.2\" 面板因文件占满空间而再也无法启动，电脑发送的任何内容都无法再到达它（issue 52）。只有在你接受这个风险时才写入。",
+    "Write at my own risk": "自担风险写入",
+    "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "还没有人在这块面板上试过启动画面：只有在你同意自担风险试用时才会写入，位置在 设置 → 面板 → 启动画面。"
   },
   "fields": {
     "night": "夜晚",

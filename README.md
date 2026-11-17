@@ -225,9 +225,11 @@ Start screen*. The files are made for a room that is known to be there (at most 
 on the 9.2", 650,000 on the 12.3"), the panel is asked what it holds before a file goes and
 again after, and nothing on it is deleted to make room. That is what 0.9.1 lacked: one 9.2"
 ran out of room for its start screen and has kept restarting since. Levels has more detail
-than fits that room finely and is not written; for the family's other panels writing stays
-off, since how much room they have is not known. What is on a panel can always be asked, and
-a boot logo taken off again: the panel then shows its factory logo.
+than fits that room finely and is not written. **The 8.8"** gets the 9.2"'s room; on **the
+family's other panels**, whose room is not known, it writes only where you agree to try it at
+your own risk, after a plain warning, and asks you to share how it went, so that the model can
+be written to for everyone. What is on a panel can always be asked, and a boot logo taken off
+again: the panel then shows its factory logo.
 
 ### Every size, round and upright
 

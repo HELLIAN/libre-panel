@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.5rc2 — 2026-11-17
+
+The second candidate for 0.9.5: start screens on the family's other panels, for whoever wants
+to try them. Everything of 0.9.5rc1 below stays.
+
+**Changed**
+- **Try the start screen on a panel no one has tried.** The family's other panels (the 1.6" to
+  the 8", and the screen on JONSBO's TF3-360SC pump) were not written to, since how much room
+  they have is not known. Now *Put on the panel* is there too, and first says plainly what
+  happened to the 9.2" of [#52](https://github.com/syntensa/libre-panel/issues/52): files that
+  left it no room stopped it from starting, and nothing sent from the PC reached it again. It
+  writes only on *Write at my own risk*, each time, with the 9.2"'s room by the pixels and every
+  check of 0.9.4. Afterwards the card asks you to switch the PC fully off and on and to **share
+  how it went**, also if it did not work: *Share how it went* opens an issue form with the
+  model, the version, the look and what was written filled in. A model whose report says it
+  worked is written to without the question from the next version on. A look whose files would
+  be too fine for such a panel's room is not offered there, as Levels is offered nowhere:
+  measured for each model, both ways mounted, that is Aurora on the 1.6" to the 4.6" and the
+  pump screen, Pulse on the 4.6" and Circuit on the 1.6".
+- **The 8.8"** asks to share how it went as well, since this candidate is the first to write
+  to one.
+
 ## 0.9.5rc1 — 2026-11-17
 
 The candidate for 0.9.5: start screens for the 8.8", and finer start screens in the same room

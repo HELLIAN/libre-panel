@@ -36,9 +36,12 @@ since 0.9.4 (:data:`ROOM`, :meth:`PanelFiles.write`):
 - after it, the size is asked again. A file the panel did not take (it has what it had) is
   said so, and nothing more is sent. One that ended early is taken off again at once (42), so
   that no panel is left full. Nothing is ever taken away in order to write it a second time;
-- only the 9.2" and the 12.3" are written to, the models it has been done on, and the 8.8",
-  which its maker sells as the 9.2"'s sibling, with its room; another needs
-  ``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`` in the environment.
+- the 9.2" and the 12.3" are written to, the models it has been done on, and the 8.8",
+  which its maker sells as the 9.2"'s sibling, with its room. Another model of the family is
+  written to only where its owner agrees to try it, after the app has said what happened on
+  issue 52's 9.2" (``untested``, since 0.9.5): with the 9.2"'s room for as many pixels as it
+  has, and with the request to share how it went, so that the model becomes known. (Or with
+  ``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`` in the environment.)
 """
 
 from __future__ import annotations
@@ -121,11 +124,21 @@ ROOM: dict[str, tuple[int, int]] = {
 }
 # The looks that do not fit that room finely on a model, known before anything is made: the
 # card says so and offers no writing. Levels is thousands of small lights: its boot logo alone
-# is 491 KB on the 9.2" as finely as the others are made, and its clip 877.
+# is 491 KB on the 9.2" as finely as the others are made, and its clip 877. For a model no one
+# has tried, its room by the pixels (room) was measured the same way, both files and both ways
+# mounted: a look one of whose files would be too fine there is not offered (on the small
+# ones Aurora's clip, the 4.6"'s Pulse, the 1.6"'s Circuit logo).
 UNFIT: dict[str, tuple[str, ...]] = {
+    "turing-1.6-usb": ("aurora", "circuit", "levels"),
+    "turing-2.1-usb": ("aurora", "levels"),
+    "turing-2.8-usb": ("aurora", "levels"),
+    "turing-4.6-usb": ("aurora", "pulse", "levels"),
+    "turing-5.2-usb": ("levels",),
+    "turing-8-usb": ("levels",),
     "turing-8.8-usb": ("levels",),
     "turing-9.2-usb": ("levels",),
     "turing-12.3-usb": ("levels",),
+    "jonsbo-tf3-pump": ("aurora", "levels"),
 }
 # A write that happens takes its time: the 9.2" of issue 52 took 1.2 to 2.9 s for 700 KB and
 # 0.1 s for 48 KB, and a sound 9.2" and 12.3" wrote 45 to 485 KB at 0.94 MB a second at the
@@ -150,11 +163,17 @@ START_WITH_CLIP = 2  # the settings' start mode: play the clip they name
 NEVER = frozenset({11, 12, 13})  # restart, halt, and the other save of the settings
 
 # Files are written to the models it has been done on: the 9.2" and the 12.3", and the 8.8" as
-# the 9.2" (ROOM). How much room another panel of the family has is not known, so nothing is
-# written to one. Who looks into it on a panel of their own sets this in the environment, at
-# their own risk: the files are then made for the 9.2"'s room, by the pixels.
+# the 9.2" (ROOM). How much room another panel of the family has is not known: it is written to
+# only where its owner agrees to try it (the app asks each time, ``untested``), or where this is
+# set in the environment. The files are then made for the 9.2"'s room, by the pixels.
 WRITES_ENV = "LIBRE_PANEL_PANEL_WRITES"
 WRITES_WORD = "at-my-own-risk"
+# The models whose start screens have been written on a panel of theirs and seen at its next
+# start; the 8.8" is written as the 9.2" without that yet (ROOM)
+CONFIRMED = ("turing-9.2-usb", "turing-12.3-usb")
+# Where an owner who tried it says how it went: the issue form of the start screen, which the
+# app fills in with the model, the version, the look and what it wrote
+REPORT_FORM = "https://github.com/syntensa/libre-panel/issues/new?template=start_screen.yml"
 
 
 def tried(model: PanelModel | None) -> bool:
@@ -177,18 +196,20 @@ def room(model: PanelModel | None) -> tuple[int, int]:
     return clip * share // most, logo * share // most
 
 
-def writes_on(model: PanelModel | None = None) -> bool:
-    """Whether files are written to a panel of ``model``: to the models it has been done on,
-    and to any for who asks for it in the environment
+def writes_on(model: PanelModel | None = None, untested: bool = False) -> bool:
+    """Whether files are written to a panel of ``model``: to the models it has been done on;
+    to another where its owner agreed to try it (``untested``: the app asked, naming what may
+    happen); and to any for who asks for it in the environment
     (``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk``)."""
-    return tried(model) or os.environ.get(WRITES_ENV) == WRITES_WORD
+    return tried(model) or untested or os.environ.get(WRITES_ENV) == WRITES_WORD
 
 
 def writes_off() -> str:
-    """Why nothing is written to a panel of another model, as the app says it."""
+    """Why nothing is written to a panel of another model without its owner's word, as the
+    app says it."""
     return t(
-        'Writing to this panel is switched off: Libre Panel writes start screens to the 8.8", '
-        'the 9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+        "No one has tried start screens on this panel yet: they are written to it only where "
+        "you agree to try it, at your own risk, in Settings → Panel → Start screen."
     )
 
 
@@ -404,6 +425,7 @@ class PanelFiles:
 
     transport: Any
     model: PanelModel | None = None
+    untested: bool = False  # (its owner agreed to try a model that has not been: writes_on)
 
     def _command(self, cmd: int, args: bytes = b"", payload: bytes = b"",
                  timeout_ms: int = 4000) -> bytes:  # fmt: skip
@@ -457,8 +479,11 @@ class PanelFiles:
         what it had: a panel without room answers at once and changes nothing) is said so. A
         file that ended early is taken off again, so that the panel is not left full, and
         said so. Nothing is ever taken away in order to write it a second time."""
-        if not writes_on(self.model):
+        if not writes_on(self.model, self.untested):
             raise DeviceError(writes_off())
+        if not tried(self.model):
+            log.warning("start screen: writing %s to a %s, which has not been tried, as its "
+                        "owner chose", name, self.model.id if self.model else "panel")  # fmt: skip
         raw = checked_name(name)
         if name not in OURS:
             raise DeviceError(f"{name}: only the boot logo and the standby clip are written")
@@ -572,10 +597,10 @@ class StartScreen:
         self.ffmpeg = ffmpeg
 
     def _with_panel(self, model: PanelModel | None, job: Callable[[PanelFiles, PanelModel], Any],
-                    where: Where = FIRST):  # fmt: skip
+                    where: Where = FIRST, untested: bool = False):  # fmt: skip
         transport, found = self.opener(model) if where == FIRST else self.opener(model, *where)
         try:
-            return job(PanelFiles(transport, found), found)
+            return job(PanelFiles(transport, found, untested), found)
         finally:
             transport.close()
 
@@ -595,14 +620,15 @@ class StartScreen:
 
     def write_logo(
         self, model: PanelModel | None = None, orientation: str = "landscape",
-        where: Where = FIRST, design: str = bootscreen.DEFAULT,
+        where: Where = FIRST, design: str = bootscreen.DEFAULT, untested: bool = False,
     ) -> dict[str, Any]:  # fmt: skip
-        """The boot logo written and shown (it shows at the next cold start)."""
-        if model is not None and not writes_on(model):
+        """The boot logo written and shown (it shows at the next cold start); to a model not
+        tried only where its owner agreed (``untested``)."""
+        if model is not None and not writes_on(model, untested):
             raise DeviceError(writes_off())  # (said before the panel is opened)
 
         def job(files: PanelFiles, found: PanelModel) -> dict[str, Any]:
-            if not writes_on(found):
+            if not writes_on(found, untested):
                 raise DeviceError(writes_off())
             data = logo_jpeg(found, orientation=orientation, design=design)
             files.noted_listing()  # what is there before, in the log of the panel's folder
@@ -610,7 +636,7 @@ class StartScreen:
             files.show_jpeg(BOOT_LOGO)
             return {"model": found.id, "boot_logo": len(data), "design": design}
 
-        return self._with_panel(model, job, where)
+        return self._with_panel(model, job, where, untested)
 
     def remove_logo(self, model: PanelModel | None = None, where: Where = FIRST) -> dict[str, Any]:
         """The boot logo taken away: the factory logo shows again at the next cold start."""
@@ -624,19 +650,21 @@ class StartScreen:
     def write_clip(
         self, brightness: int, model: PanelModel | None = None, orientation: str = "landscape",
         where: Where = FIRST, design: str = bootscreen.DEFAULT, video_range: str = "auto",
+        untested: bool = False,
     ) -> dict[str, Any]:  # fmt: skip
         """The standby clip written, played (as it will be) and saved as what the panel
         starts with; in the range of values its decoder shows ([device] video_range, "auto"
-        as its model is known to)."""
+        as its model is known to); to a model not tried only where its owner agreed
+        (``untested``)."""
         from libre_panel.devices.h264 import find_ffmpeg
         from libre_panel.devices.turzx_video import full_range
 
-        if model is not None and not writes_on(model):
+        if model is not None and not writes_on(model, untested):
             raise DeviceError(writes_off())  # (said before the panel is opened)
         ffmpeg = self.ffmpeg() if self.ffmpeg else find_ffmpeg()
 
         def job(files: PanelFiles, found: PanelModel) -> dict[str, Any]:
-            if not writes_on(found):
+            if not writes_on(found, untested):
                 raise DeviceError(writes_off())
             data = clip_h264(found, ffmpeg, orientation=orientation, design=design,
                              full=full_range(video_range, found))  # fmt: skip
@@ -647,7 +675,7 @@ class StartScreen:
             return {"model": found.id, "standby_clip": len(data), "name": STANDBY_CLIP,
                     "design": design}  # fmt: skip
 
-        return self._with_panel(model, job, where)
+        return self._with_panel(model, job, where, untested)
 
 
 def _preview_scale(model: PanelModel, width: int, orientation: str) -> float:

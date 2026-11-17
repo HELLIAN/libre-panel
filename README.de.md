@@ -234,9 +234,11 @@ sicher da ist (höchstens 480.000 Bytes auf dem 9,2", 650.000 auf dem 12,3"), da
 vor und nach jedem Schreiben gefragt, was auf ihm liegt, und nichts wird gelöscht, um Platz zu
 schaffen. Genau das fehlte 0.9.1: Einem 9,2"-Panel ging der Platz für seinen Startbildschirm
 aus, und es startet seitdem immer wieder neu. Pegel hat mehr Details, als fein in diesen Platz
-passen, und wird nicht geschrieben; für die anderen Panels der Familie bleibt das Schreiben
-aus, weil nicht bekannt ist, wie viel Platz sie haben. Was auf einem Panel liegt, lässt sich
-immer abfragen, und ein Bootlogo wieder entfernen: dann zeigt das Panel sein Werkslogo.
+passen, und wird nicht geschrieben. **Das 8,8"** bekommt den Platz des 9,2"; auf **die anderen
+Panels der Familie**, deren Platz nicht bekannt ist, schreibt es nur, wenn du es nach einer
+deutlichen Warnung auf eigenes Risiko ausprobierst, und bittet dich danach, das Ergebnis zu
+teilen, damit das Modell für alle freigegeben werden kann. Was auf einem Panel liegt, lässt
+sich immer abfragen, und ein Bootlogo wieder entfernen: dann zeigt das Panel sein Werkslogo.
 
 ### Jede Größe, rund und hochkant
 

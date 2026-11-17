@@ -50,11 +50,19 @@ pub const ROOM: [(&str, (usize, usize)); 3] = [
     ("turing-12.3-usb", (500_000, 150_000)),
 ];
 /// The looks that do not fit that room finely on a model, known before anything is made
-/// (panel_files.py UNFIT): the card says so and offers no writing.
-pub const UNFIT: [(&str, &[&str]); 3] = [
-    ("turing-9.2-usb", &["levels"]),
+/// (panel_files.py UNFIT): the card says so and offers no writing. For a model no one has
+/// tried, measured in its room by the pixels, both files and both ways mounted.
+pub const UNFIT: [(&str, &[&str]); 10] = [
+    ("turing-1.6-usb", &["aurora", "circuit", "levels"]),
+    ("turing-2.1-usb", &["aurora", "levels"]),
+    ("turing-2.8-usb", &["aurora", "levels"]),
+    ("turing-4.6-usb", &["aurora", "pulse", "levels"]),
+    ("turing-5.2-usb", &["levels"]),
+    ("turing-8-usb", &["levels"]),
     ("turing-8.8-usb", &["levels"]),
+    ("turing-9.2-usb", &["levels"]),
     ("turing-12.3-usb", &["levels"]),
+    ("jonsbo-tf3-pump", &["aurora", "levels"]),
 ];
 /// A write that happens takes its time (the 9.2" of issue 52: 1.2 to 2.9 s for 700 KB; a sound
 /// 9.2" and 12.3" wrote 45 to 485 KB at 0.94 MB a second at the most, 0.9.4rc1), one the panel
@@ -66,11 +74,19 @@ const WRITE_RATE_MOST: usize = 4_000_000;
 /// larger: the smallest, Dark's on the 9.2", has about 44,000 bytes; only Dark's boot logos
 /// are smaller, and after a logo nothing is saved on the panel)
 const WRITE_TIMED_FROM: usize = 32 * 1024;
-/// Files are written to the models it has been done on (ROOM). Who looks into it on another
-/// panel of their own sets this in the environment, at their own risk (panel_files.py
-/// WRITES_ENV): the files are then made for the 9.2"'s room, by the pixels.
+/// Files are written to the models it has been done on (ROOM). Another is written to only
+/// where its owner agrees to try it (the app asks each time: `untested`), or where this is set
+/// in the environment (panel_files.py WRITES_ENV): the files are then made for the 9.2"'s
+/// room, by the pixels.
 pub const WRITES_ENV: &str = "LIBRE_PANEL_PANEL_WRITES";
 pub const WRITES_WORD: &str = "at-my-own-risk";
+/// The models whose start screens have been written on a panel of theirs and seen at its next
+/// start; the 8.8" is written as the 9.2" without that yet (panel_files.py CONFIRMED).
+pub const CONFIRMED: [&str; 2] = ["turing-9.2-usb", "turing-12.3-usb"];
+/// Where an owner who tried it says how it went: the start screen's issue form, which the app
+/// fills in with the model, the version, the look and what it wrote.
+pub const REPORT_FORM: &str =
+    "https://github.com/syntensa/libre-panel/issues/new?template=start_screen.yml";
 
 /// tried: whether start screens are written to panels of `model` by what is known of its room
 /// (ROOM: the models it has been done on, and the 8.8" as the 9.2").
@@ -96,16 +112,18 @@ pub fn room(model: Option<&PanelModel>) -> (usize, usize) {
 }
 
 /// writes_on: whether files are written to a panel of `model`: to the models it has been
-/// done on, and to any for who asks for it in the environment.
-pub fn writes_on(model: Option<&PanelModel>) -> bool {
-    tried(model) || std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
+/// done on; to another where its owner agreed to try it (`untested`: the app asked, naming
+/// what may happen); and to any for who asks for it in the environment.
+pub fn writes_on(model: Option<&PanelModel>, untested: bool) -> bool {
+    tried(model) || untested || std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
 }
 
-/// writes_off: why nothing is written to a panel of another model, as the app says it.
+/// writes_off: why nothing is written to a panel of another model without its owner's word,
+/// as the app says it.
 pub fn writes_off() -> String {
     lp_i18n::t(
-        "Writing to this panel is switched off: Libre Panel writes start screens to the 8.8\", \
-         the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.",
+        "No one has tried start screens on this panel yet: they are written to it only where \
+         you agree to try it, at your own risk, in Settings → Panel → Start screen.",
     )
 }
 
@@ -644,6 +662,8 @@ pub fn names_in(listing: &[u8]) -> Vec<String> {
 struct PanelFiles<'a> {
     link: &'a lp_devices::turzx::FileLink,
     model: Option<&'static PanelModel>,
+    /// its owner agreed to try a model that has not been (writes_on)
+    untested: bool,
 }
 
 impl PanelFiles<'_> {
@@ -731,8 +751,19 @@ impl PanelFiles<'_> {
     /// file that ended early is taken off again, so that the panel is not left full, and
     /// said so. Nothing is ever taken away in order to write it a second time.
     fn write(&self, name: &str, data: &[u8]) -> Result<(), String> {
-        if !writes_on(self.model) {
+        if !writes_on(self.model, self.untested) {
             return Err(writes_off());
+        }
+        if !tried(self.model) {
+            crate::logs::log(
+                crate::logs::Level::Warning,
+                "libre_panel.devices.panel_files",
+                &format!(
+                    "start screen: writing {name} to a {}, which has not been tried, as its \
+                     owner chose",
+                    self.model.map_or("panel", |model| model.id)
+                ),
+            );
         }
         let raw = checked_name(name)?;
         if !OURS.contains(&name) {
@@ -844,6 +875,7 @@ pub struct Where<'a> {
 fn with_panel(
     model: Option<&'static PanelModel>,
     place: &Where,
+    untested: bool,
     job: impl FnOnce(&PanelFiles, &'static PanelModel) -> Result<Dict, String>,
 ) -> Result<Dict, String> {
     let setup = crate::display::files_setup(model, place.beside)?;
@@ -854,6 +886,7 @@ fn with_panel(
     let files = PanelFiles {
         link: &link,
         model: Some(found),
+        untested,
     };
     job(&files, found)
 }
@@ -877,7 +910,7 @@ fn room_told(model: &PanelModel) -> Value {
 
 /// StartScreen.state: what is on the panel.
 pub fn panel_state(model: Option<&'static PanelModel>, place: &Where) -> Result<Dict, String> {
-    with_panel(model, place, |files, found| {
+    with_panel(model, place, false, |files, found| {
         let names = files.noted_listing().map_or(Value::None, |names| {
             Value::List(names.into_iter().map(Value::Str).collect())
         });
@@ -902,7 +935,8 @@ fn as_mounted(picture: Image, turned: bool) -> Image {
 }
 
 /// StartScreen.write_logo: the boot logo written and shown (it shows at the next cold start);
-/// turned round for a panel mounted upside down (`turned`), as its frames are.
+/// turned round for a panel mounted upside down (`turned`), as its frames are; to a model not
+/// tried only where its owner agreed (`untested`).
 pub fn write_logo(
     env: &lp_theme::Env,
     model: Option<&'static PanelModel>,
@@ -910,12 +944,13 @@ pub fn write_logo(
     turned: bool,
     place: &Where,
     design: &str,
+    untested: bool,
 ) -> Result<Dict, String> {
-    if model.is_some() && !writes_on(model) {
+    if model.is_some() && !writes_on(model, untested) {
         return Err(writes_off()); // (said before the panel is opened)
     }
-    with_panel(model, place, |files, found| {
-        if !writes_on(Some(found)) {
+    with_panel(model, place, untested, |files, found| {
+        if !writes_on(Some(found), untested) {
             return Err(writes_off());
         }
         let picture = boot::boot_logo(env, found, way, design, 1.0).map_err(|e| e.0)?;
@@ -933,7 +968,7 @@ pub fn write_logo(
 
 /// StartScreen.remove_logo: the boot logo taken away (the factory logo shows again).
 pub fn remove_logo(model: Option<&'static PanelModel>, place: &Where) -> Result<Dict, String> {
-    with_panel(model, place, |files, found| {
+    with_panel(model, place, false, |files, found| {
         files.delete(BOOT_LOGO)?;
         Ok(told(vec![
             ("model", Value::Str(found.id.into())),
@@ -944,7 +979,8 @@ pub fn remove_logo(model: Option<&'static PanelModel>, place: &Where) -> Result<
 
 /// StartScreen.write_clip: the standby clip written, played and saved as what the panel
 /// starts with; in the range of values its decoder shows; turned round for a panel mounted
-/// upside down (`turned`), as its frames are.
+/// upside down (`turned`), as its frames are; to a model not tried only where its owner
+/// agreed (`untested`).
 #[allow(clippy::too_many_arguments)]
 pub fn write_clip(
     env: &lp_theme::Env,
@@ -955,13 +991,14 @@ pub fn write_clip(
     place: &Where,
     design: &str,
     video_range: &str,
+    untested: bool,
 ) -> Result<Dict, String> {
-    if model.is_some() && !writes_on(model) {
+    if model.is_some() && !writes_on(model, untested) {
         return Err(writes_off()); // (said before the panel is opened)
     }
     let ffmpeg = lp_devices::h264::find_ffmpeg("")?;
-    with_panel(model, place, |files, found| {
-        if !writes_on(Some(found)) {
+    with_panel(model, place, untested, |files, found| {
+        if !writes_on(Some(found), untested) {
             return Err(writes_off());
         }
         let frames = boot::standby_frames(env, found, None, way, design, 1.0).map_err(|e| e.0)?;
@@ -1034,7 +1071,11 @@ pub fn state(told: &Told) -> Value {
             one.insert("measured".into(), Value::Bool(MEASURED.contains(&m.id)));
             // whether its files are written (the models it has been done on), and how large
             // they are at most there
-            one.insert("writes".into(), Value::Bool(writes_on(Some(m))));
+            one.insert("writes".into(), Value::Bool(writes_on(Some(m), false)));
+            // (another is written to where its owner agrees to try it; one that has been seen
+            // to start with them is confirmed)
+            one.insert("tried".into(), Value::Bool(tried(Some(m))));
+            one.insert("confirmed".into(), Value::Bool(CONFIRMED.contains(&m.id)));
             one.insert("room".into(), room_told(m));
             // (the looks known not to fit there finely: not offered for writing)
             let unfit = UNFIT.iter().find(|(id, _)| *id == m.id);
@@ -1060,6 +1101,9 @@ pub fn state(told: &Told) -> Value {
         "designs".into(),
         Value::List(boot::DESIGNS.iter().map(|d| text(d)).collect()),
     );
+    // (where an owner who tried a model says how it went, and this version)
+    answer.insert("report".into(), text(REPORT_FORM));
+    answer.insert("version".into(), text(lp_py::VERSION));
     Value::Dict(answer)
 }
 

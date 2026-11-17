@@ -1,0 +1,53 @@
+name: Start screen on a panel model
+description: How the start screen went on a panel model no one had confirmed yet (Settings → Panel → Start screen fills this in)
+title: "Start screen: "
+labels: [hardware]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying it. Whether start screens are written to this panel model for everyone is decided by reports like yours, the ones where it did not work included.
+  - type: input
+    id: model
+    attributes:
+      label: Panel model, as Libre Panel names it
+      placeholder: e.g. turing-5.2-usb
+    validations:
+      required: true
+  - type: input
+    id: product
+    attributes:
+      label: Product name on the box or the back label
+      placeholder: e.g. TURZX 5.2" USB
+  - type: dropdown
+    id: result
+    attributes:
+      label: After switching the PC fully off and on again
+      options:
+        - The boot logo shows, and the standby clip plays until Libre Panel starts
+        - Only the boot logo shows
+        - Only the standby clip plays
+        - Neither shows; the panel works as before
+        - The panel no longer starts, or keeps starting again
+    validations:
+      required: true
+  - type: input
+    id: written
+    attributes:
+      label: What was written
+      placeholder: e.g. boot logo 96 KB, standby clip 214 KB
+  - type: input
+    id: look
+    attributes:
+      label: Look
+      placeholder: e.g. Libre Panel
+  - type: input
+    id: version
+    attributes:
+      label: Libre Panel version
+      placeholder: e.g. 0.9.5
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What the panel showed, what "What is on the panel" said afterwards, the log's start screen lines, a photo. If the panel no longer starts, what it does when the PC comes on.
