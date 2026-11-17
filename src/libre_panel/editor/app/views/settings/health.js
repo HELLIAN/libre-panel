@@ -187,8 +187,8 @@ export function healthOf(facts) {
   if (info && !file) {
     const why = info.running && ["waiting", "error"].includes(info.running.state) ? info.running.detail : "";
     const plugIn = t("Plug the panel in with its USB cable: Libre Panel looks for it every few seconds.");
-    // a panel the background app shows a theme on is there, whatever the USB bus said here
-    if (!info.found && !(running && panel.state === "showing")) {
+    // a panel the background app's frames go to is there, whatever the USB bus said here
+    if (!info.found && !(running && panel.on_panel)) {
       add({
         id: "no-panel",
         tone: "warn",
@@ -544,8 +544,10 @@ export function AtAGlance() {
   }));
   useShared(loadSystem, 0);
   if (!info || !config) return null;
-  const panel = info.found
-    ? t("{panel}, connected", { panel: panelName(info.found) })
+  // (where the search finds none, the loop's frames going to the panel say it is there)
+  const there = info.found || (info.model && info.running?.on_panel ? info.model : null);
+  const panel = there
+    ? t("{panel}, connected", { panel: panelName(there) })
     : info.model
       ? t("{panel}, not connected", { panel: panelName(info.model) })
       : t("No panel found");
@@ -556,7 +558,7 @@ export function AtAGlance() {
   const { weather } = config;
   const placed = weather.latitude !== null && weather.longitude !== null;
   const rows = [
-    { id: "panel", title: t("Panel"), value: panel, tone: info.found ? "ok" : "warn", section: "panel" },
+    { id: "panel", title: t("Panel"), value: panel, tone: there ? "ok" : "warn", section: "panel" },
     // the panels beside it, each as it is doing (Settings → Panels)
     ...(config.panels || []).map((more, n) => {
       const running = (info.running?.more || []).find((item) => item.index === n);

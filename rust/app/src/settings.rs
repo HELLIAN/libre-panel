@@ -1035,6 +1035,11 @@ impl Settings<'_> {
                 found = Some(Found::of(configured));
             }
         }
+        // the panel chosen by hand, there by its own USB ids: a screen no search finds by
+        // itself (the JONSBO DS339's display chip is in USB-to-HDMI adapters too)
+        if let Some(configured) = configured.filter(|&model| on_the_bus(model)) {
+            found = Some(Found::of(configured));
+        }
         let model = configured.or(found.as_ref().map(|found| found.model));
         let video = &config.device.video;
         let usb = model.is_none_or(|model| model.protocol == "usb-turing");
@@ -1063,6 +1068,8 @@ impl Settings<'_> {
                         .cloned()
                         .unwrap_or(Value::List(Vec::new())),
                 ),
+                // its frames go to the panel: it is there, whatever the search finds
+                ("on_panel", Value::Bool(of("on_panel") == Value::Bool(true))),
             ]);
         }
         let maybe = match found.is_none() && configured.is_none() {
@@ -1671,6 +1678,16 @@ fn model_info(model: &PanelModel, port: Option<&str>, sure: bool) -> Value {
 
 fn port_info(port: &lp_devices::ports::FoundPort) -> Value {
     model_info(port.model, Some(&port.device), port.sure())
+}
+
+/// Whether a panel no search finds by itself (a USB display chip, MS9132) is on the bus by
+/// its USB ids, none of it opened: chosen by hand, it is there.
+fn on_the_bus(model: &PanelModel) -> bool {
+    model.protocol == "usb-ms9132"
+        && model
+            .usb_ids
+            .iter()
+            .any(|&(vendor, product)| lp_devices::usb_link::present(vendor, &[product]).is_some())
 }
 
 /// Whether the panel set up is one screen of the panel on the bus: a screen of the ZC-360

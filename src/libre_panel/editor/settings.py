@@ -785,6 +785,10 @@ class Settings:
         configured = find_model(config.device.model)
         if found is not None and _screen_of(configured, found["model"]):
             found = {"model": configured, "info": _model_info(configured)}
+        # the panel chosen by hand, there by its own USB ids: a screen no search finds by itself
+        # (the JONSBO DS339's display chip is in USB-to-HDMI adapters too)
+        if configured is not None and _on_the_bus(configured):
+            found = {"model": configured, "info": _model_info(configured)}
         model = configured or (found["model"] if found else None)
         video = config.device.video
         usb = model is None or model.protocol == "usb-turing"
@@ -802,7 +806,9 @@ class Settings:
             state = panel.state()
             spare = self._spare_panels(state)
             running = {"state": state["state"], "detail": state["detail"],
-                       "size": state.get("size"), "more": state.get("more", [])}  # fmt: skip
+                       "size": state.get("size"), "more": state.get("more", []),
+                       # its frames go to the panel: it is there, whatever the search finds
+                       "on_panel": bool(state.get("on_panel"))}  # fmt: skip
             shown = state.get("theme") or None
         return {
             "configured": config.device.model,
@@ -1226,6 +1232,21 @@ class Settings:
         except OSError as exc:
             raise SettingsError(str(exc), 501) from exc
         return {"opened": name}
+
+
+def _on_the_bus(model: Any) -> bool:
+    """Whether a panel no search finds by itself (a USB display chip, MS9132) is on the bus by
+    its USB ids, none of it opened: chosen by hand, it is there."""
+    from libre_panel.devices import usb_link
+
+    if model.protocol != "usb-ms9132":
+        return False
+    try:
+        return any(usb_link.present(vendor, (product,)) is not None
+                   for vendor, product in model.usb_ids)  # fmt: skip
+    except Exception:  # a USB library that fails is no panel
+        log.debug("looking for the %s on the bus failed", model.id, exc_info=True)
+        return False
 
 
 def _screen_of(configured: Any, found: Any) -> bool:

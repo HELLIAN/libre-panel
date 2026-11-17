@@ -44,7 +44,8 @@ def health(page):
 
 HEALTH_OF = """async (facts) => {
   const { healthOf } = await import("/app/views/settings/health.js");
-  const base = { app: { available: true, panel: { state: "showing", stats: {} } }, themes: [],
+  const panel = { state: "showing", on_panel: true, stats: {} };
+  const base = { app: { available: true, panel }, themes: [],
     panelInfo: null, unlockInfo: null, settings: null, settingsError: null, sourceStates: null,
     serviceStates: null, clipQuestion: null };
   const { ready, items, good } = healthOf({ ...base, ...facts });
@@ -93,8 +94,11 @@ def test_the_overview_tells_each_thing_with_what_mends_it(app_url):  # noqa: F81
         waiting = {"available": True, "panel": {"state": "waiting", "stats": {}}}
         missing = [["no-panel", "warn", "Report a panel"]]
         assert of(panelInfo=PANEL, app=waiting)["items"] == missing
-        # (a panel the background app shows a theme on is there, whatever the bus said here)
+        # (a panel the background app's frames go to is there, whatever the bus said here)
         assert of(panelInfo=PANEL)["items"] == []
+        # (the PNG file that stands in for one is no panel)
+        on_file = {"available": True, "panel": {"state": "showing", "on_panel": False, "stats": {}}}
+        assert of(panelInfo=PANEL, app=on_file)["items"] == missing
         chosen = {**found, "model": {**TURING, "id": "turing-8.8-usb", "label": 'Turing 8.8"'}}
         assert of(panelInfo=chosen)["items"] == [["other-panel", "warn", "Use the Turing 9.2″"]]
         # the panel paused, or stopped with a fault
@@ -260,6 +264,41 @@ def test_the_overview_says_all_good_calmly_and_the_short_form_says_nothing(
         page.wait_for_function("window.libre.store.get().serviceStates !== null")
         page.wait_for_timeout(500)
         assert page.locator("#short-form").inner_text() == ""  # nothing while all is well
+
+
+def test_a_panel_the_app_draws_on_is_connected_though_no_search_finds_it(
+    app_url,  # noqa: F811
+    isolated_home,
+    monkeypatch,
+):
+    """The JONSBO DS339 chosen by hand (a USB display chip no search finds) while the app's
+    frames go to it: the overview and Settings → Panel say it is connected, nothing that it is
+    not."""
+    from test_editor_settings import panel_on_the_bus
+
+    from libre_panel.config import set_config_value
+    from libre_panel.devices import usb_link
+
+    panel_on_the_bus(monkeypatch)  # the search finds none
+    monkeypatch.setattr(usb_link, "present", lambda vendor, products: None)
+    set_config_value("device.model", "jonsbo-ds339")
+
+    def driven(route, request):
+        answer = route.fetch().json()
+        assert answer["found"] is None
+        answer["running"] = {"state": "showing", "detail": "", "size": [376, 960], "more": [],
+                             "on_panel": True}  # fmt: skip
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
+
+    routes = {"**/api/app": a_panel_app(target="JONSBO DS339"), "**/api/panel": driven}
+    with browser_page(app_url, "settings/overview", routes=routes, allow=PICTURE) as page:
+        glance = page.locator("[data-glance='panel']")
+        expect(glance).to_contain_text("DS339")
+        expect(glance).to_contain_text(", connected")
+        expect(page.locator("[data-health='no-panel']")).to_have_count(0)
+        page.goto(f"{app_url}#/settings/panel")
+        expect(page.locator(".panel-found-name")).to_contain_text("DS339")
+        expect(page.locator(".panel-found-detail")).to_contain_text("Connected")
 
 
 # The short form of the card, as Start is to show it, drawn into a box of its own.

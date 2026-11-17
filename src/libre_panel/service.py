@@ -284,6 +284,8 @@ class PanelService:
             "missing_theme": status.missing_theme,
             "notice": self._notice() if state in ("showing", "waiting") else "",
             "target": status.target,
+            # whether its frames go to a panel that takes them (not to the PNG file)
+            "on_panel": status.on_panel and state == "showing",
             "theme": status.theme,
             # what a config.toml without a theme shows on this panel (see theme.defaults)
             "default_theme": status.default_theme,

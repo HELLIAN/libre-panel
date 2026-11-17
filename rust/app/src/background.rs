@@ -461,6 +461,11 @@ impl PanelService {
         };
         told.insert("sequence".into(), sequence);
         told.insert("target".into(), Value::Str(status.target));
+        // whether its frames go to a panel that takes them (not to a PNG file)
+        told.insert(
+            "on_panel".into(),
+            Value::Bool(status.on_panel && state == "showing"),
+        );
         told.insert("default_theme".into(), Value::Str(status.default_theme));
         told.insert("mode".into(), status.mode.map_or(Value::None, Value::Str));
         // numbers of the last seconds (meter.rs); none while it does not run

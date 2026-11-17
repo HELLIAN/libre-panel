@@ -124,8 +124,10 @@ function PanelFound() {
   const { found, model, configured, running } = info;
   // the running app says why it waits for the panel (no permission, a missing library …)
   const why = running && ["waiting", "error"].includes(running.state) && running.detail;
-  const same = Boolean(found && model && found.id === model.id);
-  const shown = same ? found : model;
+  // (where the search finds none, the loop's frames going to the panel say it is there)
+  const onBus = Boolean(found && model && found.id === model.id);
+  const same = onBus || Boolean(model && !found && running?.on_panel);
+  const shown = onBus ? found : model;
   let status = null; // without a panel there is nothing to say but how to get one
   if (same) status = html`<${Status} tone="ok">${t("Connected")}<//>`;
   else if (found && model)

@@ -329,6 +329,7 @@ def test_the_background_app_is_controlled_through_its_server(tmp_path: Path) -> 
             assert state["panel"]["state"] == "showing" and state["panel"]["theme"] == "slate"
             assert (state["brightness"], state["upside_down"]) == (50, False)
             shown = {key: state["panel"][key] for key in ("theme", "target", "default_theme")}
+            assert state["panel"]["on_panel"] is False  # (a PNG file is no panel)
             assert asked("pause")[1]["panel"]["state"] == "paused"
             # what the panel showed stays said while it rests, as 0.8 says it: once its loop
             # had ended, Start named no theme for a paused panel, and no panel
@@ -339,6 +340,7 @@ def test_the_background_app_is_controlled_through_its_server(tmp_path: Path) -> 
                 time.sleep(0.6)
             rests = asked()[1]["panel"]
             assert rests["state"] == "paused" and rests["stats"] == {} and rests["more"] == []
+            assert rests["on_panel"] is False
             assert {key: rests[key] for key in shown} == shown and shown["target"], rests
             assert asked("brightness", 30)[1]["brightness"] == 30
             assert asked("upside_down", True)[1]["upside_down"] is True
@@ -3875,6 +3877,10 @@ def test_the_panel_test_runs_on_the_app_s_panel_as_doctor_session_py_runs_it(
                     return status.split(" ", 2)[1], json.loads(answer)
 
                 assert _waited(lambda: len(rig.fake.frames) > 0 or None, 30), "no frame shown"
+                # its frames go to the panel: the app and Settings → Panel say it is there
+                _, app = ask(_get("/api/app", WITH))
+                assert app["panel"]["state"] == "showing" and app["panel"]["on_panel"] is True
+                assert ask(_get("/api/panel", WITH))[1]["running"]["on_panel"] is True
                 assert ask(_get("/api/doctor", WITH))[1] == {
                     "state": "idle", "question": None, "error": "", "steps": []}  # fmt: skip
                 status, said = ask(_post("/api/doctor", {"action": "start"}))

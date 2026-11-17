@@ -12,6 +12,14 @@
   after **▶**). *Settings → Transitions → Across the panels* (`[transitions] canvas`) turns it
   off. The Rust app draws each frame of it bit for bit as Python does.
 
+**Fixed**
+- **The JONSBO DS339 is said to be connected while it shows the panel's theme** (its owner's
+  report). *Settings → Panel*, the overview and *Status → Diagnose* said "not connected": the
+  search never finds a USB display chip by itself, as USB-to-HDMI adapters have the same one.
+  Chosen by hand, the DS339 (and the VMAX 4.6") now counts as there while its USB ids are on the
+  bus, nothing of it opened; and any panel counts as connected while the app's frames go to it,
+  whatever the search finds.
+
 ## 0.9.5rc2 — 2026-11-17
 
 The second candidate for 0.9.5: start screens on the family's other panels, for whoever wants

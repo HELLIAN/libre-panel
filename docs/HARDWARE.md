@@ -182,7 +182,8 @@ unverified.
   it shows its own animation.
 - **DS339** (3.39", 960×376, `device.model = "jonsbo-ds339"`): a USB display chip, the
   MacroSilicon MS9132 (`345f:9132`). USB-to-HDMI adapters have the same chip, so `auto` never
-  opens it; choose the model in *Settings → Panel*. On Linux,
+  opens it; choose the model in *Settings → Panel*, which then says it is connected while
+  its USB ids are on the bus (nothing of it is opened for that). On Linux,
   `libre-panel system-setup --linux` gives your user access to it. The brightness goes into
   the pixels; quitting with `dark_on_quit` turns it off.
 
@@ -199,8 +200,8 @@ unverified.
   4. Do the same for `usb extscreen (Interface 0)`.
   5. Start Libre Panel again and choose the DS339 in *Settings → Panel*.
 
-  JONSBO's own app talks to the panel through the drivers that were there before, so expect
-  it not to find the panel afterwards. To go back, uninstall both entries in Windows'
+  JONSBO's own app talks to the panel through the drivers that were there before, and so does
+  InfoPanel: neither finds the panel afterwards, as its owner confirmed. To go back, uninstall both entries in Windows'
   Device Manager (with *Attempt to remove the driver for this device*), replug the panel
   and, if its app still does not find it, install that app again.
 

@@ -622,6 +622,33 @@ def test_a_zc360_is_found_as_one_usb_panel_of_three_screens(server, monkeypatch)
     assert data["found"]["screens"] == 1
 
 
+def test_a_ds339_chosen_by_hand_is_found_by_its_usb_ids(server, monkeypatch):
+    """A screen behind a USB display chip (the JONSBO DS339's MS9132) is never found by the
+    search, as USB-to-HDMI adapters have the chip too; chosen by hand, its USB ids on the bus
+    say it is there (Settings → Panel: connected), even beside another panel."""
+    from libre_panel.devices import usb_link
+
+    panel_on_the_bus(monkeypatch)
+    bus: set[tuple[int, int]] = set()
+
+    def present(vendor: int, products: tuple[int, ...]) -> int | None:
+        return products[0] if (vendor, products[0]) in bus else None
+
+    monkeypatch.setattr(usb_link, "present", present)
+    bus.add((0x345F, 0x9132))
+    _, data = request(server, "GET", "/api/panel")
+    assert data["found"] is None and data["model"] is None  # (auto finds no such chip)
+    write(server, **{"device.model": "jonsbo-ds339"})
+    _, data = request(server, "GET", "/api/panel")
+    assert data["found"]["id"] == data["model"]["id"] == "jonsbo-ds339"
+    panel_on_the_bus(monkeypatch, "turing-8.8-usb")
+    _, data = request(server, "GET", "/api/panel")
+    assert data["found"]["id"] == "jonsbo-ds339"
+    bus.clear()  # unplugged: the panel found is the one there
+    _, data = request(server, "GET", "/api/panel")
+    assert data["found"]["id"] == "turing-8.8-usb" and data["model"]["id"] == "jonsbo-ds339"
+
+
 def test_a_zc360_screen_set_up_on_its_own_is_the_panel_found(server, monkeypatch):
     """Each screen its own panel (#13): the bus shows the three together, and that is the
     screen set up, not another panel to switch to."""
@@ -718,7 +745,11 @@ def test_the_running_app_tells_how_its_panel_is_doing(make, monkeypatch):
     port = make(App(panel=panel))
     _, data = request(port, "GET", "/api/panel")
     assert data["running"] == {"state": "waiting", "detail": "no panel", "size": None,
-                               "more": []}  # fmt: skip
+                               "more": [], "on_panel": False}  # fmt: skip
+    # its frames going to the panel say it is there, whatever the search finds
+    showing = {"state": "showing", "detail": "", "on_panel": True}
+    port = make(App(panel=SimpleNamespace(state=lambda: showing, status=None)))
+    assert request(port, "GET", "/api/panel")[1]["running"]["on_panel"] is True
 
 
 def test_the_panel_says_whether_its_theme_shows_the_weather(make, isolated_home, monkeypatch):

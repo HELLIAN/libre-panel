@@ -81,6 +81,8 @@ pub struct RunStatus {
     pub detail: String,
     /// where frames go: a panel, or a PNG file
     pub target: String,
+    /// whether they go to a panel (not to a PNG file): the panel is there and takes them
+    pub on_panel: bool,
     /// the panel's model, set or reported ("": not known yet)
     pub model: String,
     /// the mode a service set (a game, music)
@@ -894,6 +896,9 @@ impl MainLoop {
     }
 
     fn close_panel(&mut self) {
+        if let Ok(mut status) = self.status.lock() {
+            status.on_panel = false;
+        }
         if let Some(mut panel) = self.panel.take() {
             // (the frame that went last as its layers: its pixels made now, to stay, turned as
             // the panel got it)
@@ -959,6 +964,7 @@ impl MainLoop {
                 say(&format!("showing on {}{}", panel.describe(), panel.way()));
                 if let Ok(mut status) = self.status.lock() {
                     status.target = panel.describe();
+                    status.on_panel = panel.on_panel();
                     status.detail.clear();
                 }
                 self.failures = 0;
@@ -2083,6 +2089,7 @@ impl MainLoop {
                                     let target = panel.describe();
                                     if let Ok(mut status) = self.status.lock() {
                                         status.target = target;
+                                        status.on_panel = true;
                                     }
                                 }
                                 // (a panel took over from the PNG file: drawn for it from now on)

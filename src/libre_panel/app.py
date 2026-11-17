@@ -296,6 +296,8 @@ class RunStatus:
     # version for it: theme.model.theme_for)
     size: tuple[int, int] | None = None
     model: str = ""  # the panel's model, set or reported ("": not known yet)
+    # whether frames go to a panel that takes them (not to the PNG file that stands in for one)
+    on_panel: bool = False
     # the frame on the panel now, as the app's live picture shows it (None while it shows none)
     shown: Any = None
     # where the panel's engine composes its frames from their layers: what gives its picture of
@@ -354,7 +356,7 @@ class _Link:
         self.display = display
         self.brightness = brightness
         self.status = status
-        self.connected = False
+        self.connected = self.status.on_panel = False
         self.failures = 0
         self.retry_at = 0.0
 
@@ -374,6 +376,7 @@ class _Link:
             log.info("panel connected")
         self.connected, self.failures = True, 0
         self.status.target = self.display.describe()
+        self.status.on_panel = _on_panel(self.display)
         self.status.state, self.status.detail = "showing", ""
         return True
 
@@ -397,11 +400,12 @@ class _Link:
                 return False
         except DeviceError as exc:
             self.display.close()
-            self.connected = False
+            self.connected = self.status.on_panel = False
             self._failed(exc, now)
             return True  # (no frame either: the panel is gone)
         self.status.frames += 1
         self.status.target = self.display.describe()
+        self.status.on_panel = _on_panel(self.display)
         return True
 
     def show(self, frame: Image.Image, region: Box | list[Box], now: float) -> bool:
@@ -415,11 +419,12 @@ class _Link:
             return False
         except DeviceError as exc:
             self.display.close()
-            self.connected = False
+            self.connected = self.status.on_panel = False
             self._failed(exc, now)
             return False
         self.status.frames += 1
         self.status.target = self.display.describe()  # auto may switch from PNG to a panel
+        self.status.on_panel = _on_panel(self.display)
         return True
 
     def set_brightness(self, percent: int) -> None:

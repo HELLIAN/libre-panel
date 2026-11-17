@@ -237,7 +237,7 @@ def app_answer(target='Turing 9.2", video 50 fps', hint="", brightness=80, **num
     return {
         "available": True,
         "panel": {
-            "state": "showing", "detail": "", "hint": hint, "target": target,
+            "state": "showing", "detail": "", "hint": hint, "target": target, "on_panel": True,
             "theme": "libre-default", "frames": 9, "mode": None, "stats": stats,
         },
         "brightness": brightness, "upside_down": False, "autostart": False, "can_quit": True,
