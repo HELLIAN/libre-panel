@@ -1639,14 +1639,17 @@ def test_the_computers_programs_are_those_machine_py_names(tmp_path: Any) -> Non
 
     spawned = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])]
     special = {}
-    sleep = shutil.which("sleep")
-    if sys.platform.startswith("linux") and sleep:
+    # (copies of a program that waits under any name of its own: bash, by its own read (sleep
+    # can be one program of many, a multicall coreutils that ends at once under another name))
+    bash = shutil.which("bash")
+    if sys.platform.startswith("linux") and bash:
         for name in ("wine-preloader-x", "A-Very-Long-Program-Name.x86_64", "Short"):
             copy = tmp_path / name
-            shutil.copy(sleep, copy)
+            shutil.copy(bash, copy)
             work = tmp_path / f"work {name}"
             work.mkdir()
-            spawned.append(subprocess.Popen([str(copy), "60"], cwd=work))
+            spawned.append(subprocess.Popen([str(copy), "-c", "read -t 60"], cwd=work,
+                                            stdin=subprocess.PIPE))  # fmt: skip
             special[name] = spawned[-1].pid
     key = machine.MICROPHONE_KEY
     microphones = [
@@ -1703,6 +1706,8 @@ def test_the_computers_programs_are_those_machine_py_names(tmp_path: Any) -> Non
         for child in spawned:
             child.kill()
             child.wait()
+            if child.stdin:
+                child.stdin.close()
     got = {pid: (name, path) for name, pid, path in ours["programs"]}
     assert len(got) == len(ours["programs"]) and len(got) > 3
     assert [pid for _, pid, _ in ours["programs"]] == sorted(got)

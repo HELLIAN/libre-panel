@@ -1402,11 +1402,11 @@ def _zoned_or_earth(rng: random.Random, i: int, size: tuple[int, int]) -> dict[s
 def test_without_the_computer_s_zone_rust_leaves_out_what_needs_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (where Rust does not know the computer's zone (a TZ the C library reads by a rule of its
-    # own, summer time without its rules): a globe, another place's time and a slideshow by the
+    # (where Rust does not know the computer's zone (a TZ the C library reads by a leniency of
+    # its own, more digits than POSIX's): a globe, another place's time and a slideshow by the
     # clock Rust says it does not draw, never a frame otherwise than Python's; the computer's
     # own time, a zone of no such name and a slideshow of one picture it draws)
-    monkeypatch.setenv("TZ", "CET-1CEST")
+    monkeypatch.setenv("TZ", "CET-001")
     time.tzset()
     left_out: list[tuple[int, str]] = []
     try:
@@ -3113,8 +3113,9 @@ def test_a_picture_where_the_frame_s_time_has_no_timestamp_as_python_shows_it(
 ) -> None:
     # (a picture alone still takes the frame's timestamp: at the edges of the years 1 and 9999,
     # where the computer's zone moves it past them, Python fails at it and leaves the widget
-    # out, as Rust does; where Rust does not know the zone (a TZ the C library reads by a rule
-    # of its own), it says it does not draw a picture there, and draws it in the years between)
+    # out, as Rust does; where Rust does not know the zone (a TZ the C library reads by a
+    # leniency of its own), it says it does not draw a picture there, and draws it in the years
+    # between)
     rng = random.Random(0x7E1F)
     edge = "pictures at the edges of the years without the computer's own time zone"
     moments = [datetime(1, 1, 1), datetime(1, 1, 1, 12), datetime(1, 1, 2, 23, 59, 59),
@@ -3123,7 +3124,7 @@ def test_a_picture_where_the_frame_s_time_has_no_timestamp_as_python_shows_it(
     looks = [{"src": "pics/a.png"}, {"src": "", "slides": "pics/b.png"},
              {"src": "@media.cover"}, {"src": "anim/run.gif"}]  # fmt: skip
     drawn = refused = 0
-    for z, tz in enumerate(["Asia/Tokyo", "America/New_York", "UTC", "CET-1CEST"]):
+    for z, tz in enumerate(["Asia/Tokyo", "America/New_York", "UTC", "CET-001"]):
         local_zone(tz)
         cases, expected = [], []
         for n, (now, look) in enumerate((m, lk) for m in moments for lk in looks):
@@ -3141,7 +3142,7 @@ def test_a_picture_where_the_frame_s_time_has_no_timestamp_as_python_shows_it(
         [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
         for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
             if got.get("unported") == edge:
-                assert tz == "CET-1CEST" and moments[n // len(looks)].year in (1, 9999), n
+                assert tz == "CET-001" and moments[n // len(looks)].year in (1, 9999), n
                 refused += 1
                 continue
             assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), (tz, n)

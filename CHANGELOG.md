@@ -29,6 +29,13 @@ an owner of one tries it.
   it comes: its program never reads its USB port before it starts again, so nothing a PC
   sends reaches it. The guide says how to read the command's last line when that is so.
 
+**Fixed**
+- **A time zone of summer time without its rules** on Linux, such as `TZ=EST5EDT` where no
+  zone file has that name (newer systems keep the old names in a package of their own): the
+  app reads it as the C library does, by the United States' rules where there is no
+  `posixrules` file. Before, it did not know the computer's zone there, and left out what
+  needs it: another place's time, the globe, slideshows by the clock.
+
 ## 0.9.4 — 2026-11-17
 
 Start screens are written to the panel again, on the 9.2" and the 12.3", into a room that is

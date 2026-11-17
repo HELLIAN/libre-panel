@@ -816,7 +816,7 @@ def test_the_computer_s_zone_and_named_zones_as_python_takes_them() -> None:
         "Asia/Kolkata", "Pacific/Chatham", "America/Sao_Paulo", "Africa/Casablanca",
         "Europe/Dublin", "America/St_Johns", "Antarctica/Troll", "Pacific/Apia",
         "Pacific/Kiritimati", "Asia/Tehran", "America/Nuuk", "Asia/Gaza", "Europe/Moscow",
-        "EST5EDT", "WET", "Etc/GMT-14", "Etc/GMT+12", "America/Santiago", "Pacific/Easter",
+        "WET", "Etc/GMT-14", "Etc/GMT+12", "America/Santiago", "Pacific/Easter",
         "Asia/Jerusalem", "America/Adak", "Europe/London", "Africa/Cairo", "posixrules",
         "CET-1CEST,M3.5.0,M10.5.0/3", "EST5EDT,M3.2.0,M11.1.0", "<+0330>-3:30",
         "AEST-10AEDT,M10.1.0,M4.1.0/3", "NZST-12NZDT,M9.5.0,M4.1.0/3", "XXX3YYY,J60/2,J300/2",
@@ -830,11 +830,17 @@ def test_the_computer_s_zone_and_named_zones_as_python_takes_them() -> None:
         "CET-x",
     ]  # fmt: skip
     # (glibc reads these by rules or leniencies of its own: Rust says it does not know them)
-    unknown = ["CET-1CEST", "CET- 1", "CET-1:75", "CET-+1", "CET-1CEST,M3.5.0,M10.5.0/3,junk",
+    unknown = ["CET- 1", "CET-1:75", "CET-+1", "CET-1CEST,M3.5.0,M10.5.0/3,junk",
                "CET-1,M3.5.0,M10.5.0/3", "CET-1 x", "CET-001", "XXX3YYY,J0060/2,J300/2",
                "XXX3YYY,M3.05.0,M10.5.0", "XXX3YYY,J+60,J300/2", "XXX3YYY,J0,J300"]  # fmt: skip
     # (a zone of leap seconds, where there is one: glibc counts them)
-    (unknown if Path("/usr/share/zoneinfo/right/UTC").exists() else zones).append("right/UTC")
+    tzdir = Path(os.environ.get("TZDIR") or "/usr/share/zoneinfo")
+    (unknown if (tzdir / "right/UTC").exists() else zones).append("right/UTC")
+    # (summer time without its rules, where no file has the name: glibc takes the rules of
+    # TZDIR's posixrules, else its own, the United States')
+    without = ["CET-1CEST", "EST5EDT4", "EST5EDT,"]
+    (zones if (tzdir / "EST5EDT").exists() else without).append("EST5EDT")
+    (unknown if (tzdir / "posixrules").exists() else zones).extend(without)
     _zones_as_python_takes_them(zones, unknown, _NAMED_KEYS, {"UTC": _NAMED_KEYS})
 
 

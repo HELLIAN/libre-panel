@@ -685,10 +685,12 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       moment), at new year's and at random, and 86,985 timestamps (18,378 of them the second of
       two moments of one local time); 16 named zones about the moments they change: all as
       Python's. 22 zone files made for the test, where zoneinfo and glibc part, the same as
-      both. Where glibc would read a TZ value by rules or leniencies of its own (summer time
-      without its rules, which it takes from posixrules; a space or a second sign before an
-      offset; minutes past 59, more digits than POSIX's, more after the rules; leap seconds; a
-      file it reads otherwise than zoneinfo), Rust says it does not know the zone (12 TZ values
+      both. Summer time without its rules ("EST5EDT" where no file has the name) glibc takes
+      from TZDIR's posixrules, else by its own rules, the United States' since 2007: Rust takes
+      the latter as glibc does. Where glibc would read a TZ value by rules or leniencies of its
+      own (posixrules' rules; a space or a second sign before an offset; minutes past 59, more
+      digits than POSIX's, more after the rules; leap seconds; a file it reads otherwise than
+      zoneinfo), Rust says it does not know the zone (14 TZ values where there is a posixrules,
       and 6 files in the tests). The counter-checks put in 42 faults, and the tests catch them
       all (5 of them once cases were added: J59 in a leap year for both, a version 1 file whose
       two blocks part, a rule that changes at new year's seen from 14 hours east, and a fault
