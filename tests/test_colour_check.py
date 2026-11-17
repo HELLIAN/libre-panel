@@ -424,10 +424,12 @@ def test_a_verdict_is_kept_per_encoder_range_ffmpeg_and_versions_a_week_long(
     monkeypatch.setattr(card_choice, "version", lambda ffmpeg: versions[ffmpeg])
     assert card_choice.verdict("/a/ffmpeg", "h264_amf", False) is None
     assert not card_choice.chosen("/a/ffmpeg", "h264_amf", False)
+    before = int(time.time())
     kept = card_choice.record("/a/ffmpeg", result_of(), False)
+    after = time.time()
     assert kept["card"] is True and kept["by"] == "check" and kept["verdict"] == "identical"
     assert kept["version"] == versions["/a/ffmpeg"]
-    assert kept["when"] == pytest.approx(time.time(), abs=5)
+    assert before <= kept["when"] <= after  # (the moment it was kept, in whole seconds)
     assert card_choice.chosen("/a/ffmpeg", "h264_amf", False)
     assert not card_choice.chosen("/a/ffmpeg", "h264_amf", True)  # the other range
     assert not card_choice.chosen("/b/ffmpeg", "h264_amf", False)  # another ffmpeg
@@ -601,9 +603,12 @@ def test_the_card_says_who_converts_for_the_panel_and_why(isolated_home, monkeyp
         assert choice(checking=True)[1]
     finally:
         card_choice._running.discard(("/a/ffmpeg", "h264_amf", False))
+    before = int(time.time())
     card_choice.record("/a/ffmpeg", result_of(), False, by="background")
+    after = time.time()
     state, same = choice(why="identical", way="card", verdict="identical", by="background")
-    assert same and state["choice"]["when"] == pytest.approx(time.time(), abs=5)
+    # (the moment it was kept, however long the card's state takes on a slow machine)
+    assert same and before <= state["choice"]["when"] <= after
     card_choice.record("/a/ffmpeg", result_of(verdict="matrix"), False)
     state, same = choice(why="differs", way="processor", verdict="matrix", by="check")
     assert same and state["choice"]["worst"]["patch"] == "green"
