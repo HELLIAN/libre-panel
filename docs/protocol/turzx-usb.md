@@ -611,13 +611,29 @@ until its time is over, however often the panel comes without an answer. What
 comes back and is no answer (a port's echo) is told once each time the panel
 comes and counts as none; a step is sent only after the sync's answer.
 
-The chance is small: that panel answered the app nothing after it began to
+The chance was small: that panel answered the app nothing after it began to
 restart. What the command has over the app's tries is that it is there the moment
 the panel comes (the app looked every five seconds, and started its engine
 first), that it sends the sync again until it is answered, that it goes on for as
 long as it is given, and that it says to the millisecond how far each coming
 gets: whether the panel can be opened, whether its port takes what is sent,
 whether the port sends it back unread, whether the panel answers.
+
+**What it found on that panel** (0.9.3's `remove-clip --wait`, run by its owner on
+Windows, 2026-11-16): in its ten minutes the panel came 81 times, about every
+7.5 s, and stayed 3.9 to 7.8 s, mostly 5.8. Each time it could be opened (WinUSB),
+and each time its port took nothing: the sync waited until the panel left, and
+the transfer ended as a stalled endpoint or as a packet not taken, in turn. A
+sound 9.2" with that firmware takes the first packet 0.32 s after it comes
+([below](#a-92-as-it-starts)). So the panel's program never gets as far as reading
+its USB port before the panel starts again, and nothing a PC sends reaches it:
+not this command, not the app, and as far as is known not the vendor's app
+either, which talk to it the same way. `default-start` would meet the same port.
+What may still bring such a panel back is its maker's: a way to put its software
+back that is not known here. Where a panel comes and goes and its port takes
+nothing in a dozen comings, the command's last line says so (`its port took
+nothing that was sent`), and that is the answer: nothing more can be done from
+the PC.
 
 ### A 9.2" as it starts
 

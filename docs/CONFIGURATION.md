@@ -702,6 +702,14 @@ made for the 9.2"'s room, by the pixels.)
   packet or two by itself, the ones after only where something on the panel reads. No step
   starts the video, whose start plays the standby clip, and none writes a file.
 
+  **Where the port takes nothing**, the last line says `its port took nothing that was
+  sent`, and that is the answer. On the 9.2" of issue 52 it took nothing in 81 comings of
+  about six seconds: the panel's program never got as far as reading its USB port before
+  the panel started again, so nothing sent from a PC reaches it, from this command or any
+  other program. What may still bring such a panel back is its maker's, a way to put its
+  software back that is not known here
+  ([more](protocol/turzx-usb.md#what-goes-on-a-panel)).
+
   The steps go to the Turing 9.2" alone, the panel they were seen to work on: the vendor id
   is shared by other makers' panels with other protocols, and the family's other models may
   take a command for something else. The first thing sent is the sync, and nothing follows
