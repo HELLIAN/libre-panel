@@ -89,8 +89,8 @@ export function StartScreenCard() {
     setHeld(false);
   };
   const writing = Boolean(busy);
-  // files are written to the models it has been done on (the 9.2" and the 12.3"); for another the
-  // pictures show and download, and the factory logo can come back
+  // files are written to the models it has been done on (the 9.2" and the 12.3", and the 8.8" as
+  // the 9.2"); for another the pictures show and download, and the factory logo can come back
   const writes = chosen?.writes === true;
   // a look with more detail than fits finely in the room its files get on this panel: said,
   // and neither written nor made as a file
@@ -112,7 +112,7 @@ export function StartScreenCard() {
         })} />
     </div>
     ${!writes
-      ? html`<${Note}>${t("Writing to this panel is switched off: Libre Panel has written start screens to the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.")}<//>`
+      ? html`<${Note}>${t("Writing to this panel is switched off: Libre Panel writes start screens to the 8.8\", the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.")}<//>`
       : null}
     ${turned && writes
       ? html`<${Note}>${t("The panel is mounted upside down: the logo and the clip are written turned round, so that they are upright on it. Write them again when you turn the panel round.")}<//>`

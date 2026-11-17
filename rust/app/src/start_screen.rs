@@ -21,12 +21,18 @@ const OURS: [&str; 2] = [BOOT_LOGO, STANDBY_CLIP];
 /// A file on the panel is at most this large (what the command takes).
 pub const MAX_FILE: usize = 1024 * 1024;
 /// The boot logo's JPEG: its quality in turn until the file fits its room, every pixel with
-/// its own colour. A look that would need less than the last would show it: not made.
-const JPEG_STEPS: [i64; 5] = [95, 92, 90, 88, 85];
+/// its own colour; every whole quality from 95 down (panel_files.py JPEG_STEPS, since 0.9.5).
+/// A look that would need less than the last would show it: not made.
+const JPEG_STEPS: [i64; 11] = [95, 94, 93, 92, 91, 90, 89, 88, 87, 86, 85];
 /// The standby clip's x264 crf: the finest first, then coarser until the clip fits its room,
 /// up to the coarsest that does not show; a look that needs more is not made.
 const CLIP_CRF: i64 = 20;
 const CLIP_CRF_MAX: i64 = 26;
+/// Below a whole step that fits, where the next finer one does not: these quarters of a step,
+/// made at once (each encoder has one thread), and the finest that fits is the clip
+/// (panel_files.py CLIP_QUARTERS, since 0.9.5: a whole step left up to 13 % of the room
+/// unused).
+const CLIP_QUARTERS: [f64; 3] = [0.75, 0.5, 0.25];
 /// How much smaller a clip gets with each step of the crf, in thousandths: the first guess at
 /// the crf that fits.
 const CLIP_STEP: usize = 870;
@@ -35,14 +41,19 @@ const CLIP_STEP: usize = 870;
 /// much room there is cannot be asked, and one 9.2" was full at about 718,000 bytes of these
 /// files. So the two together stay well below what a panel of the model is known to hold: on
 /// the 9.2" two thirds of that; on the 12.3" four fifths of the 817,587 one has held for weeks.
-pub const ROOM: [(&str, (usize, usize)); 2] = [
+/// The 8.8" gets the 9.2"'s: its maker sells the two as one, with the same framebuffer, and
+/// the panel's own start screen was first read from the 8.8"'s firmware (SPUR II). (The first
+/// is the 9.2"'s: a panel of another model gets it by its pixels.)
+pub const ROOM: [(&str, (usize, usize)); 3] = [
     ("turing-9.2-usb", (360_000, 120_000)),
+    ("turing-8.8-usb", (360_000, 120_000)),
     ("turing-12.3-usb", (500_000, 150_000)),
 ];
 /// The looks that do not fit that room finely on a model, known before anything is made
 /// (panel_files.py UNFIT): the card says so and offers no writing.
-pub const UNFIT: [(&str, &[&str]); 2] = [
+pub const UNFIT: [(&str, &[&str]); 3] = [
     ("turing-9.2-usb", &["levels"]),
+    ("turing-8.8-usb", &["levels"]),
     ("turing-12.3-usb", &["levels"]),
 ];
 /// A write that happens takes its time (the 9.2" of issue 52: 1.2 to 2.9 s for 700 KB; a sound
@@ -61,7 +72,8 @@ const WRITE_TIMED_FROM: usize = 32 * 1024;
 pub const WRITES_ENV: &str = "LIBRE_PANEL_PANEL_WRITES";
 pub const WRITES_WORD: &str = "at-my-own-risk";
 
-/// tried: whether start screens have been written to panels of `model`.
+/// tried: whether start screens are written to panels of `model` by what is known of its room
+/// (ROOM: the models it has been done on, and the 8.8" as the 9.2").
 pub fn tried(model: Option<&PanelModel>) -> bool {
     model.is_some_and(|model| ROOM.iter().any(|(id, _)| *id == model.id))
 }
@@ -92,8 +104,8 @@ pub fn writes_on(model: Option<&PanelModel>) -> bool {
 /// writes_off: why nothing is written to a panel of another model, as the app says it.
 pub fn writes_off() -> String {
     lp_i18n::t(
-        "Writing to this panel is switched off: Libre Panel has written start screens to the \
-         9.2\" and the 12.3\" only, and how much room another panel has for them is not known.",
+        "Writing to this panel is switched off: Libre Panel writes start screens to the 8.8\", \
+         the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.",
     )
 }
 
@@ -378,7 +390,7 @@ fn logo_jpeg(picture: &Image, most: usize) -> Result<Vec<u8>, String> {
 pub fn clip_command(
     ffmpeg: &std::path::Path,
     size: (usize, usize),
-    crf: i64,
+    crf: f64,
     full: bool,
 ) -> Vec<String> {
     use lp_devices::h264::{colour_tags, stamp, FULL_RANGE};
@@ -420,7 +432,7 @@ pub fn clip_command(
         ]
         .map(String::from),
     );
-    command.push(crf.to_string());
+    command.push(crf.to_string()); // (as Python's "{:g}": 20, 24.25)
     command.extend(colour_tags(full));
     command.push("-x264-params".into());
     command.push(
@@ -435,7 +447,8 @@ pub fn clip_command(
 
 /// clip_h264: the standby clip's pictures turned into the framebuffer and encoded as finely
 /// as fits the clip's room (`most` bytes): at crf CLIP_CRF, coarser where that is too much,
-/// up to CLIP_CRF_MAX. A clip that would have to be coarser is not made.
+/// up to CLIP_CRF_MAX, and then a quarter of a step at a time finer where that still fits
+/// (CLIP_QUARTERS). A clip that would have to be coarser is not made.
 fn clip_h264(
     ffmpeg: &std::path::Path,
     frames: &[Image],
@@ -451,7 +464,8 @@ fn clip_h264(
         .iter()
         .flat_map(|f| f.as_bytes().iter().copied())
         .collect();
-    let encoded = |crf: i64| -> Result<Vec<u8>, String> {
+    let raw = raw.as_slice();
+    let encoded = |crf: f64| -> Result<Vec<u8>, String> {
         let command = clip_command(ffmpeg, size, crf, full);
         let failed = |why: String| format!("ffmpeg could not make the standby clip: {why}");
         let mut child = crate::capture::quiet(&mut std::process::Command::new(&command[0]))
@@ -462,15 +476,15 @@ fn clip_h264(
             .spawn()
             .map_err(|e| failed(e.to_string()))?;
         let mut stdin = child.stdin.take().expect("(piped)");
-        let input = raw.clone();
-        let writer = std::thread::spawn(move || {
-            use std::io::Write;
-            let _ = stdin.write_all(&input);
-        });
-        let done = child
-            .wait_with_output()
-            .map_err(|e| failed(e.to_string()))?;
-        let _ = writer.join();
+        // (the pictures are written while their clip is read: neither pipe fills up)
+        let done = std::thread::scope(|scope| {
+            scope.spawn(move || {
+                use std::io::Write;
+                let _ = stdin.write_all(raw);
+            });
+            child.wait_with_output()
+        })
+        .map_err(|e| failed(e.to_string()))?;
         if !done.status.success() || done.stdout.is_empty() {
             let tail = &done.stderr[done.stderr.len().saturating_sub(300)..];
             return Err(failed(bytes_repr(tail)));
@@ -478,7 +492,7 @@ fn clip_h264(
         Ok(done.stdout)
     };
     let mut crf = CLIP_CRF;
-    let mut data = encoded(crf)?;
+    let mut data = encoded(crf as f64)?;
     if data.len() > most {
         let mut guess = data.len();
         while guess > most && crf < CLIP_CRF_MAX {
@@ -486,12 +500,12 @@ fn clip_h264(
             crf += 1;
             guess = guess * CLIP_STEP / 1000;
         }
-        data = encoded(crf)?;
+        data = encoded(crf as f64)?;
         if data.len() > most {
             // the guess was too fine: coarser, a step at a time
             while data.len() > most && crf < CLIP_CRF_MAX {
                 crf += 1;
-                data = encoded(crf)?;
+                data = encoded(crf as f64)?;
             }
             if data.len() > most {
                 return Err(too_fine());
@@ -499,13 +513,25 @@ fn clip_h264(
         } else {
             // or too coarse: the finest that fits
             while crf - 1 > CLIP_CRF {
-                let finer = encoded(crf - 1)?;
+                let finer = encoded((crf - 1) as f64)?;
                 if finer.len() > most {
                     break;
                 }
                 crf -= 1;
                 data = finer;
             }
+        }
+        // (the whole step finer is too large) the finest quarter between the two that fits
+        let made = std::thread::scope(|scope| {
+            let encodes: Vec<_> = (CLIP_QUARTERS.iter())
+                .map(|quarter| scope.spawn(move || encoded(crf as f64 - quarter)))
+                .collect();
+            (encodes.into_iter())
+                .map(|encode| encode.join().expect("(an encode does not panic)"))
+                .collect::<Result<Vec<_>, String>>()
+        })?;
+        if let Some(finer) = made.into_iter().find(|finer| finer.len() <= most) {
+            data = finer;
         }
     }
     if lp_devices::h264::slice_count(&data) != native.len() {
@@ -1049,7 +1075,7 @@ mod tests {
 
     #[test]
     fn the_clips_command_is_panel_files_pys() {
-        let command = clip_command(std::path::Path::new("ffmpeg"), (480, 1920), 20, true);
+        let command = clip_command(std::path::Path::new("ffmpeg"), (480, 1920), 20.0, true);
         let joined = command.join(" ");
         assert!(joined.starts_with("ffmpeg -hide_banner -loglevel error -f rawvideo"));
         assert!(joined.contains("-s 480x1920 -framerate 30 -i - -an -vf scale=out_range=full"));
@@ -1061,10 +1087,20 @@ mod tests {
     fn the_room_is_panel_files_pys() {
         let nine = model_of("turing-9.2-usb").expect("the 9.2\"");
         let twelve = model_of("turing-12.3-usb").expect("the 12.3\"");
+        let eight = model_of("turing-8.8-usb").expect("the 8.8\"");
         assert_eq!(room(Some(nine)), (360_000, 120_000));
         assert_eq!(room(Some(twelve)), (500_000, 150_000));
+        assert_eq!(room(Some(eight)), room(Some(nine))); // (the 9.2"'s sibling)
         assert_eq!(room(None), (360_000, 120_000));
-        assert!(tried(Some(nine)) && tried(Some(twelve)) && !tried(None));
+        assert!(tried(Some(nine)) && tried(Some(twelve)) && tried(Some(eight)) && !tried(None));
+        let written: Vec<&str> = models().filter(|m| tried(Some(m))).map(|m| m.id).collect();
+        assert_eq!(
+            written,
+            ["turing-8.8-usb", "turing-9.2-usb", "turing-12.3-usb"]
+        );
+        for (id, _) in ROOM {
+            assert!(UNFIT.iter().any(|(unfit, _)| *unfit == id), "{id}");
+        }
         for model in models() {
             let (clip, logo) = room(Some(model));
             // no panel gets more than the 12.3", and none that was not tried more than the 9.2"

@@ -2995,7 +2995,7 @@
     "Icon in the tray": "トレイのアイコン",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "メニューでパネルの状態の確認、テーマの切り替え、Libre Panel の終了ができます。オフ：Libre Panel はスタートメニューまたはアプリ一覧から開きます。",
     "Libre Panel runs in the background.": "Libre Panel はバックグラウンドで動作します。",
-    "Writing to this panel is switched off: Libre Panel has written start screens to the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "このパネルへの書き込みは停止しています。Libre Panel が起動画面を書き込んだことがあるのは 9.2\" と 12.3\" のパネルだけで、ほかのパネルにどれだけ空き容量があるかは分かっていないためです。",
+    "Writing to this panel is switched off: Libre Panel writes start screens to the 8.8\", the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "このパネルへの書き込みは停止しています。Libre Panel が起動画面を書き込むのは 8.8\"、9.2\"、12.3\" のパネルだけで、ほかのパネルにどれだけ空き容量があるかは分かっていないためです。",
     "This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.": "この外観は、Libre Panel がこのパネルで使う容量に収まらないほど細部が多く、粗くして書き込むこともしません。別の外観を選んでください。",
     "Not written: with the standby clip that is on the panel ({size}), the boot logo would be more than Libre Panel puts on this panel. Write the standby clip again first: it becomes smaller.": "書き込みませんでした。パネルにあるスタンバイクリップ（{size}）と合わせると、起動ロゴは Libre Panel がこのパネルに置く量を超えます。先にスタンバイクリップを書き直してください。小さくなります。",
     "Not written: with the boot logo that is on the panel ({size}), the standby clip would be more than Libre Panel puts on this panel. Write the boot logo again first: it becomes smaller.": "書き込みませんでした。パネルにある起動ロゴ（{size}）と合わせると、スタンバイクリップは Libre Panel がこのパネルに置く量を超えます。先に起動ロゴを書き直してください。小さくなります。",

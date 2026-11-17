@@ -12,8 +12,8 @@ from test_app_browser import app_url, browser_page, choose_theme  # noqa: E402, 
 
 PANEL_SWITCH = "Which panel Start and Status show and Design edits"
 WRITES_OFF = (
-    "Writing to this panel is switched off: Libre Panel has written start screens to the "
-    '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+    'Writing to this panel is switched off: Libre Panel writes start screens to the 8.8", '
+    'the 9.2" and the 12.3" only, and how much room another panel has for them is not known.'
 )
 TOO_FINE = (
     "This look has more detail than fits in the room Libre Panel uses on this panel, and it "
@@ -26,13 +26,14 @@ LARGER = (
 
 
 def test_the_start_screen_writes_to_the_models_it_has_been_done_on(app_url, isolated_home):  # noqa: F811
-    """Issue 52: start screens are written to the 9.2" and the 12.3". For another panel of the
-    family the card says that writing is switched off and its two "Put on the panel" stay off;
-    the pictures show and download, and the factory logo can still come back. Chosen for a
-    9.2", the buttons are there."""
+    """Issue 52: start screens are written to the 9.2" and the 12.3", and to the 8.8", the
+    9.2"'s sibling. For another panel of the family (a 5.2" here) the card says that writing is
+    switched off and its two "Put on the panel" stay off; the pictures show and download, and
+    the factory logo can still come back. Chosen for an 8.8" or a 9.2", the buttons are
+    there."""
     choose_theme(isolated_home, "lumen")
     (isolated_home / "config.toml").write_text(
-        'theme = "lumen"\n[device]\nmodel = "turing-8.8-usb"\nrotate = 180\n', encoding="utf-8"
+        'theme = "lumen"\n[device]\nmodel = "turing-5.2-usb"\nrotate = 180\n', encoding="utf-8"
     )
     asked = []
 
@@ -57,11 +58,12 @@ def test_the_start_screen_writes_to_the_models_it_has_been_done_on(app_url, isol
         page.get_by_role("button", name="Factory logo again").last.click()
         expect(page.locator(".toast")).to_contain_text("The factory logo shows again")
         assert [body["action"] for body in asked] == ["remove-logo"]
-        card.locator("select").select_option("turing-9.2-usb")
-        for n in range(2):
-            expect(card.get_by_role("button", name="Put on the panel").nth(n)).to_be_enabled()
-        expect(card.locator(".note")).to_have_count(1)  # (it is written turned round)
-        expect(card.locator(".note")).to_contain_text("mounted upside down")
+        for chosen in ("turing-8.8-usb", "turing-9.2-usb"):
+            card.locator("select").select_option(chosen)
+            for n in range(2):
+                expect(card.get_by_role("button", name="Put on the panel").nth(n)).to_be_enabled()
+            expect(card.locator(".note")).to_have_count(1)  # (it is written turned round)
+            expect(card.locator(".note")).to_contain_text("mounted upside down")
 
 
 def test_the_start_screen_says_when_the_panel_holds_files_of_before(app_url, isolated_home):  # noqa: F811

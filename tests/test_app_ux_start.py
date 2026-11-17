@@ -225,12 +225,16 @@ def test_the_news_tell_of_the_start_screen_where_the_panel_is_mounted_upside_dow
     isolated_home,
 ):
     """A panel at hand whose start screen can be written, mounted upside down: its logo and
-    clip can be written upright now, and the news say so; not where it is mounted upright."""
+    clip can be written upright now, and the news say so; not where it is mounted upright, nor
+    for a panel whose start screen is not written to it."""
     choose_theme(isolated_home, "lumen")
     updated(isolated_home)
+    models = [{"id": "turing-8.8-usb", "writes": True}, {"id": "turing-5.2-usb", "writes": False}]
+    told = {"model": "turing-8.8-usb", "panel": 0, "models": models}
+    answered = []
 
     def start_screen(route, request):
-        told = {"model": "turing-8.8-usb", "panel": 0}
+        answered.append(told["model"])
         route.fulfill(status=200, content_type="application/json", body=json.dumps(told))
 
     routes = {"**/api/app": a_panel_app(), "**/api/start-screen?*": start_screen}
@@ -250,6 +254,12 @@ def test_the_news_tell_of_the_start_screen_where_the_panel_is_mounted_upside_dow
         ]
         rows.nth(2).get_by_role("button", name="Show me").click()
         page.wait_for_function("location.hash === '#/settings/panel/start-screen'")
+    told["model"] = "turing-5.2-usb"
+    answered.clear()
+    with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
+        waits_for(page, lambda: "turing-5.2-usb" in answered)
+        page.wait_for_timeout(500)  # (what the answer shows has long been shown)
+        expect(page.locator(".news-card .first-step")).to_have_count(2)
 
 
 def test_who_began_with_this_version_gets_the_first_steps_and_no_news(

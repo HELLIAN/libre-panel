@@ -20,9 +20,10 @@ from libre_panel.render import bootscreen
 
 NINE = get_model("turing-9.2-usb")
 TWELVE = get_model("turing-12.3-usb")
+EIGHT = get_model("turing-8.8-usb")
 WRITES_OFF = (
-    "Writing to this panel is switched off: Libre Panel has written start screens to the "
-    '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+    'Writing to this panel is switched off: Libre Panel writes start screens to the 8.8", '
+    'the 9.2" and the 12.3" only, and how much room another panel has for them is not known.'
 )
 TOO_FINE = (
     "This look has more detail than fits in the room Libre Panel uses on this panel, and it "
@@ -272,12 +273,14 @@ def _jpeg(picture, quality):
 
 
 def test_the_logo_is_as_fine_as_fits_its_room():
-    """The boot logo at the finest quality whose file fits the logo's room on the panel
+    """The boot logo at the finest whole quality whose file fits the logo's room on the panel
     (120,000 bytes on the 9.2", 150,000 on the 12.3"), every pixel with its own colour; a look
     that would need a quality that shows (Levels, with its thousands of small lights: 491 KB
-    at 95 on the 9.2") is not made coarser, and not made."""
-    for model, design, quality in ((NINE, "aurora", 95), (NINE, "libre-panel", 92),
-                                   (TWELVE, "circuit", 90)):  # fmt: skip
+    at 95 on the 9.2") is not made coarser, and not made. (0.9.4 had steps of 95, 92, 90, 88:
+    the default look's logo was 92 on the 9.2", Circuit's 90 on the 12.3".)"""
+    assert F.JPEG_STEPS == (95, 94, 93, 92, 91, 90, 89, 88, 87, 86, 85)
+    for model, design, quality in ((NINE, "aurora", 95), (NINE, "libre-panel", 94),
+                                   (TWELVE, "circuit", 91)):  # fmt: skip
         picture = bootscreen.boot_logo(model, design=design)
         data = F.logo_jpeg(model, design=design)
         assert data == _jpeg(picture, quality), (model.id, design)
@@ -285,7 +288,7 @@ def test_the_logo_is_as_fine_as_fits_its_room():
         if quality < 95:  # (the next finer step is too large: that is why it is this one)
             finer = F.JPEG_STEPS[F.JPEG_STEPS.index(quality) - 1]
             assert len(_jpeg(picture, finer)) > F.room(model)[1], (model.id, design)
-    for model in (NINE, TWELVE):
+    for model in (NINE, TWELVE, EIGHT):
         with pytest.raises(DeviceError) as refused:
             F.logo_jpeg(model, design="levels")
         assert str(refused.value) == TOO_FINE
@@ -311,13 +314,14 @@ def test_the_room_a_panels_files_get():
     assert sum(F.room(NINE)) * 100 // 718_000 == 66
     assert sum(F.room(TWELVE)) * 100 // 817_587 == 79
     assert F.room(None) == F.room(NINE)
-    assert F.tried(NINE) and F.tried(TWELVE) and not F.tried(None)
+    assert F.room(EIGHT) == F.room(NINE)  # (the 9.2"'s sibling: as many pixels, one family)
+    assert F.tried(NINE) and F.tried(TWELVE) and F.tried(EIGHT) and not F.tried(None)
     for model in F.models():
         clip, logo = F.room(model)
         assert 0 < clip <= 500_000 and 0 < logo <= 150_000, model.id
         if not F.tried(model):
             assert clip <= 360_000 and logo <= 120_000, model.id
-    assert F.room(get_model("turing-8.8-usb")) == F.room(NINE)  # (as many pixels)
+    assert F.room(get_model("turing-5.2-usb")) == F.room(NINE)  # (as many pixels: 720 x 1280)
     assert F.room(get_model("turing-2.8-usb")) == (90_000, 30_000)  # (480 x 480: a quarter)
     assert F.kilobytes(593_754) == "580 KB" and F.kilobytes(100) == "1 KB"
 
@@ -368,40 +372,61 @@ def test_a_clip_is_made_as_finely_as_fits_its_room(monkeypatch):
     """At crf 20 where that fits the clip's room on the panel (360,000 bytes on the 9.2"), and
     never finer: at 17 Circuit's clip was 715 KB for 395, with nothing to see for it. Else
     coarser: first at the crf guessed from how much too large it was (a clip gets about 13 %
-    smaller with each step), then a step at a time until it is the finest that fits. Never
+    smaller with each step), then a step at a time until it is the finest whole step that
+    fits; then the three quarters of a step finer than that, made at once, and the finest of
+    them that fits (since 0.9.5: a whole step left up to 13 % of the room unused). Never
     coarser than 26, which would show: a look that needs more (Levels) is not made."""
     sizes, asked = {}, []
 
     def run(command, **kwargs):
-        crf = int(command[command.index("-crf") + 1])
+        crf = float(command[command.index("-crf") + 1])
         asked.append(crf)
         return SimpleNamespace(returncode=0, stdout=b"\x00" * sizes[crf], stderr=b"")
 
     def made(model, **now):
         sizes.clear()
-        sizes.update(now and {int(crf[1:]): size for crf, size in now.items()})
+        sizes.update({float(crf[1:].replace("_", ".")): size for crf, size in now.items()})
         asked.clear()
         return len(F.clip_h264(model, "ffmpeg", [Image.new("RGB", (16, 16))]))
+
+    def were(*whole, below):
+        """The whole steps asked in turn, then the quarters below the whole step that fit (made
+        at once: in any order)."""
+        quarters = sorted(below - quarter for quarter in F.CLIP_QUARTERS)
+        return asked[: len(whole)] == list(whole) and sorted(asked[len(whole) :]) == quarters
 
     monkeypatch.setattr(F.subprocess, "run", run)
     monkeypatch.setattr("libre_panel.devices.h264.slice_count", lambda data: 1)
     assert made(NINE, c20=352_645) == 352_645 and asked == [20]  # it fits: no finer
-    # (Aurora's sizes on the 9.2": 25 is the guess, and 24 is 716 bytes too large)
-    assert made(NINE, c20=652_208, c25=318_482, c24=360_716) == 318_482
-    assert asked == [20, 25, 24]
-    # the guess two steps too coarse: finer until one does not fit
-    assert made(NINE, c20=652_208, c25=300_000, c24=340_000, c23=359_000, c22=400_000) == 359_000
-    assert asked == [20, 25, 24, 23, 22]
-    # the guess too fine: coarser, a step at a time
-    assert made(NINE, c20=652_208, c25=380_000, c26=350_000) == 350_000 and asked == [20, 25, 26]
-    # (the next step after 20 is tried once, not again as "one finer")
-    assert made(NINE, c20=394_704, c21=319_625) == 319_625 and asked == [20, 21]
+    assert F.CLIP_QUARTERS == (0.75, 0.5, 0.25)
+    # (Aurora's sizes on the 9.2": 25 is the guess, 24 is 716 bytes too large, and 24.25 fits)
+    assert made(NINE, c20=652_208, c25=318_482, c24=360_716,
+                c24_25=349_368, c24_5=339_628, c24_75=327_997) == 349_368  # fmt: skip
+    assert were(20, 25, 24, below=25)
+    # (on end: 26 left 13 % of the room, 25.25 leaves 3 %)
+    assert made(NINE, c20=796_787, c26=313_126, c25=361_140,
+                c25_25=347_820, c25_5=335_368, c25_75=326_080) == 347_820  # fmt: skip
+    assert were(20, 26, 25, below=26)
+    # the guess two steps too coarse: finer until one does not fit; no quarter fits there
+    assert made(NINE, c20=652_208, c25=300_000, c24=340_000, c23=359_000, c22=400_000,
+                c22_25=390_000, c22_5=375_000, c22_75=364_000) == 359_000  # fmt: skip
+    assert were(20, 25, 24, 23, 22, below=23)
+    # the guess too fine: coarser, a step at a time; then the one quarter that fits
+    assert made(NINE, c20=652_208, c25=380_000, c26=350_000,
+                c25_25=372_000, c25_5=364_000, c25_75=357_000) == 357_000  # fmt: skip
+    assert were(20, 25, 26, below=26)
+    # (the next step after 20 is tried once, not again as "one finer"; Circuit's quarters)
+    assert made(NINE, c20=394_704, c21=319_625,
+                c20_25=374_619, c20_5=355_625, c20_75=337_121) == 355_625  # fmt: skip
+    assert were(20, 21, below=21)
     with pytest.raises(DeviceError) as refused:  # Levels' sizes: too much at the coarsest
         made(NINE, c20=1_084_528, c26=584_548)
     assert str(refused.value) == TOO_FINE and asked == [20, 26]
     assert made(TWELVE, c20=477_724) == 477_724 and asked == [20]  # the 12.3" has more room
-    assert made(TWELVE, c20=602_822, c22=410_260, c21=492_450) == 492_450
-    assert asked == [20, 22, 21]
+    # (Circuit's on the 12.3": not a quarter fits)
+    assert made(TWELVE, c20=602_822, c22=410_260, c21=492_450,
+                c20_25=571_152, c20_5=545_953, c20_75=521_002) == 492_450  # fmt: skip
+    assert were(20, 22, 21, below=21)
 
 
 # -- on the panel ------------------------------------------------------------------------------
@@ -606,36 +631,37 @@ def test_a_file_is_not_sent_where_both_would_be_more_than_the_panels_room():
 
 def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monkeypatch):
     """Start screens are written to the 9.2" and the 12.3", where it has been done and what
-    fits is known (issue 52). How much room another panel of the family has is not known: for
-    one, neither job opens the panel or makes anything, the lowest layer refuses too, and the
-    app says so before it pauses the themes. What the panel holds is still asked and the boot
-    logo still taken off; only the word in the environment switches writing on there."""
+    fits is known (issue 52), and to the 8.8", the 9.2"'s sibling. How much room another panel
+    of the family has is not known: for one (a 5.2" here), neither job opens the panel or makes
+    anything, the lowest layer refuses too, and the app says so before it pauses the themes.
+    What the panel holds is still asked and the boot logo still taken off; only the word in the
+    environment switches writing on there."""
     import threading
 
     from libre_panel.editor.server import make_server
 
-    eight = get_model("turing-8.8-usb")
+    other = get_model("turing-5.2-usb")
     for word in (None, "1", "true", "AT-MY-OWN-RISK"):
         monkeypatch.delenv(F.WRITES_ENV, raising=False)
         if word is not None:
             monkeypatch.setenv(F.WRITES_ENV, word)
-        assert not F.writes_on(eight) and not F.writes_on(None), word
-        assert F.writes_on(NINE) and F.writes_on(TWELVE), word
+        assert not F.writes_on(other) and not F.writes_on(None), word
+        assert F.writes_on(NINE) and F.writes_on(TWELVE) and F.writes_on(EIGHT), word
     monkeypatch.delenv(F.WRITES_ENV)
     written_to = {model.id for model in F.models() if F.writes_on(model)}
-    assert written_to == {"turing-9.2-usb", "turing-12.3-usb"} == set(F.ROOM)
+    assert written_to == {"turing-8.8-usb", "turing-9.2-usb", "turing-12.3-usb"} == set(F.ROOM)
     opened = []
 
     def opener(asked):
         opened.append(asked)
-        return panel, asked or eight
+        return panel, asked or other
 
     def no_ffmpeg():
         raise AssertionError("nothing is made for a clip that is not written")
 
     panel = FakePanel({F.BOOT_LOGO: b"logo", F.STANDBY_CLIP: b"clip"})
     screen = F.StartScreen(opener=opener, ffmpeg=no_ffmpeg)
-    for write in (lambda: screen.write_logo(eight), lambda: screen.write_clip(60, eight)):
+    for write in (lambda: screen.write_logo(other), lambda: screen.write_clip(60, other)):
         with pytest.raises(DeviceError) as refused:
             write()
         assert str(refused.value) == WRITES_OFF
@@ -647,15 +673,15 @@ def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monk
             write()
         assert str(refused.value) == WRITES_OFF
     assert opened == [None, None] and panel.sent == []
-    for files in (F.PanelFiles(panel, eight), F.PanelFiles(panel)):  # nor the layer under them
+    for files in (F.PanelFiles(panel, other), F.PanelFiles(panel)):  # nor the layer under them
         with pytest.raises(DeviceError) as refused:
             files.write(F.BOOT_LOGO, b"new logo")
         assert str(refused.value) == WRITES_OFF and panel.sent == []
     assert panel.files == {F.BOOT_LOGO: b"logo", F.STANDBY_CLIP: b"clip"}
     # what the panel holds, and its boot logo taken off: as ever
-    assert screen.state(eight)["boot_logo"] == 4
+    assert screen.state(other)["boot_logo"] == 4
     panel.sent.clear()
-    assert screen.remove_logo(eight) == {"model": eight.id, "boot_logo": 0}
+    assert screen.remove_logo(other) == {"model": other.id, "boot_logo": 0}
     assert panel.sent == [(42, F.BOOT_LOGO, 0), (98, F.BOOT_LOGO, 0)]
 
     class Controls:
@@ -679,13 +705,15 @@ def test_files_are_written_to_the_models_it_has_been_done_on(isolated_home, monk
         assert {name for name, model in told.items() if model["writes"]} == written_to
         assert told["turing-9.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
         assert told["turing-12.3-usb"]["room"] == {"clip": 500_000, "logo": 150_000}
-        assert told["turing-8.8-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
-        assert told["turing-9.2-usb"]["unfit"] == told["turing-12.3-usb"]["unfit"] == ["levels"]
-        assert told["turing-8.8-usb"]["unfit"] == []  # (not known for a model not written to)
+        assert told["turing-8.8-usb"]["room"] == told["turing-9.2-usb"]["room"]
+        assert told["turing-5.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
+        for model in written_to:
+            assert told[model]["unfit"] == ["levels"], model
+        assert told["turing-5.2-usb"]["unfit"] == []  # (not known for a model not written to)
         panel.sent.clear()
         for action in ("logo", "clip"):
             status, data = request(port, "POST", "/api/start-screen",
-                                   {"action": action, "model": eight.id})  # fmt: skip
+                                   {"action": action, "model": other.id})  # fmt: skip
             assert (status, data) == (409, {"error": WRITES_OFF, "paused": False}), action
         assert controls.acts == [] and panel.sent == []  # the themes were not paused for it
         status, data = request(port, "POST", "/api/start-screen", {"action": "state"})

@@ -2151,8 +2151,9 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       the one at hand (as config.toml names it, else as found on the bus), the looks; the
       app's pictures (`/picture`: the boot logo as a PNG, the standby clip as an animated
       WebP, drawn smaller, 16 kept) and the files as the panel takes them (`/file`: the
-      logo's JPEG from quality 95 down until it fits in 1 MiB, the clip's H.264 through ffmpeg
-      from crf 20 as panel_files.py steps it, one slice a picture, 4 kept); ffmpeg found as
+      logo's JPEG at the finest whole quality from 95 down that fits its room, the clip's
+      H.264 through ffmpeg from crf 20 as panel_files.py steps it, by whole steps and then
+      quarters, one slice a picture, 4 kept); ffmpeg found as
       devices/h264.find_ffmpeg finds it (the renderer's videos take it too). The test: both
       servers' answers, the same pixels, the clip's H.264 byte for byte. The writing to the
       panel (`POST /api/start-screen`: what is on it, the logo written and shown or taken

@@ -608,10 +608,11 @@ Jonsbo TF3's pump), in the look chosen on the card, which shows them as they wil
 
 They are drawn in floating point and made 8 bits only at the end, with a dither of a level's
 worth, so that a dark gradient has no bands and a glow no rings. The boot logo is a JPEG with
-every pixel's colour, at quality 95 or the next below that fits its room on the panel (92, 90,
-88, 85); the clip is made at crf 20, and coarser, a step at a time, where it must be to fit
-its room (up to 26); in full range on a panel whose decoder shows every stream so (the 9.2"
-and the 12.3", or `video_range = "full"`): in limited range their black was grey.
+every pixel's colour, at the finest whole quality from 95 down to 85 that fits its room on the
+panel; the clip is made at crf 20, and coarser, a step at a time, where it must be to fit its
+room (up to 26), then a quarter of a step finer again where that still fits; in full range on
+a panel whose decoder shows every stream so (the 9.2" and the 12.3", or
+`video_range = "full"`): in limited range their black was grey.
 
 **How much goes on a panel.** Both files go where the panel keeps its own settings. How much
 room there is cannot be asked, and one 9.2" was full at about 718,000 bytes of these files: a
@@ -623,23 +624,35 @@ panel gets what is known to fit:
 | Panel | Standby clip | Boot logo | Together at most | which is |
 |---|---|---|---|---|
 | 9.2" | 360,000 | 120,000 | 480,000 bytes | two thirds of the 718,000 that filled one |
+| 8.8" | 360,000 | 120,000 | 480,000 bytes | the 9.2"'s: its maker sells the two as one |
 | 12.3" | 500,000 | 150,000 | 650,000 bytes | four fifths of the 817,587 one has held for weeks |
 
-The looks come to 401,000 to 454,000 bytes on the 9.2" and to 537,000 to 634,000 on the 12.3",
-whichever way the panel is mounted (Dark: 59,000 and 96,000), and look as they did: against
-the files of 0.9.0 the clips are at most 1.8 dB apart (at 49.7 dB or better) and the boot
-logos at most 2.5 dB (at 45.5 dB or better). One clip is the exception: Aurora's on a panel
-mounted on end takes the coarsest step there is, 46.8 dB on the 9.2" where 0.9.0's had 49.6
-(47.4 and 49.2 on the 12.3"), and its finest rays are softer. Nothing is made coarser than
-that. **Levels**, whose thousands of small lights took 1.4 MB on a 9.2", is therefore not
-written to either: chosen, the card says so, and gives no file of it.
+The looks come to 434,000 to 476,000 bytes on the 9.2" and to 606,000 to 642,000 on the 12.3",
+on a panel that lies and on one on end (Dark: 59,000 and 96,000; turned round for a panel
+mounted upside down, each is made the same way, in the same room), and look as they did:
+against the files of 0.9.0 the clips are at most 1.7 dB apart (at 49.9 dB or better) and the
+boot logos at most 2.1 dB (at 45.7 dB or better). One clip is the exception: Aurora's on a
+panel mounted on end, 47.2 dB on the 9.2" where 0.9.0's had 49.6 (47.75 and 49.2 on the 12.3"),
+and its finest rays are a little softer. Nothing is made coarser than crf 26 and quality 85.
+**Levels**, whose thousands of small lights took 1.4 MB on a 9.2", is therefore not written to
+either: chosen, the card says so, and gives no file of it.
 
-**Only the 9.2" and the 12.3" are written to**, the models it has been done on. For the
+Since 0.9.5 the files come closer to their room: every whole JPEG quality is tried, not only
+95, 92, 90, 88, and the clip's crf goes on in quarter steps where a whole step left room. That
+made the default look's boot logo 94 where it was 92 (0.7 to 0.8 dB finer, on either panel),
+eight more logos 0.2 to 0.6 dB finer, and thirteen of the sixteen clips that were not at
+crf 20 up to 0.4 dB finer (Aurora's on end 47.2 dB on the 9.2", where 0.9.4's had 46.8). A
+clip takes a few seconds more to write for it: the three quarters are made at once.
+
+**The 9.2", the 12.3" and the 8.8" are written to**: the first two are the models it has been
+done on, and the 8.8" gets the 9.2"'s room, since its maker sells the two as one, with the same
+framebuffer (480×1920), and its firmware is where the panel's own start screen was first read.
+0.9.5's candidate is the first to write to one: how it went is welcome in an issue. For the
 family's other panels *Put on the panel* is greyed out, since how much room they have is not
-known; the card still shows both pictures, downloads them, says what is on the panel and
-takes the boot logo off. (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment
-switches writing on there for who looks into it on a panel of their own: the files are then
-made for the 9.2"'s room, by the pixels.)
+known; the card still shows both pictures, downloads them, says what is on the panel and takes
+the boot logo off. (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment switches
+writing on there for who looks into it on a panel of their own: the files are then made for the
+9.2"'s room, by the pixels.)
 
 - **Put on the panel** writes one, after a question: the panel's themes pause, the panel
   shows what was written (the logo at once, the clip playing), and *Show the themes again*

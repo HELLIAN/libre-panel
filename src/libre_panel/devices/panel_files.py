@@ -36,7 +36,8 @@ since 0.9.4 (:data:`ROOM`, :meth:`PanelFiles.write`):
 - after it, the size is asked again. A file the panel did not take (it has what it had) is
   said so, and nothing more is sent. One that ended early is taken off again at once (42), so
   that no panel is left full. Nothing is ever taken away in order to write it a second time;
-- only the 9.2" and the 12.3" are written to, the models it has been done on; another needs
+- only the 9.2" and the 12.3" are written to, the models it has been done on, and the 8.8",
+  which its maker sells as the 9.2"'s sibling, with its room; another needs
   ``LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`` in the environment.
 """
 
@@ -49,6 +50,7 @@ import struct
 import subprocess
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -83,13 +85,20 @@ LIST_PIECES = 20
 PIECE = 512
 # the boot logo's JPEG: its quality in turn until the file fits its room, every pixel with its
 # own colour (a colour for four cost more than it saved: on Circuit's traces 38.7 dB where the
-# same bytes gave 42.1 so). A look that would need less than the last would show it: not made
-JPEG_STEPS = (95, 92, 90, 88, 85)
+# same bytes gave 42.1 so). Every whole quality from 95 down, since 0.9.5: with steps of 92, 90,
+# 88 the default look's logo was 92 on the 9.2" in 69 % of its room, and is 94 now in 91 %
+# (0.75 dB finer). A look that would need less than the last would show it: not made
+JPEG_STEPS = tuple(range(95, 84, -1))
 # the standby clip's x264 crf: the finest first, then coarser until the clip fits its room, up to
 # the coarsest that does not show; a look that needs more is not made. (Finer than CLIP_CRF only
 # made the file larger: Circuit's clip on the 9.2" was 715 KB at crf 17 and is 395 at 20, 52.8
 # and 51.4 dB.)
 CLIP_CRF, CLIP_CRF_MAX = 20, 26
+# below a whole step that fits, where the next finer one does not: these quarters of a step,
+# made at once (each encoder has one thread), and the finest that fits is the clip. A whole
+# step left up to 13 % of the room unused: Aurora's clip on end on the 9.2" was 313,126 bytes
+# at 26 (46.8 dB) and is 347,820 at 25.25 (47.2), where 25 is 361,140. (Since 0.9.5)
+CLIP_QUARTERS = (0.75, 0.5, 0.25)
 # how much smaller a clip gets with each step of the crf, in thousandths (0.85 to 0.89 over
 # the looks): the first guess at the crf that fits
 CLIP_STEP = 870
@@ -101,7 +110,12 @@ CLIP_STEP = 870
 # stay well below what a panel of the model is known to hold: on the 9.2" two thirds of those
 # 718,000; on the 12.3" four fifths of the 817,587 one has held for weeks. (The files of
 # 0.7.9 to 0.9.1 were up to 875,000 bytes for a look on a 9.2" and 1,150,000 on a 12.3".)
+# The 8.8" gets the 9.2"'s: its maker sells the two as one, with the same framebuffer
+# (480 x 1920), and the panel's own start screen was first read from the 8.8"'s firmware
+# (SPUR II); written to an 8.8" in 0.9.5's candidate first, by an owner. The two together are
+# what counts: the clip may take what its look's logo leaves (clip_room).
 ROOM: dict[str, tuple[int, int]] = {
+    "turing-8.8-usb": (360_000, 120_000),
     "turing-9.2-usb": (360_000, 120_000),
     "turing-12.3-usb": (500_000, 150_000),
 }
@@ -109,6 +123,7 @@ ROOM: dict[str, tuple[int, int]] = {
 # card says so and offers no writing. Levels is thousands of small lights: its boot logo alone
 # is 491 KB on the 9.2" as finely as the others are made, and its clip 877.
 UNFIT: dict[str, tuple[str, ...]] = {
+    "turing-8.8-usb": ("levels",),
     "turing-9.2-usb": ("levels",),
     "turing-12.3-usb": ("levels",),
 }
@@ -134,16 +149,17 @@ CMD_SAVE_SETTINGS = 125
 START_WITH_CLIP = 2  # the settings' start mode: play the clip they name
 NEVER = frozenset({11, 12, 13})  # restart, halt, and the other save of the settings
 
-# Files are written to the models it has been done on: the 9.2" and the 12.3" (ROOM). How much
-# room another panel of the family has is not known, so nothing is written to one. Who looks
-# into it on a panel of their own sets this in the environment, at their own risk: the files
-# are then made for the 9.2"'s room, by the pixels.
+# Files are written to the models it has been done on: the 9.2" and the 12.3", and the 8.8" as
+# the 9.2" (ROOM). How much room another panel of the family has is not known, so nothing is
+# written to one. Who looks into it on a panel of their own sets this in the environment, at
+# their own risk: the files are then made for the 9.2"'s room, by the pixels.
 WRITES_ENV = "LIBRE_PANEL_PANEL_WRITES"
 WRITES_WORD = "at-my-own-risk"
 
 
 def tried(model: PanelModel | None) -> bool:
-    """Whether start screens have been written to panels of ``model``."""
+    """Whether start screens are written to panels of ``model`` by what is known of its room
+    (:data:`ROOM`: the models it has been done on, and the 8.8" as the 9.2")."""
     return model is not None and model.id in ROOM
 
 
@@ -171,8 +187,8 @@ def writes_on(model: PanelModel | None = None) -> bool:
 def writes_off() -> str:
     """Why nothing is written to a panel of another model, as the app says it."""
     return t(
-        "Writing to this panel is switched off: Libre Panel has written start screens to the "
-        '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+        'Writing to this panel is switched off: Libre Panel writes start screens to the 8.8", '
+        'the 9.2" and the 12.3" only, and how much room another panel has for them is not known.'
     )
 
 
@@ -286,7 +302,7 @@ def logo_jpeg(
     raise DeviceError(too_fine())
 
 
-def clip_command(ffmpeg: str, size: tuple[int, int], crf: int = CLIP_CRF,
+def clip_command(ffmpeg: str, size: tuple[int, int], crf: float = CLIP_CRF,
                  full: bool = False) -> list[str]:  # fmt: skip
     """ffmpeg for the standby clip, as the panel's decoder plays it: one slice a picture, a
     sequence (headers and a keyframe) every 11 pictures, baseline, no B pictures; in full range
@@ -302,7 +318,7 @@ def clip_command(ffmpeg: str, size: tuple[int, int], crf: int = CLIP_CRF,
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
         "-framerate", str(bootscreen.CLIP_FPS), "-i", "-", "-an", "-vf", convert,
         "-c:v", "libx264", "-profile:v", "baseline", "-preset", "slow", "-threads", "1",
-        "-crf", str(crf), *colour_tags(full),
+        "-crf", f"{crf:g}", *colour_tags(full),
         "-x264-params",
         "sliced-threads=0:bframes=0:scenecut=0:keyint=11:min-keyint=11:repeat-headers=1"
         ":aq-mode=3",
@@ -321,7 +337,8 @@ def clip_h264(
     """The standby clip for ``model`` (upright with ``orientation`` "portrait", in the look
     ``design``, in full range with ``full``): its pictures turned into the framebuffer and
     encoded as finely as fits the clip's room on the model (:func:`room`): at crf
-    :data:`CLIP_CRF`, coarser where that is too much, up to :data:`CLIP_CRF_MAX`. A clip that
+    :data:`CLIP_CRF`, coarser where that is too much, up to :data:`CLIP_CRF_MAX`, and then a
+    quarter of a step at a time finer where that still fits (:data:`CLIP_QUARTERS`). A clip that
     would have to be coarser is not made."""
     from libre_panel.devices.h264 import slice_count
 
@@ -329,7 +346,7 @@ def clip_h264(
     native = [to_native(frame).convert("RGB") for frame in pictures]
     raw = b"".join(frame.tobytes() for frame in native)
 
-    def encoded(crf: int) -> bytes:
+    def encoded(crf: float) -> bytes:
         try:
             done = subprocess.run(
                 clip_command(ffmpeg, native[0].size, crf, full), input=raw,
@@ -361,6 +378,11 @@ def clip_h264(
                 if len(finer) > most:
                     break
                 crf, data = crf - 1, finer
+        # (the whole step finer is too large) the finest quarter between the two that fits
+        tried = [crf - quarter for quarter in CLIP_QUARTERS]
+        with ThreadPoolExecutor(len(tried)) as pool:
+            made = list(pool.map(encoded, tried))
+        data = next((finer for finer in made if len(finer) <= most), data)
     if slice_count(data) != len(native):  # one slice a picture, or the panel shows nothing
         raise DeviceError("the standby clip came out with more than one slice a picture")
     return data

@@ -2995,7 +2995,7 @@
     "Icon in the tray": "托盘图标",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "其菜单显示面板状态、切换主题并退出 Libre Panel。关闭时：从开始菜单或应用列表打开 Libre Panel。",
     "Libre Panel runs in the background.": "Libre Panel 在后台运行。",
-    "Writing to this panel is switched off: Libre Panel has written start screens to the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "已关闭向此面板写入：Libre Panel 只在 9.2\" 和 12.3\" 面板上写入过启动画面，其他面板有多少空间可用尚不清楚。",
+    "Writing to this panel is switched off: Libre Panel writes start screens to the 8.8\", the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "已关闭向此面板写入：Libre Panel 只向 8.8\"、9.2\" 和 12.3\" 面板写入启动画面，其他面板有多少空间可用尚不清楚。",
     "This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.": "此外观的细节超出了 Libre Panel 在此面板上使用的空间，也不会降低画质写入：请选择其他外观。",
     "Not written: with the standby clip that is on the panel ({size}), the boot logo would be more than Libre Panel puts on this panel. Write the standby clip again first: it becomes smaller.": "未写入：加上面板上现有的待机短片（{size}），开机 Logo 会超出 Libre Panel 在此面板上放置的容量。请先重新写入待机短片：它会变小。",
     "Not written: with the boot logo that is on the panel ({size}), the standby clip would be more than Libre Panel puts on this panel. Write the boot logo again first: it becomes smaller.": "未写入：加上面板上现有的开机 Logo（{size}），待机短片会超出 Libre Panel 在此面板上放置的容量。请先重新写入开机 Logo：它会变小。",

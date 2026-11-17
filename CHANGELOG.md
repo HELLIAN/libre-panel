@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.5rc1 — 2026-11-17
+
+The candidate for 0.9.5: start screens for the 8.8", and finer start screens in the same room
+on every panel. It is run on a 9.2" and a 12.3" before it is 0.9.5, and goes to an 8.8" where
+an owner of one tries it.
+
+**Changed**
+- **Start screens on the 8.8"**, the 9.2"'s sibling: its maker sells the two as one, with the
+  same framebuffer (480×1920), and the panel's own start screen was first read from the
+  8.8"'s firmware. It gets the 9.2"'s room, 480,000 bytes for both files, and every check
+  0.9.4 brought. This candidate is the first to write to one: if you have an 8.8", how it went
+  is welcome in an issue.
+- **Finer start screens, in the same room.** The boot logo now tries every whole JPEG quality
+  from 95 down, not only 95, 92, 90 and 88: the default look's logo is 94 where it was 92,
+  0.7 to 0.8 dB finer on either panel, and eight more logos are 0.2 to 0.6 dB finer. The
+  clip's crf goes on in quarter steps where a whole step left room (up to 13 % of it):
+  thirteen of the sixteen clips that were not at crf 20 are up to 0.4 dB finer, among them
+  Aurora's on a panel mounted on end, 47.2 dB on the 9.2" where 0.9.4's had 46.8 (47.75 and
+  47.4 on the 12.3"). No file is coarser than in 0.9.4, and none goes past its room: the
+  quarters are tried on the encoder at hand. A clip takes a few seconds more to write: its
+  three quarters are made at once.
+- **The news on Start** offer to write the start screen upright again only where the panel's
+  start screen is written (they asked owners of the family's other panels too).
+- **Issue 52, concluded**: what the rescue command found on that 9.2" is in the
+  [protocol notes](docs/protocol/turzx-usb.md#what-goes-on-a-panel). In ten minutes it came
+  81 times and its port took nothing, where a sound 9.2" takes the first packet 0.32 s after
+  it comes: its program never reads its USB port before it starts again, so nothing a PC
+  sends reaches it. The guide says how to read the command's last line when that is so.
+
 ## 0.9.4 — 2026-11-17
 
 Start screens are written to the panel again, on the 9.2" and the 12.3", into a room that is

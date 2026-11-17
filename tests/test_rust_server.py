@@ -3354,22 +3354,22 @@ def _start_screen_of(program: Any) -> tuple[Any, Any]:
 
 
 def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> None:
-    """Issue 52: start screens are written to the 9.2" and the 12.3", where what fits is known.
-    For another panel of the family (an 8.8" here) the boot logo and the standby clip are
-    refused in panel_files.py's words before the panel is opened. The card is told which
-    models are written to and how large their files are at most; what the panel holds and the
-    boot logo taken off stay."""
+    """Issue 52: start screens are written to the 9.2" and the 12.3", where what fits is known,
+    and to the 8.8", the 9.2"'s sibling. For another panel of the family (a 5.2" here, as many
+    pixels as the 9.2") the boot logo and the standby clip are refused in panel_files.py's
+    words before the panel is opened. The card is told which models are written to and how
+    large their files are at most; what the panel holds and the boot logo taken off stay."""
     from libre_panel.devices import panel_files
 
     words = (
-        "Writing to this panel is switched off: Libre Panel has written start screens to the "
-        '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+        'Writing to this panel is switched off: Libre Panel writes start screens to the 8.8", '
+        'the 9.2" and the 12.3" only, and how much room another panel has for them is not known.'
     )
-    rig = Rig(tmp_path, pid=0x0088)
+    rig = Rig(tmp_path, pid=0x0050)
     try:
         rig.config(
             'theme = "slate"\nlanguage = "en"\n[device]\ndriver = "turzx"\n'
-            'model = "turing-8.8-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
+            'model = "turing-5.2-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
         )
         rig.fake.files = {panel_files.BOOT_LOGO: b"logo", panel_files.STANDBY_CLIP: b"clip"}
         env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
@@ -3382,18 +3382,20 @@ def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> 
                 post, get = _start_screen_of(program)
                 told = {m["id"]: m for m in json.loads(get("/api/start-screen"))["models"]}
                 written_to = {name for name, model in told.items() if model["writes"]}
-                assert written_to == {"turing-9.2-usb", "turing-12.3-usb"}
+                assert written_to == {"turing-8.8-usb", "turing-9.2-usb", "turing-12.3-usb"}
                 assert told["turing-9.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
                 assert told["turing-12.3-usb"]["room"] == {"clip": 500_000, "logo": 150_000}
-                assert told["turing-9.2-usb"]["unfit"] == ["levels"]
-                assert told["turing-8.8-usb"]["unfit"] == []
+                assert told["turing-8.8-usb"]["room"] == told["turing-9.2-usb"]["room"]
+                for model in written_to:
+                    assert told[model]["unfit"] == ["levels"], model
+                assert told["turing-5.2-usb"]["unfit"] == []
                 for action in ("logo", "clip"):
-                    assert post({"action": action, "model": "turing-8.8-usb"}) == (
+                    assert post({"action": action, "model": "turing-5.2-usb"}) == (
                         "409", {"error": words, "paused": False}), action  # fmt: skip
                 assert rig.fake.commands == []  # (the panel was not even opened)
-                status, said = post({"action": "state", "model": "turing-8.8-usb"})
+                status, said = post({"action": "state", "model": "turing-5.2-usb"})
                 assert status == "200" and said["boot_logo"] == 4 and said["standby_clip"] == 4
-                assert said["model"] == "turing-8.8-usb"
+                assert said["model"] == "turing-5.2-usb"
                 assert said["room"] == {"clip": 360_000, "logo": 120_000}  # (as many pixels)
                 status, said = post({"action": "remove-logo"})
                 assert status == "200" and said["boot_logo"] == 0, said

@@ -77,7 +77,7 @@ let seen = {};
 
 /** The news of 0.9: Libre Panel written anew as one small program (half the load), the icon in
  * the notification area (a switch now, off at first), and, where the panel is mounted upside
- * down and has a start screen, that it can be written upright. */
+ * down and its start screen is written to it, that it can be written upright. */
 export function WhatsNew() {
   const config = useConfig();
   const [looked, setLooked] = useState(seen);
@@ -86,7 +86,7 @@ export function WhatsNew() {
     if (!store.get().settings) loadSettings();
     endpoints
       .startScreen()
-      .then((data) => setStartScreen(Boolean(data.model)))
+      .then((data) => setStartScreen(Boolean(data.model && data.models?.find((m) => m.id === data.model)?.writes)))
       .catch(() => setStartScreen(false));
   }, []);
   if (!config) return null;
