@@ -1520,7 +1520,6 @@
     "It replaces the clip the panel plays when the PC starts ({name}); the one there now cannot be read back first. The panel is set to start with it.": "它会替换 PC 启动时面板播放的短片（{name}）；当前短片无法先读回。面板会被设置为用它启动。",
     "It shows when the panel is switched on. The factory logo is not touched: \"Factory logo again\" brings it back.": "它在面板通电时显示。出厂 Logo 不会被改动：选择“恢复出厂 Logo”即可恢复。",
     "Libre Panel's boot logo is taken off the panel.": "Libre Panel 的开机 Logo 已从面板移除。",
-    "Measured on the 9.2\"; this panel has the same firmware, but writing to it has not been tried yet.": "在 9.2 英寸面板上实测；此面板使用相同固件，但尚未尝试向其写入。",
     "No TURZX USB panel found": "未找到 TURZX USB 面板",
     "Put on the panel": "写入面板",
     "Show the themes again": "重新显示主题",
@@ -2996,7 +2995,15 @@
     "Icon in the tray": "托盘图标",
     "Its menu shows how the panel is doing, switches themes and quits Libre Panel. Off: Libre Panel opens from the Start menu or your list of apps.": "其菜单显示面板状态、切换主题并退出 Libre Panel。关闭时：从开始菜单或应用列表打开 Libre Panel。",
     "Libre Panel runs in the background.": "Libre Panel 在后台运行。",
-    "Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.": "此版本已关闭向面板写入。一台 9.2\" 面板的启动画面存储空间用尽，此后不断重启；在其他面板上，同样的文件一直写入正常。待 Libre Panel 能判断一台面板可容纳多少后，将恢复写入。"
+    "Writing to this panel is switched off: Libre Panel has written start screens to the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.": "已关闭向此面板写入：Libre Panel 只在 9.2\" 和 12.3\" 面板上写入过启动画面，其他面板有多少空间可用尚不清楚。",
+    "This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.": "此外观的细节超出了 Libre Panel 在此面板上使用的空间，也不会降低画质写入：请选择其他外观。",
+    "Not written: with the standby clip that is on the panel ({size}), the boot logo would be more than Libre Panel puts on this panel. Write the standby clip again first: it becomes smaller.": "未写入：加上面板上现有的待机短片（{size}），开机 Logo 会超出 Libre Panel 在此面板上放置的容量。请先重新写入待机短片：它会变小。",
+    "Not written: with the boot logo that is on the panel ({size}), the standby clip would be more than Libre Panel puts on this panel. Write the boot logo again first: it becomes smaller.": "未写入：加上面板上现有的开机 Logo（{size}），待机短片会超出 Libre Panel 在此面板上放置的容量。请先重新写入开机 Logo：它会变小。",
+    "The panel did not take the file: it has what it had before, and nothing was changed. One panel did that when it had no room left.": "面板没有接收该文件：面板上仍是原来的内容，没有任何更改。曾有一台面板在空间用尽时出现这种情况。",
+    "The boot logo did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full; the factory logo shows at the next power-on.": "开机 Logo 放不下：面板只接收了 {size} 字节中的 {written} 字节。已将其重新移除，以免面板处于写满状态；出厂 Logo 将在下次通电时显示。",
+    "The standby clip did not fit: the panel took {written} of {size} bytes. It was taken off again, so that the panel is not left full: the panel has no standby clip now. Dark is the smallest look.": "待机短片放不下：面板只接收了 {size} 字节中的 {written} 字节。已将其重新移除，以免面板处于写满状态：面板现在没有待机短片。暗色是最小的外观。",
+    "{file} did not fit (the panel took {written} of {size} bytes) and could not be taken off again: {why}": "{file} 放不下（面板只接收了 {size} 字节中的 {written} 字节），并且无法重新移除：{why}",
+    "The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.": "面板上的文件比 Libre Panel 现在写入的更大。可以保留；重新写入后会变小。"
   },
   "fields": {
     "night": "夜晚",

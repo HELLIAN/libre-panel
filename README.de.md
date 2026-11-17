@@ -226,14 +226,17 @@ gemischt; beim Stoppen kommt das Theme zurück.
 
 TURZX-USB-Panels zeigen beim Einschalten ein eigenes Logo und spielen beim Start des PCs einen
 Clip. Libre Panel zeichnet beides im Look deiner Wahl (dem eigenen, Polarlicht, Puls, Platine,
-Nacht, Pegel oder Dunkel), passend zur Größe deines Panels und so fein, wie das Panel es zeigen
-kann, und gibt dir die Dateien dazu.
+Nacht, Pegel oder Dunkel), passend zur Größe deines Panels, und gibt dir die Dateien dazu.
 
-**Das Aufspielen aufs Panel ist seit 0.9.2 abgeschaltet.** Einem 9,2"-Panel ging der Platz für
-seinen Startbildschirm aus, und es startet seitdem immer wieder neu; auf anderen Panels wurden
-dieselben Dateien ohne Probleme geschrieben. Das Schreiben kommt zurück, wenn Libre Panel weiß,
-wie viel auf ein Panel passt. Was auf einem Panel liegt, lässt sich weiter abfragen, und ein
-Bootlogo wieder entfernen: dann zeigt das Panel sein Werkslogo.
+**Auf dem 9,2" und dem 12,3" spielt Libre Panel sie auf das Panel**, auf einen Klick unter
+*Einstellungen → Panel → Startbildschirm*. Die Dateien werden für einen Platz gemacht, der
+sicher da ist (höchstens 480.000 Bytes auf dem 9,2", 650.000 auf dem 12,3"), das Panel wird
+vor und nach jedem Schreiben gefragt, was auf ihm liegt, und nichts wird gelöscht, um Platz zu
+schaffen. Genau das fehlte 0.9.1: Einem 9,2"-Panel ging der Platz für seinen Startbildschirm
+aus, und es startet seitdem immer wieder neu. Pegel hat mehr Details, als fein in diesen Platz
+passen, und wird nicht geschrieben; für die anderen Panels der Familie bleibt das Schreiben
+aus, weil nicht bekannt ist, wie viel Platz sie haben. Was auf einem Panel liegt, lässt sich
+immer abfragen, und ein Bootlogo wieder entfernen: dann zeigt das Panel sein Werkslogo.
 
 ### Jede Größe, rund und hochkant
 
@@ -463,7 +466,7 @@ Administratorrechte.
 ### Mit Python
 
 ```bash
-pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.3"
+pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.4"
 libre-panel tray                    # die Hintergrund-App mit Tray-Symbol; öffnet ihr Fenster
 libre-panel autostart enable        # bei jeder Anmeldung starten
 ```
@@ -587,9 +590,9 @@ Hersteller-App zeigt. Auf dem 9,2" schaltet er sich dann von selbst ein; auf den
 TURZX-USB-Panels stellst du ihn zum Ausprobieren auf *an*. Mit einer Python-Installation
 installierst du ffmpeg selbst (Windows: `winget install ffmpeg`; Linux: das Paket deiner
 Distribution) oder nennst es an derselben Stelle. Der Videomodus speichert nichts auf dem
-Panel, und seit 0.9.2 schreibt Libre Panel überhaupt keine Datei mehr auf ein Panel
-([warum](#der-eigene-startbildschirm-des-panels)). Die seriellen Panels bekommen Standbilder,
-von denen nur die geänderten Teile gesendet werden
+Panel: Das Einzige, was Libre Panel dort je speichert, ist ein Startbildschirm, auf deinen
+Klick ([mehr](#der-eigene-startbildschirm-des-panels)). Die seriellen Panels bekommen
+Standbilder, von denen nur die geänderten Teile gesendet werden
 ([Einzelheiten](docs/CONFIGURATION.md#video)).
 </details>
 
@@ -618,10 +621,10 @@ bekannter Schadsoftware, und solche Vermutungen treffen neue Programme ohne Sign
 von Libre Panel noch sind. So gehst du sicher, dass deine Datei die hier gebaute ist:
 
 - **Ihre SHA-256** ist die in `SHA256SUMS` auf der Seite des Releases. In der PowerShell:
-  `Get-FileHash .\libre-panel-0.9.3-windows-x64-setup.exe` (Linux: `sha256sum -c SHA256SUMS`).
+  `Get-FileHash .\libre-panel-0.9.4-windows-x64-setup.exe` (Linux: `sha256sum -c SHA256SUMS`).
 - **Wo sie gebaut wurde:** Ab 0.8.0 bestätigt GitHub mit seiner Signatur für jeden Download,
   dass der Release-Workflow dieses Repositorys ihn gebaut hat, und aus welchem Commit:
-  `gh attestation verify libre-panel-0.9.3-windows-x64-setup.exe --repo syntensa/libre-panel`.
+  `gh attestation verify libre-panel-0.9.4-windows-x64-setup.exe --repo syntensa/libre-panel`.
 
 Wenn sie es ist, erlaube sie unter *Windows-Sicherheit → Viren- & Bedrohungsschutz →
 Schutzverlauf* (*Aktionen → Auf Gerät zulassen*), starte das Setup noch einmal und melde die
@@ -639,11 +642,13 @@ Downloads ist geplant.
 <br>
 
 Für Themes sendet Libre Panel nur Anzeigebefehle: Bilder, Helligkeit, Video. Die Firmware
-fasst es nie an. Das Einzige, was es je auf einem Panel gespeichert hat, war ein
-Startbildschirm, auf einen Klick, und das hat einmal geschadet: Ein 9,2"-Panel startet immer
-wieder neu, seit sein Startbildschirm mit 0.9.1 geschrieben wurde. Seit 0.9.2 schreibt Libre
-Panel keine Datei mehr auf ein Panel ([mehr](#der-eigene-startbildschirm-des-panels)).
-Firmware-Updates bleiben Sache der Hersteller-App.
+fasst es nie an. Das Einzige, was es je auf einem Panel speichert, ist ein Startbildschirm,
+auf einen Klick, und das hat einmal geschadet: Ein 9,2"-Panel startet immer wieder neu, seit
+sein Startbildschirm mit 0.9.1 geschrieben wurde, das eine Datei auf ein Panel zwang, auf dem
+kein Platz mehr war. Seit 0.9.4 schreibt Libre Panel nur auf das 9,2" und das 12,3", Dateien
+für einen Platz, der sicher da ist, und prüft jedes Schreiben davor und danach
+([mehr](#der-eigene-startbildschirm-des-panels)). Firmware-Updates bleiben Sache der
+Hersteller-App.
 </details>
 
 <details>

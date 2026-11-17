@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.9.4 — 2026-11-17
+
+Start screens are written to the panel again, on the 9.2" and the 12.3", into a room that is
+known to be there, and it was run on both panels before this release. Coming from 0.8?
+Everything 0.9 brought follows below: a third less memory, up to 38 % less processor and a
+quicker start, with the same pictures on the panel, pixel for pixel.
+
+**Changed**
+- **Start screens are written again, to the 9.2" and the 12.3"** (off since 0.9.2,
+  [#52](https://github.com/syntensa/libre-panel/issues/52)). The 9.2" that has kept restarting
+  had run out of room for these files: it held about 718,000 bytes of them, and since 0.7.9
+  Libre Panel made them "as fine as fits in 1 MiB", which is the most the command takes and
+  not what a panel holds: 615,000 to 875,000 bytes for most looks on a 9.2" (Circuit's clip
+  alone 715,000 at a fineness nobody sees; one step coarser it is 395,000), 643,000 to
+  1,150,000 on a 12.3". Now:
+  - **A panel gets what is known to fit.** The clip and the logo together are at most 480,000
+    bytes on the 9.2", two thirds of what that panel held, and 650,000 on the 12.3", four
+    fifths of what one has held for weeks. The looks come to 401,000 to 454,000 and 537,000
+    to 634,000 bytes, whichever way the panel is mounted (Dark: 59,000 and 96,000).
+  - **They look as they did, with one exception.** Against 0.9.0's files, measured for a
+    panel that lies and for one on end, the clips are at most 1.8 dB apart, at 49.7 dB or
+    better, and the boot logos at most 2.5 dB, at 45.5 dB or better. Side by side, their dark
+    areas brightened fourfold, the old and the new are hard to tell apart (the faintest stars
+    of Night are a little softer). The exception is Aurora's clip on a panel mounted on end,
+    which takes the coarsest step there is: 46.8 dB on the 9.2" where 0.9.0's had 49.6, and
+    47.4 on the 12.3" (49.2). Its finest rays are softer; 0.9.0's file for it was 797,000
+    bytes. Nothing is made coarser than that. **Levels**, whose thousands of small lights
+    took 1.4 MB on a 9.2", is therefore not written; the card says so before you ask for it.
+  - **Asked before.** The sizes of both files on the panel are read first. A file larger than
+    the one it replaces is not sent where both would be more than that room: a panel that
+    holds a 700 KB clip of 0.9.0 gets its clip anew, smaller, before a logo goes beside it.
+  - **Checked after.** A file the panel did not take is said to be not taken, also where the
+    old one has the new one's size: the time it took is looked at (that 9.2" wrote 700 KB in
+    1.2 to 2.9 s and turned them down in 30 to 50 ms; five times a clip was called written
+    that was not). Nothing more is sent then: no clip played, no setting saved.
+  - **Never left full.** A file that ends early is taken off again at once, and said. Nothing
+    is ever deleted in order to write it a second time: that was 0.9.1.
+  - **The family's other panels stay off**: how much room they have is not known.
+  - **Run on both panels first**, as
+    [what a panel keeps](docs/RELEASING.md#what-a-panel-keeps-tried-on-the-panel-first) now
+    has to be: on a 9.2" (firmware `turzx_0001_0015`, mounted on end) and a 12.3"
+    (`turzx_0001_0026`), on Windows. Clips and boot logos went over larger files, smaller
+    ones, ones of their own size and none; the boot logo was taken off and written again;
+    both panels were unplugged and started with what was written. Ten writes, and after each
+    the panel said the size that was sent. The panels answered after 48 ms to 1.8 s: the
+    quickest ran at under a quarter of the rate from which an answer counts as no write, and
+    the two that went over a file of their own size were taken as written. What a sound panel
+    cannot show was not tried on one: a file that ends early, and a panel that takes none.
+- ***What is on the panel*** says when its files are larger than Libre Panel writes now (files
+  of 0.7.9 to 0.9.1): they can stay, and written again they become smaller.
+- **A sound 9.2" answered 0.42 s after it came**, measured again with 0.9.3, which sends the
+  sync anew 100 ms after one that came back: the port took the first at 0.32 s and sent it
+  back unread, and the second was answered. The 0.66 s in 0.9.3's notes came from 0.9.2,
+  whose second sync only went out at 0.61 s. So a sound panel loses what it is sent in about
+  its first third of a second, not two thirds, and fewer still of the thirteen syncs the
+  panel of issue 52 left unanswered can be put down to that.
+
 ## 0.9.3 — 2026-11-16
 
 A hotfix for 0.9.2: `libre-panel start-screen`, the command for a panel that keeps

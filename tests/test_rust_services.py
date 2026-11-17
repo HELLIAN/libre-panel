@@ -1633,6 +1633,8 @@ def test_the_computers_programs_are_those_machine_py_names(tmp_path: Any) -> Non
     import sys
     import time
 
+    import psutil
+
     from libre_panel.services import machine
 
     spawned = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])]
@@ -1686,7 +1688,13 @@ def test_the_computers_programs_are_those_machine_py_names(tmp_path: Any) -> Non
     try:
         time.sleep(0.5)  # (the programs are there, under their own names)
         pids = [os.getpid(), *(child.pid for child in spawned), 2**30]
+        # (psutil keeps the program it read of a process for as long as that lives: one that
+        # started another in its place, or ended, is told as it was. Both looks are fresh.)
+        fresh = getattr(psutil.process_iter, "cache_clear", lambda: None)
+        fresh()
+        before = {program.pid: program for program in machine.Machine().programs()}
         [ours] = run([{"op": "machine", "pids": pids, "microphones": microphones}])
+        fresh()
         theirs = machine.Machine()
         want = {program.pid: program for program in theirs.programs()}
         running = [theirs.running_s(pid) for pid in pids]
@@ -1700,9 +1708,21 @@ def test_the_computers_programs_are_those_machine_py_names(tmp_path: Any) -> Non
     assert [pid for _, pid, _ in ours["programs"]] == sorted(got)
     for pid in pids[:-1]:
         assert got[pid] == (want[pid].name, want[pid].path), pid
-    # every program both saw is the same one (but the two that looked: each other's child)
-    same = [pid for pid in got if pid in want and got[pid] == (want[pid].name, want[pid].path)]
-    assert len(same) >= len(set(got) & set(want)) - 3, sorted(set(got) & set(want) - set(same))
+
+    # every program that was the same before the look and after it is the one it saw. What
+    # changed meanwhile tells nothing: a program that starts another in its place, one that
+    # writes its command line anew, and the kernel's workers, which name themselves after the
+    # work they do at the moment ("kworker/u8:2-events_unbound": so of those, the worker)
+    def steady(name: str, path: str) -> tuple[str, str]:
+        return (name.split("-", 1)[0] if name.startswith("kworker/") and not path else name), path
+
+    then = {pid: steady(program.name, program.path) for pid, program in before.items()}
+    kept = {pid: (program.name, program.path) for pid, program in want.items()}
+    kept = {pid: steady(*named) for pid, named in kept.items() if then.get(pid) == steady(*named)}
+    seen = [pid for pid in kept if pid in got]
+    assert len(seen) > len(kept) // 2, (len(seen), len(kept))
+    differ = [(pid, got[pid], kept[pid]) for pid in seen if steady(*got[pid]) != kept[pid]]
+    assert not differ, differ
     if special:
         work = str(tmp_path / "work wine-preloader-x")
         assert got[special["wine-preloader-x"]] == ("wine-preloader-x", work)

@@ -405,7 +405,7 @@ application's folder (`usr/data/...`; `/usr/data` fails).
 
 | Cmd | | |
 |---|---|---|
-| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named, so only names below `usr/data/` are sent. **Not sent in this version** (see *The room on a panel is not known* below) |
+| 40 | write a file | the file follows the packet in the same transfer, at most 1 MiB; written as named. Sent for `usr/data/boot.jpg` and `usr/data/standby.h264` alone, to the 9.2" and the 12.3", and never more than a panel is known to hold (see *What goes on a panel* below) |
 | 42 | delete a file | taking `usr/data/boot.jpg` away brings the factory logo back |
 | 98 | a file's size | little endian at `[8:12]`; checked after every write |
 | 99 | list a folder | 20 pieces of 512 bytes from a 0x2800-byte buffer; it reads the name only at the first, so all 20 are fetched every time; it creates a missing folder |
@@ -445,7 +445,7 @@ firmware, its store, what else is in it) is not known either.
   two days later that logo was deleted (42; 98 said none), and the next logo
   written got no byte at all.
 - **A panel without room takes no file**: for five days each 40 was answered
-  within the time the transfer takes (about 35 ms for 700 KB; a write that happens
+  within the time the transfer takes (30 to 50 ms for 700 KB; a write that happens
   takes 1.2 to 2.9 s) and nothing changed, whether the new file was larger or
   smaller than the one there. 98 then says the old file's size: Libre Panel read
   that as "the panel kept the file it had", and where the new clip was as long as
@@ -470,21 +470,132 @@ firmware, its store, what else is in it) is not known either.
   a panel in use. So the panel was not seen to take a command in its two seconds.
   Whether it takes none, or took none at the moments the app tried, that log does
   not tell. The app sent the sync once at each opening and waited two seconds: on
-  a sound panel a sync of the first two thirds of a second is lost
+  a sound panel a sync of about the first third of a second is lost
   ([below](#a-92-as-it-starts)), so one or the other of the thirteen may have been
   lost that way; all of them would not be on a panel that answers through the
   rest of its two seconds.
 - **42 does delete** on that panel: after it 98 says none for a boot logo that was
   there, twice in that log. It was never sent for a clip the panel was playing.
 
-So, for whatever is written to a panel again: how much room a panel has is not
-known, is not the same on every panel and cannot be asked (100 is the card's);
-the settings are in the same place; a write that ends early leaves a file cut
-off; and a size that matches proves nothing where the old file was as long, and
-may not prove that the file can be read. **Libre Panel writes no file to a
-panel** until that is solved (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the
-environment switches it on for who looks into it on a panel of their own). It
-never deleted a file to write it again before 0.9.1 and does not after it.
+So: how much room a panel has is not known, is not the same on every panel and
+cannot be asked (100 is the card's); the settings are in the same place; a write
+that ends early leaves a file cut off; and a size that matches proves nothing
+where the old file was as long, and may not prove that the file can be read.
+0.9.2 and 0.9.3 wrote no file to a panel. Libre Panel never deleted a file to
+write it again before 0.9.1 and does not after it.
+
+### What goes on a panel
+
+Since 0.9.4 (`devices/panel_files.py`, `rust/app/src/start_screen.rs`):
+
+- **Where the files had grown.** Until 0.7.8 a 9.2" got a clip of about 149,000
+  bytes and a logo of 48,000 (x264 crf 23, JPEG quality 88). 0.7.9 made them "as
+  fine as fits in 1 MiB", which is the most 40 takes and not a panel's room: crf
+  20, and 17 where the clip stayed under 40 % of 1 MiB; quality 95 with every
+  pixel's colour. For a look on a 9.2" that came to 615,000 to 875,000 bytes
+  (Circuit: a clip of 715,000 at crf 17 where crf 20 gives 395,000, with 1.4 dB
+  between them at 52; Levels: 1,369,000), on a 12.3" to 643,000 to 1,150,000
+  (Levels: 1,534,000). The 9.2" of issue 52 had room for about 718,000.
+- **The room a panel's files get**: on the 9.2" 360,000 bytes for the clip and
+  120,000 for the logo, two thirds of what filled one; on the 12.3" 500,000 and
+  150,000, four fifths of the 817,587 bytes one has held for weeks (where its
+  room ends is not known). The clip is made at crf 20 and, where that is too
+  much, a step coarser at a time up to 26; the logo at quality 95, 92, 90, 88 or
+  85, every pixel with its own colour (a colour for four was the worse trade: on
+  Circuit's traces 38.7 dB where the same bytes gave 42.1). A look that would
+  have to be coarser is not made: Levels, on both. What the others come to
+  (ffmpeg 6.1 on Linux; another build's clips are a per cent or two apart), and
+  how close they stay to what was drawn (PSNR; the clip against the lossless
+  clip of its pictures):
+
+  | Look | 9.2": clip | logo | together | 12.3": clip | logo | together |
+  |---|---|---|---|---|---|---|
+  | Libre Panel | 352,645 (51.9 dB; 0.9.0: 606,261, 53.4) | 82,934 (47.1; 127,210, 48.3) | 435,579 | 477,724 (52.2; the same) | 107,531 (47.7; 165,169, 48.7) | 585,255 |
+  | Aurora | 318,482 (49.7; 652,208, 51.1) | 117,959 (49.9; the same) | 436,441 | 465,170 (50.2; 988,183, 51.5) | 103,593 (49.6; 161,725, 50.0) | 568,763 |
+  | Pulse | 349,927 (51.5; 464,168, 52.3) | 103,691 (46.3; 150,737, 47.8) | 453,618 | 491,809 (52.4; 604,690, 52.7) | 124,310 (47.1; 187,968, 48.6) | 616,119 |
+  | Circuit | 319,625 (51.0; 715,341, 52.8) | 113,040 (46.1; 159,776, 47.8) | 432,665 | 492,450 (51.0; 602,822, 51.4) | 141,864 (45.5; 223,833, 47.9) | 634,314 |
+  | Night | 334,693 (52.5; 574,056, 53.3) | 104,757 (48.7; the same) | 439,450 | 440,712 (52.4; 897,818, 53.5) | 137,679 (49.1; the same) | 578,391 |
+  | Dark | 45,000 (70.3; 51,771, 72.0) | 14,289 (65.2; the same) | 59,289 | 73,830 (69.0; 85,817, 70.5) | 21,952 (64.6; the same) | 95,782 |
+
+  Turned round for a panel that is mounted upside down, the clips come out within
+  2 % of these and the logos within 0.12 %, at the same crf and quality.
+
+  For a panel mounted on end the pictures are others (drawn upright for 480×1920
+  and 720×1920), and so are the files:
+
+  | Look | 9.2": clip | logo | together | 12.3": clip | logo | together |
+  |---|---|---|---|---|---|---|
+  | Libre Panel | 339,014 (52.0 dB, crf 20; 0.9.0: 584,330, 53.5) | 76,978 (47.2; 120,502, 48.4) | 415,992 | 470,238 (52.0, crf 20; the same) | 103,955 (47.6; 160,679, 48.7) | 574,193 |
+  | Aurora | 313,126 (46.8, crf 26; 796,787, 49.6) | 87,989 (49.1; 131,336, 49.7) | 401,115 | 437,151 (47.4, crf 26; 796,589, 49.2) | 123,453 (49.5; 185,952, 50.0) | 560,604 |
+  | Pulse | 341,785 (50.2, crf 23; 513,382, 51.7) | 111,521 (45.7; 160,629, 47.2) | 453,306 | 453,571 (51.5, crf 22; 652,522, 52.3) | 129,615 (46.8; 194,549, 48.2) | 583,186 |
+  | Circuit | 320,684 (50.9, crf 21; 711,836, 52.7) | 113,393 (46.2; 160,503, 47.9) | 434,077 | 481,563 (51.0, crf 21; 595,882, 51.5) | 141,227 (45.5; 222,915, 48.0) | 622,790 |
+  | Night | 336,991 (53.2, crf 22; 575,996, 53.7) | 81,343 (49.0; the same) | 418,334 | 427,480 (53.0, crf 23; 873,977, 53.8) | 115,184 (49.2; the same) | 542,664 |
+  | Dark | 44,517 (70.2, crf 20; 50,283, 71.8) | 14,310 (65.1; the same) | 58,827 | 73,428 (68.8, crf 20; 84,481, 70.3) | 22,047 (64.6; the same) | 95,475 |
+
+  Aurora on end is the one clip at the coarsest step (0.9.0 made it 797,000
+  bytes on either panel, at crf 20 on the 9.2" and 22 on the 12.3"). It is 2.9 dB
+  from 0.9.0's on the 9.2" and 1.9 on the 12.3", where every other clip, lying
+  or on end, is within 1.8; its finest rays are softer. On end and turned round,
+  the clips are 44,206 to 342,715 bytes on the 9.2" and 73,333 to 498,920 on the
+  12.3" (up to a tenth from the upright ones, a crf step apart at most), the
+  logos within 0.06 %. Over all four mountings a look comes to 401,115 to
+  454,168 bytes on the 9.2" and 537,204 to 634,314 on the 12.3" (Dark: 58,521 to
+  59,289 and 95,379 to 96,137).
+
+- **Before 40**, 98 for the file and for the other one. A file larger than the
+  one it replaces is not sent where both together would be more than that room;
+  one that is no larger always goes (a panel that holds a 700 KB clip of 0.9.0
+  gets its clip anew, smaller, and then has room for a logo).
+- **After 40**, 98 again. The size sent: written. The size of before: the panel
+  did not take the file, which is said, and nothing more is sent (no 113, no
+  110, no 125). Where the file of before had the new one's size, the time 40
+  took tells: under a second for 4 MB is no write (that 9.2" answered 30 to
+  50 ms after 700 KB it did not take, and after 1.2 to 2.9 s when it wrote them;
+  below 32 KiB, which on these two panels only Dark's boot logos are, the
+  transfer's own time says nothing, and the file is taken as written).
+- **Any other size: the file ended early**, and the panel is full. 42 takes it
+  off again at once, 98 checks that it is gone, and what the panel took is
+  said. Nothing is written a second time. This is the one command sent to a
+  panel in that state, and it cannot be tried on a sound panel. The panel of
+  issue 52 took 42 in that state twice, by its log: for the boot logo that had
+  ended at 16 KiB (*Factory logo again*, after which it ran for three more
+  days), and for the clip 0.9.1 took away (after which it took the next file
+  and showed frames until its next start). What ended it came after: the larger
+  clip written into the room the delete had made, and the settings saved.
+- **Only the 9.2" and the 12.3"** are written to. Another model of the family
+  needs the word in the environment (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`),
+  for who looks into it on a panel of their own: its files are then made for
+  the 9.2"'s room, by the pixels, and never for more.
+- **Run on two sound panels** before 0.9.4 (0.9.4rc1 on Windows, 2026-11-16): a
+  9.2" with firmware `turzx_0001_0015`, mounted on end, and a 12.3" with
+  `turzx_0001_0026`. Every 40, in the order sent, with the size 98 said before
+  and how long the panel took to answer it; after each, 98 said the size sent:
+
+  | Panel | File | Bytes sent | The panel had | 40 answered after |
+  |---|---|---|---|---|
+  | 9.2" | clip (Circuit) | 319,122 | 51,296 | 568 ms |
+  | 9.2" | logo (Circuit) | 113,393 | 14,287 | 209 ms |
+  | 9.2" | clip (Dark) | 44,931 | 319,122 | 1,764 ms |
+  | 9.2" | clip (Dark) | 44,931 | 44,931 | 48 ms |
+  | 9.2" | logo (Circuit) | 113,393 | none | 195 ms |
+  | 9.2" | clip (Circuit) | 319,122 | 44,931 | 564 ms |
+  | 12.3" | clip (Circuit) | 485,481 | 593,754 | 1,306 ms |
+  | 12.3" | clip (Circuit) | 485,481 | 485,481 | 1,115 ms |
+  | 12.3" | logo (Circuit) | 141,864 | 223,833 | 321 ms |
+  | 12.3" | logo (Circuit) | 141,864 | none | 157 ms |
+
+  Between the logos, 42 took `usr/data/boot.jpg` off on both (98 then said none,
+  and the factory logo showed at the next start): the first 42 seen on a 12.3".
+  Both panels started with what was written after they had been unplugged.
+  Where 98 proves the write (the panel had another size, or none), it ran at
+  0.37 to 0.90 MB a second, and once at 0.03: Dark's clip of 44,931 bytes over
+  Circuit's of 319,122 took 1.8 s. The two over a file of their own size, 48 ms
+  and 1.1 s (0.94 and 0.44 MB a second), are 4.3 and 9 times slower than the
+  4 MB a second from which an answer counts as no write; the panel of issue 52
+  answered 30 to 50 ms after 700 KB it did not take, 14 MB a second and more.
+  The logos are the bytes Linux makes; the clips, from the Windows download's
+  ffmpeg, are 0.5 to 1.4 % from the tables above. Not seen, since no sound panel
+  shows it: a file that ends early, and one not taken.
 
 For a panel in that state, `libre-panel start-screen remove-clip --wait` acts the
 moment the panel is on the USB: 10 each time the panel comes, until it is answered
@@ -510,23 +621,34 @@ whether the port sends it back unread, whether the panel answers.
 
 ### A 9.2" as it starts
 
-Measured on a sound 9.2" with that firmware (`turzx_0001_0015`), plugged in on
-Windows while `libre-panel start-screen --wait` (0.9.2) watched the bus. The
-times are since the panel was on the bus.
+Measured twice on a sound 9.2" with that firmware (`turzx_0001_0015`), plugged
+in on Windows while `libre-panel start-screen --wait` watched the bus: with
+0.9.2, which sent the sync again 300 ms after one that came back, and with 0.9.3,
+which sends it 100 ms after. The times are since the panel was on the bus.
 
-| | |
-|---|---|
-| 0 ms | it is listed with the WinUSB driver and can be opened |
-| until 308 ms | its port takes nothing: a packet sent waits |
-| 308 ms | the port takes the sync and sends it back, eleven pieces at 309 ms that are no reply: control bytes written out (`^X`: `5E 5A`), `^R` with CR LF and the line again, BS space BS. A terminal's line mode does that with what it gets: the port is open, and the panel's program has not set it up yet. That sync is lost |
-| 656 ms | the next sync (sent at 611 ms) is answered: `0A C8`, the request's time stamp, `turzx_0001_0015` |
-| from then | each command is answered within 2 to 3 ms |
-| 670 ms | 112 says the panel's own clip is playing (`[8]` = 1); 98 and 99 are answered while it plays |
-| 20.7 s | still there, still answering |
+| | 0.9.2 | 0.9.3 |
+|---|---|---|
+| listed with the WinUSB driver, can be opened | 0 ms | 0 ms |
+| its port takes nothing: a packet sent waits | until 308 ms | until 318 ms |
+| the port takes the sync and sends it back, in pieces that are no reply | at 309 ms, eleven | at 319 ms, twelve (82 bytes) |
+| the next sync is sent | at 611 ms | at about 420 ms |
+| and answered: `0A C8`, the request's time stamp, `turzx_0001_0015` | at 656 ms | at 422 ms |
+| the commands after it are answered | within 2 to 3 ms | within 2 ms; 98 of `app.cfg` and `boot.sign` after 33 and 66 ms, 99 after 30 |
+| 112: the panel's own clip is playing (`[8]` = 1), and 98 and 99 are answered while it plays | at 670 ms | at 527 ms |
+| still there, still answering | at 20.7 s | at 20.6 s |
 
-So whatever a sound panel is sent in its first two thirds of a second is lost,
-and what an app sees of a panel that restarts depends on when it sends: the sync
-goes first at every coming and again until it is answered.
+What comes back is control bytes written out (`^X`: `5E 5A`), `^R` with CR LF
+and the line again, BS space BS. A terminal's line mode does that with what it
+gets: the port is open, and the panel's program has not set it up yet. That sync
+is lost.
+
+So what a sound panel is sent in about its first third of a second is lost, and
+a sync sent 100 ms after the one that came back was answered at once; when the
+panel would have answered between the two is not known. (0.9.3's notes said "from
+0.66 s on": that was when 0.9.2's second sync was answered, sent only 300 ms
+after the first came back.) What an app sees of a panel that restarts depends on
+when it sends: the sync goes first at every coming and again until it is
+answered.
 
 What two sound panels held then, by 98 and 99: the 9.2" `app.cfg` (132 bytes),
 `boot.sign` (0), `boot.jpg` (14,287) and `standby.h264` (51,296), the Dark look;
@@ -546,7 +668,8 @@ A command is known for the panel it was seen on, not for its neighbours.
   `turzx_0001_0015`, by its log: 40 wrote files, 98 said their sizes, 99 listed the
   folder, 42 deleted, 125 with start mode 2 was taken). On a 12.3" the app's
   writing (99, 40, 98, 113, 110, 125 with start mode 2) has been in use for months
-  as well; 42 is not known there. On the family's other models (1.6" to 8.8", the
+  as well, and 42 took its boot logo off (firmware `turzx_0001_0026`, 0.9.4rc1; 98
+  then said none). On the family's other models (1.6" to 8.8", the
   Jonsbo TF3's pump screen, another maker's) they are untried. And two panels of
   one model need not be alike: the 9.2" of issue 52 ran out of room where others
   never did. `libre-panel start-screen` sends its steps to the 9.2" alone, also

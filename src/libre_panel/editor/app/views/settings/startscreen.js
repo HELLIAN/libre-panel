@@ -89,9 +89,12 @@ export function StartScreenCard() {
     setHeld(false);
   };
   const writing = Boolean(busy);
-  // nothing is written to a panel in this version (a 9.2" kept restarting after its start screen
-  // was written): the pictures show and download, the factory logo can come back
-  const writes = info.writes !== false;
+  // files are written to the models it has been done on (the 9.2" and the 12.3"); for another the
+  // pictures show and download, and the factory logo can come back
+  const writes = chosen?.writes === true;
+  // a look with more detail than fits finely in the room its files get on this panel: said,
+  // and neither written nor made as a file
+  const unfit = Boolean(chosen?.unfit?.includes(design));
   const more = (config.panels || []).length > 0; // more panels: this card is the one chosen at the top
   // a panel mounted upside down: its logo and clip are written turned round, as its frames are
   const turned = (panel > 1 ? (config.panels || [])[panel - 2]?.rotate : config.device?.rotate) === 180;
@@ -108,11 +111,8 @@ export function StartScreenCard() {
           return { value: item.id, label: `${item.label} · ${w} × ${h}` };
         })} />
     </div>
-    ${chosen && !chosen.measured
-      ? html`<${Note}>${t("Measured on the 9.2\"; this panel has the same firmware, but writing to it has not been tried yet.")}<//>`
-      : null}
     ${!writes
-      ? html`<${Note}>${t("Writing to the panel is switched off in this version. One 9.2\" ran out of room for its start screen and has kept restarting since; on other panels the same files were written without trouble. Writing comes back when Libre Panel can tell how much fits on a panel.")}<//>`
+      ? html`<${Note}>${t("Writing to this panel is switched off: Libre Panel has written start screens to the 9.2\" and the 12.3\" only, and how much room another panel has for them is not known.")}<//>`
       : null}
     ${turned && writes
       ? html`<${Note}>${t("The panel is mounted upside down: the logo and the clip are written turned round, so that they are upright on it. Write them again when you turn the panel round.")}<//>`
@@ -126,6 +126,9 @@ export function StartScreenCard() {
         </button>`,
       )}
     </div>
+    ${unfit
+      ? html`<${Note}>${t("This look has more detail than fits in the room Libre Panel uses on this panel, and it is not written coarser: choose another look.")}<//>`
+      : null}
     ${held
       ? html`<${Note} action=${html`<button type="button" class="btn btn-primary" onClick=${resume}>${t("Show the themes again")}</button>`}>
           ${t("The panel shows what was written; its themes are paused.")}
@@ -134,7 +137,7 @@ export function StartScreenCard() {
     <div class="boot-tiles">
       <${Tile} title=${t("Boot logo")} text=${t("When the panel is switched on. The factory logo stays on the panel and can always come back.")}
         picture=${endpoints.startScreenPicture(model, "logo", 960, way, panel, design)} upright=${way === "portrait"}>
-        <button type="button" class="btn btn-primary" disabled=${writing || !writes}
+        <button type="button" class="btn btn-primary" disabled=${writing || !writes || unfit}
           onClick=${() => run("logo", {
             title: t("Write the boot logo to the panel?"),
             message: t("It shows when the panel is switched on. The factory logo is not touched: \"Factory logo again\" brings it back."),
@@ -146,11 +149,11 @@ export function StartScreenCard() {
           onClick=${() => run("remove-logo", { title: t("Bring back the factory logo?"), message: t("Libre Panel's boot logo is taken off the panel."), confirm: t("Factory logo again") })}>
           ${t("Factory logo again")}
         </button>
-        <a class="btn" href=${endpoints.startScreenFile(model, "logo", way, panel, design)} download><${Icon} name="download" size=${15} /> JPEG</a>
+        ${unfit ? null : html`<a class="btn" href=${endpoints.startScreenFile(model, "logo", way, panel, design)} download><${Icon} name="download" size=${15} /> JPEG</a>`}
       <//>
       <${Tile} title=${t("Standby clip")} text=${t("When the PC starts, until Libre Panel shows its themes: {motion}.", { motion: lookMotion(design) })}
         picture=${endpoints.startScreenPicture(model, "clip", 960, way, panel, design)} upright=${way === "portrait"}>
-        <button type="button" class="btn btn-primary" disabled=${writing || !writes}
+        <button type="button" class="btn btn-primary" disabled=${writing || !writes || unfit}
           onClick=${() => run("clip", {
             title: t("Write the standby clip to the panel?"),
             message: t("It replaces the clip the panel plays when the PC starts ({name}); the one there now cannot be read back first. The panel is set to start with it.", { name: info.names.clip }),
@@ -159,7 +162,7 @@ export function StartScreenCard() {
           })}>
           ${busy === "clip" ? t("Writing…") : t("Put on the panel")}
         </button>
-        <a class="btn" href=${endpoints.startScreenFile(model, "clip", way, panel, design)} download><${Icon} name="download" size=${15} /> H.264</a>
+        ${unfit ? null : html`<a class="btn" href=${endpoints.startScreenFile(model, "clip", way, panel, design)} download><${Icon} name="download" size=${15} /> H.264</a>`}
       <//>
     </div>
     <div class="boot-foot">
@@ -176,6 +179,9 @@ export function StartScreenCard() {
           </span>`
         : null}
     </div>
+    ${found?.room && (found.boot_logo > found.room.logo || found.standby_clip > found.room.clip)
+      ? html`<${Note}>${t("The panel holds larger files than Libre Panel writes now. They can stay; written again, they become smaller.")}<//>`
+      : null}
     </div>
   <//>`;
 }

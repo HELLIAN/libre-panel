@@ -53,6 +53,21 @@ and says so. What can be tried of it on a sound panel is tried: its look with `-
 panel plugged in while it waits, shows how the command meets a panel that starts (so
 0.9.2's was found to take a starting panel's echo for an answer).
 
+0.9.4 writes start screens again, so its candidate (0.9.4rc1) was run for exactly this, on
+2026-11-16 on Windows, on a 9.2" (firmware `turzx_0001_0015`, mounted on end) and a 12.3"
+(`turzx_0001_0026`): *What is on the panel*, both *Put on the panel*, the clip a second time
+(the panel then has a file of that very size, and the time the write took has to say that it
+was written), another look's smaller clip over a larger one, *Factory logo again* and the
+logo anew, the panel unplugged and started again, and the log's `start screen:` lines, which
+say how long each write took. After every write the panel said the size that was sent (98),
+both panels started with what was written, and the factory logo came back where Libre
+Panel's was taken off; the ten writes and their times are in the
+[protocol notes](protocol/turzx-usb.md#what-goes-on-a-panel). 0.9.4 is that candidate with
+the run written down: nothing it sends to a panel was changed after it. What it sends to a
+panel whose room ends before the file does (42 for the file that ended early) is a command
+for that state: it ships untried by us, and the protocol notes say what is known of it from
+the panel of issue 52.
+
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the
 workflow fills that release in.

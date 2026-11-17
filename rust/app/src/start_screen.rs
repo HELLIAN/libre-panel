@@ -16,46 +16,183 @@ pub const STANDBY_CLIP: &str = "usr/data/standby.h264";
 /// the panels the boot picture and the standby clip were measured on (panel_files.py
 /// MEASURED: SPUR II on the 9.2"); the other USB panels share its firmware, untried
 pub const MEASURED: &[&str] = &["turing-9.2-usb"];
-/// A file on the panel is at most this large.
+/// The only files written or taken off.
+const OURS: [&str; 2] = [BOOT_LOGO, STANDBY_CLIP];
+/// A file on the panel is at most this large (what the command takes).
 pub const MAX_FILE: usize = 1024 * 1024;
-/// The boot logo's JPEG: (quality, a colour every pixel) in turn until it fits.
-const JPEG_STEPS: [(i64, bool); 6] = [
-    (95, true),
-    (92, true),
-    (90, false),
-    (85, false),
-    (75, false),
-    (60, false),
-];
-/// The standby clip's x264 crf: this first, coarser in steps of 2 up to the most where it does
-/// not fit, finer where it fills less than 40 % of the room.
+/// The boot logo's JPEG: its quality in turn until the file fits its room, every pixel with
+/// its own colour. A look that would need less than the last would show it: not made.
+const JPEG_STEPS: [i64; 5] = [95, 92, 90, 88, 85];
+/// The standby clip's x264 crf: the finest first, then coarser until the clip fits its room,
+/// up to the coarsest that does not show; a look that needs more is not made.
 const CLIP_CRF: i64 = 20;
-const CLIP_CRF_MIN: i64 = 17;
-const CLIP_CRF_MAX: i64 = 30;
-/// Writing a file to a panel is switched off (issue 52). The files go where the panel keeps
-/// its own settings, and on one 9.2" the room there ran out: files ended early or were not
-/// taken, 0.9.1 forced a clip in, and that panel has kept restarting since. On other panels
-/// the same files were written for months without trouble, and a panel cannot be asked how
-/// much room it has. Until Libre Panel can tell, it writes nothing there. Who looks into it
-/// on a panel of their own sets this in the environment, at their own risk (panel_files.py
-/// WRITES_ENV).
+const CLIP_CRF_MAX: i64 = 26;
+/// How much smaller a clip gets with each step of the crf, in thousandths: the first guess at
+/// the crf that fits.
+const CLIP_STEP: usize = 870;
+/// How much Libre Panel puts on a panel: the most bytes of the standby clip and of the boot
+/// logo (panel_files.py ROOM; issue 52). Both go where the panel keeps its own settings; how
+/// much room there is cannot be asked, and one 9.2" was full at about 718,000 bytes of these
+/// files. So the two together stay well below what a panel of the model is known to hold: on
+/// the 9.2" two thirds of that; on the 12.3" four fifths of the 817,587 one has held for weeks.
+pub const ROOM: [(&str, (usize, usize)); 2] = [
+    ("turing-9.2-usb", (360_000, 120_000)),
+    ("turing-12.3-usb", (500_000, 150_000)),
+];
+/// The looks that do not fit that room finely on a model, known before anything is made
+/// (panel_files.py UNFIT): the card says so and offers no writing.
+pub const UNFIT: [(&str, &[&str]); 2] = [
+    ("turing-9.2-usb", &["levels"]),
+    ("turing-12.3-usb", &["levels"]),
+];
+/// A write that happens takes its time (the 9.2" of issue 52: 1.2 to 2.9 s for 700 KB; a sound
+/// 9.2" and 12.3" wrote 45 to 485 KB at 0.94 MB a second at the most, 0.9.4rc1), one the panel
+/// does not take is over when the transfer is (30 to 50 ms for 700 KB, 14 MB a second and
+/// more): a file of some size that was answered faster than this many bytes a second was not
+/// written.
+const WRITE_RATE_MOST: usize = 4_000_000;
+/// (below it the transfer's own time says nothing. On the 9.2" and the 12.3" every clip is
+/// larger: the smallest, Dark's on the 9.2", has about 44,000 bytes; only Dark's boot logos
+/// are smaller, and after a logo nothing is saved on the panel)
+const WRITE_TIMED_FROM: usize = 32 * 1024;
+/// Files are written to the models it has been done on (ROOM). Who looks into it on another
+/// panel of their own sets this in the environment, at their own risk (panel_files.py
+/// WRITES_ENV): the files are then made for the 9.2"'s room, by the pixels.
 pub const WRITES_ENV: &str = "LIBRE_PANEL_PANEL_WRITES";
 pub const WRITES_WORD: &str = "at-my-own-risk";
 
-/// writes_on: whether files are written to a panel: not in this version, but for who asks
-/// for it in the environment.
-pub fn writes_on() -> bool {
-    std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
+/// tried: whether start screens have been written to panels of `model`.
+pub fn tried(model: Option<&PanelModel>) -> bool {
+    model.is_some_and(|model| ROOM.iter().any(|(id, _)| *id == model.id))
 }
 
-/// writes_off: why nothing is written, as the app says it.
+/// room: the most bytes of the standby clip and of the boot logo on a panel of `model`: what
+/// ROOM says for the models written to; for another (and for none), the 9.2"'s for as many
+/// pixels as it has, and never more.
+pub fn room(model: Option<&PanelModel>) -> (usize, usize) {
+    let (clip, logo) = ROOM[0].1;
+    let Some(model) = model else {
+        return (clip, logo);
+    };
+    if let Some((_, known)) = ROOM.iter().find(|(id, _)| *id == model.id) {
+        return *known;
+    }
+    let most = 1920 * 480;
+    let pixels = usize::try_from(model.native_width * model.native_height).unwrap_or(0);
+    let share = pixels.min(most);
+    (clip * share / most, logo * share / most)
+}
+
+/// writes_on: whether files are written to a panel of `model`: to the models it has been
+/// done on, and to any for who asks for it in the environment.
+pub fn writes_on(model: Option<&PanelModel>) -> bool {
+    tried(model) || std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
+}
+
+/// writes_off: why nothing is written to a panel of another model, as the app says it.
 pub fn writes_off() -> String {
     lp_i18n::t(
-        "Writing to the panel is switched off in this version. One 9.2\" ran out of room for \
-         its start screen and has kept restarting since; on other panels the same files were \
-         written without trouble. Writing comes back when Libre Panel can tell how much fits \
-         on a panel.",
+        "Writing to this panel is switched off: Libre Panel has written start screens to the \
+         9.2\" and the 12.3\" only, and how much room another panel has for them is not known.",
     )
+}
+
+/// too_fine: why a look is not made for a panel: it would have to be coarser than shows.
+fn too_fine() -> String {
+    lp_i18n::t(
+        "This look has more detail than fits in the room Libre Panel uses on this panel, and \
+         it is not written coarser: choose another look.",
+    )
+}
+
+/// kilobytes: a file's size as the app says it.
+fn kilobytes(size: i64) -> String {
+    format!("{} KB", ((size + 512) / 1024).max(1))
+}
+
+/// A message of the app's with its values filled in.
+fn said(text: &str, values: &[(&str, Value)]) -> String {
+    lp_i18n::t_format(text, values).unwrap_or_else(|why| why.msg)
+}
+
+/// no_room: why a file is not sent: with the other one that is on the panel it would be more
+/// than Libre Panel puts there (`other`: that one's bytes; it is one of before 0.9.4).
+fn no_room(name: &str, other: i64) -> String {
+    let size = [("size", Value::Str(kilobytes(other)))];
+    if name == BOOT_LOGO {
+        return said(
+            "Not written: with the standby clip that is on the panel ({size}), the boot logo \
+             would be more than Libre Panel puts on this panel. Write the standby clip again \
+             first: it becomes smaller.",
+            &size,
+        );
+    }
+    said(
+        "Not written: with the boot logo that is on the panel ({size}), the standby clip \
+         would be more than Libre Panel puts on this panel. Write the boot logo again first: \
+         it becomes smaller.",
+        &size,
+    )
+}
+
+/// not_taken: what is said of a file the panel did not take.
+fn not_taken() -> String {
+    lp_i18n::t(
+        "The panel did not take the file: it has what it had before, and nothing was changed. \
+         One panel did that when it had no room left.",
+    )
+}
+
+/// cut_off: what is said of a file that ended early and was taken off again.
+fn cut_off(name: &str, written: i64, size: i64) -> String {
+    let values = [("written", whole(written)), ("size", whole(size))];
+    if name == BOOT_LOGO {
+        return said(
+            "The boot logo did not fit: the panel took {written} of {size} bytes. It was taken \
+             off again, so that the panel is not left full; the factory logo shows at the next \
+             power-on.",
+            &values,
+        );
+    }
+    said(
+        "The standby clip did not fit: the panel took {written} of {size} bytes. It was taken \
+         off again, so that the panel is not left full: the panel has no standby clip now. \
+         Dark is the smallest look.",
+        &values,
+    )
+}
+
+/// still_there: what is said of a file that ended early and could not be taken off again.
+fn still_there(name: &str, written: i64, size: i64, why: &str) -> String {
+    said(
+        "{file} did not fit (the panel took {written} of {size} bytes) and could not be taken \
+         off again: {why}",
+        &[
+            ("file", Value::Str(name.into())),
+            ("written", whole(written)),
+            ("size", whole(size)),
+            ("why", Value::Str(why.into())),
+        ],
+    )
+}
+
+/// its_room: a file of `size` bytes that is larger than its room on the model is not sent at
+/// all (the files made here never are: nothing else gets through).
+fn its_room(name: &str, size: usize, model: Option<&PanelModel>) -> Result<(), String> {
+    let (clip, logo) = room(model);
+    let most = if name == BOOT_LOGO { logo } else { clip };
+    if size > most {
+        return Err(format!(
+            "{name}: {size} bytes are more than the {most} it gets"
+        ));
+    }
+    Ok(())
+}
+
+/// unwritten: whether a file of `size` bytes that the panel answered after `took` cannot
+/// have been written: faster than any write is.
+fn unwritten(size: usize, took: std::time::Duration) -> bool {
+    size >= WRITE_TIMED_FROM && took.as_secs_f64() * (WRITE_RATE_MOST as f64) < size as f64
 }
 
 /// How many of the app's pictures and of the files are kept (lru_cache's maxsize).
@@ -159,11 +296,11 @@ impl Kept {
                 let frames: Vec<Image> = (frames.into_iter())
                     .map(|frame| as_mounted(frame, turned))
                     .collect();
-                clip_h264(&ffmpeg, &frames, full)
+                clip_h264(&ffmpeg, &frames, full, room(Some(model)).0)
             }
             _ => {
                 let picture = boot::boot_logo(env, model, way, design, 1.0).map_err(|e| e.0)?;
-                logo_jpeg(&as_mounted(picture, turned))
+                logo_jpeg(&as_mounted(picture, turned), room(Some(model)).1)
             }
         })
     }
@@ -220,18 +357,19 @@ fn native_rgb(picture: &Image) -> Result<Image, String> {
     }
 }
 
-/// logo_jpeg: the boot logo as the JPEG the panel shows: turned into its framebuffer, at
-/// quality 95 with every pixel's colour, less where it would not fit in 1 MiB.
-fn logo_jpeg(picture: &Image) -> Result<Vec<u8>, String> {
+/// logo_jpeg: the boot logo as the JPEG the panel shows: turned into its framebuffer, with
+/// every pixel's colour, at the finest quality of JPEG_STEPS that fits the logo's room
+/// (`most` bytes). A picture that would have to be coarser than the last is not made.
+fn logo_jpeg(picture: &Image, most: usize) -> Result<Vec<u8>, String> {
     let native = native_rgb(picture)?;
-    for (quality, full) in JPEG_STEPS {
-        let data = lp_decode::save_jpeg_options(&native, quality, full, true)
+    for quality in JPEG_STEPS {
+        let data = lp_decode::save_jpeg_options(&native, quality, true, true)
             .map_err(|e| e.to_string())?;
-        if data.len() <= MAX_FILE {
+        if data.len() <= most {
             return Ok(data);
         }
     }
-    Err("the boot logo does not fit in 1 MiB".into())
+    Err(too_fine())
 }
 
 /// clip_command: ffmpeg for the standby clip as the panel's decoder plays it: one slice a
@@ -296,8 +434,14 @@ pub fn clip_command(
 }
 
 /// clip_h264: the standby clip's pictures turned into the framebuffer and encoded as finely
-/// as fits in 1 MiB.
-fn clip_h264(ffmpeg: &std::path::Path, frames: &[Image], full: bool) -> Result<Vec<u8>, String> {
+/// as fits the clip's room (`most` bytes): at crf CLIP_CRF, coarser where that is too much,
+/// up to CLIP_CRF_MAX. A clip that would have to be coarser is not made.
+fn clip_h264(
+    ffmpeg: &std::path::Path,
+    frames: &[Image],
+    full: bool,
+    most: usize,
+) -> Result<Vec<u8>, String> {
     let native: Vec<Image> = frames.iter().map(native_rgb).collect::<Result<_, _>>()?;
     let Some(first) = native.first() else {
         return Err("the standby clip has no pictures".into());
@@ -335,17 +479,33 @@ fn clip_h264(ffmpeg: &std::path::Path, frames: &[Image], full: bool) -> Result<V
     };
     let mut crf = CLIP_CRF;
     let mut data = encoded(crf)?;
-    while data.len() > MAX_FILE && crf < CLIP_CRF_MAX {
-        crf += 2;
+    if data.len() > most {
+        let mut guess = data.len();
+        while guess > most && crf < CLIP_CRF_MAX {
+            // (about 13 % less with each step)
+            crf += 1;
+            guess = guess * CLIP_STEP / 1000;
+        }
         data = encoded(crf)?;
-    }
-    if data.len() > MAX_FILE {
-        return Err("the standby clip does not fit in 1 MiB".into());
-    }
-    if (data.len() as f64) < MAX_FILE as f64 * 0.4 && crf == CLIP_CRF {
-        let finer = encoded(CLIP_CRF_MIN)?;
-        if finer.len() <= MAX_FILE {
-            data = finer;
+        if data.len() > most {
+            // the guess was too fine: coarser, a step at a time
+            while data.len() > most && crf < CLIP_CRF_MAX {
+                crf += 1;
+                data = encoded(crf)?;
+            }
+            if data.len() > most {
+                return Err(too_fine());
+            }
+        } else {
+            // or too coarse: the finest that fits
+            while crf - 1 > CLIP_CRF {
+                let finer = encoded(crf - 1)?;
+                if finer.len() > most {
+                    break;
+                }
+                crf -= 1;
+                data = finer;
+            }
         }
     }
     if lp_devices::h264::slice_count(&data) != native.len() {
@@ -453,9 +613,11 @@ pub fn names_in(listing: &[u8]) -> Vec<String> {
     found
 }
 
-/// PanelFiles: the file commands on an open panel.
+/// PanelFiles: the file commands on an open panel (`model`: the panel's, which says how much
+/// room its files get).
 struct PanelFiles<'a> {
     link: &'a lp_devices::turzx::FileLink,
+    model: Option<&'static PanelModel>,
 }
 
 impl PanelFiles<'_> {
@@ -532,39 +694,88 @@ impl PanelFiles<'_> {
         Ok(if size == u32::MAX { 0 } else { i64::from(size) })
     }
 
-    /// write: a file written, and checked that it has the size it should. A file the panel
-    /// kept in place of the new one is left as it is and said: never taken away to write
-    /// again (0.9.1 did so, and so got a clip in that filled the panel's folder to the last
-    /// byte: that 9.2" has kept restarting since).
+    /// write: the boot logo or the standby clip written, checked before and after (issue
+    /// 52: a 9.2" had no room left for one, and 0.9.1 forced it in).
+    ///
+    /// Before: a file larger than its room on the model is not sent at all; then what the
+    /// panel has of this file and of the other one. A file larger than the one it replaces
+    /// is not sent where both together would be more than the room Libre Panel uses on the
+    /// model. After: the size again. A file the panel did not take (it has
+    /// what it had: a panel without room answers at once and changes nothing) is said so. A
+    /// file that ended early is taken off again, so that the panel is not left full, and
+    /// said so. Nothing is ever taken away in order to write it a second time.
     fn write(&self, name: &str, data: &[u8]) -> Result<(), String> {
-        if !writes_on() {
+        if !writes_on(self.model) {
             return Err(writes_off());
         }
         let raw = checked_name(name)?;
+        if !OURS.contains(&name) {
+            return Err(format!(
+                "{name}: only the boot logo and the standby clip are written"
+            ));
+        }
         if data.is_empty() || data.len() > MAX_FILE {
             return Err(format!(
                 "{name}: a file is 1 byte to 1 MiB, not {}",
                 data.len()
             ));
         }
-        self.command(CMD_WRITE_FILE, &file_args(&raw, data.len()), data, 20000)?;
-        let written = self.size(name)?;
-        if written != data.len() as i64 {
-            return Err(format!(
-                "{name}: the panel has {written} bytes of it, not {}",
-                data.len()
+        its_room(name, data.len(), self.model)?;
+        let beside = if name == BOOT_LOGO {
+            STANDBY_CLIP
+        } else {
+            BOOT_LOGO
+        };
+        let (before, other) = (self.size(name)?, self.size(beside)?);
+        let size = data.len() as i64;
+        let (clip, logo) = room(self.model);
+        if size > before && size + other > (clip + logo) as i64 {
+            warn(&format!(
+                "start screen: {name} ({size} bytes) not sent: {beside} on the panel has {other}"
             ));
+            return Err(no_room(name, other));
         }
-        Ok(())
+        let began = std::time::Instant::now();
+        self.command(CMD_WRITE_FILE, &file_args(&raw, data.len()), data, 20000)?;
+        let took = began.elapsed();
+        let after = self.size(name)?;
+        note(&format!(
+            "start screen: {name}: {size} bytes sent, answered after {} ms; the panel had \
+             {before} bytes of it and has {after}",
+            took.as_millis()
+        ));
+        if after == size && !(before == after && unwritten(data.len(), took)) {
+            return Ok(());
+        }
+        if after == before {
+            return Err(not_taken());
+        }
+        // it ended early: off again, so that the panel is not left full
+        match self.delete(name).and_then(|()| self.size(name)) {
+            Err(why) => Err(still_there(name, after, size, &why)),
+            Ok(left) if left != 0 => Err(still_there(
+                name,
+                after,
+                size,
+                &format!("{left} bytes of it stay"),
+            )),
+            Ok(_) => {
+                warn(&format!(
+                    "start screen: {name} ended at {after} of {size} bytes: taken off again"
+                ));
+                Err(cut_off(name, after, size))
+            }
+        }
     }
 
     fn delete(&self, name: &str) -> Result<(), String> {
-        self.command(
-            CMD_DELETE_FILE,
-            &file_args(&checked_name(name)?, 0),
-            &[],
-            4000,
-        )
+        let raw = checked_name(name)?;
+        if !OURS.contains(&name) {
+            return Err(format!(
+                "{name}: only the boot logo and the standby clip are taken off"
+            ));
+        }
+        self.command(CMD_DELETE_FILE, &file_args(&raw, 0), &[], 4000)
     }
 
     fn show_jpeg(&self, name: &str) -> Result<(), String> {
@@ -614,7 +825,11 @@ fn with_panel(
     let Some(found) = link.model() else {
         return Err(lp_i18n::t("No TURZX USB panel found"));
     };
-    job(&PanelFiles { link: &link }, found)
+    let files = PanelFiles {
+        link: &link,
+        model: Some(found),
+    };
+    job(&files, found)
 }
 
 fn told(pairs: Vec<(&str, Value)>) -> Dict {
@@ -623,6 +838,15 @@ fn told(pairs: Vec<(&str, Value)>) -> Dict {
 
 fn whole(n: i64) -> Value {
     Value::Int(n.into())
+}
+
+/// The room a model's files get, as the app is told it: {"clip": bytes, "logo": bytes}.
+fn room_told(model: &PanelModel) -> Value {
+    let (clip, logo) = room(Some(model));
+    Value::Dict(told(vec![
+        ("clip", whole(clip as i64)),
+        ("logo", whole(logo as i64)),
+    ]))
 }
 
 /// StartScreen.state: what is on the panel.
@@ -636,6 +860,8 @@ pub fn panel_state(model: Option<&'static PanelModel>, place: &Where) -> Result<
             ("files", names),
             ("boot_logo", whole(files.size(BOOT_LOGO)?)),
             ("standby_clip", whole(files.size(STANDBY_CLIP)?)),
+            // (what Libre Panel writes at most: files of before 0.9.4 may be larger)
+            ("room", room_told(found)),
         ]))
     })
 }
@@ -659,12 +885,15 @@ pub fn write_logo(
     place: &Where,
     design: &str,
 ) -> Result<Dict, String> {
-    if !writes_on() {
-        return Err(writes_off());
+    if model.is_some() && !writes_on(model) {
+        return Err(writes_off()); // (said before the panel is opened)
     }
     with_panel(model, place, |files, found| {
+        if !writes_on(Some(found)) {
+            return Err(writes_off());
+        }
         let picture = boot::boot_logo(env, found, way, design, 1.0).map_err(|e| e.0)?;
-        let data = logo_jpeg(&as_mounted(picture, turned))?;
+        let data = logo_jpeg(&as_mounted(picture, turned), room(Some(found)).1)?;
         files.noted_listing();
         files.write(BOOT_LOGO, &data)?;
         files.show_jpeg(BOOT_LOGO)?;
@@ -701,17 +930,20 @@ pub fn write_clip(
     design: &str,
     video_range: &str,
 ) -> Result<Dict, String> {
-    if !writes_on() {
-        return Err(writes_off());
+    if model.is_some() && !writes_on(model) {
+        return Err(writes_off()); // (said before the panel is opened)
     }
     let ffmpeg = lp_devices::h264::find_ffmpeg("")?;
     with_panel(model, place, |files, found| {
+        if !writes_on(Some(found)) {
+            return Err(writes_off());
+        }
         let frames = boot::standby_frames(env, found, None, way, design, 1.0).map_err(|e| e.0)?;
         let frames: Vec<Image> = (frames.into_iter())
             .map(|frame| as_mounted(frame, turned))
             .collect();
         let full = lp_devices::turzx::full_range(video_range, Some(found));
-        let data = clip_h264(&ffmpeg, &frames, full)?;
+        let data = clip_h264(&ffmpeg, &frames, full, room(Some(found)).0)?;
         files.noted_listing();
         files.write(STANDBY_CLIP, &data)?;
         files.play(STANDBY_CLIP)?;
@@ -774,6 +1006,17 @@ pub fn state(told: &Told) -> Value {
                 Value::List(vec![Value::Int(w.into()), Value::Int(h.into())]),
             );
             one.insert("measured".into(), Value::Bool(MEASURED.contains(&m.id)));
+            // whether its files are written (the models it has been done on), and how large
+            // they are at most there
+            one.insert("writes".into(), Value::Bool(writes_on(Some(m))));
+            one.insert("room".into(), room_told(m));
+            // (the looks known not to fit there finely: not offered for writing)
+            let unfit = UNFIT.iter().find(|(id, _)| *id == m.id);
+            let unfit = unfit.map_or(&[][..], |(_, looks)| *looks);
+            one.insert(
+                "unfit".into(),
+                Value::List(unfit.iter().map(|look| text(look)).collect()),
+            );
             Value::Dict(one)
         })
         .collect();
@@ -791,8 +1034,6 @@ pub fn state(told: &Told) -> Value {
         "designs".into(),
         Value::List(boot::DESIGNS.iter().map(|d| text(d)).collect()),
     );
-    // (whether files are written to a panel: not in this version, issue 52)
-    answer.insert("writes".into(), Value::Bool(writes_on()));
     Value::Dict(answer)
 }
 
@@ -814,5 +1055,93 @@ mod tests {
         assert!(joined.contains("-s 480x1920 -framerate 30 -i - -an -vf scale=out_range=full"));
         assert!(joined.contains("-crf 20 -colorspace smpte170m"));
         assert!(joined.ends_with("matrix_coefficients=6 -f h264 -"));
+    }
+
+    #[test]
+    fn the_room_is_panel_files_pys() {
+        let nine = model_of("turing-9.2-usb").expect("the 9.2\"");
+        let twelve = model_of("turing-12.3-usb").expect("the 12.3\"");
+        assert_eq!(room(Some(nine)), (360_000, 120_000));
+        assert_eq!(room(Some(twelve)), (500_000, 150_000));
+        assert_eq!(room(None), (360_000, 120_000));
+        assert!(tried(Some(nine)) && tried(Some(twelve)) && !tried(None));
+        for model in models() {
+            let (clip, logo) = room(Some(model));
+            // no panel gets more than the 12.3", and none that was not tried more than the 9.2"
+            assert!(clip <= 500_000 && logo <= 150_000, "{}", model.id);
+            assert!(
+                tried(Some(model)) || (clip <= 360_000 && logo <= 120_000),
+                "{}",
+                model.id
+            );
+            assert!(clip > 0 && logo > 0, "{}", model.id);
+        }
+        let small = model_of("turing-2.8-usb").expect("the 2.8\"");
+        assert_eq!(room(Some(small)), (90_000, 30_000)); // (480 x 480: a quarter of the 9.2")
+        assert!(!tried(Some(small)));
+    }
+
+    #[test]
+    fn a_file_larger_than_its_room_is_not_sent() {
+        let nine = model_of("turing-9.2-usb").expect("the 9.2\"");
+        let twelve = model_of("turing-12.3-usb").expect("the 12.3\"");
+        assert_eq!(its_room(STANDBY_CLIP, 360_000, Some(nine)), Ok(()));
+        assert_eq!(its_room(BOOT_LOGO, 120_000, Some(nine)), Ok(()));
+        assert_eq!(
+            its_room(STANDBY_CLIP, 360_001, Some(nine)),
+            Err("usr/data/standby.h264: 360001 bytes are more than the 360000 it gets".into())
+        );
+        assert_eq!(
+            its_room(BOOT_LOGO, 120_001, Some(nine)),
+            Err("usr/data/boot.jpg: 120001 bytes are more than the 120000 it gets".into())
+        );
+        // (a clip that fits the 12.3" is too much for the 9.2", and for a panel not named)
+        assert_eq!(its_room(STANDBY_CLIP, 492_450, Some(twelve)), Ok(()));
+        assert!(its_room(STANDBY_CLIP, 492_450, Some(nine)).is_err());
+        assert!(its_room(STANDBY_CLIP, 492_450, None).is_err());
+        assert!(its_room(BOOT_LOGO, 150_001, Some(twelve)).is_err());
+    }
+
+    #[test]
+    fn a_write_that_was_answered_too_fast_did_not_happen() {
+        use std::time::Duration;
+        // (a 9.2" answered 30 to 50 ms after 700 KB it did not take, and after 1.2 s or more
+        // when it wrote them)
+        assert!(unwritten(706_912, Duration::from_millis(50)));
+        assert!(!unwritten(706_912, Duration::from_millis(1250)));
+        assert!(unwritten(360_000, Duration::from_millis(40)));
+        assert!(!unwritten(360_000, Duration::from_millis(600)));
+        // (the smallest clip, Dark's on a 9.2" on end, turned round: told too)
+        assert!(unwritten(44_206, Duration::from_millis(3)));
+        assert!(!unwritten(44_206, Duration::from_millis(48)));
+        // (each write of 0.9.4rc1 on a sound 9.2" and 12.3", and how long the panel took: all
+        // written, the quickest, 44,931 bytes in 48 ms, at under a quarter of the rate)
+        let measured = [
+            (319_122, 568),
+            (113_393, 209),
+            (44_931, 1764),
+            (44_931, 48),
+            (113_393, 195),
+            (319_122, 564),
+            (485_481, 1306),
+            (485_481, 1115),
+            (141_864, 321),
+            (141_864, 157),
+        ];
+        for (size, ms) in measured {
+            assert!(
+                !unwritten(size, Duration::from_millis(ms)),
+                "{size} in {ms} ms"
+            );
+        }
+        assert!(unwritten(44_931, Duration::from_millis(11)));
+        assert!(unwritten(141_864, Duration::from_millis(35)));
+        // (the fastest write in that panel's log: 149 KB in under 220 ms)
+        assert!(!unwritten(149_040, Duration::from_millis(220)));
+        // (a small file's transfer says nothing: Dark's boot logo)
+        assert!(!unwritten(14_289, Duration::from_millis(1)));
+        assert!(!unwritten(21_952, Duration::from_millis(1)));
+        assert_eq!(kilobytes(593_754), "580 KB");
+        assert_eq!(kilobytes(100), "1 KB");
     }
 }

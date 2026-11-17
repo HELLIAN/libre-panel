@@ -3353,24 +3353,23 @@ def _start_screen_of(program: Any) -> tuple[Any, Any]:
     return post, get
 
 
-def test_nothing_is_written_to_a_panel_in_this_version(tmp_path: Path) -> None:
-    """Issue 52: a 9.2" kept restarting, for good, after its start screen was written, and what
-    on the panel does that is not known. Until it is, the app writes no file to a panel: the
-    boot logo and the standby clip are refused in panel_files.py's words before the panel is
-    opened, the card is told so, and what the panel holds and the boot logo taken off stay."""
+def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> None:
+    """Issue 52: start screens are written to the 9.2" and the 12.3", where what fits is known.
+    For another panel of the family (an 8.8" here) the boot logo and the standby clip are
+    refused in panel_files.py's words before the panel is opened. The card is told which
+    models are written to and how large their files are at most; what the panel holds and the
+    boot logo taken off stay."""
     from libre_panel.devices import panel_files
 
     words = (
-        'Writing to the panel is switched off in this version. One 9.2" ran out of room for '
-        "its start screen and has kept restarting since; on other panels the same files were "
-        "written without trouble. Writing comes back when Libre Panel can tell how much fits "
-        "on a panel."
+        "Writing to this panel is switched off: Libre Panel has written start screens to the "
+        '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
     )
-    rig = Rig(tmp_path)
+    rig = Rig(tmp_path, pid=0x0088)
     try:
         rig.config(
             'theme = "slate"\nlanguage = "en"\n[device]\ndriver = "turzx"\n'
-            'model = "turing-9.2-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
+            'model = "turing-8.8-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
         )
         rig.fake.files = {panel_files.BOOT_LOGO: b"logo", panel_files.STANDBY_CLIP: b"clip"}
         env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
@@ -3381,13 +3380,21 @@ def test_nothing_is_written_to_a_panel_in_this_version(tmp_path: Path) -> None:
                               encoding="utf-8") as program:  # fmt: skip
             try:
                 post, get = _start_screen_of(program)
-                assert json.loads(get("/api/start-screen"))["writes"] is False
+                told = {m["id"]: m for m in json.loads(get("/api/start-screen"))["models"]}
+                written_to = {name for name, model in told.items() if model["writes"]}
+                assert written_to == {"turing-9.2-usb", "turing-12.3-usb"}
+                assert told["turing-9.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
+                assert told["turing-12.3-usb"]["room"] == {"clip": 500_000, "logo": 150_000}
+                assert told["turing-9.2-usb"]["unfit"] == ["levels"]
+                assert told["turing-8.8-usb"]["unfit"] == []
                 for action in ("logo", "clip"):
-                    assert post({"action": action}) == (
+                    assert post({"action": action, "model": "turing-8.8-usb"}) == (
                         "409", {"error": words, "paused": False}), action  # fmt: skip
                 assert rig.fake.commands == []  # (the panel was not even opened)
-                status, said = post({"action": "state"})
+                status, said = post({"action": "state", "model": "turing-8.8-usb"})
                 assert status == "200" and said["boot_logo"] == 4 and said["standby_clip"] == 4
+                assert said["model"] == "turing-8.8-usb"
+                assert said["room"] == {"clip": 360_000, "logo": 120_000}  # (as many pixels)
                 status, said = post({"action": "remove-logo"})
                 assert status == "200" and said["boot_logo"] == 0, said
                 assert set(rig.fake.files) == {panel_files.STANDBY_CLIP}
@@ -3407,9 +3414,11 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
     boot logo written and shown (the JPEG panel_files.py makes, byte for byte), taken away
     again, the standby clip written, played and saved as the start (H.264 byte for byte where
     ffmpeg is there) and named in config.toml; on a panel mounted upside down both turned
-    round, the files to keep as well, and a clip the panel kept in place of the new one said and
-    left as it is (nothing taken away); what is no action, panel or model refused in server.py's
-    words."""
+    round, the files to keep as well. And what a write is checked for (issue 52): a clip the
+    panel did not take is said and left as it is, also where the panel has one of that very
+    size (the time the write took tells); one that ended early is taken off again and not
+    played or saved; a boot logo that would be too much beside a clip of before 0.9.4 is not
+    sent. What is no action, panel or model is refused in server.py's words."""
     from PIL import Image
 
     from libre_panel.devices import panel_files
@@ -3422,22 +3431,23 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
             'theme = "slate"\nlanguage = "en"\n[device]\ndriver = "turzx"\n'
             'model = "turing-9.2-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
         )
-        # (writing to a panel is switched off in this version, issue 52: what is sent when it
-        # is on again is asked for here as who looks into it does)
+        # (a 9.2": one of the two models files are written to, with nothing set for it)
         env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
-               **_libraries(), **rig.env(),
-               panel_files.WRITES_ENV: panel_files.WRITES_WORD}  # fmt: skip
+               **_libraries(), **rig.env()}  # fmt: skip
+        env.pop(panel_files.WRITES_ENV, None)
         with subprocess.Popen([str(_program()), "editor", "--port", "0"], env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               encoding="utf-8") as program:  # fmt: skip
             try:
                 post, get = _start_screen_of(program)
-                assert json.loads(get("/api/start-screen"))["writes"] is True
+                told = {m["id"]: m for m in json.loads(get("/api/start-screen"))["models"]}
+                assert told["turing-9.2-usb"]["writes"] is True
                 model = panel_files.model_of("turing-9.2-usb")
+                room = {"clip": 360_000, "logo": 120_000}
                 status, said = post({"action": "state"})
                 assert status == "200", said
                 assert said == {"model": model.id, "files": [], "boot_logo": 0,
-                                "standby_clip": 0, "paused": False}  # fmt: skip
+                                "standby_clip": 0, "room": room, "paused": False}  # fmt: skip
                 logo = panel_files.logo_jpeg(model, design="aurora")
                 status, said = post({"action": "logo", "design": "aurora"})
                 assert status == "200", said
@@ -3482,28 +3492,74 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                     frames = [frame.transpose(Image.Transpose.ROTATE_180)
                               for frame in bootscreen.standby_frames(model)]  # fmt: skip
                     clip = panel_files.clip_h264(model, shutil.which("ffmpeg"), frames, full=True)
-                    # a panel that keeps the clip it had where there is no room for both at
-                    # once (as a 9.2" did): said, and left as it is: nothing taken away, played
-                    # or saved (0.9.1 took it away and wrote again; that 9.2" kept restarting
-                    # after its start screen was written so)
+                    assert len(clip) <= room["clip"] and len(turned) <= room["logo"]
+
+                    def sent_since(before: int) -> list[int]:
+                        return [cmd for cmd in rig.fake.commands[before:]
+                                if cmd in (40, 42, 98, 15, 110, 125)]  # fmt: skip
+
+                    # a panel that takes no file any more (as a 9.2" did once it was full): it
+                    # answers at once and keeps what it had. Said, and left as it is: nothing
+                    # taken away, played or saved (0.9.1 took the clip away and wrote again;
+                    # that 9.2" has kept restarting since)
                     old = rig.fake.files[panel_files.STANDBY_CLIP]
-                    rig.fake.room = len(old) + len(clip) - 1
+                    saved, played = len(rig.fake.saved), len(rig.fake.clip_names)
+                    rig.fake.refuses = True
                     before = len(rig.fake.commands)
                     status, said = post({"action": "clip"})
-                    assert status == "409", said
-                    assert said["error"] == (
-                        f"{panel_files.STANDBY_CLIP}: the panel has "
-                        f"{len(old)} bytes of it, not {len(clip)}"
-                    ), said
+                    assert (status, said["error"]) == ("409", panel_files.not_taken()), said
                     assert rig.fake.files[panel_files.STANDBY_CLIP] == old
-                    sent = [cmd for cmd in rig.fake.commands[before:]
-                            if cmd in (40, 42, 98, 15, 110, 125)]  # fmt: skip
-                    assert sent == [40, 98], sent
+                    assert sent_since(before) == [98, 98, 40, 98]
+                    rig.fake.refuses = False
+                    # a panel whose room ends before the clip does: what it took of it is taken
+                    # off again, so that it is not left full, and said; not played, not saved
+                    rig.fake.room = len(turned) + len(clip) - 1000
+                    before = len(rig.fake.commands)
+                    status, said = post({"action": "clip"})
+                    assert (status, said["error"]) == ("409", panel_files.cut_off(
+                        panel_files.STANDBY_CLIP, len(clip) - 1000, len(clip))), said  # fmt: skip
+                    assert set(rig.fake.files) == {panel_files.BOOT_LOGO}
+                    assert sent_since(before) == [98, 98, 40, 98, 42, 98]
+                    assert (len(rig.fake.saved), len(rig.fake.clip_names)) == (saved, played)
                     rig.fake.room = None
                     status, said = post({"action": "clip"})
                     assert status == "200" and said["standby_clip"] == len(clip), said
                     assert rig.fake.files[panel_files.STANDBY_CLIP] == clip
                     assert get("/api/start-screen/file?model=turing-9.2-usb&what=clip") == clip
+                    assert len(rig.fake.saved) == saved + 1
+                    # the same clip again: the panel has a file of that very size, so the size
+                    # says nothing and the time the write took tells. One the panel wrote (it
+                    # takes its time) is written, played and saved
+                    status, said = post({"action": "clip"})
+                    assert status == "200" and said["standby_clip"] == len(clip), said
+                    assert len(rig.fake.saved) == saved + 2
+                    # and one it answered at once and did not take is not (five times a clip
+                    # was called written on that 9.2" that was not): said, nothing played or saved
+                    rig.fake.refuses = True
+                    before = len(rig.fake.commands)
+                    status, said = post({"action": "clip"})
+                    assert (status, said["error"]) == ("409", panel_files.not_taken()), said
+                    assert sent_since(before) == [98, 98, 40, 98]
+                    assert len(rig.fake.saved) == saved + 2
+                    rig.fake.refuses = False
+                # a clip of before 0.9.4 on the panel (700 KB), and no boot logo: a logo beside
+                # it would be more than Libre Panel puts on a 9.2": asked, and not sent
+                rig.fake.files = {panel_files.STANDBY_CLIP: bytes(701_830)}
+                before = len(rig.fake.commands)
+                status, said = post({"action": "logo", "design": "aurora"})
+                assert (status, said["error"]) == ("409", panel_files.no_room(
+                    panel_files.BOOT_LOGO, 701_830)), said  # fmt: skip
+                assert "(685 KB)" in said["error"]
+                assert [cmd for cmd in rig.fake.commands[before:]
+                        if cmd in (40, 42, 98, 113)] == [98, 98]  # fmt: skip
+                assert set(rig.fake.files) == {panel_files.STANDBY_CLIP}
+                status, said = post({"action": "state"})
+                assert said["standby_clip"] == 701_830 and said["room"] == room, said
+                # a look with more detail than fits finely is not made, and nothing is sent
+                before = len(rig.fake.commands)
+                status, said = post({"action": "logo", "design": "levels"})
+                assert (status, said["error"]) == ("409", panel_files.too_fine()), said
+                assert not {40, 42, 113} & set(rig.fake.commands[before:])
                 for payload, words in (
                     ({"action": "nope"},
                      'expected {"action": "state", "logo", "remove-logo" or "clip"}'),
