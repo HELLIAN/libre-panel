@@ -153,6 +153,34 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
 - [x] the JPEG and WebP comparisons on Windows too: CI builds libjpeg-turbo 3.2.0 and libwebp
       1.6.0 there as Pillow's Windows wheel has them built in (MSVC, the SIMD), from archives
       checked by their SHA-256 (libjpeg's boolean is a byte on Windows, an int elsewhere)
+- [x] as fast as Pillow or faster in what the transitions take, the same bytes:
+      - ImageChops.offset makes two copies a row;
+      - a new picture is filled at once where it is one value in every band, and by doubling
+        where its bands differ;
+      - paste through a mask works a row at a time, and an RGBA picture through its own alpha
+        four pixels at a time;
+      - an RGBa picture is laid onto RGB through its own alpha, faded, in one pass
+        (paste_unpremultiplied: what convert, putalpha and paste make of it);
+      - the bilinear transform has its own loop for 1, 3 and 4 bands, and where the processor
+        has AVX2 it does a pixel's four bands at once and four pixels' places at once (the same
+        doubles in the same order);
+      - the resampling's passes are compiled for AVX2 as well (the same int sums).
+
+      Measured best of five runs taken in turn (Pillow 13.0 alongside):
+
+      | operation | before | after | Pillow |
+      |---|---|---|---|
+      | offset of 1920x720 | 4.26 ms | 0.44 ms | 0.41 ms |
+      | a new 1920x720 picture of one colour | 3.23 ms | 0.20 ms | 0.22 ms |
+      | a 600x300 paste through an L mask | 0.78 ms | 0.53 ms | 0.53 ms |
+      | a turned 130x122 RGBA tile | 0.47 ms | 0.21 ms | 0.43 ms |
+      | a 1920x720 resize | 13.3 ms | 11.7 ms | 12.3 ms |
+
+      Tests: the comparisons of
+      R1 and of every transition (R4); the four bands at once against one by one on turned,
+      grown and moved pictures of 1x1 to 130x122, a map with no number in it among them; and
+      the laying in one pass against convert, putalpha and paste, with and without its fade,
+      anywhere on the picture and beyond it
 - [ ] to decide: the app reads an animated WebP's durations before each frame is loaded,
       when Pillow has not set them yet, so it plays those at its usual pace (the Rust frames
       read them as the app does for now)
@@ -1315,8 +1343,8 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       Pillow's box blur of radius r reaching ceil(r) a pass at most
 - [x] the transitions from one screen to the next (render/overlays.py's fade and slide,
       render/transitions.py's tube and entrance, render/handovers.py's wipe, iris, blinds,
-      dissolve, the slides from each side, zoom, the line of light, glitch, tiles and shatter;
-      a cut is none): each made by its name for a switch, with the parameters a service passed
+      dissolve, the slides from each side, zoom, the line of light, glitch, tiles, shatter,
+      cascade, comet and portal; a cut is none): each made by its name for a switch, with the parameters a service passed
       (an entrance's title, text, logo and kind; one whose kind is no key does not start), the
       new theme's colours and the app's language, its duration and what a switch and toasts
       do while it plays; each of its frames of the old screen, the new one and how far it has
@@ -1329,15 +1357,20 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       plays them with R5. The tests: 120 themes of other colours, sizes (1x1 to 1920x480,
       either way round) and languages, with up to three switches each (their old frame now
       and then another, now and then told where the panels stand), at times on their way, at
-      their ends and past them; and seven scenarios for what those seldom meet: the entrance
+      their ends and past them; and eleven scenarios for what those seldom meet: the entrance
       at each turn of its timeline in every kind, on another size and on a panel narrower than
       its band; every transition at its start, its end and where the line of light is almost
       at its brightest, a shatter whose old frame changes; the maps and the strip of light
-      kept for a size; slides, the wipe and the line of light over all the panels as one
-      (render/canvas.py: either of two panels side by side or one above the other, at the
-      times their seams and the line are at the panels' edges, in the gap and beyond, a
-      transition the canvas does not touch, canvases that say nothing sensible, the wipe's map
-      for another size): 1787 frames to the bit, 345 of them over the panels; and random's
+      kept for a size; slides, the wipe, the line of light, the iris, the shatter, the
+      cascade, the comet and the portal over all the panels as one (render/canvas.py: either
+      of two panels side by side or one above the other, at the times their seams and the line
+      are at the panels' edges, in the gap and beyond, a transition the canvas does not touch,
+      canvases that say nothing sensible, a comet over a sliver of a panel, the wipe's map for
+      another size); the cascade, the comet, the portal, the shatter and the iris on
+      lumen-1920x720, encore-pair, arena-480x480 and terra-vertical as their renderer drew them
+      last (the cascade's ground and cards from Renderer.beneath), alone and on either of two
+      panels, then on frames of another size: 2740 frames to the bit, 1324 of them over the
+      panels and 760 of the cascade, the comet and the portal; and random's
       draws of 132 seeds. The counter-checks put 110 faults into
       transitions.rs and 10 into random.rs: the tests catch 107 and 8 (squares, the early
       light of an entrance's edges, the music's track joined to its text, the room a narrow

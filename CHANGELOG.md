@@ -34,6 +34,19 @@
   second instead of 13. The Rust app draws every light bit for bit as Python does.
 
 **Changed**
+- **Transitions cost less in the Rust app, with the same pixels.** Counted per frame on a 12.3"
+  panel (callgrind, the instructions of a transition's frames):
+  - the glitch takes a sixteenth of what it did, as its colour bands now move a row at a time;
+  - the shatter over the panels takes a third;
+  - the tiles, the wipe and the iris take about half;
+  - the comet takes 0.56 to 0.63 of what it did;
+  - the cascade and the portal take three quarters;
+  - a slide over the panels no longer copies both screens first.
+
+  Under them, pasting through a mask works a row at a time, a picture of one colour is filled
+  at once, and a turned picture is worked out four bands and four places at once where the
+  processor has AVX2. Resizing is compiled for AVX2 too: a whole 12.3" picture takes 11.7
+  instead of 13.3 ms. Every frame is still bit for bit what Python draws.
 - **Less work and memory for what was there.** Found while measuring the light: the Rust app
   worked out a cover's colour (`@cover`, and a card's frame while a track plays) anew each time
   it drew, 0.7 ms each, where Python keeps it per picture; now it keeps it too (Encore without

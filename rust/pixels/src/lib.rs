@@ -134,10 +134,22 @@ impl Image {
             "a colour of {} bands for {mode}",
             colour.len()
         );
-        let mut data = Vec::with_capacity(width * height * mode.bands());
-        for _ in 0..width * height {
-            data.extend_from_slice(colour);
-        }
+        // (one value in every band: filled at once; else the first pixel, then what is there
+        // copied after itself until it is all)
+        let n = width * height * mode.bands();
+        let data = if colour.iter().all(|&v| v == colour[0]) {
+            vec![colour[0]; n]
+        } else {
+            let mut data = Vec::with_capacity(n);
+            if n > 0 {
+                data.extend_from_slice(colour);
+            }
+            while data.len() < n {
+                let more = (n - data.len()).min(data.len());
+                data.extend_from_within(..more);
+            }
+            data
+        };
         Image {
             mode,
             width,

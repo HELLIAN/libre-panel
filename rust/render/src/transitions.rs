@@ -10,7 +10,7 @@
 
 use std::borrow::Cow;
 
-use lp_pixels::{chops, merge, Filter, Image, Mode, Transpose};
+use lp_pixels::{chops, Filter, Image, Mode, Transpose};
 use lp_py::random::Random;
 use lp_py::{Dict, Value};
 
@@ -1045,18 +1045,39 @@ fn glitch(old: &Image, new: &Image, t: f64) -> Result<Image> {
     }
     let split = round_int(12.0 * u * strength)?;
     if split != 0 {
-        let bands = out.split();
-        out = merge(
-            Mode::RGB,
-            &[
-                &bands[0].offset(split, 0),
-                &bands[1],
-                &bands[2].offset(-split, 0),
-            ],
-        )
-        .map_err(failed)?;
+        out = colours_apart(&out, split)?;
     }
     Ok(out)
+}
+
+/// The red band moved `split` to the right and the blue one as far to the left, what leaves on
+/// one side coming in on the other (Image.merge of the split bands, the red and the blue
+/// through ImageChops.offset): in one pass, a row at a time.
+fn colours_apart(out: &Image, split: i64) -> Result<Image> {
+    let (w, h) = (out.width(), out.height());
+    if w == 0 {
+        return Ok(out.clone());
+    }
+    // (each row as it is, then its red from `s` to the left and its blue from `s` to the
+    // right, round the row)
+    let s = split.rem_euclid(w as i64) as usize * 3;
+    let mut moved = out.as_bytes().to_vec();
+    let row = w * 3;
+    for (to, from) in moved
+        .chunks_exact_mut(row)
+        .zip(out.as_bytes().chunks_exact(row))
+    {
+        let band = |to: &mut [u8], from: &[u8], b: usize| {
+            for (o, f) in to.chunks_exact_mut(3).zip(from.chunks_exact(3)) {
+                o[b] = f[b];
+            }
+        };
+        band(&mut to[s..], &from[..row - s], 0);
+        band(&mut to[..s], &from[row - s..], 0);
+        band(&mut to[..row - s], &from[s..], 2);
+        band(&mut to[row - s..], &from[..s], 2);
+    }
+    Image::from_bytes(Mode::RGB, w, h, moved).map_err(failed)
 }
 
 /// Tiles: the screen turns over tile by tile, from one corner across, the new one on their
@@ -1339,10 +1360,10 @@ fn lay(
     } else {
         Cow::Borrowed(&tile.picture)
     };
-    // (a clear pixel around it: soft edges once turned)
+    // (a clear pixel around it: soft edges once turned; held premultiplied, as the transform
+    // takes an RGBA picture: its colours, all of alpha 255, and the clear ring are so already)
     let (pw, ph) = (face.width() + 2, face.height() + 2);
-    let mut held = Image::blank(Mode::RGBA, pw, ph);
-    held.paste(&face, 1, 1, None).map_err(failed)?;
+    let held = held_premultiplied(&face)?;
     let (x0, y0, x1, y1) = tile.bounds;
     let cx = (x0 + x1) as f64 / 2.0 + by.0;
     let cy = (y0 + y1) as f64 / 2.0 + by.1;
@@ -1367,7 +1388,7 @@ fn lay(
         c / size,
         my + (-s * dx + c * dy) / size,
     ];
-    let mut laid = held
+    let laid = held
         .transform(
             (ow as usize, oh as usize),
             lp_pixels::Transform::Affine(data),
@@ -1375,17 +1396,42 @@ fn lay(
             None,
         )
         .map_err(failed)?;
-    if alpha < 0.999 {
-        let lut = (0..256)
-            .map(|v| round_int(v as f64 * alpha))
-            .collect::<Result<Vec<i64>>>()?;
-        let seen = laid
-            .getchannel(3)
-            .and_then(|a| a.point(&lut))
-            .map_err(failed)?;
-        laid.putalpha(&seen).map_err(failed)?;
+    // (back to plain colours, its alpha `alpha` of itself, and laid through it: in one pass)
+    let fade = if alpha < 0.999 {
+        // (Python's round of each: where one is no number, the first is none either)
+        round_int(0.0 * alpha)?;
+        let mut lut = [0u8; 256];
+        for (v, slot) in lut.iter_mut().enumerate() {
+            *slot = (v as f64 * alpha).round_ties_even().clamp(0.0, 255.0) as u8;
+        }
+        Some(lut)
+    } else {
+        None
+    };
+    out.paste_unpremultiplied(&laid, ox, oy, fade.as_ref())
+        .map_err(failed)
+}
+
+/// An RGB picture in RGBa with a clear pixel round it: what pasting it at (1, 1) into a blank
+/// RGBa picture two pixels wider and taller gives (its colours of alpha 255), made row by row.
+fn held_premultiplied(face: &Image) -> Result<Image> {
+    let (w, h) = (face.width(), face.height());
+    let (pw, ph) = (w + 2, h + 2);
+    let mut bytes = Vec::with_capacity(pw * ph * 4);
+    bytes.resize(pw * 4, 0);
+    for row in face
+        .as_bytes()
+        .chunks_exact((w * 3).max(1))
+        .take(h * usize::from(w > 0))
+    {
+        bytes.extend_from_slice(&[0; 4]);
+        for p in row.chunks_exact(3) {
+            bytes.extend_from_slice(&[p[0], p[1], p[2], 255]);
+        }
+        bytes.extend_from_slice(&[0; 4]);
     }
-    out.paste(&laid, ox, oy, Some(&laid)).map_err(failed)
+    bytes.resize(pw * ph * 4, 0);
+    Image::from_bytes(Mode::RGBa, pw, ph, bytes).map_err(failed)
 }
 
 /// _joined: boxes ([x0, y0, x1, y1]) joined where they overlap, until none do: a screen's cards.

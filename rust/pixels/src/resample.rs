@@ -183,6 +183,7 @@ fn horizontal_row<const B: usize>(line: &[u8], dst: &mut [u8], c: &Coeffs, kk: &
 }
 
 /// The rows of ``src`` from ``offset`` on, each resampled to ``c``'s width (8 bits a band).
+#[inline(always)]
 fn horizontal_8(src: &Image, offset: usize, rows: usize, c: &Coeffs) -> Image {
     let w = c.bounds.len();
     let kk = fixed(&c.kk);
@@ -202,6 +203,7 @@ fn horizontal_8(src: &Image, offset: usize, rows: usize, c: &Coeffs) -> Image {
 /// The columns of ``src``, resampled to ``c``'s height (``c``'s bounds shifted by ``offset``):
 /// each output row summed a whole input row at a time (the same int sums as Resample.c's,
 /// column by column).
+#[inline(always)]
 fn vertical_8(src: &Image, offset: usize, c: &Coeffs) -> Image {
     let h = c.bounds.len();
     let kk = fixed(&c.kk);
@@ -231,8 +233,28 @@ fn horizontal_first(in_w: usize, in_h: usize, w: usize, h: usize) -> bool {
     !(shrink_y > 0 && shrink_y > (in_w as i64 - w as i64) * 2)
 }
 
-/// Resample.c's ImagingResampleInner for 8-bit bands.
+/// Resample.c's ImagingResampleInner for 8-bit bands: compiled for AVX2 as well and that one
+/// taken where the processor has it (the same int sums, more of them at once).
 fn resample_8(src: &Image, w: usize, h: usize, filter: Filter, bx: [f32; 4]) -> Image {
+    #[cfg(target_arch = "x86_64")]
+    {
+        static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *READY.get_or_init(|| std::arch::is_x86_feature_detected!("avx2")) {
+            // SAFETY: the processor has AVX2.
+            return unsafe { resample_8_avx2(src, w, h, filter, bx) };
+        }
+    }
+    resample_8_body(src, w, h, filter, bx)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn resample_8_avx2(src: &Image, w: usize, h: usize, filter: Filter, bx: [f32; 4]) -> Image {
+    resample_8_body(src, w, h, filter, bx)
+}
+
+#[inline(always)]
+fn resample_8_body(src: &Image, w: usize, h: usize, filter: Filter, bx: [f32; 4]) -> Image {
     let need_h = w != src.width || bx[0] != 0.0 || bx[2] != w as f32;
     let need_v = h != src.height || bx[1] != 0.0 || bx[3] != h as f32;
     let cv = coeffs(src.height, bx[1], bx[3], h, filter);

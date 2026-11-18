@@ -161,14 +161,15 @@ impl Image {
         if yo < 0 {
             yo += h;
         }
+        // (each row the row `yo` further down, its pixels from `xo` on and then the first
+        // `xo` of them: two copies a row)
         let b = self.bands();
-        for row in 0..h {
-            let yi = (row + yo) % h;
-            for col in 0..w {
-                let xi = (col + xo) % w;
-                let (d, s) = (((row * w + col) as usize) * b, ((yi * w + xi) as usize) * b);
-                out.data[d..d + b].copy_from_slice(&self.data[s..s + b]);
-            }
+        let (stride, xo) = (self.width * b, (xo % w) as usize * b);
+        for (row, line) in out.data.chunks_exact_mut(stride).enumerate() {
+            let yi = (row + yo as usize) % h as usize;
+            let from = &self.data[yi * stride..(yi + 1) * stride];
+            line[..stride - xo].copy_from_slice(&from[xo..]);
+            line[stride - xo..].copy_from_slice(&from[..xo]);
         }
         out
     }

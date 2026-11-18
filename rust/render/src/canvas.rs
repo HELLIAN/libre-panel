@@ -135,16 +135,20 @@ pub fn slide(old: &Image, new: &Image, t: f64, canvas: &Canvas, way: (i64, i64))
     } else {
         (at - size, at)
     };
-    let rgb = |im: &Image| -> Result<Image> {
+    // (each in RGB: as it is, not a copy, where it is so already)
+    let rgb = |im: &Image| -> Result<Option<Image>> {
         match im.mode() {
-            Mode::RGB => Ok(im.clone()),
-            _ => im.convert(Mode::RGB).map_err(failed),
+            Mode::RGB => Ok(None),
+            _ => im.convert(Mode::RGB).map(Some).map_err(failed),
         }
     };
     let (ox, oy) = if across { (o, 0) } else { (0, o) };
     let (nx, ny) = if across { (n, 0) } else { (0, n) };
-    out.paste(&rgb(old)?, ox, oy, None).map_err(failed)?;
-    out.paste(&rgb(new)?, nx, ny, None).map_err(failed)?;
+    let (old_rgb, new_rgb) = (rgb(old)?, rgb(new)?);
+    out.paste(old_rgb.as_ref().unwrap_or(old), ox, oy, None)
+        .map_err(failed)?;
+    out.paste(new_rgb.as_ref().unwrap_or(new), nx, ny, None)
+        .map_err(failed)?;
     if 0 < at && at < size {
         shade(&mut out, at, ahead, across, canvas)?;
     }
