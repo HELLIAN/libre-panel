@@ -473,8 +473,8 @@ exclusively. Firmware updates stay the job of the vendor app; Libre Panel never
 touches firmware.
 
 **Windows:** USB (V1.x) panels come with the WinUSB driver bound through
-their descriptors; no Zadig needed. `pip install "libre-panel[usb]"` also
-installs a bundled libusb. Two kinds of panel do need the WinUSB driver set by hand, once,
+their descriptors; no Zadig needed. A Python install's `usb` extra also
+brings a bundled libusb. Two kinds of panel do need the WinUSB driver set by hand, once,
 with [Zadig](https://zadig.akeo.ie): the JONSBO DS339 and the VMAX 4.6"
 ([both of their interfaces](#jonsbo-ds916-and-ds339)), and Waveshare's 2.8" as a USB display.
 

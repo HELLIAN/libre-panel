@@ -33,7 +33,8 @@ With the downloads:
   points at the AppImage file; if you move it, enable autostart again. The
   AppImage needs FUSE, which desktop distributions include.
 
-Installed with pip, add the `tray` extra: `pipx install "libre-panel[usb,serial,tray]"`.
+Installed with pip, add the `tray` extra:
+`pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel"`.
 
 ## Updating
 
@@ -114,7 +115,7 @@ first; quitting Libre Panel closes it.
 
 - **Windows:** WebView2 draws the window. Windows 11 has it, Windows 10 gets
   it with Microsoft Edge; the downloads bring everything else. Installed with
-  pip: `pipx install "libre-panel[usb,serial,tray,window]"`.
+  pip: `pipx install "libre-panel[usb,serial,tray,window] @ git+https://github.com/syntensa/libre-panel"`.
 - **Linux:** WebKitGTK draws the window, through pywebview and PyGObject.
   WebKitGTK and PyGObject come from your distribution:
 
@@ -127,7 +128,7 @@ first; quitting Libre Panel closes it.
 
   pywebview goes into the environment Libre Panel runs in, which must see the
   system's PyGObject: `pipx install --system-site-packages
-  "libre-panel[usb,serial,tray]"`, then `pipx inject libre-panel pywebview`
+  "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel"`, then `pipx inject libre-panel pywebview`
   (without pywebview, Libre Panel draws its window with PyGObject itself).
   **The AppImage and the Linux archive** open their window with the same packages
   of your distribution: their own Python has no GTK, so the window runs in the

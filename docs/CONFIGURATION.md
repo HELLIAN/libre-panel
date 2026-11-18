@@ -896,7 +896,8 @@ only while a theme or a service reads it:
   another player at once, so the panel follows without delay; a look every
   five seconds is only the safety net, and the position moves on by itself in
   between. The cover is read when the track changes. The installer brings what
-  it needs; a pip install needs `pip install "libre-panel[media]"`.
+  it needs; a Python install takes the `media` extra in its install line (as
+  [MQTT](#more-sensor-sources) does below).
 - Linux: any MPRIS player (Spotify, browsers, media players) through `playerctl`, asked
   once a second; where it is not installed, straight from the session's D-Bus with systemd's
   `busctl` (the player that plays, else one that is paused).
@@ -943,9 +944,14 @@ entities = ["sensor.*", "binary_sensor.front_door", "climate.*"]
 poll_seconds = 10
 ```
 
-**MQTT** (`mqtt.*`; `pip install "libre-panel[mqtt]"`, included in the
-installers): what your devices publish. A JSON object is taken apart into one
-reading per field.
+**MQTT** (`mqtt.*`): what your devices publish. A JSON object is taken apart into one
+reading per field. The downloads have it built in. A Python install takes the `mqtt`
+extra in its install line, from GitHub: Libre Panel is not on PyPI, where
+`pip install "libre-panel[mqtt]"` would look for it.
+
+```
+pipx install --force "libre-panel[usb,serial,tray,mqtt] @ git+https://github.com/syntensa/libre-panel"
+```
 
 ```toml
 [sensors]
@@ -2214,7 +2220,7 @@ and fetch the libraries (they are not part of Libre Panel; the script downloads
 them from NuGet and checks them against fixed checksums):
 
 ```
-pip install "libre-panel[lhm]"
+pipx install --force "libre-panel[usb,serial,tray,lhm] @ git+https://github.com/syntensa/libre-panel"
 python fetch_lhm.py "C:\Program Files\lhm-libs"      # in a terminal opened as administrator
 ```
 
