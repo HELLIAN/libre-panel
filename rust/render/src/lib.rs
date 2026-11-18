@@ -35,6 +35,7 @@ mod looks;
 pub mod lru;
 mod metric;
 pub mod moon;
+pub mod morph;
 pub mod motion;
 pub mod np;
 pub mod overlays;

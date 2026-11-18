@@ -37,9 +37,10 @@ def test_each_new_transition_draws_every_frame_in_its_size(name):
         drawn = [kind.frame(old, new, t / 10) for t in range(11)]
         assert all(out.size == size and out.mode == "RGB" for out in drawn), name
         assert drawn[-1].getpixel((size[0] // 2, size[1] // 2)) == NEW  # it ends on the new
+        # (on the way, the new shows somewhere; a morph with no screen before it fades)
         assert any(
             NEW in [c for _, c in out.getcolors(1 << 16) or []] for out in drawn[1:-1]
-        ) or name in ("zoom", "glitch"), name  # fmt: skip (on the way, the new shows somewhere)
+        ) or name in ("zoom", "glitch", "morph"), name  # fmt: skip
 
 
 @pytest.mark.parametrize("name", sorted(HANDOVERS))

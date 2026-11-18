@@ -715,6 +715,21 @@ def _blend(
     return out if out.mode == frame.mode else out.convert(frame.mode), blend
 
 
+def _hand_before(kind: Any, was: Any, snapshot: Any, now: float) -> None:
+    """The old screen for a morph (render/handovers.py), from the renderer that drew it: its
+    last frame as it was composed; composed here once where its layers went to the engine."""
+    if getattr(kind, "name", None) != "morph" or not hasattr(kind, "set_before"):
+        return
+    parting = was.parting()
+    if parting is None and snapshot is not None:
+        try:
+            was.render(snapshot, now)
+            parting = was.parting()
+        except Exception:  # (it fades instead)
+            log.exception("the old screen could not be drawn for the morph")
+    kind.set_before(parting)
+
+
 def _begin(
     kind: Any,
     last_frame: Image.Image | None,
@@ -1545,7 +1560,7 @@ class MainLoop:
                     i18n.set_language(config.language)
                     hub.follow_config(config)  # taken at the sample that follows (next_sample)
                     self._ahead.drop()  # (what was read before it is not that)
-                    renderer.close()
+                    was = renderer  # (closed once a morph has taken its last frame apart)
                     theme, renderer = new_theme, self._renderer(new_theme, config)
                     size = target_size(config, renderer.theme, wanted)  # (laid out: the same)
                     previous, next_sample = None, 0.0
@@ -1570,6 +1585,7 @@ class MainLoop:
                                 snapshot.readings if snapshot is not None else None,
                                 theme.name, make=transition, canvas=canvas,
                             )  # fmt: skip
+                            _hand_before(kind, was, snapshot, now)
                             if getattr(kind, "canvas", None) is not None:
                                 begins = now + self._together(before, config, occasion, leaving)
                             else:
@@ -1578,6 +1594,7 @@ class MainLoop:
                         if host is not None:
                             switches = host.switches  # this was the switch
                             host.emit("theme-changed", theme=wanted)
+                    was.close()
                     shown, refused, status.theme = wanted, None, wanted
                     status.missing_theme = status.missing_why = ""
                     log.info("showing theme %r", shown)

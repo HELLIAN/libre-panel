@@ -800,7 +800,7 @@ impl MainLoop {
         let canvas = if together { self.canvas() } else { None };
         let (moment, _) = moment();
         self.blends += 1;
-        let kind = switch::handover(
+        let mut kind = switch::handover(
             &self.config,
             occasion,
             leaving,
@@ -812,6 +812,9 @@ impl MainLoop {
             self.blends as usize + now.to_bits() as usize,
             canvas.as_ref(),
         );
+        if let Some(morph) = kind.as_mut().filter(|kind| kind.name == "morph") {
+            morph.set_before(self.parting(now));
+        }
         // (over all of them: on each from the same moment)
         let begins = match &kind {
             Some(kind) if kind.on_canvas() => now + self.together(occasion, leaving),
@@ -837,6 +840,25 @@ impl MainLoop {
             self.blend = Some(blend);
             self.began_in = self.host.mode();
         }
+    }
+
+    /// The old screen for a morph, from the renderer that drew it (still the loop's while the
+    /// switch is made): its last frame as it was composed; composed here once where its layers
+    /// went to the engine.
+    fn parting(&mut self, now: f64) -> Option<lp_render::morph::Parting> {
+        let was = self.renderer.as_mut()?;
+        if let Ok(Some(parting)) = was.parting() {
+            return Some(parting);
+        }
+        let snapshot = self.snapshot.clone()?;
+        if let Err(why) = was.render_shared(snapshot, now) {
+            say(&format!(
+                "the old screen could not be drawn for the morph: {}",
+                why.0
+            ));
+            return None;
+        }
+        was.parting().ok().flatten()
     }
 
     /// config.toml read again where it changed; one that cannot be read leaves the last.

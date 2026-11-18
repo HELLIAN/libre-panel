@@ -20,6 +20,15 @@
   the panels too: the circle opens from the middle of all of them, the old screen's tiles fall
   one after another along them. On one panel by itself each plays on it alone, the iris and the
   shatter as before. The Rust app draws each frame bit for bit as Python does.
+- **Morph.** A new transition: what the old screen and the new one both show (the time, a ring
+  or a number of the same reading, the album cover, a game's logo, the moon) flies from its old
+  place to its new one on a gentle arc, growing or shrinking to its new size and turning into
+  its new look on the way, while the rest of the old screen fades out and the new one's comes
+  in. Two screens with nothing alike simply fade. In the Rust app on a 12.3" with the demo's
+  readings (Lumen to Arena, Arena to Lumen, Encore to Lumen), its first frame, which takes both
+  screens apart, takes 13.5 to 17.7 ms, each frame after it 3.6 to 4.8 ms (the median). The Rust
+  app draws it as Python does, to the bit but in the glow of a screen's rings and bars, which
+  its renderer draws within a level: there a pixel now and then a level or two apart.
 - **Light that moves.** On a panel that moves, light now moves over what it shows: the end of
   a ring breathes in its colour and now and then a light runs along the ring (past 80 % its end
   glows wider); the newest point of a curve beats with each reading; while a track plays, its

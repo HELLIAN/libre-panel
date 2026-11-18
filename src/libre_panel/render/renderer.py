@@ -1686,6 +1686,24 @@ class Renderer:
                 boxes.append(box)
         return ground, boxes
 
+    def parting(self) -> Any:
+        """The frame composed last as it was composed, for the morph (render/morph.py): the
+        ground, the pieces in their order and what each widget shows; None before a frame was
+        composed here. Kept by the morph when the theme changes, after this renderer is closed:
+        its pieces are the frame's own (nothing changes them)."""
+        from libre_panel.render.morph import Parting, shown_as
+
+        if self._last is None:
+            return None
+        w, h = self.theme.width, self.theme.height
+        shows: dict[str, str] = {}
+        for widget in self.widgets:
+            key = shown_as(widget)
+            if key is not None:
+                shows[str(widget.get("id"))] = key
+        ground = self._ground_of((0, 0, w, h))
+        return Parting(ground, list(self._last[0]), shows, self._opaque, self._last[1])
+
     def _as_rgb(self, canvas: Image.Image) -> Image.Image:
         """The frame of ``canvas``, in RGB: a new picture each time (the loop keeps frames and
         draws on them). An RGBA picture pasted into an RGB one gives its colours as they are,

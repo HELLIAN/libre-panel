@@ -3198,10 +3198,13 @@ fn run(case: &Value) -> Result<Value, String> {
             // case says "drawn" (a moment's bits), the renderer draws its frame of that moment
             // first, as the panel's loop has before a transition begins (what the cascade
             // brings in, card by card), its clocks at "now" where the case gives it ([year,
-            // month, day, hour, minute, second, microsecond]); where it says "time", each step
+            // month, day, hour, minute, second, microsecond]), its readings those of "snapshot"
+            // where it gives one; where it says "pictures", each step also gives its frame (to
+            // look at, not to compare); where it says "time", each step
             // also tells how long its frame took, in nanoseconds (to measure, not to compare)
             use lp_render::transitions::Transition;
             let timed = case["time"].as_bool() == Some(true);
+            let pictures = case["pictures"].as_bool() == Some(true);
             let env = lp_theme::Env {
                 fonts_dir: case["fonts_dir"].as_str().unwrap_or("").into(),
             };
@@ -3226,7 +3229,11 @@ fn run(case: &Value) -> Result<Value, String> {
             };
             let mut renderer = lp_render::Renderer::new(theme, &env, options).map_err(|e| e.0)?;
             // (the pictures services published: a logo by its key)
-            let mut snapshot = lp_render::snapshot::Snapshot::default();
+            // (or, where the case gives one, a whole snapshot: readings, pictures, histories)
+            let mut snapshot = match case.get("snapshot") {
+                Some(given) => snapshot_of(given),
+                None => lp_render::snapshot::Snapshot::default(),
+            };
             for (key, picture) in case["images"].as_object().into_iter().flatten() {
                 snapshot.images.insert(key.clone(), image_of(picture)?);
             }
@@ -3239,6 +3246,24 @@ fn run(case: &Value) -> Result<Value, String> {
                     .render(snapshot.clone(), float_in(now))
                     .map_err(|e| format!("not drawn: {}", e.0))?;
             }
+            // (where the case says "before": {"theme", "drawn"}, the old screen's theme drawn at
+            // its moment first, as the panel's loop had it before the switch: what the morph
+            // takes apart)
+            let before = match case.get("before") {
+                Some(old) => {
+                    let theme = lp_theme::load_theme(
+                        std::path::Path::new(old["theme"].as_str().unwrap_or("")),
+                        &env,
+                    )
+                    .map_err(|e| e.msg)?;
+                    let mut was =
+                        lp_render::Renderer::new(theme, &env, options).map_err(|e| e.0)?;
+                    was.render(snapshot.clone(), float_in(&old["drawn"]))
+                        .map_err(|e| format!("not drawn before: {}", e.0))?;
+                    was.parting().map_err(|e| e.0)?
+                }
+                None => None,
+            };
             renderer.set_snapshot(snapshot);
             let mut olds: Vec<(String, Image)> = Vec::new();
             let mut answers = Vec::new();
@@ -3252,6 +3277,7 @@ fn run(case: &Value) -> Result<Value, String> {
                     answers.push(json!({"made": false}));
                     continue;
                 };
+                made.set_before(before.clone());
                 let mut steps = Vec::new();
                 for step in spec["steps"].as_array().into_iter().flatten() {
                     let key = step[0].to_string();
@@ -3279,6 +3305,9 @@ fn run(case: &Value) -> Result<Value, String> {
                             });
                             if timed {
                                 answer["ns"] = json!(took);
+                            }
+                            if pictures {
+                                answer["image"] = value_of(&out);
                             }
                             answer
                         }

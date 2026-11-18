@@ -105,6 +105,7 @@ enum Kind {
     Cascade(Option<Laid>),
     Comet(Option<Box<Flown>>),
     Portal(Option<Box<Opening>>),
+    Morph(Box<Morph>),
     /// a plugin's (render/plugin.rs)
     Plugin(Box<dyn crate::plugin::PluginTransition>),
 }
@@ -175,11 +176,12 @@ impl Transition {
             "cascade" => (1.9, "wait", "over", false, Kind::Cascade(None)),
             "comet" => (1.7, "wait", "over", false, Kind::Comet(None)),
             "portal" => (1.5, "wait", "over", false, Kind::Portal(None)),
+            "morph" => (2.1, "wait", "over", false, Kind::Morph(Box::default())),
             _ => return Transition::plugin(name, params, renderer),
         };
         let name = BUILT_IN.iter().copied().find(|n| *n == name)?;
         // take_canvas: across the panels, at its own pace there
-        let canvas = canvas_duration(name).and_then(|d| canvas_of(params).map(|c| (d, c)));
+        let canvas = canvas_duration(name).zip(canvas_of(params));
         let mut kind = kind;
         if let (Kind::Masked(masked), Some((_, c))) = (&mut kind, &canvas) {
             if masked.map == Map::Iris {
@@ -200,6 +202,14 @@ impl Transition {
             kind,
             canvas: canvas.map(|(_, c)| c),
         })
+    }
+
+    /// The old screen as its renderer composed it last (Renderer::parting), for the morph
+    /// (RenderContext.before): what it takes apart; the others take nothing of it.
+    pub fn set_before(&mut self, before: Option<crate::morph::Parting>) {
+        if let Kind::Morph(morph) = &mut self.kind {
+            morph.before = before;
+        }
     }
 
     /// A plugin's transition (overlays.transition: the registry's), from what draws the plugins
@@ -327,6 +337,7 @@ impl Transition {
                 None => shatter(pieces, old, old_key, new, t, 1.3),
             },
             Kind::Cascade(laid) => cascade(laid, old, new, t, self.canvas.as_ref(), renderer),
+            Kind::Morph(morph) => morph.frame(old, new, t, renderer),
             Kind::Comet(flown) => comet(flown, old, new, t, self.canvas.as_ref(), &colours),
             Kind::Portal(opening) => portal(opening, old, new, t, self.canvas.as_ref(), &colours),
             Kind::Plugin(played) => played.frame(old, new, t).map_err(Failed),
@@ -344,7 +355,7 @@ fn policy(said: &str) -> &'static str {
 }
 
 /// The built-in names (overlays.BUILT_IN_TRANSITIONS).
-pub const BUILT_IN: [&str; 20] = [
+pub const BUILT_IN: [&str; 21] = [
     "cut",
     "fade",
     "slide",
@@ -365,6 +376,7 @@ pub const BUILT_IN: [&str; 20] = [
     "cascade",
     "comet",
     "portal",
+    "morph",
 ];
 
 impl Kind {
@@ -2016,6 +2028,135 @@ fn ring(
         }
     }
     Ok(())
+}
+
+// -- the morph: what both screens show flies to its new place ---------------------------------
+
+/// Morph.OUT, IN, LAST, FLIGHT, TURN and LIFT_MM
+const MORPH_OUT: f64 = 0.55;
+const MORPH_IN: (f64, f64) = (0.35, 0.9);
+const MORPH_LAST: f64 = 0.9;
+const MORPH_FLIGHT: (f64, f64) = (0.06, 0.9);
+const MORPH_TURN: (f64, f64) = (0.35, 0.65);
+const MORPH_LIFT_MM: f64 = 7.0;
+
+/// Morph: the old screen (its renderer's parting, until taken apart) and what was made of both.
+#[derive(Default)]
+pub struct Morph {
+    before: Option<crate::morph::Parting>,
+    made: Option<Flights>,
+}
+
+/// Morph._made: the size, the old screen without what flies, the new one without it, the
+/// things that fly (each its old part and its new one, the largest first) and the dark.
+struct Flights {
+    size: (usize, usize),
+    old_without: Image,
+    new_without: Image,
+    flights: Vec<(crate::morph::Part, crate::morph::Part)>,
+    dark: Image,
+}
+
+impl Morph {
+    /// _flights: worked out once both screens are known; None where there is nothing to take
+    /// apart (the old screen unknown, or of another size): it fades.
+    fn flights(&mut self, new: &Image, renderer: &Renderer) -> Result<Option<&Flights>> {
+        use crate::morph::{take_apart, things};
+        let size = (new.width(), new.height());
+        if self.made.is_none() {
+            let Some(before) = self.before.as_ref().filter(|b| b.size() == size) else {
+                return Ok(None);
+            };
+            let Some(after) = renderer.parting()?.filter(|a| a.size() == size) else {
+                return Ok(None); // (not drawn yet: asked again at the next frame)
+            };
+            let (old_things, new_things) = (things(before), things(&after));
+            let area = |b: (i64, i64, i64, i64)| (b.2 - b.0) * (b.3 - b.1);
+            let mut shared: Vec<&String> = (old_things.keys())
+                .filter(|k| new_things.contains_key(*k))
+                .collect();
+            shared.sort_by(|a, b| {
+                (area(old_things[*b].1).cmp(&area(old_things[*a].1))).then_with(|| a.cmp(b))
+            });
+            let taken = |found: &std::collections::HashMap<String, crate::morph::Found>| {
+                (shared.iter())
+                    .map(|k| ((*k).clone(), found[*k].clone()))
+                    .collect::<Vec<_>>()
+            };
+            let (old_without, mut old_parts) = take_apart(before, &taken(&old_things))?;
+            let (new_without, mut new_parts) = take_apart(&after, &taken(&new_things))?;
+            let flights = (shared.iter())
+                .filter_map(|k| Some((old_parts.remove(*k)?, new_parts.remove(*k)?)))
+                .collect();
+            let dark = Image::new(Mode::RGB, size.0, size.1, &[0, 0, 0]);
+            self.made = Some(Flights {
+                size,
+                old_without,
+                new_without,
+                flights,
+                dark,
+            });
+            self.before = None; // (what it held is in the parts now)
+        }
+        Ok(self.made.as_ref().filter(|m| m.size == size))
+    }
+
+    fn frame(&mut self, old: &Image, new: &Image, t: f64, renderer: &Renderer) -> Result<Image> {
+        if t >= 1.0 {
+            return Ok(new.clone());
+        }
+        let Some(made) = self.flights(new, renderer)? else {
+            // (nothing to take apart: a fade)
+            return chops::blend(&*rgb(old)?, &*rgb(new)?, smooth(t) as f32).map_err(failed);
+        };
+        let gone = 1.0 - smooth(t / MORPH_OUT);
+        let mut out = if gone <= 0.0 || gone >= 1.0 {
+            (if gone <= 0.0 {
+                &made.dark
+            } else {
+                &made.old_without
+            })
+            .clone()
+        } else {
+            chops::blend(&made.dark, &made.old_without, gone as f32).map_err(failed)?
+        };
+        let come = smooth((t - MORPH_IN.0) / (MORPH_IN.1 - MORPH_IN.0));
+        out = over(out, &made.new_without, come)?;
+        let (a, b) = MORPH_FLIGHT;
+        let e = in_out((t - a) / (b - a));
+        let turned = smooth((e - MORPH_TURN.0) / (MORPH_TURN.1 - MORPH_TURN.0));
+        let high = MORPH_LIFT_MM * per_mm(&alone(made.size), made.size).1;
+        let lift = high * (std::f64::consts::PI * e).sin();
+        for (was, comes) in &made.flights {
+            let (ax, ay, aw, ah) = was.bounds;
+            let (bx, by, bw, bh) = comes.bounds;
+            let (ax, ay, aw, ah) = (ax as f64, ay as f64, aw as f64, ah as f64);
+            let (bx, by, bw, bh) = (bx as f64, by as f64, bw as f64, bh as f64);
+            // (up where it has room for its arc)
+            let rise = if py_min(ay, by) >= high { -lift } else { lift };
+            let middle = (
+                ax + aw / 2.0 + (bx + bw / 2.0 - ax - aw / 2.0) * e,
+                ay + ah / 2.0 + (by + bh / 2.0 - ay - ah / 2.0) * e + rise,
+            );
+            let room = (aw + (bw - aw) * e, ah + (bh - ah) * e);
+            crate::morph::lay(&mut out, was, middle, room, 1.0 - turned)?;
+            crate::morph::lay(&mut out, comes, middle, room, turned)?;
+        }
+        let last = smooth((t - MORPH_LAST) / (1.0 - MORPH_LAST));
+        over(out, &*rgb(new)?, last)
+    }
+}
+
+/// _mixed: `b` over `a` by `share`: `a` at none, `b` at all of it (a frame copied no more
+/// than it must be).
+fn over(a: Image, b: &Image, share: f64) -> Result<Image> {
+    if share <= 0.0 {
+        Ok(a)
+    } else if share >= 1.0 {
+        Ok(b.clone())
+    } else {
+        chops::blend(&a, b, share as f32).map_err(failed)
+    }
 }
 
 #[cfg(test)]

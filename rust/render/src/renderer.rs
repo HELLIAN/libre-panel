@@ -625,6 +625,33 @@ impl Renderer {
         Ok(Some((compose::as_rgb(&canvas)?, boxes)))
     }
 
+    /// parting: the frame composed last as it was composed, for the morph (render/morph.py): the
+    /// ground, the pieces in their order and what each widget shows; None before a frame was
+    /// composed here (or where the engine composed it).
+    pub fn parting(&self) -> Result<Option<crate::morph::Parting>> {
+        let Some((frame, pieces)) = &self.composed else {
+            return Ok(None);
+        };
+        let ground = match &self.ground_kept {
+            Some(ground) => ground.clone(),
+            None => self.ground()?,
+        };
+        let mut shows = std::collections::HashMap::new();
+        for w in self.widgets.iter() {
+            if let Some(key) = crate::morph::shown_as(w) {
+                let id = w.get("id").map_or_else(|| "None".to_string(), Value::str);
+                shows.insert(id, key);
+            }
+        }
+        Ok(Some(crate::morph::Parting {
+            ground,
+            pieces: pieces.clone(),
+            shows,
+            opaque: self.opaque,
+            frame: Some(frame.clone()),
+        }))
+    }
+
     /// The pieces of the frame composed last, in their order (none before the first, or where
     /// the engine composes): what lies where, for a comparison with Python's, and whether a
     /// piece is the one of a frame before.

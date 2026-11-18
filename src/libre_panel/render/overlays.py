@@ -527,7 +527,7 @@ BUILT_IN_TRANSITIONS = {
 PLAIN_TRANSITIONS = ("cut", "fade", "slide", "slide-right", "slide-up", "slide-down", "wipe",
                      "zoom", "iris", "blinds", "dissolve")  # fmt: skip
 ELABORATE_TRANSITIONS = ("tube", "entrance", "light", "glitch", "tiles", "shatter", "cascade",
-                         "comet", "portal")  # fmt: skip
+                         "comet", "portal", "morph")  # fmt: skip
 BUILT_IN_STYLES = {"card": CardStyle, "band": BandStyle}
 
 

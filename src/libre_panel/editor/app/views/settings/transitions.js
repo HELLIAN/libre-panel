@@ -39,6 +39,7 @@ const NAMES = {
   cascade: () => t("Cascade"),
   comet: () => t("Comet"),
   portal: () => t("Portal"),
+  morph: () => t("Morph"),
   [RANDOM]: () => t("Random"),
 };
 

@@ -99,8 +99,9 @@ const PLAIN_TRANSITIONS: [&str; 11] = [
     "blinds",
     "dissolve",
 ];
-const ELABORATE_TRANSITIONS: [&str; 9] = [
+const ELABORATE_TRANSITIONS: [&str; 10] = [
     "tube", "entrance", "light", "glitch", "tiles", "shatter", "cascade", "comet", "portal",
+    "morph",
 ];
 const HOTKEYS: [&str; 8] = [
     "pause",

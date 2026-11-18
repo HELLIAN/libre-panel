@@ -512,6 +512,7 @@ random = ["fade", "wipe", "zoom", "iris", "blinds", "dissolve", "light", "tiles"
 | `cascade` | the ground changes, then the new screen's cards come in one after another, each rising and growing into its place |
 | `comet` | a comet flies across, the new screen opening behind it |
 | `portal` | a ring of light opens from the middle, the new screen growing through it into its place |
+| `morph` | what both screens show (the time, a ring, a number, the album cover) flies from its old place to its new one, growing or shrinking on the way; the rest fades |
 | `random` | another of `random` each time |
 
 **Over all the panels.** With more than one panel, a slide, the wipe, the iris, the line of
@@ -532,6 +533,17 @@ panel by itself, as does any other transition and any switch of one panel alone.
 The cascade takes the new screen's cards from how it is drawn, in any theme: what covers all of
 the panel at the bottom (its background, a full-panel picture or rect, a look's grid) is the
 ground that comes first, and the widgets on it, joined where they overlap, are the cards.
+
+The morph (2.1 s) finds what the old screen and the new one both show: the time (a clock or a
+face, the seconds beside it going with it), the date, a reading in the same form (a ring, a
+bar, a graph, a number, a fan or an agent's sign of the same sensor), a live picture (the album
+cover, a game's logo), the moon, the earth, the sun's way and the month. Each flies on a gentle
+arc from where it was to where it is now, as large as its new place, turning into its new look
+half way; the rest of the old screen fades out under them and the new one's comes in, and at
+the end the new screen as it is now. What is shown more than once apart (a reading as a number
+here and there), what covers all of the panel and what is the same on any screen (a frame, a
+text, an icon) stays with its screen and fades. Two screens of other sizes, or a switch with
+nothing on the panel before, simply fade.
 
 A plugin's transition goes by its name (`myplugin.curtain`, [Plugins](PLUGINS.md)). The old
 setting `transition = "fade"` at the top of `config.toml` still names the default.

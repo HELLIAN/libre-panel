@@ -6,6 +6,7 @@ last (their ground and their cards)."""
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import random
@@ -17,7 +18,7 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
-from rust_check import image, run
+from rust_check import image, picture, run
 
 from libre_panel import fonts, i18n
 from libre_panel.plugins.render import RenderContext
@@ -102,18 +103,33 @@ def _frame(size: tuple[int, int], mode: str, seed: int) -> dict[str, Any]:
 DRAWN_ON = datetime(2025, 11, 13, 14, 26, 40)
 
 
-def _python(folder: Path, language: str, switches: list[dict[str, Any]],
-            drawn: str | None = None) -> list[Any]:  # fmt: skip
+def _python(folder: Path, language: str, switches: list[dict[str, Any]], drawn: str | None = None,
+            before: tuple[Path, str] | None = None, demo: bool = False) -> list[Any]:  # fmt: skip
     """Each switch's answer from Python, as lp-check gives Rust's (``drawn``: the moment the
-    renderer draws its frame of first, a double's bits)."""
+    renderer draws its frame of first, a double's bits; ``before``: the old screen's theme and
+    the moment it was drawn at, which the morph takes apart; ``demo``: both drawn with the
+    demo's readings)."""
+
+    def seen() -> Snapshot:  # (its clocks at DRAWN_ON, as lp-check's snapshot is told)
+        pictures = {k: _noise(v) for k, v in PICTURES.items()}
+        if demo:
+            from test_rust_render import _demo
+
+            return dataclasses.replace(_demo(), images={**_demo().images, **pictures})
+        return Snapshot(images=pictures, now=DRAWN_ON)
+
     i18n.set_language(language)
     try:
         renderer = Renderer(load_theme(folder), preview=True)
         renderer.snapshot = Snapshot(images={k: _noise(v) for k, v in PICTURES.items()})
-        if drawn is not None:  # (its clocks at DRAWN_ON, as lp-check's snapshot is told)
-            pictures = {k: _noise(v) for k, v in PICTURES.items()}
-            renderer.render(Snapshot(images=pictures, now=DRAWN_ON), now=_float(drawn))
+        if drawn is not None:
+            renderer.render(seen(), now=_float(drawn))
         context = RenderContext(renderer)
+        if before is not None:
+            was = Renderer(load_theme(before[0]), preview=True)
+            was.render(seen(), now=_float(before[1]))
+            context.before = was.parting()  # type: ignore[attr-defined]
+            was.close()
         olds: dict[str, Image.Image] = {}  # (the same spec, the same frame: its id stays)
         answers: list[Any] = []
         for switch in switches:
@@ -127,6 +143,8 @@ def _python(folder: Path, language: str, switches: list[dict[str, Any]],
                 try:
                     out = made.frame(old, _noise(new_spec), _float(t))
                     steps.append({"size": list(out.size), "mode": out.mode, "sha256": _sha(out)})
+                    if demo:  # (the glow of rings and bars: drawn by each within a level)
+                        steps[-1]["picture"] = out
                 except Exception:
                     steps.append({"error": True})
             answers.append({
@@ -231,20 +249,37 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
                       "locale": str(i18n.LOCALE_DIR), "language": language,
                       "images": {k: image(_noise(v)) for k, v in PICTURES.items()},
                       "switches": wire})  # fmt: skip
-        if drawn:
+        if drawn and drawn[0].get("demo"):  # (the demo's readings, pictures and moment)
+            from test_rust_render import _demo, _snapshot_given
+
+            wired[-1]["drawn"] = drawn[0]["at"]
+            wired[-1]["snapshot"] = _snapshot_given(_demo())
+            wired[-1]["pictures"] = True
+        elif drawn:
             wired[-1]["drawn"] = drawn[0]["at"]
             wired[-1]["now"] = [DRAWN_ON.year, DRAWN_ON.month, DRAWN_ON.day, DRAWN_ON.hour,
                                 DRAWN_ON.minute, DRAWN_ON.second, 0, 0]  # fmt: skip
+        if drawn and "before" in drawn[0]:  # (the old screen, which the morph takes apart)
+            old = drawn[0]["before"]
+            wired[-1]["before"] = {"theme": str(find_theme(old["theme"])), "drawn": old["at"]}
     answers = run(wired)
     frames = 0
     for n, (got, (_, _, language, switches, *drawn)) in enumerate(zip(answers, cases, strict=True)):
-        want = _python(tmp_path / f"t{n}", language, switches, drawn[0]["at"] if drawn else None)
+        old = drawn[0].get("before") if drawn else None
+        before = (find_theme(old["theme"]), old["at"]) if old else None
+        want = _python(tmp_path / f"t{n}", language, switches, drawn[0]["at"] if drawn else None,
+                       before, bool(drawn and drawn[0].get("demo")))  # fmt: skip
         assert len(got["switches"]) == len(want), n
         for k, (mine, theirs) in enumerate(zip(got["switches"], want, strict=True)):
             if theirs.get("made"):
                 for j, (a, b) in enumerate(zip(mine["steps"], theirs["steps"], strict=True)):
+                    if "picture" in b:  # (in the glow of rings and bars a level or two apart)
+                        got, want = picture(a.pop("image")), b.pop("picture")
+                        apart = np.abs(np.asarray(got, np.int16) - np.asarray(want, np.int16))
+                        assert got.size == want.size and apart.max() <= 2, (n, k, j, apart.max())
+                        a.pop("sha256"), b.pop("sha256")
                     assert a == b, (n, k, switches[k]["name"], switches[k]["raw"], j, a, b)
-                    frames += "sha256" in b
+                    frames += "sha256" in b or "size" in b
             assert mine == theirs, (n, k, switches[k]["name"], mine, theirs)
     return frames
 
@@ -413,13 +448,42 @@ def _cards_coming_in(theme: str, size: tuple[int, int], seed: int) -> Any:
     return scenario
 
 
+def _morphing(old: str, new: str, size: tuple[int, int], seed: int, demo: bool = True) -> Any:
+    """The morph from a built-in theme to another as their renderers drew them, with the demo's
+    readings or with none (the time, the rings, the numbers and the cover both show fly, their
+    lights with them; the rest fades): at the turns of its timeline; and on frames of another
+    size, where it has nothing to take apart and fades."""
+
+    def scenario() -> tuple[Any, ...]:
+        times = (0.0, 0.03, 0.06, 0.2, 0.35, 0.42, 0.5, 0.58, 0.65, 0.8, 0.9, 0.95, 0.999, 1.0)
+        steps = [[_frame(size, "RGB", seed), _frame(size, "RGB", seed + 1), _bits(t)]
+                 for t in times]  # fmt: skip
+        other = (size[0] // 2, size[1] // 3)
+        apart = [[_frame(other, "RGB", seed), _frame(other, "RGB", seed + 2), _bits(t)]
+                 for t in (0.3, 0.7)]  # fmt: skip
+        switches = [{"name": "morph", "raw": {}, "steps": steps},
+                    {"name": "morph", "raw": {}, "steps": apart}]  # fmt: skip
+        at = _bits(1_763_000_000.0 + seed)
+        was = {"theme": old, "at": _bits(1_762_999_990.0 + seed)}
+        return size, {}, "en", switches, {"theme": new, "at": at, "before": was, "demo": demo}
+
+    return scenario
+
+
 SCENARIOS = [_entrance_at_its_turns, _entrance_on_another_size, _every_one_at_its_ends,
              _kept_for_another_size, _entrance_on_a_narrow_panel,
              _the_line_almost_at_its_brightest, _across_the_panels,
              _cards_coming_in("lumen-1920x720", (1920, 720), 1),
              _cards_coming_in("encore-pair", (1920, 480), 2),
              _cards_coming_in("arena-480x480", (480, 480), 3),
-             _cards_coming_in("terra-vertical", (480, 1920), 4)]  # fmt: skip
+             _cards_coming_in("terra-vertical", (480, 1920), 4),
+             _morphing("lumen-1920x720", "arena-1920x720", (1920, 720), 5),
+             _morphing("arena-1920x720", "lumen-1920x720", (1920, 720), 6),
+             _morphing("encore-1920x720", "lumen-1920x720", (1920, 720), 7),
+             _morphing("lumen-pair", "arena-pair", (1920, 480), 8),
+             _morphing("arena-vertical", "lumen-vertical", (480, 1920), 9),
+             _morphing("lumen-480x480", "arena-480x480", (480, 480), 10),
+             _morphing("lumen-1920x720", "arena-1920x720", (1920, 720), 11, False)]  # fmt: skip
 
 
 def test_transitions_as_python_draws_them(tmp_path: Path) -> None:

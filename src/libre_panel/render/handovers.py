@@ -51,6 +51,7 @@ from libre_panel.render.light import (
     role_color,
     smooth,
 )
+from libre_panel.render.morph import lay, take_apart, things
 
 
 def _rgb(image: Image.Image) -> Image.Image:
@@ -932,7 +933,100 @@ def _ring(out: Image.Image, opening: _Opening, r: float, strength: float, accent
     out.paste(ImageChops.add(out, Image.merge("RGB", planes)))
 
 
+class Morph(Transition):
+    """What both screens show (the time, a reading in the same form, the album cover: see
+    render/morph.py) flies from its old place to its new one, on an arc, growing or shrinking
+    to its new size and turning into its new look on the way; the rest of the old screen fades
+    out and the new one's fades in after it, so the things in flight stand out; at the end the
+    new screen as it is drawn now."""
+
+    name = "morph"
+    api = 1
+    duration = 2.1
+    toasts = "over"
+    OUT = 0.55  # the old screen fades out by then (without what flies)
+    IN = (0.35, 0.9)  # and the new one in, between these (without what flies)
+    LAST = 0.9  # from here the new screen as it is drawn now takes over
+    FLIGHT = (0.06, 0.9)  # when the things fly (eased slow, fast, slow)
+    TURN = (0.35, 0.65)  # where along its flight a thing turns into its new look
+    LIFT_MM = 7.0  # how high a thing's arc rises at its middle (downward where it has no room)
+
+    def __init__(self, context: Any = None, params: dict[str, Any] | None = None) -> None:
+        super().__init__(context, params)
+        self._before = getattr(context, "before", None)  # (the old screen: Renderer.parting)
+        self._made: Any = None
+
+    def set_before(self, before: Any) -> None:
+        """The old screen as its renderer composed it last (Renderer.parting): what it takes
+        apart (the app gives it once the transition is chosen)."""
+        self._before = before
+
+    def _flights(self, new: Image.Image) -> Any:
+        """The old screen without what flies, the new one without it, the things that fly
+        (each its old part and its new one, the largest first) and the dark under them; worked
+        out once both screens are known. None where there is nothing to take apart (the old
+        screen unknown, or of another size): it fades."""
+        if self._made is not None:
+            return self._made if self._made[0] == new.size else None
+        before = self._before
+        if before is None or before.size != new.size:
+            return None
+        renderer = getattr(self.context, "_renderer", None)
+        after = getattr(renderer, "parting", lambda: None)()
+        if after is None or after.size != new.size:
+            return None  # (not drawn yet: asked again at the next frame)
+        old_things, new_things = things(before), things(after)
+        shared = sorted(old_things.keys() & new_things.keys(),
+                        key=lambda k: (-_area(old_things[k][1]), k))  # fmt: skip
+        old_without, old_parts = take_apart(before, {k: old_things[k] for k in shared})
+        new_without, new_parts = take_apart(after, {k: new_things[k] for k in shared})
+        flights = [(old_parts[k], new_parts[k]) for k in shared]
+        self._made = (new.size, old_without, new_without, flights, Image.new("RGB", new.size))
+        self._before = None  # (what it held is in the parts now)
+        return self._made
+
+    def frame(self, old: Image.Image, new: Image.Image, t: float) -> Image.Image:
+        if t >= 1.0:
+            return new
+        made = self._flights(new)
+        if made is None:  # (nothing to take apart: a fade)
+            return Image.blend(_rgb(old), _rgb(new), smooth(t))
+        _, old_without, new_without, flights, dark = made
+        out = _mixed(dark, old_without, 1 - smooth(t / self.OUT))
+        out = _mixed(out, new_without, smooth((t - self.IN[0]) / (self.IN[1] - self.IN[0])))
+        if out is dark or out is old_without or out is new_without:
+            out = out.copy()  # (the things are laid on it)
+        a, b = self.FLIGHT
+        e = in_out((t - a) / (b - a))
+        turned = smooth((e - self.TURN[0]) / (self.TURN[1] - self.TURN[0]))
+        high = self.LIFT_MM * per_mm(alone(new.size), new.size)[1]
+        lift = high * math.sin(math.pi * e)
+        for was, comes in flights:
+            ax, ay, aw, ah = was.box
+            bx, by, bw, bh = comes.box
+            rise = -lift if min(ay, by) >= high else lift  # (up where it has room for its arc)
+            middle = (ax + aw / 2 + (bx + bw / 2 - ax - aw / 2) * e,
+                      ay + ah / 2 + (by + bh / 2 - ay - ah / 2) * e + rise)  # fmt: skip
+            room = (aw + (bw - aw) * e, ah + (bh - ah) * e)
+            lay(out, was, middle, room, 1 - turned)
+            lay(out, comes, middle, room, turned)
+        return _mixed(out, _rgb(new), smooth((t - self.LAST) / (1 - self.LAST)))
+
+
+def _area(box: tuple[int, int, int, int]) -> int:
+    return (box[2] - box[0]) * (box[3] - box[1])
+
+
+def _mixed(a: Image.Image, b: Image.Image, share: float) -> Image.Image:
+    """``b`` over ``a`` by ``share``: ``a`` itself at none, ``b`` itself at all of it."""
+    if share <= 0:
+        return a
+    if share >= 1:
+        return b
+    return Image.blend(a, b, share)
+
+
 # the transitions this module brings, by name (render/overlays.py adds them to the built-in ones)
 HANDOVERS = {cls.name: cls for cls in (Wipe, Iris, Blinds, Dissolve, SlideRight, SlideUp, SlideDown,
                                        Zoom, LightLine, Glitch, Tiles, Shatter, Cascade, Comet,
-                                       Portal)}  # fmt: skip
+                                       Portal, Morph)}  # fmt: skip
