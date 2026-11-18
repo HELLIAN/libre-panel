@@ -62,7 +62,7 @@ const PATH_WORDS: [&str; 13] = [
     "output",
 ];
 /// The sensor sources of Libre Panel (sensors/base.py's), in its order.
-pub(crate) const PROVIDERS: [&str; 18] = [
+pub(crate) const PROVIDERS: [&str; 19] = [
     "psutil",
     "linux",
     "librehardwaremonitor",
@@ -81,6 +81,7 @@ pub(crate) const PROVIDERS: [&str; 18] = [
     "hwinfo",
     "json",
     "nut",
+    "dell",
 ];
 const DRIVERS: [&str; 3] = ["auto", "turzx", "virtual"]; // (sorted)
 const LHM_MODES: [&str; 4] = ["auto", "service", "inprocess", "webserver"];

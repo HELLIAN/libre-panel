@@ -2369,6 +2369,8 @@
     "The battery, the runtime and the load of a UPS, through Network UPS Tools (NUT) on this PC, a NAS or a Raspberry Pi. Set up in config.toml.": "UPSのバッテリー、稼働可能時間、負荷を、このPC、NAS、Raspberry PiのNetwork UPS Tools（NUT）経由で取得します。config.tomlで設定します。",
     "The readings are json.{name}.<field>.": "測定値はjson.{name}.<フィールド>という名前になります。",
     "UPS": "UPS",
+    "Dell fans": "Dell のファン",
+    "The fans and temperatures Dell Command | Monitor reports, on Dell PCs whose fans no other source sees (Windows).": "Dell Command | Monitor が報告するファンと温度。ほかのソースではファンが見えない Dell の PC 向け (Windows)。",
     "Very large number": "特大の数字",
     "What an address answers, or a file holds, as readings for any module: a NAS, a router, another PC. Nothing to sign up for.": "アドレスの応答やファイルの内容を、任意のモジュール用の測定値として使えます（NAS、ルーター、別のPCなど）。アカウント登録は不要です。",
     "Which host": "対象のホスト",

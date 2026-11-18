@@ -2369,6 +2369,8 @@
     "The battery, the runtime and the load of a UPS, through Network UPS Tools (NUT) on this PC, a NAS or a Raspberry Pi. Set up in config.toml.": "Батарея, время автономии и нагрузка ИБП — через Network UPS Tools (NUT) на этом ПК, NAS или Raspberry Pi. Настраивается в config.toml.",
     "The readings are json.{name}.<field>.": "Показания называются json.{name}.<поле>.",
     "UPS": "ИБП",
+    "Dell fans": "Вентиляторы Dell",
+    "The fans and temperatures Dell Command | Monitor reports, on Dell PCs whose fans no other source sees (Windows).": "Вентиляторы и температуры, о которых сообщает Dell Command | Monitor, на ПК Dell, вентиляторы которых не видит ни один другой источник (Windows).",
     "Very large number": "Очень крупное число",
     "What an address answers, or a file holds, as readings for any module: a NAS, a router, another PC. Nothing to sign up for.": "Ответ адреса или содержимое файла — как показания для любого модуля: NAS, роутер, другой ПК. Регистрироваться не нужно.",
     "Which host": "Какой хост",

@@ -46,6 +46,12 @@
   music plays 10 % (6 % without it, 7 % before), as its bars and sheen ask for 25 pictures a
   second instead of 13. The Rust app draws every light bit for bit as Python does.
 
+- **Dell's fans.** Many Dell PCs show their fans to no other program, LibreHardwareMonitor
+  included. Where Dell Command | Monitor is installed, the new *Dell fans* source (*Settings →
+  Sensors*, Windows) reads the fans and temperatures it reports, as `fan.dell.<name>` and
+  `temp.dell.<name>` ("Processor Fan" is `fan.dell.processor_fan`), so the fan widgets, fan
+  lists and any other widget show them. Asked of a Dell owner; not yet tried on a Dell PC here.
+
 **Changed**
 - **Transitions cost less in the Rust app, with the same pixels.** Counted per frame on a 12.3"
   panel (callgrind, the instructions of a transition's frames):

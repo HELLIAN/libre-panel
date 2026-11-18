@@ -1990,6 +1990,50 @@ def test_a_ups_is_read_as_nut_py_reads_it(language: str) -> None:
     assert all(count > 20 for count in seen.values()), seen
 
 
+def test_dell_command_monitor_s_sensors_are_read_as_dell_py_reads_them() -> None:
+    """sensors/dell.py: Dell Command | Monitor's numeric sensors (as WMI gives them, a property
+    now and then missing, empty or of another kind) as fans and temperatures, their readings
+    scaled by their UnitModifier, their names made keys and numbered where met again."""
+    from libre_panel.sensors import dell
+
+    rng = random.Random(0xDE11)
+    names = ["Processor Fan", "System Fan", "CPU Temperature", "  Rear  Fan ", "", "Fan 1",
+             "Lüfter", "PROCESSOR FAN", "fan/2", "\u0130nner Fan", "-", None, 7]  # fmt: skip
+    devices = ["Root/MainSystemChassis/FanObj", "Root\\Fan2Obj", "", "Root/", None]
+    kinds = [5, 2, 1, 3, 0, None, "5", " 2 ", "x", True, 5.7, 1e300, -1, 2**70]
+    units = [19, 2, 5, 0, None, "19", 19.9, False]
+    modifiers = [0, -1, -2, 1, 3, -13, 14, None, "-1", 2.5, 2**64]
+    values = [2345, 0, -5, 523, None, "1200", " 812 ", "1_000", "12.5", 1e400, float("nan"),
+              3.9, 2**63, -(2**63), 2**53 + 1, "\u0663", True, "", [1]]  # fmt: skip
+    fields = {"ElementName": names, "DeviceID": devices, "SensorType": kinds,
+              "BaseUnits": units, "UnitModifier": modifiers, "CurrentReading": values}  # fmt: skip
+    cases = []
+    for _ in range(600):
+        rows = []
+        for _ in range(rng.randrange(0, 7)):
+            row = {k: rng.choice(pool) for k, pool in fields.items() if rng.random() < 0.85}
+            rows.append(row)
+        cases.append(json.dumps(rows))
+    cases += ["[]", "null", "{}", '[1, "x"]', "not json"]
+    [ours] = run([{"op": "dell", "rows": cases}])
+    seen = {"fan": 0, "temp": 0, "numbered": 0, "none": 0}
+    for text, got in zip(cases, ours["readings"], strict=True):
+        try:
+            rows = json.loads(text)
+        except ValueError:
+            rows = None
+        rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+        readings = dell.readings_from_rows(rows)
+        wanted = [[k, {"float": repr(r.value)}, r.unit, r.label, r.device]
+                  for k, r in readings.items()]  # fmt: skip
+        assert got == wanted, text
+        seen["none"] += not wanted
+        for key in readings:
+            seen[key.split(".")[0]] += 1
+            seen["numbered"] += key.rsplit("_", 1)[-1].isdigit()
+    assert all(count > 20 for count in seen.values()), seen
+
+
 def test_mqtt_messages_are_read_as_mqtt_py_reads_them() -> None:
     """sensors/mqtt.py: a topic against patterns with + and #, a message's payload as a
     number, a text or a JSON object taken apart, with the unit of the first pattern that

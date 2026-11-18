@@ -495,6 +495,27 @@ impl Source for Nut {
     }
 }
 
+/// Dell's fans and temperatures, as Dell Command | Monitor reports them (sensors/dell.py).
+struct Dell(lp_sensors::dell::DellSource);
+
+impl Source for Dell {
+    fn name(&self) -> &'static str {
+        "dell"
+    }
+
+    fn read(&mut self, out: &mut Readings) {
+        out.extend(self.0.read());
+    }
+
+    fn notes(&mut self) -> Vec<String> {
+        self.0.notes()
+    }
+
+    fn wait_ready(&mut self, seconds: f64) {
+        self.0.wait_ready(seconds);
+    }
+}
+
 /// What devices publish to an MQTT broker (sensors/mqtt.py).
 struct Mqtt(lp_sensors::mqtt::MqttSource);
 
@@ -1073,6 +1094,16 @@ impl Hub {
                         notes.extend(said);
                     }
                     "hardware" => sources.push(Box::new(Hardware::of(config))),
+                    "dell" => match seconds_of(sensors.options.get(name), "update_s", 2.0) {
+                        Ok(update_s) => {
+                            let options = lp_sensors::dell::Options { update_s };
+                            sources
+                                .push(Box::new(Dell(lp_sensors::dell::DellSource::new(options))));
+                        }
+                        Err(why) => {
+                            notes.push(format!("sensor source {name:?} not started: {why}"))
+                        }
+                    },
                     "homeassistant" | "json" | "nut" | "mqtt" | "calendar" => {
                         let table = sensors.options.get(name);
                         match web_source(name, table) {

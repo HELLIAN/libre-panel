@@ -2368,6 +2368,8 @@
     "The battery, the runtime and the load of a UPS, through Network UPS Tools (NUT) on this PC, a NAS or a Raspberry Pi. Set up in config.toml.": "La batería, la autonomía y la carga de un SAI, mediante Network UPS Tools (NUT) en este PC, un NAS o una Raspberry Pi. Se configura en config.toml.",
     "The readings are json.{name}.<field>.": "Las lecturas son json.{name}.<campo>.",
     "UPS": "SAI",
+    "Dell fans": "Ventiladores Dell",
+    "The fans and temperatures Dell Command | Monitor reports, on Dell PCs whose fans no other source sees (Windows).": "Los ventiladores y las temperaturas que informa Dell Command | Monitor, en los PC Dell cuyos ventiladores no ve ninguna otra fuente (Windows).",
     "Very large number": "Número muy grande",
     "What an address answers, or a file holds, as readings for any module: a NAS, a router, another PC. Nothing to sign up for.": "Lo que responde una dirección o contiene un archivo, como lecturas para cualquier módulo: un NAS, un router, otro PC. Sin registrarse.",
     "Which host": "Qué host",

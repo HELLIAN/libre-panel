@@ -5,6 +5,7 @@
 pub mod appicon;
 pub mod audio;
 pub mod calendar;
+pub mod dell;
 pub mod frames;
 pub mod gpus;
 pub mod hardware;

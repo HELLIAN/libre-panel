@@ -2368,6 +2368,8 @@
     "The battery, the runtime and the load of a UPS, through Network UPS Tools (NUT) on this PC, a NAS or a Raspberry Pi. Set up in config.toml.": "通过本机、NAS 或树莓派上的 Network UPS Tools（NUT）读取 UPS 的电量、续航和负载。在 config.toml 中设置。",
     "The readings are json.{name}.<field>.": "读数名为 json.{name}.<字段>。",
     "UPS": "UPS 电源",
+    "Dell fans": "Dell 风扇",
+    "The fans and temperatures Dell Command | Monitor reports, on Dell PCs whose fans no other source sees (Windows).": "Dell Command | Monitor 报告的风扇和温度，适用于其他来源看不到风扇的 Dell 电脑（Windows）。",
     "Very large number": "超大数字",
     "What an address answers, or a file holds, as readings for any module: a NAS, a router, another PC. Nothing to sign up for.": "把某个地址的响应或文件内容作为任意模块的读数：NAS、路由器、另一台电脑。无需注册。",
     "Which host": "哪个主机",

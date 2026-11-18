@@ -1622,6 +1622,32 @@ fn power(case: &Value) -> Result<Value, String> {
     Ok(json!({"runs": runs}))
 }
 
+/// dell: Dell Command | Monitor's sensors (each case a JSON text of rows, as WMI gives them)
+/// as readings: each `[key, value, unit, label, device]`.
+fn dell(case: &Value) -> Value {
+    let mut out = Vec::new();
+    for text in case["rows"].as_array().into_iter().flatten() {
+        let rows: Vec<lp_sensors::dell::Row> = match loaded(text) {
+            lp_py::Value::List(list) => list
+                .iter()
+                .filter_map(|row| match row {
+                    lp_py::Value::Dict(row) => {
+                        Some(row.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let readings = lp_sensors::dell::readings_from_rows(&rows);
+        out.push(json!(readings
+            .iter()
+            .map(|(key, r)| json!([key, plain(&r.value), r.unit, r.label, r.device]))
+            .collect::<Vec<_>>()));
+    }
+    json!({"readings": out})
+}
+
 /// A JSON text as Python's value (none for one that is no JSON).
 fn loaded(text: &Value) -> lp_py::Value {
     lp_py::json::loads(text.as_str().unwrap_or("null")).unwrap_or(lp_py::Value::None)
@@ -3216,6 +3242,7 @@ pub fn run(op: &str, case: &Value) -> Result<Value, String> {
         "web_sources" => web_sources(case)?,
         "nut" => nut(case)?,
         "mqtt" => mqtt(case)?,
+        "dell" => dell(case),
         "calendar" => calendar(case)?,
         "shared_memory" => shared_memory(case)?,
         "services_host" => services_host(case)?,

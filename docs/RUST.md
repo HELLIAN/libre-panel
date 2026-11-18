@@ -1984,6 +1984,16 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       the unit of the first pattern that matches. 3000 messages and 3000 pairs of pattern and
       topic compared with Python; the app talks to a broker of the test's own. A broker
       that is not there is said once (Python says nothing)
+- [x] Dell's fans (sensors/dell.py, lp-sensors' dell): Dell Command | Monitor's numeric
+      sensors (CIM_NumericSensor in `root\dcim\sysman`) as fan.dell.* in RPM and
+      temp.dell.* in °C, each reading scaled by its UnitModifier, its name made a key and
+      numbered where met again, asked every `update_s` seconds in a thread of its own; a PC
+      without it is said once and asked again a minute later. The app asks WMI itself, through
+      COM (windows' Wmi bindings: the namespace's services, a WQL query, each property of each
+      row a number or a text); Python has PowerShell ask, in one PowerShell that stays. 605
+      sets of rows (properties missing, empty, of other kinds, numbers as texts, names met
+      again, texts that are no JSON) compared with Python; the WMI rows are tried on Windows'
+      own classes in CI, which has no Dell Command | Monitor (not yet run on a Dell PC)
 - [x] the calendar (sensors/calendar.py, lp-sensors' calendar): .ics texts from addresses
       (webcal:// too) and files, loaded in a thread of its own; their events in the
       computer's time (UTC, a zone's name, Outlook's and Mozilla's names of zones, whole

@@ -2369,6 +2369,8 @@
     "The battery, the runtime and the load of a UPS, through Network UPS Tools (NUT) on this PC, a NAS or a Raspberry Pi. Set up in config.toml.": "La batteria, l'autonomia e il carico di un UPS, tramite Network UPS Tools (NUT) su questo PC, un NAS o un Raspberry Pi. Si imposta in config.toml.",
     "The readings are json.{name}.<field>.": "Le letture si chiamano json.{name}.<campo>.",
     "UPS": "UPS",
+    "Dell fans": "Ventole Dell",
+    "The fans and temperatures Dell Command | Monitor reports, on Dell PCs whose fans no other source sees (Windows).": "Le ventole e le temperature che segnala Dell Command | Monitor, sui PC Dell le cui ventole nessun'altra fonte vede (Windows).",
     "Very large number": "Numero molto grande",
     "What an address answers, or a file holds, as readings for any module: a NAS, a router, another PC. Nothing to sign up for.": "Ciò che risponde un indirizzo, o contiene un file, come letture per qualsiasi modulo: un NAS, un router, un altro PC. Nessuna registrazione necessaria.",
     "Which host": "Quale host",

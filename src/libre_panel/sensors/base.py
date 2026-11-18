@@ -188,6 +188,7 @@ _BUILTIN_PROVIDERS = {
     "hwinfo": "libre_panel.sensors.hwinfo:HWiNFOProvider",
     "json": "libre_panel.sensors.json_source:JsonProvider",
     "nut": "libre_panel.sensors.nut:NutProvider",
+    "dell": "libre_panel.sensors.dell:DellProvider",
 }
 
 

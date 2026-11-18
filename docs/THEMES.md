@@ -950,7 +950,7 @@ names and huge widths are rejected; the widget then shows its `fallback`.
 | `mem.temp`, `mem.speed` | °C, MT/s | the memory: the temperature of its hottest module (from the module's own thermal sensor, DDR4 and DDR5: LibreHardwareMonitor with administrator rights and the PawnIO driver as for the CPU's temperature; on Linux the `spd5118` and `jc42` drivers) and the speed it runs at (the firmware's SMBIOS table, the slowest module's: see [Configuration](CONFIGURATION.md#hardware-names)) |
 | `disk.load`, `disk.used`, `disk.total`, `disk.read`, `disk.write` | %, GiB, B/s | psutil |
 | `net.down`, `net.up` | B/s | psutil |
-| `fan.<device>.<name>`, `temp.<device>.<name>` | RPM, °C | every fan and temperature: the `linux` source (`temp.k10temp.tctl`, `temp.nvme.composite`, `fan.amdgpu.0`, and the mainboard's fans as `fan.lpc.fan_1` ...), LibreHardwareMonitor (e.g. `temp.cpu.package`, `fan.gpu.gpu_fan_1`) |
+| `fan.<device>.<name>`, `temp.<device>.<name>` | RPM, °C | every fan and temperature: the `linux` source (`temp.k10temp.tctl`, `temp.nvme.composite`, `fan.amdgpu.0`, and the mainboard's fans as `fan.lpc.fan_1` ...), LibreHardwareMonitor (e.g. `temp.cpu.package`, `fan.gpu.gpu_fan_1`), Dell Command \| Monitor on Dell PCs (`fan.dell.processor_fan`, the [`dell` source](CONFIGURATION.md#more-sensor-sources)) |
 | `cpu.core.<n>.load` | % | each core (thread), from 1; ten times a second from `load`, over the last 0.3 s |
 | `cpu.pcore.<n>.load` | % | each physical core, the mean of its threads; from `load`, where a core has two and Windows or Linux tells which |
 | `disk.<n>.name`, `.load`, `.used`, `.free`, `.total` | text, %, GiB | each drive, the system drive first |

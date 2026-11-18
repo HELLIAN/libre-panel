@@ -1141,6 +1141,23 @@ while the mains is off) and `ups.status` ("On mains", "On battery", "Battery low
 module shows them. A warning with `key = "ups.on_battery"` and `crit = 1` in the
 [notices](#notices) turns the mains going off into an alarm on every panel.
 
+**Dell's fans** (`fan.dell.*`, `temp.dell.*`, Windows): many Dell PCs show their fans to no
+other program, LibreHardwareMonitor included. Where Dell Command | Monitor is installed
+(Dell's own program for its PCs, from Dell's support site), Libre Panel reads the fans and
+temperatures it reports, every `update_s` seconds, and names them as it does: its "Processor
+Fan" is `fan.dell.processor_fan` (RPM), its "CPU Temperature" `temp.dell.cpu_temperature`
+(°C), where every fan and temperature of a PC is. Switch it on in *Settings → Sensors → Dell
+fans*, or name it among the sources; a PC without Dell Command | Monitor is said once in the
+log.
+
+```toml
+[sensors]
+providers = ["load", "audio", "librehardwaremonitor", "presentmon", "psutil", "dell"]
+
+[sensors.dell]
+update_s = 2
+```
+
 Show these readings with the Dashboard module (`ha.sensor.living_room_temperature
 = Living room`, one per line), a list, or any widget with a `sensor`.
 `libre-panel sensors` lists what is there.
