@@ -38,6 +38,7 @@ from libre_panel.fonts import DEFAULT_FONT, builtin_font_path
 from libre_panel.fonts.fallback import cursive, truetype
 from libre_panel.icons import draw_icon, link_icon, weather_icon_name
 from libre_panel.render import cover, fan, fan_looks, kept, lists, moving
+from libre_panel.render import field as fields
 from libre_panel.render import finish as finishes
 from libre_panel.render import scene as scenes
 from libre_panel.render.countdown import countdown_text
@@ -905,8 +906,18 @@ class Renderer:
         if not preview:  # costly sensors work only while a panel shows them
             want(self, _reads(self.widgets))
         self._background = self._load_background()
+        # a light field under it all (render/field.py), but not under a picture the person laid
+        # across the panels; where this panel stands among those that stand together (a
+        # canvas.Canvas in millimetres, set by the main loop; None: the panel by itself), and
+        # the light of the frame being drawn and of the one composed last (_compose)
+        self._field = theme.background_field if backdrop is None else None
+        self.canvas: Any = None
+        self._light: fields.Light | None = None
+        self._light_shown: fields.Light | None = None
+        self._light_key: tuple[Any, ...] | None = None  # (what the light was made of last)
         # Frames start from an opaque colour: pieces go on with a paste in place
         self._opaque = (self.color(theme.background_color) or (0, 0, 0, 0))[3] == 255
+        self._opaque = self._opaque or self._field is not None  # (the light is opaque)
         # and such frames are composed in RGB (Pillow keeps it in four bytes a pixel too, and
         # pastes RGBA into it as it pastes into RGBA): the frame the panel gets is then a copy
         # of it, not a conversion (a millisecond and a half less on the 12.3")
@@ -947,6 +958,8 @@ class Renderer:
         # ... and a text's or a letter's picture of its mask and ink (scene.MaskRecipe): kept
         # here as the mask, a quarter of the picture (where it lays them too)
         self.native_masks = False
+        # ... and draws a light field up and lays a frame's layers in front of it (field.py)
+        self.native_lights = False
         # ... and makes a lit bar's picture and glow for each value (scene.Bar), likewise
         self.native_bars = False
         # ... and a card whose inside is one colour comes as its edges and that colour, which the
@@ -1480,6 +1493,8 @@ class Renderer:
             px0, py0, px1, py1 = piece.span or self._extent(piece)  # (worked out once a piece)
             if px0 < x1 and px1 > x0 and py0 < y1 and py1 > y0:
                 inside.append((wid, piece))  # outside the region: its pixels are unchanged
+        if self._light is not None:  # (what lies in front of the light, laid over it once)
+            return fields.compose(self._light, inside, region)
         below = next((i for i, (wid, _) in enumerate(inside) if wid in changed), len(inside))
         hit = self._underlays.get(
             region,
@@ -1511,10 +1526,48 @@ class Renderer:
                 self._warn(f"widget {wid!r} failed: {exc}")
         return part
 
+    def _light_at(self, snapshot: Snapshot, now: float) -> fields.Light:
+        """The light under the frame at ``now`` (render/field.py): where this panel stands
+        among those standing together, at the field's step of ``now`` on the wall clock as it
+        drifts (its ``moves`` holds; else as it stands at 0), under the load of that step (its
+        ``load`` holds; else at rest), from the theme's background colour up. The light before
+        while it is the same."""
+        spec = self._field
+        assert spec is not None
+        step = fields.stepped(now)
+        moves = not spec["moves"] or self._holds(spec["moves"], snapshot)
+        load = 0.0
+        if not spec["load"] or self._holds(spec["load"], snapshot):
+            sample = getattr(self, "sample", None)
+            eased = 1.0 if sample is None else (step - sample[0]) / sample[1]
+            load = fields.load_of(snapshot.history, eased)
+        w, h = self.theme.width, self.theme.height
+        canvas = self.canvas
+        if canvas is None:
+            own = whole = fields.alone(self.theme)
+        else:
+            own, whole = canvas.own, canvas.whole
+        base = (self.color(self.theme.background_color) or (0, 0, 0, 255))[:3]
+        t = step if moves else 0.0
+        key = ((w, h), own, whole, t, load, spec["look"], base)
+        if moves or load:
+            self._due_at(step + 1.0 / fields.RATE)  # (the next step: a new light)
+        before = self._light
+        if before is not None and self._light_key == key:
+            return before
+        self._light_key = key
+        light = fields.light((w, h), own, whole, t, load, spec["look"], base)
+        if before is not None and fields.same(before, light):
+            return before  # (no level of it other: the frame, and the engine's, as they are)
+        return light
+
     def _ground(self) -> Image.Image:
         """The theme's background colour with its picture laid over it, the size of the panel:
         made once (and again for another colour: the cover's), and cut for every region that
-        is composed from the ground up (callers must not change it)."""
+        is composed from the ground up (callers must not change it). Under a light field, the
+        light of the frame being drawn."""
+        if self._light is not None:
+            return self._light.picture
         color = self.color(self.theme.background_color)
         if self._grounds is None or self._grounds[0] != color:
             self._grounds = None  # (the one before goes first: it is the panel's size)
@@ -1559,7 +1612,7 @@ class Renderer:
         """The ground of ``region``: its colour alone where the theme has no background picture
         (no picture the size of the panel is kept for that), else cut from :meth:`_ground`."""
         color = self.color(self.theme.background_color)
-        if self._background is None and color is not None:
+        if self._background is None and color is not None and self._light is None:
             size = (region[2] - region[0], region[3] - region[1])
             return Image.new(self._mode, size, color if self._mode == "RGBA" else color[:3])
         return self._ground().crop(region)
@@ -1583,6 +1636,8 @@ class Renderer:
         theme = self.theme
         full = (0, 0, theme.width, theme.height)
         last = self._last if self.incremental else None
+        if self._light is not self._light_shown:  # (a new light: all of the frame is new)
+            last, self._light_shown = None, self._light
         regions = [full] if last is None else self._dirty(last[0], pieces)
         self._unchanged = last is not None and not regions
         self._composed = None if last is None else list(regions)  # (render: self.damage)
@@ -1612,6 +1667,7 @@ class Renderer:
             self.keep_static
             and self._mode == "RGB"
             and self._opaque
+            and (self._light is None or self.native_lights)
             and all(scenes.layerable(piece) for _, piece in pieces)
         )
 
@@ -1630,8 +1686,10 @@ class Renderer:
         self._forget_laid()
         self.scenes += 1
         color = self.color(self.theme.background_color)
-        if self._background is None and color is not None:
-            ground: Any = tuple(color[:3])
+        if self._light is not None:
+            ground: Any = self._light  # (the engine draws it up from its levels)
+        elif self._background is None and color is not None:
+            ground = tuple(color[:3])
         else:
             ground = self._ground()
         return scenes.SceneFrame(
@@ -2012,6 +2070,8 @@ class Renderer:
         self.moving = False
         self.due = None
         self.snapshot = snapshot
+        if self._field is not None:
+            self._light = self._light_at(snapshot, now)
         self.motion.begin(snapshot.readings, now, self._glide_s(), self._lead())
         shining = bool(self.shine.kinds) and self.animate and not self.preview
         if shining:

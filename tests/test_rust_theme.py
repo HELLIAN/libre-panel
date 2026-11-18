@@ -249,7 +249,13 @@ def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
             "background": ["color", "image", "gradient", "gradient_direction", "zz"],
         }[part]
         values = [_odd(rng), ["#000", "#fff"], ["#000", "@accent"], ["#000"], 97, 96, 200, 201]
-        _block(data, part)[rng.choice(keys + ["card_opacity"])] = rng.choice(values)
+        key = rng.choice(keys + ["card_opacity", "field"])
+        if key == "field" and part == "background":
+            values = [{"look": "lumen"}, {}, {"look": "nova"}, {"look": None}, "lumen",
+                      {"look": "lumen", "moves": "switch.light_flows", "load": "!switch.x"},
+                      {"moves": 5}, {"load": _odd(rng)}, {"look": ["lumen"]},
+                      _odd(rng)]  # fmt: skip
+        _block(data, part)[key] = rng.choice(values)
 
 
 def test_themes_with_slips_in_them_are_refused_or_completed_as_python_does() -> None:

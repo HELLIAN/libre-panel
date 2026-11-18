@@ -836,8 +836,14 @@ def passes_through(settings: EncoderSettings) -> bool:
 # that are the picture's own: lettering, lines; Lumen's light 50.9 instead of 49.9 dB from the
 # frames, its edges 45.6 instead of 44.5, the dither in its gradients kept better, 0.93 of it
 # instead of 0.86). Adaptive quantization stays: without it the dither goes, and the bands
-# come back.
-DRAWN_X264 = "no-deblock=1:subme=0"
+# come back. And smaller dead zones (x264's 21 and 11 between frames and within one): a change
+# of a level or two in a smooth light was held back until it was two or three, so a light
+# field (render/field.py) moved in steps the light had not; measured on the 12.3" at x264's
+# settings here, decoded again: Lumen with its light 0.20 levels from the frames made instead
+# of 0.43 on the mean (steps of two levels 0.016 % of the pixels instead of 0.3), 449 kbit/s
+# instead of 360, a quarter of a millisecond a frame more; Lumen and Arena as they are closer
+# too (0.25 instead of 0.27, 0.20 instead of 0.22) at 3 to 7 % more bits, their time the same.
+DRAWN_X264 = "no-deblock=1:subme=0:deadzone-inter=6:deadzone-intra=6"
 
 
 def codec_args(

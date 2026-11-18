@@ -34,7 +34,7 @@ class Scene:
     renderer hands out new ones."""
 
     size: tuple[int, int]
-    ground: tuple[int, int, int] | Image.Image
+    ground: Any  # (an RGB colour, an RGB picture, or a light field: render/field.py's Light)
     pieces: tuple[tuple[str, Piece], ...]
     half: bool = False
 
@@ -57,16 +57,21 @@ def layerable(piece: Piece) -> bool:
 
 def compose(scene: Scene) -> Image.Image:
     """The frame of ``scene`` (RGB), as the renderer composes it: its ground with each piece
-    laid on it in turn (Renderer._composite onto the opaque frame)."""
+    laid on it in turn (Renderer._composite onto the opaque frame); over a light field, what
+    lies in front of it laid over it once (render/field.py)."""
+    from libre_panel.render import field
     from libre_panel.render.renderer import Renderer
 
     ground = scene.ground
-    if isinstance(ground, Image.Image):
+    if isinstance(ground, field.Light):
+        canvas = field.compose(ground, scene.pieces)
+    elif isinstance(ground, Image.Image):
         canvas = ground.copy()
     else:
         canvas = Image.new("RGB", scene.size, ground)
-    for _wid, piece in scene.pieces:
-        Renderer._composite(canvas, piece, (0, 0), True)
+    if not isinstance(ground, field.Light):
+        for _wid, piece in scene.pieces:
+            Renderer._composite(canvas, piece, (0, 0), True)
     if scene.half:
         canvas = canvas.transpose(Image.Transpose.ROTATE_180)
     return canvas

@@ -166,6 +166,9 @@ pub struct Theme {
     pub background_image: Option<String>,
     pub background_gradient: Option<(String, String)>,
     pub background_direction: String,
+    /// A light field under everything (render/field.rs), over the panels that stand together
+    /// (background.field); None: none.
+    pub background_field: Option<LightField>,
     /// an int, of any size from 100 up
     pub refresh_ms: Value,
     pub model: String,
@@ -231,6 +234,13 @@ impl Theme {
                     self.background_direction.clone().into(),
                 );
             }
+        }
+        if let Some(field) = &self.background_field {
+            let mut f = Dict::default();
+            f.insert("look".into(), field.look.clone().into());
+            f.insert("moves".into(), field.moves.clone().into());
+            f.insert("load".into(), field.load.clone().into());
+            b.insert("field".into(), Value::Dict(f));
         }
         Value::Dict(b)
     }
@@ -1130,6 +1140,44 @@ fn finish_warnings(widgets: &[Dict], warnings: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// The looks of a light field under a theme (render/field.rs's look; model.py's FIELD_LOOKS).
+pub const FIELD_LOOKS: [&str; 1] = ["lumen"];
+
+/// A light field under a theme (background.field): its look, and the conditions (as a widget's
+/// needs) under which its light drifts and follows the load; "" always.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LightField {
+    pub look: String,
+    pub moves: String,
+    pub load: String,
+}
+
+/// _parse_field: ``background.field``, ``{"look": "lumen", "moves": "switch.light_flows",
+/// "load": "switch.light_load"}``.
+fn parse_field(value: Option<&Value>) -> Result<Option<LightField>> {
+    let field = match value {
+        None | Some(Value::None) => return Ok(None),
+        Some(Value::Dict(d)) => d,
+        Some(_) => return refuse("background.field: an object, e.g. {\"look\": \"lumen\"}"),
+    };
+    let look = get(field, "look", FIELD_LOOKS[0].into());
+    if !FIELD_LOOKS.iter().any(|&l| look == Value::from(l)) {
+        return refuse(format!(
+            "background.field.look: one of {}",
+            FIELD_LOOKS.join(", ")
+        ));
+    }
+    let need = |key: &str| -> Result<String> {
+        let place = format!("background.field.{key}");
+        Ok(coerce("string", get(field, key, "".into()), &place, None)?.str())
+    };
+    Ok(Some(LightField {
+        look: look.str(),
+        moves: need("moves")?,
+        load: need("load")?,
+    }))
+}
+
 fn parse_switches(raw: Option<&Value>) -> Result<Dict> {
     let raw = match raw {
         None | Some(Value::None) => return Ok(Dict::default()),
@@ -1366,6 +1414,7 @@ pub fn parse_theme(data: &Value, root: Option<&Path>, env: &Env) -> Result<Theme
     if direction != Value::from("vertical") && direction != Value::from("horizontal") {
         return refuse("background.gradient_direction: \"vertical\" or \"horizontal\"");
     }
+    let bg_field = parse_field(background.get("field"))?;
     let refresh_ms = coerce(
         "int",
         get(data, "refresh_ms", int(1000)),
@@ -1436,6 +1485,7 @@ pub fn parse_theme(data: &Value, root: Option<&Path>, env: &Env) -> Result<Theme
         background_image: bg_image,
         background_gradient: bg_gradient,
         background_direction: direction.str(),
+        background_field: bg_field,
         refresh_ms,
         model: model_id,
         palette,

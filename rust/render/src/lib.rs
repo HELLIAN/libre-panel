@@ -21,6 +21,7 @@ pub mod effects;
 pub mod facets;
 pub mod fan;
 pub mod fan_looks;
+pub mod field;
 mod finish;
 pub mod formatting;
 mod gauge;

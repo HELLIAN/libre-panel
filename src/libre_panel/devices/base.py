@@ -159,6 +159,8 @@ class Display:
     makes_fans = False
     # ... and a picture of a mask and an ink (render/scene.py's MaskRecipe: texts, letters)
     makes_masks = False
+    # ... and draws a light field up and lays the frame in front of it (render/field.py)
+    draws_lights = False
     # a slow link (the USB serial panels, pixels over a serial port): the main loop keeps the
     # motion calm and sends the parts that changed one by one (app.calm, changed_regions)
     slow = False

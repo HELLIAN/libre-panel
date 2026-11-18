@@ -692,6 +692,14 @@ pub fn run(options: Options) -> Result<(), String> {
                 asked.composed(&shared, Some(&s.scene)); // (after its picture went on)
             }
             Record::Shown { id } => asked.ask(&shared, id, stream.as_ref().map(|s| &s.scene)),
+            Record::Light { w, h, levels } => {
+                let Some(s) = stream.as_mut() else {
+                    break Err("a light before its stream".into());
+                };
+                if let Err(e) = s.scene.ground_light(w, h, &levels) {
+                    break Err(e);
+                }
+            }
             Record::Ground { colour, picture } => {
                 let Some(s) = stream.as_mut() else {
                     break Err("a ground before its stream".into());

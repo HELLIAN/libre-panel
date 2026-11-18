@@ -49,6 +49,7 @@ from libre_panel.plugins.host import LEFT_OUT, NO_PANEL, OFF_IN_THEME, Delivery,
 from libre_panel.plugins.render import RenderContext
 from libre_panel.render import fan
 from libre_panel.render.alarm import AlarmEdge
+from libre_panel.render.canvas import Canvas
 from libre_panel.render.light import role_color
 from libre_panel.render.motion import Motion
 from libre_panel.render.overlays import ToastLayer, handover, switch_policy, transition
@@ -188,6 +189,8 @@ def _native(renderer: Renderer, display: Display, layers: bool) -> None:
     # ... and its texts and letters of their masks, where it makes them
     renderer.native_masks = layers and getattr(display, "makes_masks", False)
     renderer.native_bars = layers  # (and its lit bars and their glows)
+    # a light field's frames go as their layers only to an engine that draws the light
+    renderer.native_lights = layers and getattr(display, "draws_lights", False)
 
 
 def turned(frame: Image.Image, rotate: int) -> Image.Image:
@@ -1145,6 +1148,23 @@ class MainLoop:
         return {"own": [float(v) for v in own], "whole": whole, "panel": index,
                 "panels": len(shown)}  # fmt: skip
 
+    def _place(self) -> Canvas | None:
+        """Where this panel stands among all of them, in millimetres, as Settings → More panels
+        shows them, for a light across them (render/field.py); None for a panel alone, or one
+        whose place is not known yet (its light as on a panel by itself)."""
+        if self.laid_of is None:
+            return None
+        rects = self.laid_of()
+        index = 0 if self.panel is None else self.panel + 1
+        own = rects[index] if index < len(rects) else None
+        shown = [r for r in rects if r is not None]
+        if own is None or len(shown) < 2:
+            return None
+        left, top = min(r[0] for r in shown), min(r[1] for r in shown)
+        right, bottom = max(r[0] + r[2] for r in shown), max(r[1] + r[3] for r in shown)
+        return Canvas(tuple(map(float, own)), (float(left), float(top), float(right - left),
+                                               float(bottom - top)))  # fmt: skip
+
     def _together(self, before: Config, after: Config, occasion: str, leaving: bool) -> float:
         """How much later this panel's part of a transition over all the panels begins: every
         panel at the same moment, :data:`SWEEP_LEAD_S` after the change (each notices it in its
@@ -1353,6 +1373,7 @@ class MainLoop:
             renderer.beats = self.beats
             renderer.symbols = config.symbols  # and the symbols in their look
             renderer.switches = self._switched(theme, config, source)  # and as switched
+            renderer.canvas = self._place()  # (its part of a light across the panels)
             # made as the panel's engine takes them, where it composes the frames: a text as its
             # mask, a fan as its recipes (the frames drawn after go on so: the pieces are kept)
             _native(renderer, self.display, continuous and _takes_scenes(self.display))
@@ -1647,6 +1668,8 @@ class MainLoop:
                 if age is not None and age < every:  # just after the first panel's next ones
                     next_sample = started - age + every + IN_STEP_S
                 renderer.new_sample(now, every)
+                if renderer.theme.background_field is not None:  # (panels moved meanwhile)
+                    renderer.canvas = self._place()
             elif hub.every_frame:  # cheap sources follow on every frame (a new dict:
                 latest = hub.fresh(video=display.streaming)  # helpers may read the old one)
                 before, snapshot.readings = snapshot.readings, {**snapshot.readings, **latest}

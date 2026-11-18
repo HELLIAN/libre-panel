@@ -372,6 +372,10 @@ fn bounds(
 enum Ground {
     Colour([u8; 3]),
     Picture(Vec<u8>),
+    /// A light field (render/field.py), the frame's size: the frame is what lies in front of
+    /// it, laid on a clear foreground (premultiplied, four bytes a pixel: [`lay_front`]), over
+    /// it once ([`front_on`]). A new one leaves what lies in front of it as it was.
+    Light(Vec<u8>),
 }
 
 /// What lies under the layers that changed in a block, as it was composed last: the layers
@@ -408,6 +412,9 @@ pub struct Scene {
     /// The next frame is composed whole: there was none yet, the ground is new, or one of
     /// Libre Panel's own frames came between.
     whole: bool,
+    /// The blocks whose light changed since the frame before (a new light over the light
+    /// before, of the same size): composed anew, though no layer of theirs changed.
+    lit: Option<Vec<bool>>,
     under: Vec<Option<Under>>,
     /// The rings whose pictures the engine makes for each value (ring.rs).
     rings: HashMap<u32, ring::Base>,
@@ -440,6 +447,7 @@ impl Scene {
             order: Vec::new(),
             half: false,
             whole: true,
+            lit: None,
             under: (0..cols * rows).map(|_| None).collect(),
             rings: HashMap::new(),
             sources: HashMap::new(),
@@ -456,6 +464,7 @@ impl Scene {
     pub fn ground_colour(&mut self, rgb: [u8; 3]) {
         self.ground = Ground::Colour(rgb);
         self.whole = true;
+        self.lit = None;
         self.forget_unders();
     }
 
@@ -465,8 +474,85 @@ impl Scene {
         }
         self.ground = Ground::Picture(pixels);
         self.whole = true;
+        self.lit = None;
         self.forget_unders();
         Ok(())
+    }
+
+    /// A light field for the ground: its levels, a point in the middle of each block of 8 by 8
+    /// pixels (`fw` x `fh`, RGB row by row), drawn up to the frame ([`drawn_up`], as
+    /// render/field.py draws it up). What lies in front of a light before stays (it is the same over
+    /// any light); every block is composed anew over the new one.
+    pub fn ground_light(&mut self, fw: usize, fh: usize, levels: &[u8]) -> Result<(), String> {
+        if fw != self.width.div_ceil(LIGHT_STEP) || fh != self.height.div_ceil(LIGHT_STEP) {
+            return Err(format!(
+                "a light of {fw}x{fh} for a frame of {}x{}",
+                self.width, self.height
+            ));
+        }
+        if levels.len() != fw * fh * 3 {
+            return Err(format!("a light of {fw}x{fh} and {} bytes", levels.len()));
+        }
+        let drawn = drawn_up(levels, fw, fh, self.width, self.height);
+        if let Ground::Light(before) = &self.ground {
+            // (only the blocks whose light is another: the rest show what they showed)
+            let apart = self.blocks_apart(before, &drawn);
+            self.lit = Some(match self.lit.take() {
+                Some(was) => was.iter().zip(&apart).map(|(a, b)| *a || *b).collect(),
+                None => apart,
+            });
+        } else {
+            self.forget_unders(); // (what lay over another ground: three bytes a pixel)
+            self.whole = true;
+        }
+        self.ground = Ground::Light(drawn);
+        Ok(())
+    }
+
+    /// The blocks in which two pictures of the frame's size (three bytes a pixel) differ.
+    fn blocks_apart(&self, a: &[u8], b: &[u8]) -> Vec<bool> {
+        let mut apart = vec![false; self.cols * self.rows];
+        let line = self.width * 3;
+        for (y, (ra, rb)) in a.chunks_exact(line).zip(b.chunks_exact(line)).enumerate() {
+            let marks = &mut apart[(y / self.block) * self.cols..][..self.cols];
+            for (c, mark) in marks.iter_mut().enumerate() {
+                if *mark {
+                    continue;
+                }
+                let (x0, x1) = (c * self.block * 3, ((c + 1) * self.block * 3).min(line));
+                *mark = ra[x0..x1] != rb[x0..x1];
+            }
+        }
+        apart
+    }
+
+    /// Whether the frame is composed in front of a light (four bytes a pixel, premultiplied).
+    fn front(&self) -> bool {
+        matches!(self.ground, Ground::Light(_))
+    }
+
+    /// The foreground `fore` of the box (x0, y0)-(x1, y1) over the light there, row by row
+    /// into `out`, the pixels of the box `wide` across whose top left corner is (bx0, by0).
+    fn front_into(
+        &self,
+        fore: &[u8],
+        (x0, y0, x1, y1): Rect,
+        out: &mut [u8],
+        (bx0, by0, wide): (usize, usize, usize),
+    ) {
+        let Ground::Light(light) = &self.ground else {
+            unreachable!("in front of a light")
+        };
+        let w = x1 - x0;
+        for (row, y) in (y0..y1).enumerate() {
+            let at = ((y - by0) * wide + (x0 - bx0)) * 3;
+            let from = (y * self.width + x0) * 3;
+            front_on_into(
+                &fore[row * w * 4..(row + 1) * w * 4],
+                &light[from..from + w * 3],
+                &mut out[at..at + w * 3],
+            );
+        }
     }
 
     /// A layer for the frames to come. Libre Panel numbers each layer anew; one that takes the
@@ -880,10 +966,16 @@ impl Scene {
         if let Some(id) = order.iter().find(|id| !self.layers.contains_key(id)) {
             return Err(format!("a frame with layer {id}, which never came"));
         }
+        let lit = self.lit.take();
         let marked = if self.whole || half != self.half {
             Some(vec![true; self.cols * self.rows])
         } else {
-            self.damage(&order)
+            self.damage(&order).map(|mut marked| {
+                for (m, l) in marked.iter_mut().zip(lit.iter().flatten()) {
+                    *m |= *l;
+                }
+                marked
+            })
         };
         let old: HashSet<u32> = self.order.iter().copied().collect();
         let fresh: HashSet<u32> = order
@@ -1062,12 +1154,22 @@ impl Scene {
             })
             .collect();
         let ids: Vec<u32> = over.iter().map(|&k| lying[k].id).collect();
+        let front = self.front();
+        let n = if front { 4 } else { 3 };
         let start = match &self.under[index] {
-            Some(u) if u.pixels.len() == w * h * 3 && ids.starts_with(&u.below) => u.below.len(),
+            Some(u) if u.pixels.len() == w * h * n && ids.starts_with(&u.below) => u.below.len(),
             _ => 0,
         };
+        let wide = bx1 - bx0;
+        if front && start > 0 && start == over.len() {
+            // (nothing new in front of the light here: what lies before it, over it)
+            let fore = &self.under[index].as_ref().expect("its under").pixels;
+            self.front_into(fore, (x0, y0, x1, y1), out, (bx0, by0, wide));
+            return;
+        }
         let mut pixels = match (&self.under[index], start) {
             (Some(u), s) if s > 0 => u.pixels.clone(),
+            _ if front => vec![0u8; w * h * 4],
             _ => self.ground_of((x0, y0, x1, y1)),
         };
         // (below the first layer new in this frame: kept for the frames after)
@@ -1082,12 +1184,12 @@ impl Scene {
                     pixels: pixels.clone(),
                 });
             }
-            lay(
-                &self.layers[&lying[k].id],
-                &self.sources,
-                &mut pixels,
-                (x0, y0, x1, y1),
-            );
+            let layer = &self.layers[&lying[k].id];
+            if front {
+                lay_front(layer, &self.sources, &mut pixels, (x0, y0, x1, y1));
+            } else {
+                lay(layer, &self.sources, &mut pixels, (x0, y0, x1, y1));
+            }
         }
         if new_at == over.len() && over.len() > start {
             self.under[index] = Some(Under {
@@ -1095,7 +1197,10 @@ impl Scene {
                 pixels: pixels.clone(),
             });
         }
-        let wide = bx1 - bx0;
+        if front {
+            self.front_into(&pixels, (x0, y0, x1, y1), out, (bx0, by0, wide));
+            return;
+        }
         for (row, line) in pixels.chunks_exact(w * 3).enumerate() {
             let at = ((y0 - by0 + row) * wide + (x0 - bx0)) * 3;
             out[at..at + w * 3].copy_from_slice(line);
@@ -1127,22 +1232,28 @@ impl Scene {
                     .filter(|(_, (lx0, _, lx1, _))| *lx0 < x1 && *lx1 > x0)
                     .map(|(id, _)| *id)
                     .collect();
+                let front = self.front();
+                let n = if front { 4 } else { 3 };
                 let (start, mut pixels) = match &self.under[r * self.cols + c] {
                     Some(u)
-                        if u.pixels.len() == (x1 - x0) * (y1 - y0) * 3
+                        if u.pixels.len() == (x1 - x0) * (y1 - y0) * n
                             && ids.starts_with(&u.below) =>
                     {
                         (u.below.len(), u.pixels.clone())
                     }
+                    _ if front => (0, vec![0u8; (x1 - x0) * (y1 - y0) * 4]),
                     _ => (0, self.ground_of((x0, y0, x1, y1))),
                 };
                 for id in &ids[start..] {
-                    lay(
-                        &self.layers[id],
-                        &self.sources,
-                        &mut pixels,
-                        (x0, y0, x1, y1),
-                    );
+                    let rect = (x0, y0, x1, y1);
+                    if front {
+                        lay_front(&self.layers[id], &self.sources, &mut pixels, rect);
+                    } else {
+                        lay(&self.layers[id], &self.sources, &mut pixels, rect);
+                    }
+                }
+                if front {
+                    pixels = front_on(&pixels, &self.ground_of((x0, y0, x1, y1)));
                 }
                 for (row, line) in pixels.chunks_exact((x1 - x0) * 3).enumerate() {
                     let at = ((y0 + row) * width + x0) * 3;
@@ -1163,7 +1274,7 @@ impl Scene {
         let w = x1 - x0;
         match &self.ground {
             Ground::Colour(rgb) => rgb.repeat(w * (y1 - y0)),
-            Ground::Picture(pixels) => {
+            Ground::Picture(pixels) | Ground::Light(pixels) => {
                 let mut out = Vec::with_capacity(w * (y1 - y0) * 3);
                 for y in y0..y1 {
                     let at = (y * self.width + x0) * 3;
@@ -1254,6 +1365,301 @@ fn lay(layer: &Layer, sources: &HashMap<u32, Source>, out: &mut [u8], (x0, y0, x
             How::Over => over(dst, src),
             How::Solid => dst.copy_from_slice(src),
             How::Add => add(dst, src),
+        }
+    }
+}
+
+/// [`lay`] onto a foreground in front of a light (four bytes a pixel, premultiplied by their
+/// cover: render/field.py's Foreground), each step as field.py takes it: a layer through its
+/// alpha ([`front_over`]), a colour so, an opaque picture as it is, light added.
+fn lay_front(
+    layer: &Layer,
+    sources: &HashMap<u32, Source>,
+    out: &mut [u8],
+    (x0, y0, x1, y1): Rect,
+) {
+    let (px0, py0, px1, py1) = layer.part;
+    let lx0 = (layer.x + px0 as i64).max(x0 as i64);
+    let ly0 = (layer.y + py0 as i64).max(y0 as i64);
+    let lx1 = (layer.x + px1 as i64).min(x1 as i64);
+    let ly1 = (layer.y + py1 as i64).min(y1 as i64);
+    if lx1 <= lx0 || ly1 <= ly0 {
+        return;
+    }
+    let n = layer.how.channels();
+    let span = (lx1 - lx0) as usize;
+    let w = x1 - x0;
+    if let Some(colour) = layer.fill {
+        for fy in ly0..ly1 {
+            let at = ((fy as usize - y0) * w + (lx0 as usize - x0)) * 4;
+            front_colour(&mut out[at..at + span * 4], colour);
+        }
+        return;
+    }
+    if let Some(cuts) = &layer.cuts {
+        let mut fy = ly0;
+        while fy < ly1 {
+            let (rows, spans) = cuts.rows((fy - layer.y) as usize);
+            let end = (layer.y + rows as i64).min(ly1);
+            for &(u0, u1, k) in spans {
+                let part = &cuts.parts[k];
+                let Some(source) = sources.get(&part.source) else {
+                    continue;
+                };
+                let off = i64::from(part.sx) - i64::from(part.dx) - layer.x;
+                let a = (layer.x + u0 as i64).max(lx0).max(-off);
+                let b = (layer.x + u1 as i64).min(lx1).min(source.w as i64 - off);
+                let down = i64::from(part.sy) - i64::from(part.dy) - layer.y;
+                let (r0, r1) = (fy.max(-down), end.min(source.h as i64 - down));
+                if a >= b || r0 >= r1 {
+                    continue;
+                }
+                let len = (b - a) as usize;
+                for ry in r0..r1 {
+                    let from = ((ry + down) as usize * source.w + (a + off) as usize) * 4;
+                    let at = ((ry as usize - y0) * w + (a as usize - x0)) * 4;
+                    front_over(
+                        &mut out[at..at + len * 4],
+                        &source.pixels[from..from + len * 4],
+                    );
+                }
+            }
+            fy = end;
+        }
+        return;
+    }
+    for fy in ly0..ly1 {
+        let src_at = (((fy - layer.y) as usize) * layer.w + (lx0 - layer.x) as usize) * n;
+        let src = &layer.pixels[src_at..src_at + span * n];
+        let dst_at = ((fy as usize - y0) * w + (lx0 as usize - x0)) * 4;
+        let dst = &mut out[dst_at..dst_at + span * 4];
+        match layer.how {
+            How::Over => front_over(dst, src),
+            How::Solid => {
+                for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(3)) {
+                    d[..3].copy_from_slice(s);
+                    d[3] = 255;
+                }
+            }
+            How::Add => {
+                for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(3)) {
+                    for c in 0..3 {
+                        d[c] = d[c].saturating_add(s[c]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The pixels a point of a light field stands for, across and down (render/field.py's STEP).
+const LIGHT_STEP: usize = 8;
+
+/// For each of `n` pixels in a row, the two points of a light field it lies between (each in
+/// the middle of its block of [`LIGHT_STEP`]) and how near the second, in sixteenths
+/// (render/field.py's _between).
+fn between(n: usize, points: usize) -> Vec<(usize, usize, u16)> {
+    let last = points as i64 - 1;
+    (0..n as i64)
+        .map(|x| {
+            let sixteenths = 2 * x - (LIGHT_STEP as i64 - 1);
+            let first = sixteenths.div_euclid(16);
+            let near = (sixteenths - 16 * first) as u16;
+            let at = |i: i64| i.clamp(0, last) as usize;
+            (at(first), at(first + 1), near)
+        })
+        .collect()
+}
+
+/// A light field's levels (`fw` x `fh`, RGB) drawn up to `w` x `h` as render/field.py's
+/// drawn_up: each pixel between the four points nearest its middle, weighted in sixteenths
+/// each way, the sum rounded once. The rows across first, for every row of points (sixteen
+/// times the level: whole numbers), then each row of the frame of the two it lies between,
+/// sixteen bits a channel (the compiler takes eight at a time).
+fn drawn_up(levels: &[u8], fw: usize, fh: usize, w: usize, h: usize) -> Vec<u8> {
+    let across: Vec<Vec<u16>> = {
+        let taps = between(w, fw);
+        levels
+            .chunks_exact(fw * 3)
+            .map(|row| {
+                let mut out = Vec::with_capacity(w * 3);
+                for &(a, b, f) in &taps {
+                    for c in 0..3 {
+                        let (va, vb) = (u16::from(row[a * 3 + c]), u16::from(row[b * 3 + c]));
+                        out.push(va * (16 - f) + vb * f);
+                    }
+                }
+                out
+            })
+            .collect()
+    };
+    let mut out = vec![0u8; w * h * 3];
+    for ((a, b, f), line) in between(h, fh).into_iter().zip(out.chunks_exact_mut(w * 3)) {
+        let (first, second, g) = (&across[a], &across[b], 16 - f);
+        for ((o, &u), &v) in line.iter_mut().zip(first).zip(second) {
+            *o = ((u * g + v * f + 128) >> 8) as u8;
+        }
+    }
+    out
+}
+
+/// `v` / 255 rounded, as Pillow divides (exact up to 65,025 and a little beyond).
+fn div255(v: u32) -> u32 {
+    let t = v + 128;
+    ((t >> 8) + t) >> 8
+}
+
+/// RGBA pixels laid through their alpha onto a foreground in front of a light (render/field.py's
+/// Foreground.over): `F = div255(s a + F (255 - a))`, `A = a + div255(A (255 - a))`, which is
+/// Pillow's blend of each of the four (the cover's with 255 for the piece's). Four at a time
+/// where the processor has SSSE3, the same bytes.
+fn front_over(dst: &mut [u8], src: &[u8]) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("ssse3") {
+        // SAFETY: the processor has SSSE3 (just asked)
+        let done = unsafe { front_over_ssse3(dst, src) };
+        front_over_one_by_one(&mut dst[done * 4..], &src[done * 4..]);
+        return;
+    }
+    front_over_one_by_one(dst, src);
+}
+
+/// [`front_over`] four pixels at a time: [`over_ssse3`]'s blend in sixteen-bit lanes, the
+/// piece's alpha lane as 255.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "ssse3")]
+unsafe fn front_over_ssse3(dst: &mut [u8], src: &[u8]) -> usize {
+    use std::arch::x86_64::*;
+    let quads = (dst.len() / 4).min(src.len() / 4) / 4;
+    let zero = _mm_setzero_si128();
+    let (full, half) = (_mm_set1_epi16(255), _mm_set1_epi16(128));
+    let opaque = _mm_set1_epi32(0xFF00_0000_u32 as i32);
+    let lay = |d: __m128i, s: __m128i, a: __m128i| {
+        let t = _mm_add_epi16(
+            _mm_add_epi16(
+                _mm_mullo_epi16(d, _mm_sub_epi16(full, a)),
+                _mm_mullo_epi16(s, a),
+            ),
+            half,
+        );
+        _mm_srli_epi16::<8>(_mm_add_epi16(t, _mm_srli_epi16::<8>(t)))
+    };
+    for q in 0..quads {
+        // SAFETY: q < quads: the four pixels' 16 bytes of each are in them
+        let (s, at) = (src.as_ptr().add(q * 16), dst.as_mut_ptr().add(q * 16));
+        let s = _mm_loadu_si128(s.cast());
+        let d = _mm_loadu_si128(at.cast());
+        let (sl, sh) = (_mm_unpacklo_epi8(s, zero), _mm_unpackhi_epi8(s, zero));
+        let al = _mm_shufflehi_epi16::<0xFF>(_mm_shufflelo_epi16::<0xFF>(sl));
+        let ah = _mm_shufflehi_epi16::<0xFF>(_mm_shufflelo_epi16::<0xFF>(sh));
+        let s = _mm_or_si128(s, opaque);
+        let low = lay(_mm_unpacklo_epi8(d, zero), _mm_unpacklo_epi8(s, zero), al);
+        let high = lay(_mm_unpackhi_epi8(d, zero), _mm_unpackhi_epi8(s, zero), ah);
+        _mm_storeu_si128(at.cast(), _mm_packus_epi16(low, high));
+    }
+    quads * 4
+}
+
+/// [`front_over`], a pixel at a time.
+fn front_over_one_by_one(dst: &mut [u8], src: &[u8]) {
+    for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+        let a = u32::from(s[3]);
+        if a == 0 {
+            continue; // (the same: div255(F 255) is F)
+        }
+        let rest = 255 - a;
+        for c in 0..3 {
+            d[c] = div255(u32::from(s[c]) * a + u32::from(d[c]) * rest) as u8;
+        }
+        d[3] = (a + div255(u32::from(d[3]) * rest)) as u8;
+    }
+}
+
+/// [`front_over`] of one colour.
+fn front_colour(dst: &mut [u8], s: [u8; 4]) {
+    let a = u32::from(s[3]);
+    if a == 0 {
+        return;
+    }
+    let rest = 255 - a;
+    let lit = [0, 1, 2].map(|c| u32::from(s[c]) * a);
+    for d in dst.chunks_exact_mut(4) {
+        for c in 0..3 {
+            d[c] = div255(lit[c] + u32::from(d[c]) * rest) as u8;
+        }
+        d[3] = (a + div255(u32::from(d[3]) * rest)) as u8;
+    }
+}
+
+/// A foreground (four bytes a pixel) over the light under it (three): the frame's pixels,
+/// `min(255, F + div255(g (255 - A)))` (render/field.py's Foreground.on). Four at a time
+/// where the processor has SSSE3, the same bytes.
+fn front_on(front: &[u8], light: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; light.len()];
+    front_on_into(front, light, &mut out);
+    out
+}
+
+/// [`front_on`] into `out` (as long as `light`).
+fn front_on_into(front: &[u8], light: &[u8], out: &mut [u8]) {
+    let mut done = 0;
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("ssse3") {
+        // SAFETY: the processor has SSSE3 (just asked)
+        done = unsafe { front_on_ssse3(front, light, out) };
+    }
+    front_on_one_by_one(&front[done * 4..], &light[done * 3..], &mut out[done * 3..]);
+}
+
+/// [`front_on`] four pixels at a time: the light's channels and the cover in sixteen-bit lanes,
+/// the light let through divided as Pillow divides, the foreground added with saturation.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "ssse3")]
+unsafe fn front_on_ssse3(front: &[u8], light: &[u8], out: &mut [u8]) -> usize {
+    use std::arch::x86_64::*;
+    let quads = (front.len() / 4).min(light.len() / 3) / 4;
+    // (the last group of four reads four bytes past its twelve: stop one short of the end)
+    let quads = if quads * 12 + 4 > light.len() {
+        quads.saturating_sub(1)
+    } else {
+        quads
+    };
+    let to_rgbx = _mm_setr_epi8(0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1);
+    let to_rgb = _mm_setr_epi8(0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1);
+    let zero = _mm_setzero_si128();
+    let (full, half) = (_mm_set1_epi16(255), _mm_set1_epi16(128));
+    let through = |g: __m128i, f: __m128i| {
+        let a = _mm_shufflehi_epi16::<0xFF>(_mm_shufflelo_epi16::<0xFF>(f));
+        let t = _mm_add_epi16(_mm_mullo_epi16(g, _mm_sub_epi16(full, a)), half);
+        _mm_srli_epi16::<8>(_mm_add_epi16(t, _mm_srli_epi16::<8>(t)))
+    };
+    for q in 0..quads {
+        // SAFETY: q < quads: 16 bytes of `front`, 16 of `light` (12 used) and 12 of `out` are in
+        // them (the last group stops short of the end: above)
+        let f = _mm_loadu_si128(front.as_ptr().add(q * 16).cast());
+        let g = _mm_shuffle_epi8(_mm_loadu_si128(light.as_ptr().add(q * 12).cast()), to_rgbx);
+        let low = through(_mm_unpacklo_epi8(g, zero), _mm_unpacklo_epi8(f, zero));
+        let high = through(_mm_unpackhi_epi8(g, zero), _mm_unpackhi_epi8(f, zero));
+        let sum = _mm_shuffle_epi8(_mm_adds_epu8(_mm_packus_epi16(low, high), f), to_rgb);
+        let at = out.as_mut_ptr().add(q * 12);
+        _mm_storel_epi64(at.cast(), sum);
+        at.add(8)
+            .cast::<i32>()
+            .write_unaligned(_mm_cvtsi128_si32(_mm_srli_si128::<8>(sum)));
+    }
+    quads * 4
+}
+
+/// [`front_on`], a pixel at a time, into `out`.
+fn front_on_one_by_one(front: &[u8], light: &[u8], out: &mut [u8]) {
+    for ((f, g), o) in front
+        .chunks_exact(4)
+        .zip(light.chunks_exact(3))
+        .zip(out.chunks_exact_mut(3))
+    {
+        let rest = 255 - u32::from(f[3]);
+        for c in 0..3 {
+            o[c] = (u32::from(f[c]) + div255(u32::from(g[c]) * rest)).min(255) as u8;
         }
     }
 }
@@ -2450,5 +2856,92 @@ mod tests {
         assert_eq!(boxes[0].4, vec![1, 2, 3, 9, 9, 9]);
         assert!(Layer::new(0, 0, 2, 2, How::Over, vec![0; 15]).is_err());
         assert!(Layer::new(0, 0, 0, 2, How::Add, vec![]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod light_timing {
+    use super::*;
+    use std::time::Instant;
+
+    /// What a light's parts cost on the 12.3" (cargo test --release light_timing -- --ignored
+    /// --nocapture).
+    #[test]
+    #[ignore]
+    fn light_timing() {
+        let (w, h) = (1920usize, 720usize);
+        let levels: Vec<u8> = (0..240 * 90 * 3).map(|i| (i * 7 % 61) as u8).collect();
+        let best = |f: &mut dyn FnMut()| {
+            (0..15)
+                .map(|_| {
+                    let t = Instant::now();
+                    f();
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::MAX, f64::min)
+        };
+        let up = best(&mut || {
+            std::hint::black_box(drawn_up(&levels, 240, 90, w, h));
+        });
+        let light = drawn_up(&levels, 240, 90, w, h);
+        let front: Vec<u8> = (0..w * h * 4).map(|i| (i * 13 % 200) as u8).collect();
+        let on = best(&mut || {
+            std::hint::black_box(front_on(&front, &light));
+        });
+        let src: Vec<u8> = (0..w * h * 4).map(|i| (i * 31 % 256) as u8).collect();
+        let mut dst4 = front.clone();
+        let fo = best(&mut || front_over(&mut dst4, &src));
+        let mut dst3 = light.clone();
+        let o = best(&mut || over(&mut dst3, &src));
+        println!(
+            "drawn up {up:.2} ms, front_on {on:.2}, front_over {fo:.2}, over {o:.2} (whole frame)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod light_tests {
+    use super::*;
+
+    fn noise(n: usize, seed: u32) -> Vec<u8> {
+        let mut x = seed;
+        (0..n)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn four_at_a_time_as_one_by_one() {
+        for n in [0usize, 1, 3, 4, 5, 7, 8, 9, 16, 17, 33, 1000, 1027] {
+            let (front, src, light) = (noise(n * 4, 1), noise(n * 4, 2), noise(n * 3, 3));
+            // (some clear and some opaque pixels among them)
+            let mut src = src;
+            for p in src.chunks_exact_mut(4).step_by(3) {
+                p[3] = if p[0] % 2 == 0 { 0 } else { 255 };
+            }
+            let mut fast = front.clone();
+            front_over(&mut fast, &src);
+            let mut slow = front.clone();
+            front_over_one_by_one(&mut slow, &src);
+            assert_eq!(fast, slow, "over, {n}");
+            let mut slow_on = vec![0u8; n * 3];
+            front_on_one_by_one(&front, &light, &mut slow_on);
+            assert_eq!(front_on(&front, &light), slow_on, "on, {n}");
+        }
+    }
+
+    #[test]
+    fn a_light_drawn_up_keeps_a_level_and_its_points() {
+        let flat = vec![37u8; 5 * 3 * 3];
+        assert!(drawn_up(&flat, 5, 3, 40, 20).iter().all(|&v| v == 37));
+        let levels = noise(5 * 3 * 3, 9);
+        let up = drawn_up(&levels, 5, 3, 40, 24);
+        // the corners' pixels are their points (beyond the first and last, as they are; a
+        // frame that ends within its last block ends before its last point)
+        assert_eq!(&up[..3], &levels[..3]);
+        assert_eq!(&up[up.len() - 3..], &levels[levels.len() - 3..]);
     }
 }

@@ -252,6 +252,7 @@ def light_theme(theme: Any) -> Any:
             None if gradient is None else (light_colour(gradient[0]), light_colour(gradient[1]))
         ),
         background_image=None,
+        background_field=None,  # (light behind a white panel: none)
         widgets=_light(copy.deepcopy(theme.widgets)),
         look=_light(copy.deepcopy(theme.look)),
         style=style,

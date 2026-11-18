@@ -160,6 +160,13 @@ pub enum Record {
         colour: Option<[u8; 3]>,
         picture: Vec<u8>,
     },
+    /// A light field for the ground (render/field.py): its levels at a fraction of the frame,
+    /// `w` x `h`, RGB row by row (kind 9, 2).
+    Light {
+        w: usize,
+        h: usize,
+        levels: Vec<u8>,
+    },
     Layer {
         id: u32,
         x: i32,
@@ -509,6 +516,19 @@ pub fn read(input: &mut impl Read) -> io::Result<Option<Record>> {
                     Ok(Some(Record::Ground {
                         colour: None,
                         picture,
+                    }))
+                }
+                2 if (8..=MOST_LAYER).contains(&len) => {
+                    let data = bytes(input, len, "a light cut short")?;
+                    let w = u32::from_le_bytes(data[..4].try_into().expect("four bytes")) as usize;
+                    let h = u32::from_le_bytes(data[4..8].try_into().expect("four bytes")) as usize;
+                    if w.checked_mul(h).and_then(|n| n.checked_mul(3)) != Some(len - 8) {
+                        return Err(invalid("a light whose levels are not its size"));
+                    }
+                    Ok(Some(Record::Light {
+                        w,
+                        h,
+                        levels: data[8..].to_vec(),
                     }))
                 }
                 _ => Err(invalid("a ground of no kind known")),

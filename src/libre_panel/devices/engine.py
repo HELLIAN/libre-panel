@@ -53,7 +53,7 @@ from libre_panel.devices.h264 import (
     find_engine,
 )
 from libre_panel.i18n import t
-from libre_panel.render import fan, moving
+from libre_panel.render import fan, field, moving
 from libre_panel.render.scene import (
     Bar,
     BarBase,
@@ -209,6 +209,12 @@ def makes_masks(engine: str) -> bool:
     return "masks" in _can(engine)
 
 
+def draws_lights(engine: str) -> bool:
+    """Whether ``engine`` draws a light field up for the ground from its levels and lays a
+    frame's layers in front of it (render/field.py's Light and Foreground)."""
+    return "lights" in _can(engine)
+
+
 def gives_shown(engine: str) -> bool:
     """Whether ``engine`` gives the frame of layers it composed last, whole (:data:`SHOWN`: the
     app's picture of the panel, its pixels not made here)."""
@@ -249,7 +255,7 @@ class SceneSender:
     def __init__(
         self, rings: bool = False, views: bool = False, globes: bool = False, fills: bool = False,
         laid: bool = False, grown: bool = False, bars: bool = False, fans: bool = False,
-        masks: bool = False,
+        masks: bool = False, lights: bool = False,
     ) -> None:  # fmt: skip
         self.rings = rings  # the engine makes a lit gauge's ring (render/lit.py's Ring)
         self.views = views  # ... and cuts a layer from pictures it keeps (render/scene.py's View)
@@ -262,6 +268,7 @@ class SceneSender:
         # (render/scene.py's Made of render/fan.py's recipes), of the rotors it keeps
         self.fans = fans
         self.masks = masks  # ... and makes a picture of its mask and ink (scene.py's MaskRecipe)
+        self.lights = lights  # ... and draws a light field up and lays the frame before it
         self._ground: Any = None
         # each piece's layers (and the ring, or the pictures, they are of): what the engine has
         self._pieces: dict[int, tuple[Piece, list[int], Any, tuple[int, ...], int | None]] = {}
@@ -614,12 +621,20 @@ class SceneSender:
         with the ground and layers the engine does not have yet."""
         parts: list[bytes] = []
         ground = scene.ground
-        if isinstance(ground, Image.Image):
+        if isinstance(ground, field.Light) and not self.lights:
+            ground = ground.picture  # (an engine of before: the light as a picture, to a level)
+        if isinstance(ground, field.Light):
+            if ground is not self._ground:  # (a light the engine draws up from its levels)
+                fh, fw = ground.small.shape[:2]
+                data = struct.pack("<II", fw, fh) + ground.small.tobytes()
+                parts += [_head(GROUND, 2, len(data)), data]
+                self.bytes += len(data)
+        elif isinstance(ground, Image.Image):
             if ground is not self._ground:  # (the renderer keeps its ground: the same picture)
                 data = (ground if ground.mode == "RGB" else ground.convert("RGB")).tobytes()
                 parts += [_head(GROUND, 1, len(data)), data]
                 self.bytes += len(data)
-        elif isinstance(self._ground, Image.Image) or ground != self._ground:
+        elif not isinstance(self._ground, tuple) or ground != self._ground:
             parts.append(_head(GROUND, 0, 3) + bytes(ground))
         self._ground = ground
         order: list[int] = []
@@ -1162,7 +1177,7 @@ class EngineStream:
         lead: float | None = None, scenes: bool = False, rings: bool = False,
         views: bool = False, globes: bool = False, fills: bool = False, laid: bool = False,
         grown: bool = False, bars: bool = False, fans: bool = False, masks: bool = False,
-        shown: bool = False,
+        shown: bool = False, lights: bool = False,
     ) -> None:  # fmt: skip
         self.link, self.size = link, size
         # with ``shown``: the engine gives the frame of layers it composed last (EngineLink.shown)
@@ -1175,7 +1190,7 @@ class EngineStream:
         # strip from the one before, with ``bars`` a lit bar's picture and glow, with ``fans`` a
         # fan's rotor at each position and its ring, with ``masks`` a text or a letter of its mask
         self.scenes = (
-            SceneSender(rings, views, globes, fills, laid, grown, bars, fans, masks)
+            SceneSender(rings, views, globes, fills, laid, grown, bars, fans, masks, lights)
             if scenes else None
         )  # fmt: skip
         # how long after the time a frame was drawn for the engine sends its picture (seconds;

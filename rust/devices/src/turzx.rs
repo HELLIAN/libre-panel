@@ -57,7 +57,7 @@ pub const DEFAULT_BLOCK: u32 = 202_752;
 /// plays at the last rate set.
 pub const POWER_ON_FPS: u8 = 30;
 /// What x264 is told for drawn frames (h264.py's DRAWN_X264).
-pub const DRAWN_X264: &str = "no-deblock=1:subme=0";
+pub const DRAWN_X264: &str = "no-deblock=1:subme=0:deadzone-inter=6:deadzone-intra=6";
 /// The models whose decoder shows the high profile (HIGH_PROFILE_MODELS).
 pub const HIGH_PROFILE_MODELS: [&str; 2] = ["turing-9.2-usb", "turing-12.3-usb"];
 /// 4:4:4 at 90 keeps coloured text crisp; busy frames step down.
@@ -1810,11 +1810,13 @@ mod tests {
         assert_eq!(
             options.join(" "),
             "--size 1920x480 --turn 270 --fps 25 --crf 20 --kbit 2000 --keyint 50 --preset \
-             superfast --profile high --x264 no-deblock=1:subme=0 --lead-ms 80"
+             superfast --profile high --x264 no-deblock=1:subme=0:deadzone-inter=6:deadzone-intra=6 \
+             --lead-ms 80"
         );
         let options = engine_options((480, 1920), &video, "", true, 1.5, "auto");
         assert!(options.join(" ").ends_with(
-            "--profile baseline --x264 no-deblock=1:subme=0 --encoder auto --full --lead-ms 80"
+            "--profile baseline --x264 no-deblock=1:subme=0:deadzone-inter=6:deadzone-intra=6 \
+             --encoder auto --full --lead-ms 80"
         ));
         assert_eq!(
             jpeg_width(crate::models::find_model("turing-9.2-usb"), 480),

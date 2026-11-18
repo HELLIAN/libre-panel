@@ -370,6 +370,7 @@ pub fn light_theme(theme: &Theme) -> Result<Theme> {
         .as_ref()
         .map(|(from, to)| (light_colour(from, Role::None), light_colour(to, Role::None)));
     light.background_image = None;
+    light.background_field = None; // (light behind a white panel: none)
     light.widgets = theme
         .widgets
         .iter()

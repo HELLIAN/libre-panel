@@ -255,6 +255,10 @@ class TurzxDisplay(Display):
     def makes_masks(self) -> bool:
         return bool(getattr(self._impl, "makes_masks", False)) if self._impl else False
 
+    @property
+    def draws_lights(self) -> bool:
+        return bool(getattr(self._impl, "draws_lights", False)) if self._impl else False
+
     def shown_picture(self, timeout: float = 1.0) -> Image.Image | None:
         """The frame shown as the panel's engine composed it (TurzxVideoDisplay.shown_picture)."""
         give = getattr(self._impl, "shown_picture", None) if self._impl else None

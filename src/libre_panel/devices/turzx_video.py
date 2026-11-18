@@ -68,6 +68,7 @@ from libre_panel.devices.engine import (
     EngineTransport,
     can_send,
     cuts_views,
+    draws_lights,
     encodes_on_cards,
     encodes_on_proven_cards,
     engine_scene,
@@ -674,6 +675,14 @@ class TurzxVideoDisplay(TurzxUsbDisplay):
         return self.takes_scenes and bool(getattr(sender, "rings", False))
 
     @property
+    def draws_lights(self) -> bool:
+        """Whether the engine that composes the frames also draws a light field up and lays
+        the frame in front of it (render/field.py): the renderer hands a field theme's frames
+        to it as their layers."""
+        sender = getattr(self.encoder, "scenes", None)
+        return self.takes_scenes and bool(getattr(sender, "lights", False))
+
+    @property
     def makes_masks(self) -> bool:
         """Whether the engine that composes the frames also makes a picture of a mask and an ink
         itself (render/scene.py's MaskRecipe): the renderer keeps texts and letters as masks."""
@@ -992,6 +1001,7 @@ class TurzxVideoDisplay(TurzxUsbDisplay):
                 laid=layers and lays_laid(engine), grown=layers and grows_sources(engine),
                 bars=layers and makes_bars(engine), fans=layers and makes_fans(engine),
                 masks=layers and makes_masks(engine), shown=layers and gives_shown(engine),
+                lights=layers and draws_lights(engine),
             )  # fmt: skip
             if layers and not self._layers_said:  # (once: a new stream starts as often)
                 self._layers_said = True

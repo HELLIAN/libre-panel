@@ -3208,6 +3208,31 @@ fn run(case: &Value) -> Result<Value, String> {
                 .unwrap_or_default();
             json!({ "shown": shown })
         }
+        "field" => {
+            // render/field.py's small and field: the light field of the look "look" on a panel
+            // of "size" standing at "own" in the canvas "whole" (millimetres, each a double's
+            // bits), at "t" under "load" (bits too), on "base" (RGB): its levels at an eighth,
+            // and drawn up ("digest": the drawn-up picture's SHA-256 alone)
+            let bits = |v: &Value| {
+                f64::from_bits(u64::from_str_radix(v.as_str().unwrap_or("0"), 16).unwrap_or(0))
+            };
+            let rect = |v: &Value| (bits(&v[0]), bits(&v[1]), bits(&v[2]), bits(&v[3]));
+            let n = |v: &Value| v.as_u64().unwrap_or(0) as usize;
+            let size = (n(&case["size"][0]), n(&case["size"][1]));
+            let Some(pools) = lp_render::field::look(case["look"].as_str().unwrap_or("")) else {
+                return Err("no such look".into());
+            };
+            let (own, whole) = (rect(&case["own"]), rect(&case["whole"]));
+            let (t, load) = (bits(&case["t"]), bits(&case["load"]));
+            let base = [0, 1, 2].map(|c| case["base"][c].as_u64().unwrap_or(0).min(255) as u8);
+            let (fw, fh, levels) = lp_render::field::small(size, own, whole, t, load, pools, base);
+            let drawn = lp_render::field::field(size, own, whole, t, load, pools, base)
+                .map_err(|e| e.to_string())?;
+            json!({
+                "small": [fw, fh, STANDARD.encode(&levels)],
+                "field": image_answer(&drawn, case["digest"].as_bool() == Some(true)),
+            })
+        }
         "things" => {
             // morph.things and morph._where of a frame of the case's pieces (each of a blank
             // layer: "wid", "x", "y", "w", "h", "add", "light" [x, y, w, h], "frosted"

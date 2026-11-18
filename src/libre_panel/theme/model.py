@@ -558,6 +558,9 @@ class Theme:
     # right: background_direction "horizontal"), drawn by the renderer without bands
     background_gradient: tuple[str, str] | None = None
     background_direction: str = "vertical"
+    # A light field under everything (render/field.py), over the panels that stand together:
+    # {"look": ..., "moves": need, "load": need} (background.field); None: none
+    background_field: dict[str, str] | None = None
     refresh_ms: int = 1000
     model: str = "custom"
     palette: dict[str, str] = field(default_factory=dict)
@@ -600,6 +603,8 @@ class Theme:
             background["gradient"] = list(self.background_gradient)
             if self.background_direction != "vertical":
                 background["gradient_direction"] = self.background_direction
+        if self.background_field is not None:
+            background["field"] = dict(self.background_field)
         return background
 
     def to_dict(self) -> dict[str, Any]:
@@ -1067,6 +1072,28 @@ def _parse_switches(raw: Any) -> dict[str, dict[str, Any]]:
     return switches
 
 
+# the looks of a light field under a theme (render/field.py's LOOKS)
+FIELD_LOOKS = ("lumen",)
+
+
+def _parse_field(value: Any) -> dict[str, str] | None:
+    """``background.field``: a light field under the theme (render/field.py), ``{"look":
+    "lumen", "moves": "switch.light_flows", "load": "switch.light_load"}``: ``moves`` and
+    ``load`` conditions as a widget's needs, for whether its light drifts and whether it
+    follows the load; always, where none is given."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ThemeError('background.field: an object, e.g. {"look": "lumen"}')
+    look = value.get("look", FIELD_LOOKS[0])
+    if look not in FIELD_LOOKS:
+        raise ThemeError(f"background.field.look: one of {', '.join(FIELD_LOOKS)}")
+    field = {"look": look}
+    for key in ("moves", "load"):
+        field[key] = _coerce("string", value.get(key, ""), f"background.field.{key}")
+    return field
+
+
 MAX_DETACHED = 64
 
 
@@ -1160,6 +1187,7 @@ def parse_theme(data: Any, root: Path | None = None) -> Theme:
     bg_direction = background.get("gradient_direction", "vertical")
     if bg_direction not in ("vertical", "horizontal"):
         raise ThemeError('background.gradient_direction: "vertical" or "horizontal"')
+    bg_field = _parse_field(background.get("field"))
     refresh_ms = _coerce("int", data.get("refresh_ms", 1000), "refresh_ms")
     if refresh_ms < 100:
         raise ThemeError("refresh_ms must be at least 100")
@@ -1193,6 +1221,7 @@ def parse_theme(data: Any, root: Path | None = None) -> Theme:
         background_image=bg_image,
         background_gradient=bg_gradient,
         background_direction=bg_direction,
+        background_field=bg_field,
         refresh_ms=refresh_ms,
         model=model_id,
         palette=palette,
@@ -1416,9 +1445,10 @@ def is_agents_screen(name: str) -> bool:
 def with_look(theme: Theme, source: Theme | None) -> Theme:
     """``theme`` in the look of ``source``, for a panel beside the first in the first panel's
     look (config.toml ``[[panels]] same_look``): the colours of its palette, by name (and
-    those only ``theme`` has stay), its background colour, its fonts and how its modules are
-    framed (``style``: cards, corners, glow). What is where, the pictures and the effects
-    stay ``theme``'s; so does a font of ``source``'s own folder, which ``theme`` cannot reach.
+    those only ``theme`` has stay), its background colour and light field, its fonts and how
+    its modules are framed (``style``: cards, corners, glow). What is where, the pictures and
+    the effects stay ``theme``'s; so does a font of ``source``'s own folder, which ``theme``
+    cannot reach.
     None, or ``theme`` itself: the theme as it is."""
     if source is None or (source.root is not None and source.root == theme.root):
         return theme
@@ -1432,12 +1462,20 @@ def with_look(theme: Theme, source: Theme | None) -> Theme:
         for key in ("display_font", "text_font"):
             if not reachable(source.style.get(key, "")):
                 style[key] = (theme.style or STYLE_DEFAULTS).get(key) or DEFAULT_FONT
+    # its light field too, with the switches that govern it where ``theme`` has none of them
+    field, switches = source.background_field, theme.switches
+    if field is not None:
+        named = {need.lstrip("!").strip()[len(SWITCH):] for need in (field["moves"],
+                 field["load"]) if need.lstrip("!").strip().startswith(SWITCH)}  # fmt: skip
+        switches = {**{n: s for n, s in source.switches.items() if n in named}, **switches}
     return replace(
         theme,
         palette={**theme.palette, **source.palette},
         background_color=source.background_color,
+        background_field=field,
         font=source.font if reachable(source.font) else theme.font,
         style=style,
+        switches=switches,
     )
 
 
