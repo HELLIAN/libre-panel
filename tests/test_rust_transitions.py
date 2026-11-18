@@ -97,6 +97,11 @@ def _frame(size: tuple[int, int], mode: str, seed: int) -> dict[str, Any]:
     return {"size": list(size), "mode": mode, "seed": (seed * 0x9E3779B9) & 0xFFFFFFFF}
 
 
+# The moment a built-in theme is drawn at before its cascade: one of this century (Windows'
+# local time knows nothing before 1970, where Python's clocks fail and Rust's frame is refused).
+DRAWN_ON = datetime(2025, 11, 13, 14, 26, 40)
+
+
 def _python(folder: Path, language: str, switches: list[dict[str, Any]],
             drawn: str | None = None) -> list[Any]:  # fmt: skip
     """Each switch's answer from Python, as lp-check gives Rust's (``drawn``: the moment the
@@ -105,9 +110,9 @@ def _python(folder: Path, language: str, switches: list[dict[str, Any]],
     try:
         renderer = Renderer(load_theme(folder), preview=True)
         renderer.snapshot = Snapshot(images={k: _noise(v) for k, v in PICTURES.items()})
-        if drawn is not None:  # (at the first moment of 1970, as lp-check's snapshot is)
+        if drawn is not None:  # (its clocks at DRAWN_ON, as lp-check's snapshot is told)
             pictures = {k: _noise(v) for k, v in PICTURES.items()}
-            renderer.render(Snapshot(images=pictures, now=datetime(1970, 1, 1)), now=_float(drawn))
+            renderer.render(Snapshot(images=pictures, now=DRAWN_ON), now=_float(drawn))
         context = RenderContext(renderer)
         olds: dict[str, Image.Image] = {}  # (the same spec, the same frame: its id stays)
         answers: list[Any] = []
@@ -228,6 +233,8 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
                       "switches": wire})  # fmt: skip
         if drawn:
             wired[-1]["drawn"] = drawn[0]["at"]
+            wired[-1]["now"] = [DRAWN_ON.year, DRAWN_ON.month, DRAWN_ON.day, DRAWN_ON.hour,
+                                DRAWN_ON.minute, DRAWN_ON.second, 0, 0]  # fmt: skip
     answers = run(wired)
     frames = 0
     for n, (got, (_, _, language, switches, *drawn)) in enumerate(zip(answers, cases, strict=True)):

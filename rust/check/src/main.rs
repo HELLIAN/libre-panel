@@ -3197,8 +3197,9 @@ fn run(case: &Value) -> Result<Value, String> {
             // old spec is the same frame), and how far it has gone (a double's bits); where the
             // case says "drawn" (a moment's bits), the renderer draws its frame of that moment
             // first, as the panel's loop has before a transition begins (what the cascade
-            // brings in, card by card); where it says "time", each step also tells how long its
-            // frame took, in nanoseconds (to measure, not to compare)
+            // brings in, card by card), its clocks at "now" where the case gives it ([year,
+            // month, day, hour, minute, second, microsecond]); where it says "time", each step
+            // also tells how long its frame took, in nanoseconds (to measure, not to compare)
             use lp_render::transitions::Transition;
             let timed = case["time"].as_bool() == Some(true);
             let env = lp_theme::Env {
@@ -3228,6 +3229,10 @@ fn run(case: &Value) -> Result<Value, String> {
             let mut snapshot = lp_render::snapshot::Snapshot::default();
             for (key, picture) in case["images"].as_object().into_iter().flatten() {
                 snapshot.images.insert(key.clone(), image_of(picture)?);
+            }
+            if let Some(at) = case["now"].as_array() {
+                // (the moment its clocks tell)
+                snapshot.now = datetime_of(at);
             }
             if let Some(now) = case.get("drawn") {
                 renderer
