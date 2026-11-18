@@ -1288,7 +1288,7 @@ def test_what_config_toml_names_and_nobody_has_is_said_in_plain_words(tmp_path: 
     assert done.returncode == 0, done.stderr
     assert "readings from: demo," in done.stderr
     unknown = "sensor source 'psutill' not started: unknown sensor provider 'psutill'"
-    assert f"{unknown} (available: audio, calendar, demo, " in done.stderr
+    assert f"{unknown} (available: audio, calendar, dell, demo, " in done.stderr
     assert "service 'nonsense': not installed" in done.stderr
     assert "this build" not in done.stderr
 
