@@ -270,6 +270,31 @@ def test_the_preview_can_show_a_test_notice(server):
     assert status == 400 and "notice" in data["error"]
 
 
+def test_designs_picture_shows_a_sensor_the_demo_cannot_know_with_the_panels_reading(editor):
+    """Issue 54: a fan of a JSON file in a list's "Which fans" is in Design's picture with the
+    panel's reading, as the panel shows it, and the picture is the one "With this PC's sensors"
+    draws; without the background app there is no reading of it, and nothing is started."""
+    from libre_panel.sensors.base import Reading, Snapshot
+    from libre_panel.theme.model import THEME_FORMAT
+
+    widget = {"type": "list", "id": "f0", "x": 4, "y": 4, "w": 300, "h": 60, "style": "fans",
+              "items": "json.dell.rpm = CPU", "font_size": 12, "color": "#eef6ff"}  # fmt: skip
+    theme = {"format": THEME_FORMAT, "name": "fans", "display": {"width": 320, "height": 80},
+             "background": {"color": "#101418"}, "widgets": [widget]}  # fmt: skip
+
+    def picture(**more):
+        status, data = request(editor.port, "POST", "/api/render", {"theme": theme, **more})
+        assert status == 200
+        return data["png"]
+
+    alone = picture()  # (the demo's readings, which have no such fan)
+    found = {"json.dell.rpm": Reading("json.dell.rpm", 1830, "rpm", "rpm")}
+    host = SimpleNamespace(latest=Snapshot(readings=found))
+    editor.state.controls = SimpleNamespace(plugin_host=host)
+    shown = picture()
+    assert shown != alone and shown == picture(live=True)
+
+
 def test_render_reports_the_grid_and_module_cells(server):
     plain = theme_dict()  # without modules
     plain["widgets"] = [w for w in plain["widgets"] if w["type"] != "module"]

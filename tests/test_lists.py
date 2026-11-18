@@ -35,6 +35,22 @@ def picked(items, found, **widget):
     return [(i.key, i.name) for i in lists.pick({"items": items, **widget}, found)]
 
 
+def test_design_shows_the_sensors_the_demo_has_no_sample_of_with_this_pcs_readings():
+    """Design's picture without "With this PC's sensors": a sensor the theme names that the
+    demo cannot know (a JSON file's fan in "Which fans", issue 54) takes this PC's reading,
+    named whole or by a pattern none of the demo's readings match; a pattern the demo answers
+    stays the demo's (its fans are not joined by this PC's), as does a reading it has."""
+    demo = readings(fan__cpu=1200.0, cpu__temp=50.0)
+    live = readings(json__dell__rpm=(1830, "rpm", "rpm"), fan__lpc__fan_2=900.0,
+                    cpu__temp=61.0, mqtt__DellFans__rpm=1500.0, mqtt__DellFans__status="ok",
+                    json__other=3.0)  # fmt: skip
+    texts = ["json.dell.rpm = CPU\nfan.*", "mqtt.DellFans.*", "!json.other", "cpu.temp",
+             "# json.other", "Hello?", "json.none", "json.dell.rpm"]  # fmt: skip
+    keys = ["json.dell.rpm", "mqtt.DellFans.rpm", "mqtt.DellFans.status"]
+    assert lists.unsampled(texts, demo, live) == keys
+    assert lists.unsampled([], demo, live) == []
+
+
 def test_items_by_name_pattern_and_exclusion():
     found = readings(
         cpu__temp=(61.0, "°C", "CPU temperature", "temp.k10temp.tctl"),

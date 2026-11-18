@@ -68,7 +68,7 @@ pub use graph::glide_ranges as graph_glide;
 pub use graph::still_range as graph_range;
 pub use image::animation_read;
 pub use image::{read_animation, Animation, Read as AnimationRead};
-pub use list::forget_fans_run;
+pub use list::{forget_fans_run, unsampled};
 pub use piece::{Failed, Piece};
 pub use plugin::Plugins;
 pub use renderer::{Options, Renderer, Unported};

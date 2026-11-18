@@ -100,6 +100,11 @@
   Download card show what their service reports, and every service is off until it is switched
   on; Design's picture then showed sample values, while the panel showed nothing there. The
   module now says that its service is off and turns it on with one click.
+- **Design's picture shows a sensor of your own source.** A fan of a JSON file named in a
+  list's *Which fans* was on the panel and on Start, but not in Design's picture: that picture
+  takes the demo's sample readings, which cannot know such a sensor. Where the background app
+  runs, a sensor the theme names (whole, or by a pattern the samples do not answer) that the
+  samples lack now shows the panel's reading. Nothing is started for it.
 - **A number gliding to a new reading no longer stands still on the way.** Where its glide first
   ran away from the reading, or past it, the number was taken as already there and showed the
   value of a moment before while its ring or bar went on. It follows its glide now, in both

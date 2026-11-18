@@ -1376,7 +1376,9 @@ fn drawing(
 }
 
 /// _render: Design's and Look's picture of the theme it is given (drawings.rs), live readings
-/// over the demo's where it asks for them.
+/// over the demo's where it asks for them; else the panel's readings of the sensors the theme
+/// names that the demo has no sample of (where the background app runs: no sources started
+/// for it).
 fn render(state: &State, exchange: &mut Exchange) {
     drawing(state, exchange, |payload, state, env, config| {
         let get = |key: &str| match payload {
@@ -1387,21 +1389,17 @@ fn render(state: &State, exchange: &mut Exchange) {
             ))),
         };
         let root = base_folder(state, Some(&get("base")?));
-        let live = match get("live")?.truthy() {
-            true => live_snapshot(state).map(|current| {
-                let history = std::sync::Arc::unwrap_or_clone(current.history)
-                    .into_iter()
-                    .filter(|(_, values)| values.len() > 1)
-                    .collect();
-                (current.readings, history)
-            }),
-            false => None,
+        let all = get("live")?.truthy();
+        let live = match all {
+            true => live_snapshot(state).map(std::sync::Arc::new),
+            false => (state.controls.upgrade()).and_then(|app| app.latest()),
         };
         crate::drawings::render(
             &get("theme")?,
             root.as_deref(),
             config,
-            live,
+            live.as_deref(),
+            all,
             &get("notice")?,
             &get("look")?,
             env,

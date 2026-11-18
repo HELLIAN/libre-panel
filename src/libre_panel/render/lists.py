@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,6 +73,24 @@ def parse_items(text: str) -> list[Entry]:
 def read_keys(text: str) -> set[str]:
     """The keys and patterns a list reads (for the providers that work on demand)."""
     return {e.pattern for e in parse_items(text) if not e.exclude}
+
+
+def unsampled(texts: Iterable[str], demo: Mapping[str, Any], live: Mapping[str, Any]) -> list[str]:
+    """The keys of ``live`` that a theme names (``texts``: every text of its JSON, read as a
+    list's lines) and the demo's readings ``demo`` have no sample of, so that Design's picture
+    shows them with this PC's readings: a sensor of a source the demo cannot know (a JSON
+    file's, an MQTT topic's). A key named whole, or the keys a pattern matches where it matches
+    none of the demo's (a pattern the demo answers stays the demo's: its fans are not joined by
+    this PC's)."""
+    found: dict[str, None] = {}
+    for text in texts:
+        for pattern in (e.pattern for e in parse_items(text) if not e.exclude):
+            if not _GLOB.search(pattern):
+                if pattern not in demo and pattern in live:
+                    found[pattern] = None
+            elif not fnmatch.filter(demo, pattern):
+                found.update(dict.fromkeys(fnmatch.filter(live, pattern)))
+    return list(found)
 
 
 def _natural(key: str) -> list[Any]:

@@ -62,7 +62,7 @@ from libre_panel.editor.updates import Install, UpdateError, Updates
 from libre_panel.fonts import BUILTIN_PREFIX, DEFAULT_FONT, builtin_font_path, builtin_fonts
 from libre_panel.i18n import t
 from libre_panel.icons import ICON_NAMES
-from libre_panel.render import fan, fan_looks
+from libre_panel.render import fan, fan_looks, lists
 from libre_panel.render.renderer import Renderer
 from libre_panel.sensors.base import TIME_SECOND, Reading, SensorHub, Snapshot
 from libre_panel.sensors.demo import demo_snapshot
@@ -412,6 +412,11 @@ class EditorState:
 
             self.start_screen_jobs = StartScreen()
         return self.start_screen_jobs
+
+    def panel_snapshot(self):
+        """The readings the background app's panel was last drawn from; None without it."""
+        host = getattr(self.controls, "plugin_host", None)
+        return host.latest if host is not None else None
 
     def live_snapshot(self):
         """The readings for previews. In the background app they are the panel's
@@ -2705,18 +2710,26 @@ class EditorHandler(BaseHTTPRequestHandler):
             return
         root = self._base_folder(payload.get("base"))
         live = None
-        if payload.get("live"):
+        everything = bool(payload.get("live"))
+        if everything:
             try:
                 current = self.state.live_snapshot()
                 live = (dict(current.readings),
                         {k: list(v) for k, v in current.history.items() if len(v) > 1})  # fmt: skip
             except Exception as exc:
                 log.warning("live sensors unavailable: %s", exc)
+        else:  # the panel's readings of the sensors the theme names (no sources started for it)
+            latest = self.state.panel_snapshot()
+            if latest is not None:
+                named = lists.unsampled(drawings.texts(payload.get("theme")), {}, latest.readings)
+                history = {k: list(v) for k in named if len(v := latest.history.get(k, ())) > 1}
+                live = ({k: latest.readings[k] for k in named}, history)
         try:
             answer = self.state.pictures.ask(
                 "render", payload.get("theme"), str(root) if root is not None else None,
                 self.state.cards(), self.state.fan_choices(), self.state.symbols(),
                 self.state.every_switch(), live, payload.get("notice"), payload.get("look"),
+                everything,
             )  # fmt: skip
         except PictureError as exc:
             if exc.kind not in ("ThemeError", "BadRequest"):

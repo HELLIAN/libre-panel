@@ -15,6 +15,7 @@ import base64
 import contextlib
 import io
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from PIL import Image, ImageOps
 from libre_panel import i18n
 from libre_panel.config import DEFAULT_CARDS, FAN_PAINTS, SYMBOL_PACKS
 from libre_panel.editor.presets import presets_for_editor
-from libre_panel.render import fan, fan_looks
+from libre_panel.render import fan, fan_looks, lists
 from libre_panel.render.renderer import Renderer
 from libre_panel.sensors.base import Reading
 from libre_panel.sensors.demo import demo_snapshot
@@ -143,20 +144,38 @@ def with_notice(renderer: Renderer, frame: Any, kind: str, look: str = "") -> An
 Live = tuple[dict[str, Reading], dict[str, list[float]]]  # the readings and their history
 
 
+def texts(raw: Any) -> Iterator[str]:
+    """Every text of a theme's JSON."""
+    if isinstance(raw, str):
+        yield raw
+    elif isinstance(raw, list):
+        for item in raw:
+            yield from texts(item)
+    elif isinstance(raw, dict):
+        for item in raw.values():
+            yield from texts(item)
+
+
 def render(
     raw: Any, root: str | None, cards: tuple[str, ...], fan_choices: Any, symbols: str,
     every_switch: dict[str, dict[str, bool]], live: Live | None, notice: Any = None,
-    look: Any = None,
+    look: Any = None, everything: bool = True,
 ) -> dict[str, Any]:  # fmt: skip
     """Design's and Look's picture of the theme ``raw`` (its JSON; ``root``: the folder its
-    assets come from), with the demo values and, ``live``, the readings and their history over
-    them; with the test message ``notice`` on it. What /api/render answers: the PNG (base64),
-    the boxes, the warnings, the grid and the modules' boxes. ThemeError for a theme that does
-    not parse, BadRequest for a notice that is no test message's kind."""
+    assets come from), with the demo values and, ``live``, this PC's readings and their history
+    over them: all of them (``everything``: Design's "With this PC's sensors"), or else only
+    those of the sensors the theme names that the demo has no sample of (lists.unsampled); with
+    the test message ``notice`` on it. What /api/render answers: the PNG (base64), the boxes,
+    the warnings, the grid and the modules' boxes. ThemeError for a theme that does not parse,
+    BadRequest for a notice that is no test message's kind."""
     theme = parse_theme(raw, root=Path(root) if root else None)
     snapshot = demo_snapshot()
     if live is not None:
         readings, history = live
+        if not everything:
+            keys = lists.unsampled(texts(raw), snapshot.readings, readings)
+            readings = {key: readings[key] for key in keys}
+            history = {key: history[key] for key in keys if key in history}
         snapshot.readings.update(readings)
         snapshot.history.update(history)
     renderer = Renderer(with_cards(theme, cards), preview=True)
