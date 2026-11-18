@@ -604,7 +604,9 @@ class Theme:
             if self.background_direction != "vertical":
                 background["gradient_direction"] = self.background_direction
         if self.background_field is not None:
-            background["field"] = dict(self.background_field)
+            # (its colours only where it has them: a field without stays as it was written)
+            background["field"] = {k: v for k, v in self.background_field.items()
+                                   if k != "colours" or v}  # fmt: skip
         return background
 
     def to_dict(self) -> dict[str, Any]:
@@ -1073,14 +1075,16 @@ def _parse_switches(raw: Any) -> dict[str, dict[str, Any]]:
 
 
 # the looks of a light field under a theme (render/field.py's LOOKS)
-FIELD_LOOKS = ("lumen",)
+FIELD_LOOKS = ("lumen", "arena")
 
 
 def _parse_field(value: Any) -> dict[str, str] | None:
     """``background.field``: a light field under the theme (render/field.py), ``{"look":
     "lumen", "moves": "switch.light_flows", "load": "switch.light_load"}``: ``moves`` and
     ``load`` conditions as a widget's needs, for whether its light drifts and whether it
-    follows the load; always, where none is given."""
+    follows the load; always, where none is given. ``"colours": "@media.cover"``: while that
+    picture is there, the light in its colours (render/cover.py's colours) instead of the
+    look's."""
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -1089,8 +1093,10 @@ def _parse_field(value: Any) -> dict[str, str] | None:
     if look not in FIELD_LOOKS:
         raise ThemeError(f"background.field.look: one of {', '.join(FIELD_LOOKS)}")
     field = {"look": look}
-    for key in ("moves", "load"):
+    for key in ("moves", "load", "colours"):
         field[key] = _coerce("string", value.get(key, ""), f"background.field.{key}")
+    if field["colours"] and not (field["colours"].startswith("@") and len(field["colours"]) > 1):
+        raise ThemeError('background.field.colours: a picture\'s name, e.g. "@media.cover"')
     return field
 
 

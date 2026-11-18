@@ -2169,6 +2169,8 @@
     "This theme's switches": "Gli interruttori di questo tema",
     "They hold for every screen that has them.": "Valgono per ogni schermata che li ha.",
     "Frames around every part": "Cornici attorno a ogni parte",
+    "The light flows": "La luce scorre",
+    "The light follows the load": "La luce segue il carico",
     "Dark when Libre Panel quits": "Scuro quando Libre Panel si chiude",
     "When Libre Panel quits, Windows shutting down too, the panel shows black and its light goes off; it lights up again when Libre Panel starts. Off: it keeps the last picture.": "Quando Libre Panel si chiude, anche allo spegnimento di Windows, il pannello mostra il nero e la sua luce si spegne; si riaccende all'avvio di Libre Panel. Disattivato: conserva l'ultima immagine.",
     "the panel's light off when it quits": "luce del pannello spenta alla chiusura",

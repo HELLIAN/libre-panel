@@ -555,6 +555,28 @@ def _a_veil_over_a_card() -> tuple[Any, ...]:
     return size, {}, "en", switches, {"theme": theme, "at": _bits(1_763_000_025.0)}
 
 
+def _cascade_over_the_light() -> tuple[Any, ...]:
+    """The cascade on a theme of its own over a light field: the cards come in on the light
+    as it lies under them, alone and on the second of two panels side by side."""
+    size = (320, 160)
+    widgets = [{"type": "rect", "id": "card", "x": 40, "y": 30, "w": 90, "h": 50,
+                "color": "#3A7BD5A0", "radius": 8},
+               {"type": "rect", "id": "other", "x": 180, "y": 60, "w": 110, "h": 80,
+                "color": "#D53A7B", "radius": 12}]  # fmt: skip
+    theme = {"format": THEME_FORMAT, "name": "lit", "widgets": widgets,
+             "background": {"color": "#000000", "field": {"look": "lumen"}},
+             "display": {"width": size[0], "height": size[1]}}  # fmt: skip
+    mm = (size[0] * 0.1527, size[1] * 0.1527)
+    side = {"whole": [0.0, 0.0, 2 * mm[0] + 15.0, mm[1]], "own": [mm[0] + 15.0, 0.0, *mm]}
+    switches = []
+    for j, canvas in enumerate([None, side]):
+        steps = [[_frame(size, "RGB", 35), _frame(size, "RGB", 36 + j), _bits(t)]
+                 for t in (0.0, 0.22, 0.4, 0.55, 0.93)]  # fmt: skip
+        switches.append({"name": "cascade", "raw": {} if canvas is None else {"canvas": canvas},
+                         "steps": steps})  # fmt: skip
+    return size, {}, "en", switches, {"theme": theme, "at": _bits(1_763_000_035.0)}
+
+
 def _morphing(old: str, new: str, size: tuple[int, int], seed: int, demo: bool = True,
               into: str | None = None) -> Any:  # fmt: skip
     """The morph from a built-in theme to another as their renderers drew them, with the demo's
@@ -635,7 +657,15 @@ SCENARIOS = [_entrance_at_its_turns, _entrance_on_another_size, _every_one_at_it
              _morphing("lumen-1920x720", "lumen-1920x720", (1920, 720), 12,
                        into="arena-1920x720"),
              _morphing_across(0, 13), _morphing_across(1, 14, top=20.0),
-             _morphing_across(0, 15, alone=True)]  # fmt: skip
+             _morphing_across(0, 15, alone=True), _cascade_over_the_light,
+             # (into the v2 screens, over their light: Lumen v2's, Arena v2's, Encore v2's in the
+             # cover's colours, on the 12.3" and on the companion on end)
+             _morphing("arena-1920x720", "lumen-v2-1920x720", (1920, 720), 17),
+             _morphing("arena-vertical", "lumen-v2-companion-vertical", (480, 1920), 18),
+             _morphing("lumen-v2-1920x720", "arena-v2-1920x720", (1920, 720), 19),
+             _morphing("lumen-1920x720", "encore-v2-1920x720", (1920, 720), 20),
+             _morphing("encore-vertical", "encore-v2-companion-vertical", (480, 1920),
+                       21)]  # fmt: skip
 
 
 def test_transitions_as_python_draws_them(tmp_path: Path) -> None:

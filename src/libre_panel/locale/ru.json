@@ -2169,6 +2169,8 @@
     "This theme's switches": "Переключатели этой темы",
     "They hold for every screen that has them.": "Они действуют на каждом экране, где есть.",
     "Frames around every part": "Рамки вокруг каждой части",
+    "The light flows": "Свет течёт",
+    "The light follows the load": "Свет следует за нагрузкой",
     "Dark when Libre Panel quits": "Тёмная при выходе из Libre Panel",
     "When Libre Panel quits, Windows shutting down too, the panel shows black and its light goes off; it lights up again when Libre Panel starts. Off: it keeps the last picture.": "Когда Libre Panel завершает работу (в том числе при выключении Windows), панель показывает чёрный экран, и её подсветка гаснет; при запуске Libre Panel она снова включается. Выкл.: сохраняется последнее изображение.",
     "the panel's light off when it quits": "подсветка панели гаснет при выходе",

@@ -19,7 +19,7 @@ pub type Rect = (f64, f64, f64, f64);
 /// A pool of light: its colour at rest and under load, how far it drifts as a share of the
 /// canvas across and down, in how many seconds it goes there and back each way, where in its
 /// round it starts (radians), and how wide it is (its Gaussian's sigma, millimetres).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pool {
     pub cool: [f64; 3],
     pub warm: [f64; 3],
@@ -58,6 +58,20 @@ pub const LUMEN: [Pool; 3] = [
     pool([127.0, 156.0, 255.0], [248.0, 113.0, 113.0], (0.44, 0.40), (390.0, 281.0), 2.5, 72.0),
     pool([199.0, 146.0, 255.0], [255.0, 150.0, 120.0], (0.42, 0.38), (450.0, 223.0), 4.4, 58.0),
 ];
+/// Arena's: its CPU, GPU and memory colours (the Arctic look's) at rest, warm as Lumen's.
+#[rustfmt::skip]
+pub const ARENA: [Pool; 3] = [
+    pool([19.0, 229.0, 215.0], [245.0, 168.0, 84.0], (0.46, 0.36), (330.0, 247.0), 0.4, 64.0),
+    pool([163.0, 174.0, 255.0], [248.0, 113.0, 113.0], (0.44, 0.40), (390.0, 281.0), 2.5, 72.0),
+    pool([224.0, 168.0, 255.0], [255.0, 150.0, 120.0], (0.42, 0.38), (450.0, 223.0), 4.4, 58.0),
+];
+/// A light in a picture's colours (background.field.colours: a cover's, cover.rs's colours):
+/// each pool in one of them, at rest and under load alike (the load makes it brighter, not
+/// warmer), this much stronger, as it stands for the picture behind the whole screen ...
+pub const TINTED: f64 = 1.8;
+/// ... and from one picture's colours to the next it glides this long (smoothstep), where the
+/// frames stream; elsewhere it takes them at once.
+pub const TINT_S: f64 = 2.0;
 /// The light's strength at rest, and what full load adds.
 const STRENGTH: (f64, f64) = (0.19, 0.15);
 /// The light swells and ebbs once in this long.
@@ -71,8 +85,45 @@ const WARMTH: f64 = 0.85;
 pub fn look(name: &str) -> Option<&'static [Pool]> {
     match name {
         "lumen" => Some(&LUMEN),
+        "arena" => Some(&ARENA),
         _ => None,
     }
+}
+
+/// tinted: `pools` in `colours` (one each, in turn): each in its colour at rest and under load,
+/// [`TINTED`] stronger; where they drift as they do.
+pub fn tinted(pools: &[Pool], colours: &[[u8; 3]]) -> Vec<Pool> {
+    pools
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let c = colours[i % colours.len()].map(|v| f64::from(v) * TINTED);
+            Pool {
+                cool: c,
+                warm: c,
+                ..*p
+            }
+        })
+        .collect()
+}
+
+/// gliding: `k` (0 to 1, eased: smoothstep) of the way from the colours of `before` to those
+/// of `after` (the same pools: where they drift as `after` has it).
+pub fn gliding(before: &[Pool], after: &[Pool], k: f64) -> Vec<Pool> {
+    let t = k.clamp(0.0, 1.0);
+    let e = t * t * (3.0 - 2.0 * t);
+    if e >= 1.0 {
+        return after.to_vec();
+    }
+    before
+        .iter()
+        .zip(after)
+        .map(|(a, b)| Pool {
+            cool: std::array::from_fn(|c| a.cool[c] + (b.cool[c] - a.cool[c]) * e),
+            warm: std::array::from_fn(|c| a.warm[c] + (b.warm[c] - a.warm[c]) * e),
+            ..*b
+        })
+        .collect()
 }
 
 /// stepped: the moment of the field shown at `t` (wall clock, seconds): the last of its steps.
@@ -204,6 +255,329 @@ pub fn drawn_up(levels: &[u8], fw: usize, fh: usize, size: (usize, usize)) -> Ve
         }
     }
     out
+}
+
+// -- the light as a frame's ground ------------------------------------------------------------
+
+/// The readings whose load the light follows (the higher of them), and over how many of them.
+pub const LOAD_SENSORS: [&str; 2] = ["cpu.load", "gpu.load"];
+pub const LOAD_SAMPLES: usize = 10;
+
+/// load_of: the load the light follows (0 to 1): the higher of [`LOAD_SENSORS`]' means over
+/// their last [`LOAD_SAMPLES`] numbers in `history`, `eased` (0 to 1) of the way from the mean
+/// before the newest number to it (smoothstep); 0 where none of them has a number.
+pub fn load_of(history: &indexmap::IndexMap<String, Vec<f64>>, eased: f64) -> f64 {
+    let t = eased.clamp(0.0, 1.0);
+    let k = t * t * (3.0 - 2.0 * t);
+    let mut load: f64 = 0.0;
+    for key in LOAD_SENSORS {
+        let Some(values) = history.get(key).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        let n = values.len();
+        let now = &values[n.saturating_sub(LOAD_SAMPLES)..];
+        let before = &values[n.saturating_sub(LOAD_SAMPLES + 1)..n - 1];
+        let before = if before.is_empty() { now } else { before };
+        // (Python's sum, left to right, then divided)
+        let mean = |v: &[f64]| v.iter().fold(0.0, |a, b| a + b) / v.len() as f64;
+        let (a, b) = (mean(before), mean(now));
+        load = load.max(a + (b - a) * k);
+    }
+    (load / 100.0).clamp(0.0, 1.0)
+}
+
+/// What a light was made of: the frame's size, where the panel stands and the canvas, the
+/// field's moment and load, its pools (its look's, or in a picture's colours) and the colour
+/// under it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LightKey {
+    pub size: (usize, usize),
+    pub own: Rect,
+    pub whole: Rect,
+    pub t: f64,
+    pub load: f64,
+    pub pools: Vec<Pool>,
+    pub base: [u8; 3],
+}
+
+/// Light: a light field as a frame's ground (render/field.py's Light): its points (`fw` x `fh`,
+/// RGB) and drawn up to the frame (made the first time it is asked for, where the frame is
+/// composed here: the engine draws it up itself).
+pub struct Light {
+    pub small: Vec<u8>,
+    pub fw: usize,
+    pub fh: usize,
+    pub size: (usize, usize),
+    pub key: LightKey,
+    picture: std::cell::OnceCell<Image>,
+}
+
+impl Light {
+    /// light: the light of [`field`] as a frame's ground.
+    pub fn new(key: LightKey) -> Light {
+        let (fw, fh, small) = small(
+            key.size, key.own, key.whole, key.t, key.load, &key.pools, key.base,
+        );
+        Light {
+            small,
+            fw,
+            fh,
+            size: key.size,
+            key,
+            picture: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The light drawn up to the frame (RGB).
+    pub fn picture(&self) -> &Image {
+        self.picture.get_or_init(|| {
+            let drawn = drawn_up(&self.small, self.fw, self.fh, self.size);
+            Image::from_bytes(Mode::RGB, self.size.0, self.size.1, drawn).expect("its size")
+        })
+    }
+
+    /// same: whether two lights are the same light (the same points for a frame of one size).
+    pub fn same(&self, other: &Light) -> bool {
+        self.size == other.size && self.fw == other.fw && self.small == other.small
+    }
+}
+
+/// alone: where a panel showing a theme of `size` on the model `model` stands by itself
+/// (millimetres, at 0, 0): the size of its model's picture, else as dense as the 9.2" bar.
+pub fn alone(model: &str, size: (usize, usize)) -> Rect {
+    const GUESS_MM_PER_PX: f64 = 0.118;
+    let mm = lp_devices::models::find_model(model).and_then(|m| {
+        let inch = m.size_inch.get();
+        (inch != 0.0).then(|| {
+            let per = inch * 25.4 / (m.native_width as f64).hypot(m.native_height as f64);
+            (size.0 as f64 * per, size.1 as f64 * per)
+        })
+    });
+    let (w, h) = mm.unwrap_or((
+        size.0 as f64 * GUESS_MM_PER_PX,
+        size.1 as f64 * GUESS_MM_PER_PX,
+    ));
+    (0.0, 0.0, w, h)
+}
+
+// -- what lies in front of the light -------------------------------------------------------------
+
+/// `v` / 255 rounded, as Pillow divides (exact for 0 to 65,025).
+fn div255(v: u32) -> u32 {
+    let t = v + 128;
+    (t + (t >> 8)) >> 8
+}
+
+/// Foreground: what lies in front of the light over a box (render/field.py's Foreground):
+/// every piece laid on it in turn as on a clear picture, its colours premultiplied by their
+/// cover, eight bits each (RGBA, row by row).
+pub struct Foreground {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+impl Foreground {
+    pub fn new(width: usize, height: usize) -> Foreground {
+        Foreground {
+            width,
+            height,
+            rgba: vec![0; width * height * 4],
+        }
+    }
+
+    /// The part of a picture `w` x `h` at (x, y) on the box: its corners on the box.
+    fn on_box(&self, x: i64, y: i64, w: usize, h: usize) -> Option<(usize, usize, usize, usize)> {
+        let (x0, y0) = (x.max(0), y.max(0));
+        let x1 = x.saturating_add(w as i64).min(self.width as i64);
+        let y1 = y.saturating_add(h as i64).min(self.height as i64);
+        (x1 > x0 && y1 > y0).then_some((x0 as usize, y0 as usize, x1 as usize, y1 as usize))
+    }
+
+    /// Each pixel of a picture `w` x `h` at (x, y) that lies on the box, with the pixel it
+    /// lies on: `lay(foreground pixel, index of the picture's pixel)`.
+    fn each(&mut self, x: i64, y: i64, w: usize, h: usize, mut lay: impl FnMut(&mut [u8], usize)) {
+        let Some((x0, y0, x1, y1)) = self.on_box(x, y, w, h) else {
+            return;
+        };
+        for fy in y0..y1 {
+            let sy = (fy as i64 - y) as usize;
+            for fx in x0..x1 {
+                let sx = (fx as i64 - x) as usize;
+                let at = (fy * self.width + fx) * 4;
+                lay(&mut self.rgba[at..at + 4], sy * w + sx);
+            }
+        }
+    }
+
+    /// A picture through an alpha (`colour` RGB, `alpha` one byte each, `w` x `h`) at (x, y):
+    /// `F = div255(s a + F (255 - a))`, `A = a + div255(A (255 - a))`.
+    pub fn over(&mut self, colour: &[u8], alpha: &[u8], w: usize, h: usize, x: i64, y: i64) {
+        self.each(x, y, w, h, |d, i| {
+            let a = u32::from(alpha[i]);
+            let rest = 255 - a;
+            for c in 0..3 {
+                d[c] = div255(u32::from(colour[i * 3 + c]) * a + u32::from(d[c]) * rest) as u8;
+            }
+            d[3] = (a + div255(u32::from(d[3]) * rest)) as u8;
+        });
+    }
+
+    /// An RGBA picture through its alpha.
+    pub fn over_rgba(&mut self, rgba: &[u8], w: usize, h: usize, x: i64, y: i64) {
+        self.each(x, y, w, h, |d, i| {
+            let s = &rgba[i * 4..i * 4 + 4];
+            let a = u32::from(s[3]);
+            let rest = 255 - a;
+            for c in 0..3 {
+                d[c] = div255(u32::from(s[c]) * a + u32::from(d[c]) * rest) as u8;
+            }
+            d[3] = (a + div255(u32::from(d[3]) * rest)) as u8;
+        });
+    }
+
+    /// An RGB picture as it is, opaque.
+    pub fn solid(&mut self, rgb: &[u8], w: usize, h: usize, x: i64, y: i64) {
+        self.each(x, y, w, h, |d, i| {
+            d[..3].copy_from_slice(&rgb[i * 3..i * 3 + 3]);
+            d[3] = 255;
+        });
+    }
+
+    /// Light (RGB) added, as light adds up.
+    pub fn add(&mut self, rgb: &[u8], w: usize, h: usize, x: i64, y: i64) {
+        self.each(x, y, w, h, |d, i| {
+            for c in 0..3 {
+                d[c] = d[c].saturating_add(rgb[i * 3 + c]);
+            }
+        });
+    }
+
+    /// The foreground of `(x0, y0, x1, y1)` within the box over `light` (RGB, that box's
+    /// size): `min(255, F + div255(g (255 - A)))`.
+    pub fn on(&self, light: &[u8], (x0, y0, x1, y1): (usize, usize, usize, usize)) -> Vec<u8> {
+        let mut out = Vec::with_capacity((x1 - x0) * (y1 - y0) * 3);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let f = &self.rgba[(y * self.width + x) * 4..][..4];
+                let g = &light[((y - y0) * (x1 - x0) + (x - x0)) * 3..][..3];
+                let rest = 255 - u32::from(f[3]);
+                for c in 0..3 {
+                    out.push((u32::from(f[c]) + div255(u32::from(g[c]) * rest)).min(255) as u8);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// lay: `piece` laid on `fore`, whose top left corner is `origin` on the panel, as
+/// render/field.py's lay: a frosted backdrop first (what shows beneath it at this moment, the
+/// light of the box `light` included, blurred, laid through its mask), then the piece (added
+/// light, an opaque picture as it is, an L through itself, else through its alpha), then the
+/// light it gives.
+pub fn lay(
+    fore: &mut Foreground,
+    piece: &crate::piece::Piece,
+    origin: (i64, i64),
+    light: &[u8],
+) -> lp_pixels::Result<()> {
+    let (ox, oy) = origin;
+    if let (Some(mask), Some([bx, by, bw, bh])) = (&piece.backdrop, piece.hit) {
+        let (bx, by) = (bx - ox, by - oy);
+        let region = (
+            bx.max(0),
+            by.max(0),
+            bx.saturating_add(bw).min(fore.width as i64),
+            by.saturating_add(bh).min(fore.height as i64),
+        );
+        if region.2 > region.0 && region.3 > region.1 {
+            let (rx0, ry0, rx1, ry1) = (
+                region.0 as usize,
+                region.1 as usize,
+                region.2 as usize,
+                region.3 as usize,
+            );
+            let mut under = Vec::with_capacity((rx1 - rx0) * (ry1 - ry0) * 3);
+            for y in ry0..ry1 {
+                let at = (y * fore.width + rx0) * 3;
+                under.extend_from_slice(&light[at..at + (rx1 - rx0) * 3]);
+            }
+            let beneath = fore.on(&under, (rx0, ry0, rx1, ry1));
+            let r = piece.backdrop_radius;
+            let blurred =
+                Image::from_bytes(Mode::RGB, rx1 - rx0, ry1 - ry0, beneath)?.gaussian_blur(r, r)?;
+            let cut = mask.crop(region.0 - bx, region.1 - by, region.2 - bx, region.3 - by);
+            let cut = if cut.mode() == Mode::L {
+                cut
+            } else {
+                cut.convert(Mode::L)?
+            };
+            fore.over(
+                blurred.as_bytes(),
+                cut.as_bytes(),
+                rx1 - rx0,
+                ry1 - ry0,
+                region.0,
+                region.1,
+            );
+        }
+    }
+    let layer = piece.whole();
+    let (x, y) = (piece.x - ox, piece.y - oy);
+    let (w, h) = (layer.width(), layer.height());
+    if piece.add {
+        let rgb = if layer.mode() == Mode::RGB {
+            std::borrow::Cow::Borrowed(&*layer)
+        } else {
+            std::borrow::Cow::Owned(layer.convert(Mode::RGB)?)
+        };
+        fore.add(rgb.as_bytes(), w, h, x, y);
+        return Ok(());
+    }
+    match layer.mode() {
+        Mode::RGB => fore.solid(layer.as_bytes(), w, h, x, y),
+        Mode::L => {
+            let grey: Vec<u8> = layer.as_bytes().iter().flat_map(|&v| [v, v, v]).collect();
+            fore.over(&grey, layer.as_bytes(), w, h, x, y);
+        }
+        Mode::RGBA => fore.over_rgba(layer.as_bytes(), w, h, x, y),
+        _ => {
+            let rgba = layer.convert(Mode::RGBA)?;
+            fore.over_rgba(rgba.as_bytes(), w, h, x, y);
+        }
+    }
+    if let Some(glow) = &piece.light {
+        let glow_layer = glow.whole();
+        let rgb = glow_layer.convert(Mode::RGB)?;
+        fore.add(
+            rgb.as_bytes(),
+            rgb.width(),
+            rgb.height(),
+            glow.x - ox,
+            glow.y - oy,
+        );
+    }
+    Ok(())
+}
+
+/// compose: the frame of `pieces` over `light` (RGB) in the box (x0, y0, x1, y1) on the panel,
+/// as render/field.py composes it; a piece that fails is left out, its error kept in `failed`.
+pub fn compose<'a>(
+    light: &Light,
+    pieces: impl IntoIterator<Item = &'a (String, std::rc::Rc<crate::piece::Piece>)>,
+    (x0, y0, x1, y1): (i64, i64, i64, i64),
+    failed: &mut Vec<(String, String)>,
+) -> lp_pixels::Result<Image> {
+    let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    let ground = light.picture().crop(x0, y0, x1, y1);
+    let mut fore = Foreground::new(w, h);
+    for (id, piece) in pieces {
+        if let Err(e) = lay(&mut fore, piece, (x0, y0), ground.as_bytes()) {
+            failed.push((id.clone(), e.0));
+        }
+    }
+    Image::from_bytes(Mode::RGB, w, h, fore.on(ground.as_bytes(), (0, 0, w, h)))
 }
 
 #[cfg(test)]

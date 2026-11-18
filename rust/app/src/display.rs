@@ -524,6 +524,12 @@ impl Display {
         matches!(&self.panel, Panel::Turzx(panel) if panel.makes_fans())
     }
 
+    /// Whether frames go as their layers to an engine that draws a light field up and lays
+    /// their layers in front of it (renderer.native_lights).
+    pub fn draws_lights(&self) -> bool {
+        matches!(&self.panel, Panel::Turzx(panel) if panel.draws_lights())
+    }
+
     pub fn streams(&self) -> bool {
         match &self.panel {
             Panel::Turzx(panel) => panel.streams(),
@@ -709,6 +715,12 @@ impl Display {
         let ground = match &scene.ground {
             lp_render::scene::Ground::Colour(rgb) => Ground::Colour(*rgb),
             lp_render::scene::Ground::Picture(picture) => Ground::Picture(picture),
+            lp_render::scene::Ground::Light(light) => Ground::Light {
+                fw: light.fw as u32,
+                fh: light.fh as u32,
+                levels: &light.small,
+                keep: Rc::clone(light) as Rc<dyn std::any::Any>,
+            },
         };
         let entries: Vec<Entry<'_>> = scene
             .pieces

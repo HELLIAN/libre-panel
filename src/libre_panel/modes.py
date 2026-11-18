@@ -34,8 +34,8 @@ OWNER = "pages"  # who sets the mode of a page, for the host (a service goes by 
 DEFAULT_THEMES = {MEDIA: "encore", IDLE: "almanac"}
 # The screens made for a page, offered first where its theme is chosen
 SUGGESTED = {
-    GAME: ("arena",),
-    MEDIA: ("encore",),
+    GAME: ("arena", "arena-v2"),
+    MEDIA: ("encore", "encore-v2"),
     IDLE: ("almanac", "almanac-analog"),
     REPORT: ("round-report",),
 }

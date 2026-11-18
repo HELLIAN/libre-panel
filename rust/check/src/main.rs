@@ -2703,6 +2703,15 @@ fn run(case: &Value) -> Result<Value, String> {
                     renderer.native_rings = c["native_rings"].as_bool().unwrap_or(false);
                     renderer.native_bars = c["native_bars"].as_bool().unwrap_or(false);
                     renderer.native_fans = c["native_fans"].as_bool().unwrap_or(false);
+                    // (where this panel stands among the panels standing together, its own box
+                    // and the canvas of all of them in millimetres, as the loop sets it for a
+                    // light across them; and an engine that draws the light up)
+                    let rect = |v: &Value| {
+                        let at = |k: usize| v[k].as_f64();
+                        Some((at(0)?, at(1)?, at(2)?, at(3)?))
+                    };
+                    renderer.canvas = rect(&c["light_canvas"][0]).zip(rect(&c["light_canvas"][1]));
+                    renderer.native_lights = c["native_lights"].as_bool().unwrap_or(false);
                     // (video mode: every frame reaches the panel, the graphs scroll on in each,
                     // as the loop sets it for a panel that streams)
                     renderer.continuous = c["continuous"].as_bool().unwrap_or(false);
@@ -2749,6 +2758,7 @@ fn run(case: &Value) -> Result<Value, String> {
                     renderer.video_fps = c["video_fps"].as_u64().map(|f| f as u32);
                     renderer.video_keys = c["video_keys"].as_bool().unwrap_or(false);
                     let bytes = c["bytes"].as_bool() == Some(true);
+                    let scene = c["scene"].as_bool() == Some(true);
                     // (the moving lights of the step before, kept alive so that one of this
                     // step is told the same piece by itself, not by an address used again)
                     let mut lit_before: std::collections::HashMap<
@@ -2763,7 +2773,31 @@ fn run(case: &Value) -> Result<Value, String> {
                                 renderer.new_sample(at, every);
                             }
                         }
-                        let mut out = match renderer.render(snapshot_of(snapshot), now) {
+                        // (where asked, the frame as its layers where the engine can compose
+                        // them, as the loop asks a panel's engine for it: composed here then as
+                        // the engine's frame is, and said so)
+                        let mut layered = None;
+                        let drawn = if scene {
+                            renderer.render_scene(snapshot_of(snapshot), now).and_then(
+                                |(drawing, boxes)| {
+                                    use lp_render::renderer::Drawing;
+                                    let frame = match drawing {
+                                        Drawing::Scene(scene) => {
+                                            layered = Some(true);
+                                            scene.compose().map_err(lp_render::Unported::from)?
+                                        }
+                                        Drawing::Frame(frame) => {
+                                            layered = Some(false);
+                                            (*frame).clone()
+                                        }
+                                    };
+                                    Ok((frame, boxes))
+                                },
+                            )
+                        } else {
+                            renderer.render(snapshot_of(snapshot), now)
+                        };
+                        let mut out = match drawn {
                             Ok((frame, boxes)) => {
                                 let sum = Sha256::digest(frame.as_bytes());
                                 let hex: String = sum.iter().map(|b| format!("{b:02x}")).collect();
@@ -2778,6 +2812,9 @@ fn run(case: &Value) -> Result<Value, String> {
                                     "moving": renderer.moving, "due": renderer.due});
                                 if bytes {
                                     out["frame"] = value_of(&frame);
+                                }
+                                if let Some(layered) = layered {
+                                    out["layered"] = json!(layered);
                                 }
                                 // (where asked: each piece of the frame in its order, where it
                                 // lies and whether it is light added; a moving light's own

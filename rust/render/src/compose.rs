@@ -41,7 +41,7 @@ fn clip(a: Area, (w, h): (usize, usize)) -> Option<Area> {
     (a.2 > a.0 && a.3 > a.1).then_some(a)
 }
 
-fn meet(a: Area, b: Area) -> bool {
+pub(crate) fn meet(a: Area, b: Area) -> bool {
     a.0 < b.2 && b.0 < a.2 && a.1 < b.3 && b.1 < a.3
 }
 

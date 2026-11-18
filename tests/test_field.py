@@ -84,11 +84,17 @@ def _field_theme(name="lumen-1920x720", **spec):
 def test_the_theme_says_its_field_and_keeps_it():
     theme = _field_theme(moves="switch.light_flows", load="!switch.light_load")
     assert theme.background_field == {"look": "lumen", "moves": "switch.light_flows",
-                                      "load": "!switch.light_load"}  # fmt: skip
+                                      "load": "!switch.light_load", "colours": ""}  # fmt: skip
+    assert "colours" not in theme.to_dict()["background"]["field"]  # (none: not written)
     again = parse_theme(theme.to_dict(), theme.root)
     assert again.background_field == theme.background_field
     assert FIELD_LOOKS == tuple(field.LOOKS)
-    for bad in ("lumen", {"look": "nova"}, {"look": "lumen", "moves": 5}):
+    # in the colours of a picture (Encore v2's: its cover's), of another look
+    tinted = _field_theme(look="arena", colours="@media.cover")
+    assert tinted.background_field["colours"] == "@media.cover"
+    assert parse_theme(tinted.to_dict(), tinted.root).background_field == tinted.background_field
+    for bad in ("lumen", {"look": "nova"}, {"look": "lumen", "moves": 5},
+                {"colours": "media.cover"}, {"colours": "@"}, {"colours": 5}):  # fmt: skip
         data = theme.to_dict()
         data["background"]["field"] = bad
         with pytest.raises(ThemeError, match="background.field"):
@@ -139,6 +145,7 @@ def test_the_renderer_lays_the_frame_in_front_of_the_light_and_moves_it_in_steps
 def test_the_switches_hold_the_light_still_and_at_rest():
     theme = _field_theme(moves="switch.light_flows", load="switch.light_load")
     renderer = Renderer(theme)
+    renderer.continuous = True  # (a panel the frames stream to)
     renderer.switches = {"light_flows": False, "light_load": False}
     busy = demo_snapshot(fixed_time=T0)
     busy.history["cpu.load"] = [100.0] * 20
@@ -151,6 +158,68 @@ def test_the_switches_hold_the_light_still_and_at_rest():
     renderer.render(busy, T0 + 7.3)
     assert renderer._light.key[4] == 1.0 and renderer._light.key[3] == field.stepped(T0 + 7.3)
     renderer.close()
+
+
+def test_on_a_panel_sent_whole_pictures_the_light_stands_and_takes_each_reading():
+    """Where the frames do not stream (a panel sent a picture of all of it at each change),
+    the light neither drifts nor eases: it stands at 0, takes the load of a reading at once,
+    and asks for no frame of its own."""
+    renderer = Renderer(_field_theme())
+    renderer.continuous = False
+    snap = demo_snapshot(fixed_time=T0)
+    snap.history["cpu.load"] = [10.0] * 10 + [90.0]
+    snap.history["gpu.load"] = [0.0] * 11
+    renderer.new_sample(T0, 1.0)  # (a reading this moment: on a stream it would ease to it)
+    renderer.render(snap, T0)
+    first = renderer._light
+    assert first.key[3] == 0.0 and renderer.due is None
+    assert first.key[4] == pytest.approx(field.load_of(snap.history, 1.0))
+    renderer.render(snap, T0 + 3.7)
+    assert renderer._light is first and renderer.due is None
+    renderer.close()
+
+
+def test_a_light_in_the_colours_of_the_cover_glides_to_each_new_one():
+    """Encore v2's light: while a cover is there, each pool in one of its colours (the cover's
+    most carrying, as bright as they can be), stronger; from one cover to the next, and to no
+    cover, it glides over TINT_S from the reading that brought it, on a stream; on a panel sent
+    whole pictures it takes them at once."""
+    from libre_panel.render import cover
+
+    warm = Image.new("RGB", (48, 48), (200, 40, 30))
+    cold = Image.new("RGB", (48, 48), (20, 40, 120))
+    grey = Image.new("RGB", (48, 48), (120, 120, 120))
+    [lit] = cover.colours(warm)
+    assert max(lit) == 255 and lit[1] < 60 and cover.colours(grey) == []
+    assert cover.dominant(warm) == (200, 40, 30)  # (the winner as a frame takes it, as it was)
+    lumen = field.LOOKS["lumen"]
+    assert [p.cool for p in field.tinted(lumen, [(10, 20, 30)])] == [(18.0, 36.0, 54.0)] * 3
+    assert field.gliding(lumen, field.tinted(lumen, [(10, 20, 30)]), 0.0) == lumen
+    theme = _field_theme("encore-1920x720", colours="@media.cover")
+    for streams in (True, False):
+        renderer = Renderer(theme)
+        renderer.continuous = streams
+        snap = demo_snapshot(fixed_time=T0)
+        snap.images["media.cover"] = warm
+        renderer.new_sample(T0, 1.0)
+        renderer.render(snap, T0)
+        assert renderer._light.key[5] == field.tinted(lumen, cover.colours(warm))
+        snap.images["media.cover"] = cold
+        renderer.new_sample(T0 + 1.0, 1.0)
+        renderer.render(snap, T0 + 1.0)
+        target = field.tinted(lumen, cover.colours(cold))
+        if streams:  # (on its way, and a frame due for the next step)
+            assert renderer._light.key[5] != target and renderer.due is not None
+            renderer.render(snap, T0 + 1.0 + field.TINT_S / 2)
+            between = renderer._light.key[5]
+            assert between != target
+            renderer.render(snap, T0 + 1.0 + field.TINT_S + 0.2)
+        assert renderer._light.key[5] == target
+        del snap.images["media.cover"]  # (the track ended: the look's own colours again)
+        renderer.new_sample(T0 + 9.0, 1.0)
+        renderer.render(snap, T0 + 9.0 + field.TINT_S + 0.2)
+        assert renderer._light.key[5] == lumen
+        renderer.close()
 
 
 def test_two_panels_side_by_side_meet_in_one_light():

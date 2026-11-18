@@ -2168,6 +2168,8 @@
     "This theme's switches": "Opções deste tema",
     "They hold for every screen that has them.": "Valem para cada tela que os tenha.",
     "Frames around every part": "Moldura em volta de cada parte",
+    "The light flows": "A luz flui",
+    "The light follows the load": "A luz acompanha a carga",
     "Dark when Libre Panel quits": "Escuro ao fechar o Libre Panel",
     "When Libre Panel quits, Windows shutting down too, the panel shows black and its light goes off; it lights up again when Libre Panel starts. Off: it keeps the last picture.": "Quando o Libre Panel fecha, inclusive ao desligar o Windows, o painel mostra preto e sua luz se apaga; ele acende de novo quando o Libre Panel inicia. Desligado: mantém a última imagem.",
     "the panel's light off when it quits": "luz do painel apagada ao fechar",

@@ -2168,6 +2168,8 @@
     "This theme's switches": "此主题的开关",
     "They hold for every screen that has them.": "它们适用于所有带有这些开关的屏幕。",
     "Frames around every part": "每个控件周围的边框",
+    "The light flows": "光线流动",
+    "The light follows the load": "光线随负载变化",
     "Dark when Libre Panel quits": "Libre Panel 退出时变暗",
     "When Libre Panel quits, Windows shutting down too, the panel shows black and its light goes off; it lights up again when Libre Panel starts. Off: it keeps the last picture.": "当 Libre Panel 退出（包括 Windows 关机）时，面板显示黑色并关闭背光；Libre Panel 启动时会重新亮起。关闭：保留最后一幅画面。",
     "the panel's light off when it quits": "退出时关闭面板背光",

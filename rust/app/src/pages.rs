@@ -55,8 +55,8 @@ fn or_none(value: Option<String>) -> Value {
 /// The screens made for a page, offered first where its theme is chosen.
 fn suggested(page: &str) -> &'static [&'static str] {
     match page {
-        GAME => &["arena"],
-        modes::MEDIA => &["encore"],
+        GAME => &["arena", "arena-v2"],
+        modes::MEDIA => &["encore", "encore-v2"],
         modes::IDLE => &["almanac", "almanac-analog"],
         REPORT => &["round-report"],
         _ => &[],

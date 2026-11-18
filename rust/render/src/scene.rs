@@ -17,6 +17,8 @@ use crate::piece::{Failed, Result};
 pub enum Ground {
     Colour([u8; 3]),
     Picture(Rc<Image>),
+    /// a light field (render/field.py): the engine draws it up from its points
+    Light(Rc<crate::field::Light>),
 }
 
 /// A frame of `size`: `ground` with `pieces` (widget id, piece) laid on it in turn. Its pieces
@@ -44,10 +46,20 @@ pub fn layerable(piece: &Piece) -> bool {
 
 impl SceneFrame {
     /// The frame (RGB) as the renderer composes it: its ground with each piece laid on it in
-    /// turn (onto the opaque frame).
+    /// turn (onto the opaque frame); over a light field, what lies in front of it laid over it
+    /// once (render/field.py).
     pub fn compose(&self) -> Result<Image> {
         let (w, h) = (self.size.0.max(0) as usize, self.size.1.max(0) as usize);
         let mut canvas = match &self.ground {
+            Ground::Light(light) => {
+                let mut failed = Vec::new();
+                let whole = (0, 0, w as i64, h as i64);
+                let frame = crate::field::compose(light, &self.pieces, whole, &mut failed)?;
+                return match failed.into_iter().next() {
+                    Some((_, e)) => Err(Failed(e)),
+                    None => Ok(frame),
+                };
+            }
             Ground::Colour(rgb) => Image::new(Mode::RGB, w, h, rgb),
             Ground::Picture(picture) => {
                 if picture.mode() != Mode::RGB {

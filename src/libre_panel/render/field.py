@@ -40,8 +40,8 @@ class Pool:
     of the canvas across and down, in how many seconds it goes there and back each way, where
     in its round it starts (radians), and how wide it is (its Gaussian's sigma, millimetres)."""
 
-    cool: tuple[int, int, int]
-    warm: tuple[int, int, int]
+    cool: tuple[float, float, float]
+    warm: tuple[float, float, float]
     ax: float
     ay: float
     px: float
@@ -57,7 +57,20 @@ LOOKS: dict[str, tuple[Pool, ...]] = {
         Pool((127, 156, 255), (248, 113, 113), 0.44, 0.40, 390.0, 281.0, 2.5, 72.0),
         Pool((199, 146, 255), (255, 150, 120), 0.42, 0.38, 450.0, 223.0, 4.4, 58.0),
     ),
+    # Arena's: its CPU, GPU and memory colours (the Arctic look's) at rest, warm as Lumen's
+    "arena": (
+        Pool((19, 229, 215), (245, 168, 84), 0.46, 0.36, 330.0, 247.0, 0.4, 64.0),
+        Pool((163, 174, 255), (248, 113, 113), 0.44, 0.40, 390.0, 281.0, 2.5, 72.0),
+        Pool((224, 168, 255), (255, 150, 120), 0.42, 0.38, 450.0, 223.0, 4.4, 58.0),
+    ),
 }
+# A light in a picture's colours (background.field.colours: a cover's, render/cover.py's
+# colours): each pool in one of them, at rest and under load alike (the load makes it brighter,
+# not warmer), this much stronger, as it stands for the picture behind the whole screen ...
+TINTED = 1.8
+# ... and from one picture's colours to the next it glides this long (smoothstep), where the
+# frames stream; elsewhere it takes them at once
+TINT_S = 2.0
 STRENGTH = (0.19, 0.15)  # the light's strength at rest, and what full load adds
 BREATH_S = 9.0  # the light swells and ebbs once in this long
 BREATH = (0.04, 0.10)  # by this share at rest, and what full load adds
@@ -69,19 +82,44 @@ def stepped(t: float) -> float:
     return math.floor(t * RATE) / RATE
 
 
+def tinted(pools: Sequence[Pool], colours: Sequence[tuple[int, int, int]]) -> tuple[Pool, ...]:
+    """``pools`` in ``colours`` (one each, in turn): each in its colour at rest and under load,
+    :data:`TINTED` stronger; where they drift as they do."""
+    out = []
+    for i, pool in enumerate(pools):
+        c = tuple(v * TINTED for v in colours[i % len(colours)])
+        out.append(Pool(c, c, pool.ax, pool.ay, pool.px, pool.py, pool.phase, pool.radius))
+    return tuple(out)
+
+
+def gliding(before: Sequence[Pool], after: Sequence[Pool], k: float) -> tuple[Pool, ...]:
+    """``k`` (0 to 1, eased: smoothstep) of the way from the colours of ``before`` to those of
+    ``after`` (the same pools: where they drift as ``after`` has it)."""
+    t = min(1.0, max(0.0, k))
+    e = t * t * (3.0 - 2.0 * t)
+    if e >= 1.0:
+        return tuple(after)
+    out = []
+    for a, b in zip(before, after, strict=True):
+        cool = tuple(x + (y - x) * e for x, y in zip(a.cool, b.cool, strict=True))
+        warm = tuple(x + (y - x) * e for x, y in zip(a.warm, b.warm, strict=True))
+        out.append(Pool(cool, warm, b.ax, b.ay, b.px, b.py, b.phase, b.radius))
+    return tuple(out)
+
+
 def small(
     size: tuple[int, int],
     own: Rect,
     whole: Rect,
     t: float,
     load: float,
-    look: str = "lumen",
+    look: str | Sequence[Pool] = "lumen",
     base: tuple[int, int, int] = (0, 0, 0),
 ) -> np.ndarray:
     """The field at an eighth of the panel (``size`` its pixels) as levels (uint8, rows by
     columns by RGB): ``own`` where the panel stands and ``whole`` the canvas of all the panels
     standing together (millimetres), at ``t`` (seconds) under ``load`` (0 to 1), its light on
-    ``base`` (the theme's background colour)."""
+    ``base`` (the theme's background colour); ``look``: one of :data:`LOOKS`, or its pools."""
     load = min(1.0, max(0.0, load))
     fw, fh = -(-size[0] // STEP), -(-size[1] // STEP)
     # (each in the middle of its block of the panel's pixels, the last one's too where the
@@ -93,7 +131,7 @@ def small(
     mix = min(1.0, load * WARMTH)
     acc = np.zeros((fh, fw, 3), np.float64)
     acc[:, :] = base
-    for pool in LOOKS[look]:
+    for pool in LOOKS[look] if isinstance(look, str) else look:
         cx = whole[0] + whole[2] * (
             0.5 + pool.ax * math.sin(2.0 * math.pi * t / pool.px + pool.phase)
         )
@@ -121,7 +159,7 @@ def field(
     whole: Rect,
     t: float,
     load: float,
-    look: str = "lumen",
+    look: str | Sequence[Pool] = "lumen",
     base: tuple[int, int, int] = (0, 0, 0),
 ) -> Image.Image:
     """The panel's part of the field (RGB, ``size``): :func:`small` drawn up."""
@@ -220,10 +258,12 @@ def same(a: Light, b: Light) -> bool:
 
 
 def light(size: tuple[int, int], own: Rect, whole: Rect, t: float, load: float,
-          look: str = "lumen", base: tuple[int, int, int] = (0, 0, 0)) -> Light:  # fmt: skip
+          look: str | Sequence[Pool] = "lumen",
+          base: tuple[int, int, int] = (0, 0, 0)) -> Light:  # fmt: skip
     """The light of :func:`field` as a frame's ground (``t`` as it is: :func:`stepped` first)."""
-    levels = small(size, own, whole, t, load, look, base)
-    return Light(levels, size, (size, own, whole, t, load, look, base))
+    pools = LOOKS[look] if isinstance(look, str) else tuple(look)
+    levels = small(size, own, whole, t, load, pools, base)
+    return Light(levels, size, (size, own, whole, t, load, pools, base))
 
 
 # -- what lies in front of the light ------------------------------------------------------------

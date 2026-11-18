@@ -180,9 +180,13 @@ _STUDIO = {"line": "#32475E", "disk": "#7EE8A6"}  # Studio's frames and its gree
 # "lumen-1920x720" to "lumen", "almanac-analog" to "almanac".
 FAMILIES: dict[str, Family] = {
     "lumen": Family("libre", cards={"card_opacity": 0.7}),
+    # the v2 screens over a light field (render/field.py): the cards a little more see-through,
+    # so it shows through them (tools/themes_v2.py)
+    "lumen-v2": Family("libre", cards={"card_opacity": 0.58}),
     "almanac": Family("libre", cards={"card_opacity": 0.7}),
     "nimbus": Family("libre", cards={"card_opacity": 0.7}),
     "encore": Family("libre", cards={"card_opacity": 0.9}),
+    "encore-v2": Family("libre", cards={"card_opacity": 0.78}),
     "terra": Family("libre", colours={"accent": "#5FC8FF"}, cards={"card_opacity": 0.6}),
     "libre-default": Family("libre", cards={"card": "flat", "radius": 12, "glow": 0.5}),
     "column": Family("libre"),
@@ -190,6 +194,8 @@ FAMILIES: dict[str, Family] = {
     "slate": Family("libre"),
     "pico": Family("libre"),
     "arena": Family("arctic", cards={"card_opacity": 0.8}),
+    # over its light field: the light is the ground (no gradient behind the cards)
+    "arena-v2": Family("arctic", cards={"backdrop": "flat", "card_opacity": 0.68}),
     "round-report": Family(
         "arctic", cards={"card_opacity": 0.8}, why="it follows a game on Arena: in its design"
     ),

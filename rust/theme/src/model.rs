@@ -240,6 +240,10 @@ impl Theme {
             f.insert("look".into(), field.look.clone().into());
             f.insert("moves".into(), field.moves.clone().into());
             f.insert("load".into(), field.load.clone().into());
+            // (its colours only where it has them: a field without stays as it was written)
+            if !field.colours.is_empty() {
+                f.insert("colours".into(), field.colours.clone().into());
+            }
             b.insert("field".into(), Value::Dict(f));
         }
         Value::Dict(b)
@@ -1141,15 +1145,17 @@ fn finish_warnings(widgets: &[Dict], warnings: &mut Vec<String>) -> Result<()> {
 }
 
 /// The looks of a light field under a theme (render/field.rs's look; model.py's FIELD_LOOKS).
-pub const FIELD_LOOKS: [&str; 1] = ["lumen"];
+pub const FIELD_LOOKS: [&str; 2] = ["lumen", "arena"];
 
 /// A light field under a theme (background.field): its look, and the conditions (as a widget's
-/// needs) under which its light drifts and follows the load; "" always.
+/// needs) under which its light drifts and follows the load; "" always. `colours`: the picture
+/// ("@media.cover") in whose colours the light is while it is there; "" none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LightField {
     pub look: String,
     pub moves: String,
     pub load: String,
+    pub colours: String,
 }
 
 /// _parse_field: ``background.field``, ``{"look": "lumen", "moves": "switch.light_flows",
@@ -1171,10 +1177,15 @@ fn parse_field(value: Option<&Value>) -> Result<Option<LightField>> {
         let place = format!("background.field.{key}");
         Ok(coerce("string", get(field, key, "".into()), &place, None)?.str())
     };
+    let (moves, load, colours) = (need("moves")?, need("load")?, need("colours")?);
+    if !colours.is_empty() && !(colours.starts_with('@') && colours.chars().count() > 1) {
+        return refuse("background.field.colours: a picture's name, e.g. \"@media.cover\"");
+    }
     Ok(Some(LightField {
         look: look.str(),
-        moves: need("moves")?,
-        load: need("load")?,
+        moves,
+        load,
+        colours,
     }))
 }
 

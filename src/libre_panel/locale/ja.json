@@ -2169,6 +2169,8 @@
     "This theme's switches": "このテーマのスイッチ",
     "They hold for every screen that has them.": "それらを持つすべての画面に適用されます。",
     "Frames around every part": "すべての部分に枠を付ける",
+    "The light flows": "光が流れる",
+    "The light follows the load": "光が負荷に合わせて変わる",
     "Dark when Libre Panel quits": "Libre Panel終了時は消灯",
     "When Libre Panel quits, Windows shutting down too, the panel shows black and its light goes off; it lights up again when Libre Panel starts. Off: it keeps the last picture.": "Libre Panelを終了すると（Windowsのシャットダウン時も）、パネルは黒を表示してライトが消え、Libre Panelの起動時に再び点灯します。オフの場合：最後の画像を表示したままにします。",
     "the panel's light off when it quits": "終了時にパネルのライトを消す",

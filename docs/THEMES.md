@@ -39,6 +39,7 @@ short). Every theme moves to any other panel from the panel button at the top of
 | **Column** | 3.5" portrait | the clock, a row per resource and the network |
 | **Pico** | 0.96" (160×80) | CPU with its temperature, and memory |
 | **Companions** | a panel beside the first, 9.2" either way up and 12.3" | Lumen Companion (every core, the temperatures with the fans, the drives, the processes), Arena Companion, Encore Companion and Almanac Companion: what the first panel's screen leaves out, while it leaves out what they show ([more panels at once](CONFIGURATION.md#more-panels-at-once)) |
+| **Lumen v2, Arena v2, Encore v2** | every size and version Lumen, Arena and Encore have, the companions too | the same screens over a light that drifts slowly across all your panels as one, cool at rest and warmer under load (*The light flows*, *The light follows the load*), their cards a little more see-through so it shows; Encore v2's light takes the colours of the cover that plays, in place of the blurred cover |
 | **High Contrast** | every size from 2.1" to 12.3", upright too | white on black in very large digits, to read from across the room: the temperatures of the processor and the graphics card, orange when warm and red when hot, and the time |
 
 Also built in: the round report after a game ([Libre Panel's screens](#libre-panels-screens)).
@@ -81,6 +82,22 @@ Also built in: the round report after a game ([Libre Panel's screens](#libre-pan
   panel would otherwise show its few levels as stripes (Libre Panel's own themes keep the
   editor's dot grid as their `image` over `["#0A0E13", "#06090D"]`). A gradient baked into
   the picture keeps its levels as it has them.
+- Optional: `background.field` puts a light under the theme: soft pools of light that drift
+  slowly across all the panels standing together, as one (each panel shows its part of it,
+  where it stands in *Settings → More panels*; by itself, its own size), calm and cool at rest,
+  warmer and brighter while the computer works (the higher of the CPU's and the GPU's load over
+  the last ten readings).
+  `{"look": "lumen", "moves": "switch.light_flows", "load": "switch.light_load"}`: `look` is
+  `lumen` or `arena` (the pools in the CPU, GPU and memory colours of Lumen's or Arena's look);
+  `moves` and `load` are conditions as a widget's `needs`, under which it drifts and follows the
+  load (always, where left out); `"colours": "@media.cover"` gives the pools that picture's
+  colours while it is there (its three that carry it most, as bright as they can be, the light
+  stronger), gliding over two seconds from one picture's colours to the next. The light is the
+  ground: `color` is what it shines on, and an `image` or `gradient` is not drawn under it.
+  It is made at an eighth of the panel, 6.25 times a second, and moves only where the frames
+  stream to the panel (video mode); on a panel sent a whole picture at each change it stands
+  and takes each reading's load. Lumen v2, Arena v2 and Encore v2 are made with it
+  (`python tools/themes_v2.py --write` makes them from Lumen's, Arena's and Encore's versions).
 - `font` is the default for all text; `builtin:Barlow-Regular`, `-Medium`,
   `-SemiBold`, `-Bold`, `builtin:BarlowCondensed-Medium`, `-SemiBold`,
   `builtin:JetBrainsMono-Medium`, `-Bold`, `builtin:LiberationSans-Regular`,
@@ -792,7 +809,8 @@ theme's own frames are cards; what is on them stays as it is. Libre Panel's
 own themes let a little of it through, just enough to be seen (Terra 0.6, Lumen,
 Almanac and Nimbus 0.7, Arena and the round report 0.8, Studio and Agents 0.85,
 Encore 0.9, whose cards lie over the cover; the contrast of the text against
-what is behind it falls by 3 % at most); High Contrast covers it.
+what is behind it falls by 3 % at most), the v2 screens more, so their light shows (Lumen v2
+0.58, Arena v2 0.68, Encore v2 0.78); High Contrast covers it.
 The person's `card_opacity` in config.toml (*Settings → Panel → Card
 opacity*) holds for every theme and goes before the theme's. The editor's
 looks (Arctic, Libre, Neon, Graphite, Paper, Sunset, Mono, High Contrast) set

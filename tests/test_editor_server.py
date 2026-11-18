@@ -476,7 +476,7 @@ def test_pages_of_the_panel(server, isolated_home):
     assert pages["game"] == {
         "id": "game", "mode": "game", "theme": None, "fps": None,
         "on": False, "service": "game",  # (the game service is off)
-        "suggested": ["arena"],
+        "suggested": ["arena", "arena-v2"],
     }  # fmt: skip
     assert pages["report"]["theme"] == "round-report" and pages["report"]["on"] is False
     # the pages Libre Panel switches to itself: off until switched on, each with its screen

@@ -915,6 +915,9 @@ class Renderer:
         self._light: fields.Light | None = None
         self._light_shown: fields.Light | None = None
         self._light_key: tuple[Any, ...] | None = None  # (what the light was made of last)
+        # a light in a picture's colours (its field's colours): the pools it glides from, those
+        # it glides to, and when it set out (the reading's time: every panel the same)
+        self._tint: tuple[tuple[fields.Pool, ...], tuple[fields.Pool, ...], float] | None = None
         # Frames start from an opaque colour: pieces go on with a paste in place
         self._opaque = (self.color(theme.background_color) or (0, 0, 0, 0))[3] == 255
         self._opaque = self._opaque or self._field is not None  # (the light is opaque)
@@ -1531,15 +1534,19 @@ class Renderer:
         among those standing together, at the field's step of ``now`` on the wall clock as it
         drifts (its ``moves`` holds; else as it stands at 0), under the load of that step (its
         ``load`` holds; else at rest), from the theme's background colour up. The light before
-        while it is the same."""
+        while it is the same. It drifts, and eases from one load to the next, only where the
+        frames stream to the panel (``continuous``): a panel that is sent a picture of all of
+        it at each change would be sent all of it at each step; there it stands, and takes the
+        load of each reading as it comes."""
         spec = self._field
         assert spec is not None
         step = fields.stepped(now)
-        moves = not spec["moves"] or self._holds(spec["moves"], snapshot)
+        streams = self.continuous
+        moves = streams and (not spec["moves"] or self._holds(spec["moves"], snapshot))
         load = 0.0
         if not spec["load"] or self._holds(spec["load"], snapshot):
             sample = getattr(self, "sample", None)
-            eased = 1.0 if sample is None else (step - sample[0]) / sample[1]
+            eased = 1.0 if sample is None or not streams else (step - sample[0]) / sample[1]
             load = fields.load_of(snapshot.history, eased)
         w, h = self.theme.width, self.theme.height
         canvas = self.canvas
@@ -1549,17 +1556,45 @@ class Renderer:
             own, whole = canvas.own, canvas.whole
         base = (self.color(self.theme.background_color) or (0, 0, 0, 255))[:3]
         t = step if moves else 0.0
-        key = ((w, h), own, whole, t, load, spec["look"], base)
-        if moves or load:
+        pools, gliding = self._pools_at(spec, snapshot, step, streams)
+        key = ((w, h), own, whole, t, load, pools, base)
+        if moves or (streams and load) or gliding:
             self._due_at(step + 1.0 / fields.RATE)  # (the next step: a new light)
         before = self._light
         if before is not None and self._light_key == key:
             return before
         self._light_key = key
-        light = fields.light((w, h), own, whole, t, load, spec["look"], base)
+        light = fields.light((w, h), own, whole, t, load, pools, base)
         if before is not None and fields.same(before, light):
             return before  # (no level of it other: the frame, and the engine's, as they are)
         return light
+
+    def _pools_at(
+        self, spec: dict[str, str], snapshot: Snapshot, step: float, streams: bool
+    ) -> tuple[tuple[fields.Pool, ...], bool]:
+        """The light's pools at the field's ``step``: its look's, or, while the picture its
+        ``colours`` names is there, in that picture's colours (render/cover.py's colours); and
+        whether they are still gliding. From one set of colours to the next they glide over
+        :data:`field.TINT_S` from the reading that brought them, where the frames stream;
+        elsewhere they are taken at once."""
+        pools = fields.LOOKS[spec["look"]]
+        name = spec.get("colours", "")
+        if not name:
+            return pools, False
+        found = cover.colours(snapshot.images.get(name[1:]))
+        target = fields.tinted(pools, found) if found else pools
+        at = self.sample[0]
+        glide = self._tint
+        if glide is None:
+            self._tint = glide = (target, target, at)  # (the first: as it is, no glide)
+        elif glide[1] != target:
+            # (from where the glide before stood when this reading came)
+            here = fields.gliding(glide[0], glide[1], (at - glide[2]) / fields.TINT_S)
+            self._tint = glide = (here, target, at)
+        if not streams:
+            return glide[1], False
+        k = (step - glide[2]) / fields.TINT_S
+        return fields.gliding(glide[0], glide[1], k), k < 1.0
 
     def _ground(self) -> Image.Image:
         """The theme's background colour with its picture laid over it, the size of the panel:

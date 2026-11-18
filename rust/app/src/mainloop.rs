@@ -218,6 +218,9 @@ pub struct MainLoop {
     asked: Asked,
     config: Config,
     config_file: PathBuf,
+    /// a panel beside the first: config.toml whole as it read it last for where the panels
+    /// stand (arranged), with the file's stamp then (read again only once the file changed)
+    full_config: std::cell::RefCell<Option<(i128, Config)>>,
     watched: f64,
     /// the sources' hub: the first panel's loop reads them, those beside it share it
     hub: Arc<Mutex<Hub>>,
@@ -379,6 +382,25 @@ static MOMENTS: Mutex<Vec<((&'static str, bool), f64)>> = Mutex::new(Vec::new())
 /// there are ("panel", "panels": a morph's things fly between them); None for this one not
 /// known, or for fewer than two known.
 fn canvas_of(rects: &[Option<crate::arrangement::Rect>], index: usize) -> Option<Value> {
+    let (own, whole, panels) = canvas_rects(rects, index)?;
+    let rect = |(x, y, w, h): crate::arrangement::Rect| {
+        Value::List([x, y, w, h].into_iter().map(Value::Float).collect())
+    };
+    let mut canvas = lp_py::Dict::default();
+    canvas.insert("own".into(), rect(own));
+    canvas.insert("whole".into(), rect(whole));
+    canvas.insert("panel".into(), Value::int(index as i64));
+    canvas.insert("panels".into(), Value::int(panels as i64));
+    Some(Value::Dict(canvas))
+}
+
+/// The box of the panel `index` of those standing at `rects` and the canvas around all of
+/// them that are known (millimetres), and how many those are; None for this one not known, or
+/// for fewer than two known.
+fn canvas_rects(
+    rects: &[Option<crate::arrangement::Rect>],
+    index: usize,
+) -> Option<(crate::arrangement::Rect, crate::arrangement::Rect, usize)> {
     let own = rects.get(index).copied().flatten()?;
     let shown: Vec<_> = rects.iter().flatten().copied().collect();
     if shown.len() < 2 {
@@ -392,18 +414,7 @@ fn canvas_of(rects: &[Option<crate::arrangement::Rect>], index: usize) -> Option
     };
     let (left, top) = (least(|r| r.0), least(|r| r.1));
     let (right, bottom) = (most(|r| r.0 + r.2), most(|r| r.1 + r.3));
-    let rect = |(x, y, w, h): crate::arrangement::Rect| {
-        Value::List([x, y, w, h].into_iter().map(Value::Float).collect())
-    };
-    let mut canvas = lp_py::Dict::default();
-    canvas.insert("own".into(), rect(own));
-    canvas.insert(
-        "whole".into(),
-        rect((left, top, right - left, bottom - top)),
-    );
-    canvas.insert("panel".into(), Value::int(index as i64));
-    canvas.insert("panels".into(), Value::int(shown.len() as i64));
-    Some(Value::Dict(canvas))
+    Some((own, (left, top, right - left, bottom - top), shown.len()))
 }
 
 /// Now on the wall clock, in seconds since 1970.
@@ -578,6 +589,7 @@ impl MainLoop {
             asked,
             config,
             config_file,
+            full_config: std::cell::RefCell::new(None),
             watched: 0.0,
             hub,
             view: None,
@@ -1252,15 +1264,37 @@ impl MainLoop {
         &self,
         then: impl FnOnce(&Config, &[Option<crate::arrangement::Told>]) -> T,
     ) -> Option<T> {
-        use crate::arrangement::Told;
-        let loaded;
-        let full = match &self.beside {
-            None => &self.config,
-            Some(_) => {
-                loaded = lp_config::load_config(&self.config_file, lp_config::platform()).ok()?;
-                &loaded
+        let kept;
+        let full = match (&self.beside, self.config.stamp) {
+            (None, _) => &self.config,
+            (Some(_), stamp) => {
+                let fresh = self
+                    .full_config
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|(at, _)| Some(*at) == stamp);
+                if !fresh {
+                    let loaded =
+                        lp_config::load_config(&self.config_file, lp_config::platform()).ok()?;
+                    *self.full_config.borrow_mut() = stamp.map(|at| (at, loaded.clone()));
+                    if stamp.is_none() {
+                        return self.arranged_of(&loaded, then);
+                    }
+                }
+                kept = self.full_config.borrow();
+                &kept.as_ref().expect("kept above").1
             }
         };
+        self.arranged_of(full, then)
+    }
+
+    /// arranged of `full`, config.toml whole.
+    fn arranged_of<T>(
+        &self,
+        full: &Config,
+        then: impl FnOnce(&Config, &[Option<crate::arrangement::Told>]) -> T,
+    ) -> Option<T> {
+        use crate::arrangement::Told;
         let first = match &self.beside {
             Some(beside) => Arc::clone(&beside.first),
             None => Arc::clone(&self.status),
@@ -1281,6 +1315,16 @@ impl MainLoop {
             statuses.push(each.and_then(|each| each.lock().ok().map(|s| told(&s))));
         }
         Some(then(full, &statuses))
+    }
+
+    /// _place: where this panel stands among all of them, in millimetres, as Settings → More
+    /// panels shows them (arrangement::laid_out), for a light across them (render/field.rs):
+    /// its own box and the canvas around all of them; None for a panel alone, or one whose
+    /// place is not known yet (its light as on a panel by itself).
+    fn place(&self) -> Option<(lp_render::field::Rect, lp_render::field::Rect)> {
+        let rects = self.arranged(crate::arrangement::laid_out)?;
+        let index = self.beside.as_ref().map_or(0, |beside| beside.n + 1);
+        canvas_rects(&rects, index).map(|(own, whole, _)| (own, whole))
     }
 
     /// _canvas: where this panel and all of them stand, in millimetres, as Settings → More
@@ -1390,6 +1434,7 @@ impl MainLoop {
         };
         renderer.symbols = config.symbols.clone();
         renderer.switches = switches;
+        renderer.canvas = self.place(); // (its part of a light across the panels)
         let streams = self.panel.as_ref().is_some_and(Display::streams);
         renderer.fps = if streams {
             config.device.video.fps as f64
@@ -2014,12 +2059,16 @@ impl MainLoop {
         lp_render::prof::part("rewant", || self.rewant(&renderer));
         if sampled {
             renderer.new_sample(started, every);
+            if renderer.theme.background_field.is_some() {
+                renderer.canvas = self.place(); // (panels moved meanwhile)
+            }
         }
         renderer.continuous = self.panel.as_ref().is_some_and(Display::streams);
         renderer.left_out_windows = self.panel.as_ref().is_some_and(Display::cuts_windows);
         renderer.native_rings = self.panel.as_ref().is_some_and(Display::makes_rings);
         renderer.native_bars = self.panel.as_ref().is_some_and(Display::makes_bars);
         renderer.native_fans = self.panel.as_ref().is_some_and(Display::makes_fans);
+        renderer.native_lights = self.panel.as_ref().is_some_and(Display::draws_lights);
         // (graphs that rest: frames that rest)
         renderer.graph_steps = self.config.graph_steps;
 

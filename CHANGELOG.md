@@ -46,6 +46,22 @@
   music plays 10 % (6 % without it, 7 % before), as its bars and sheen ask for 25 pictures a
   second instead of 13. The Rust app draws every light bit for bit as Python does.
 
+- **Lumen v2, Arena v2 and Encore v2.** The three screens over a light of their own: soft pools
+  of light in their colours drift slowly across all your panels as one (each panel shows its part
+  of it, where it stands in *Settings → More panels*), calm and cool at rest, warmer and brighter
+  while the computer works. Encore v2's light takes the colours of the cover that plays, in place
+  of the cover blurred behind the screen, and glides into a new track's colours over two seconds.
+  Two switches on each: *The light flows* and *The light follows the load*. Every size and
+  version the three have, the companions across and on end too; their cards a little more
+  see-through, so the light shows. It moves only where the frames stream to the panel (the TURZX
+  12.3" and 9.2" in video mode), 6.25 steps a second; on a panel sent a whole picture at each
+  change it stands and takes each reading's load. The app makes the light at an eighth of the
+  panel and the engine draws it up and lays the screen in front of it once: measured on the
+  12.3" (Lumen, readings moving), the engine's time a frame is 6.2 ms with the light at rest and
+  7.2 under full load, against 3.8 without a light. Themes of your own get it with
+  `background.field` ([Themes](docs/THEMES.md)). The Rust app draws it bit for bit as Python
+  does.
+
 - **Dell's fans.** Many Dell PCs show their fans to no other program, LibreHardwareMonitor
   included. Where Dell Command | Monitor is installed, the new *Dell fans* source (*Settings →
   Sensors*, Windows) reads the fans and temperatures it reports, as `fan.dell.<name>` and
@@ -53,6 +69,11 @@
   lists and any other widget show them. Asked of a Dell owner; not yet tried on a Dell PC here.
 
 **Changed**
+- **Smooth light stays smooth in video mode.** x264 held a change of a level or two in a smooth
+  light back until it was two or three, so a slowly changing light moved in visible steps. Its
+  dead zones are smaller now (6 instead of 21 and 11): decoded again, Lumen with its light is
+  0.20 levels from the frames drawn instead of 0.43 on the mean, Lumen and Arena as they are
+  0.25 instead of 0.27 and 0.20 instead of 0.22, at 3 to 7 % more bits and the same time.
 - **Transitions cost less in the Rust app, with the same pixels.** Counted per frame on a 12.3"
   panel (callgrind, the instructions of a transition's frames):
   - the glitch takes a sixteenth of what it did, as its colour bands now move a row at a time;
