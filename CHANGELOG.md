@@ -96,6 +96,10 @@
   frame now, in both apps (Orbit 87 instead of 91 MB, and 93 instead of 180 MB with the light).
 
 **Fixed**
+- **A module whose service is off says so in Design.** Power use, Timer, AI activity and the
+  Download card show what their service reports, and every service is off until it is switched
+  on; Design's picture then showed sample values, while the panel showed nothing there. The
+  module now says that its service is off and turns it on with one click.
 - **A number gliding to a new reading no longer stands still on the way.** Where its glide first
   ran away from the reading, or past it, the number was taken as already there and showed the
   value of a moment before while its ring or bar went on. It follows its glide now, in both

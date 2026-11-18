@@ -45,7 +45,7 @@ import { versionBase } from "../../core/orientation.js";
 import { panelName, currentModel } from "../../shell/panel-popover.js";
 import { HardwareNameField } from "../settings/hardware.js";
 import { navigate } from "../../shell/views.js";
-import { loadSettings, saveSettings, useConfig } from "../../core/settings.js";
+import { enableService, loadSettings, saveSettings, useConfig } from "../../core/settings.js";
 import { CardsHow, TURN_MINUTES, cardOfLine, lineWith, minutesOf } from "../home/cards.js";
 
 const cap = (text) => (text ? text.charAt(0).toUpperCase() + text.slice(1) : text);
@@ -490,6 +490,25 @@ function moduleSubtitle(widget, sensor, sourceName) {
   return null;
 }
 
+// the service a module shows the readings of: while it is off, the panel shows nothing there
+// (Design's picture shows sample values, which would pretend it does)
+const MODULE_SERVICE = { power: "power", timer: "timer", ai: "agents", download: "downloads" };
+
+/** Says that the service a module reads is off, and turns it on. */
+function ServiceOff({ widget }) {
+  const config = useConfig();
+  const service = MODULE_SERVICE[widget.module];
+  useEffect(() => {
+    if (service && !store.get().settings) loadSettings();
+  }, [service]);
+  const enabled = config?.services?.enabled;
+  if (!service || !Array.isArray(enabled) || enabled.includes(service)) return null;
+  return html`<div class="inspector-off" role="note">
+    <p>${t("{name} is off: the panel shows nothing here until it is on. The picture shows sample values.", { name: kindName(widget.module) })}</p>
+    <button type="button" class="btn" onClick=${() => enableService(service, true)}>${t("Turn on")}</button>
+  </div>`;
+}
+
 function ModuleInspector({ widget }) {
   const [page, setPage] = usePage();
   const info = moduleKinds()[widget.module] || { sources: [] };
@@ -569,6 +588,7 @@ function ModuleInspector({ widget }) {
       sensor=${sensor}
     />
     <div class="inspector-body">
+      <${ServiceOff} widget=${widget} />
       <${Section} title=${t("Shows")}>
         <${Select} label=${t("Module")} value=${widget.module} onChange=${(kind) => setModuleKind(widget, kind)}
           options=${Object.entries(kinds).map(([kind, item]) => ({ value: kind, label: item.name }))} />

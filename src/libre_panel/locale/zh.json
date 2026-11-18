@@ -1236,6 +1236,7 @@
     "No sensor of that name": "没有该名称的传感器",
     "No theme of that name": "没有该名称的主题",
     "No value on this computer: a sample": "此电脑上没有该值：一个示例",
+    "{name} is off: the panel shows nothing here until it is on. The picture shows sample values.": "{name} 已关闭：开启之前，面板此处不显示任何内容。图片显示的是示例值。",
     "Normal": "普通",
     "Not saved": "未保存",
     "Notes": "注释",

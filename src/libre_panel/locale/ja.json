@@ -1236,6 +1236,7 @@
     "No sensor of that name": "その名前のセンサーはありません",
     "No theme of that name": "その名前のテーマはありません",
     "No value on this computer: a sample": "このコンピューターには値がありません：サンプル値",
+    "{name} is off: the panel shows nothing here until it is on. The picture shows sample values.": "{name} はオフです。オンにするまでパネルのここには何も表示されません。画像は見本の値です。",
     "Normal": "通常",
     "Not saved": "未保存",
     "Notes": "注記",

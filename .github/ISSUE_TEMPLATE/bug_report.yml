@@ -30,5 +30,5 @@ body:
     id: log
     attributes:
       label: Log output
-      description: Run the command with `-v` and paste the output. Remove anything personal.
+      description: "In Libre Panel, open *Status → Diagnose*: **Copy the report** and the log's **Copy**, and paste them here. The log is also the file `logs/libre-panel.log` in the settings folder (`%APPDATA%\\LibrePanel` on Windows, `~/.config/libre-panel` on Linux). Remove anything personal."
       render: text

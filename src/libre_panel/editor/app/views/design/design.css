@@ -1253,6 +1253,24 @@
   line-height: 1.45;
 }
 
+/* a module whose service is off: said, with the switch to turn it on */
+.inspector-off {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 196, 107, 0.4);
+  border-radius: 10px;
+  background: var(--warn-soft);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.inspector-off p {
+  margin: 0;
+  flex: 1;
+}
+
 .inspector-builtin {
   display: block;
   margin-top: 4px;

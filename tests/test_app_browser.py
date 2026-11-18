@@ -3123,6 +3123,34 @@ def test_a_modules_source_and_detaching_it(page):
     assert widget(page, ring)["source"] == "disk"
 
 
+def test_a_module_whose_service_is_off_says_so_and_turns_it_on(page):
+    """Power use shows the readings of its service, which is off until it is switched on, and
+    Design's picture shows sample values for them: the module says that the panel shows
+    nothing there yet, and turns the service on from where it stands."""
+    new_theme_from_a_layout(page, "Turing 3.5")
+    js(page, "window.libre.store.set({ settings: null })")  # (as Design opened first)
+    js(
+        page,
+        """(async () => {
+          const ops = await import('/app/views/design/ops.js');
+          ops.addModule('power', [0, 0, 2, 1]);
+        })()""",
+    )
+    page.wait_for_function("window.libre.doc.widgets().some((w) => w.module === 'power')")
+    power = js(page, "window.libre.doc.widgets().find((w) => w.module === 'power').id")
+    js(page, f"window.libre.doc.setSelection([{power!r}])")
+    off = page.locator(".inspector .inspector-off")
+    expect(off).to_contain_text("Power use is off: the panel shows nothing here until it is on.")
+    off.get_by_role("button", name="Turn on").click()
+    expect(off).to_have_count(0)
+    waits_for(page, lambda: "power" in settings_config().services.enabled)
+    # a module of no service says nothing of the kind
+    ring = js(page, "window.libre.doc.widgets().find((w) => w.module === 'ring')?.id")
+    if ring:
+        js(page, f"window.libre.doc.setSelection([{ring!r}])")
+        expect(page.locator(".inspector .inspector-off")).to_have_count(0)
+
+
 def test_a_detached_module_is_put_back_together_and_its_parts_move_back_to_their_place(page):
     new_theme_from_a_layout(page, "Turing 3.5")
     ring = js(page, "window.libre.doc.widgets().find((w) => w.module === 'ring').id")

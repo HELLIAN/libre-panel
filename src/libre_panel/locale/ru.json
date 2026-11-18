@@ -1236,6 +1236,7 @@
     "No sensor of that name": "Нет датчика с таким именем",
     "No theme of that name": "Нет темы с таким именем",
     "No value on this computer: a sample": "На этом компьютере нет значения: пример",
+    "{name} is off: the panel shows nothing here until it is on. The picture shows sample values.": "{name} выключено: панель ничего здесь не покажет, пока вы его не включите. Картинка показывает примерные значения.",
     "Normal": "Обычный",
     "Not saved": "Не сохранено",
     "Notes": "Примечания",

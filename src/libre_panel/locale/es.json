@@ -1236,6 +1236,7 @@
     "No sensor of that name": "Ningún sensor con ese nombre",
     "No theme of that name": "Ningún tema con ese nombre",
     "No value on this computer: a sample": "Sin valor en este equipo: un ejemplo",
+    "{name} is off: the panel shows nothing here until it is on. The picture shows sample values.": "{name} está desactivado: el panel no muestra nada aquí hasta que lo actives. La imagen muestra valores de ejemplo.",
     "Normal": "Normal",
     "Not saved": "Sin guardar",
     "Notes": "Notas",
