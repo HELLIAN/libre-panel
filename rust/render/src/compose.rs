@@ -12,7 +12,7 @@ pub type Area = (i64, i64, i64, i64);
 
 /// Where on a frame of `size` a piece leaves its pixels: its layer, the light it adds, and the
 /// box its frosted backdrop blurs (None where none of it lies on the frame).
-fn reach(piece: &Piece, size: (usize, usize)) -> Option<Area> {
+pub(crate) fn reach(piece: &Piece, size: (usize, usize)) -> Option<Area> {
     let layer = |p: &Piece| {
         let (w, h) = p.size();
         (

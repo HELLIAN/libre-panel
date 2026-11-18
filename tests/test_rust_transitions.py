@@ -1,14 +1,17 @@
 """rust/render's transitions against Python's (docs/RUST.md): overlays.transition for each
 built-in name, with the parameters a service passes, the new theme's colours and language, and
 the frames each draws from an old screen to the new one, the same to the bit; where Python's
-raises, Rust's fails too."""
+raises, Rust's fails too. The cascade also on the built-in themes as their renderer drew them
+last (their ground and their cards)."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import random
+import shutil
 import struct
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +24,15 @@ from libre_panel.plugins.render import RenderContext
 from libre_panel.render import overlays
 from libre_panel.render.renderer import Renderer
 from libre_panel.sensors.base import Snapshot
-from libre_panel.theme.model import load_theme
+from libre_panel.theme.model import find_theme, load_theme
 
 THEME_FORMAT = "libre-panel-theme/1"
 NAMES = ["fade", "slide", "tube", "entrance", "wipe", "iris", "blinds", "dissolve", "slide-right",
-         "slide-up", "slide-down", "zoom", "light", "glitch", "tiles", "shatter"]  # fmt: skip
+         "slide-up", "slide-down", "zoom", "light", "glitch", "tiles", "shatter", "cascade",
+         "comet", "portal"]  # fmt: skip
+# the ones that go over all the panels as one where told where they stand (render/canvas.py)
+ACROSS = ["slide", "slide-right", "slide-up", "slide-down", "wipe", "light", "iris", "shatter",
+          "cascade", "comet", "portal"]  # fmt: skip
 OTHERS = ["cut", "", "nope", "Fade"]  # (none for these)
 SIZES = [(1920, 480), (480, 1920), (800, 480), (480, 480), (1280, 720), (320, 240), (240, 320),
          (1920, 462), (180, 640), (64, 36), (16, 9), (3, 2), (1, 1), (1000, 31)]  # fmt: skip
@@ -90,12 +97,17 @@ def _frame(size: tuple[int, int], mode: str, seed: int) -> dict[str, Any]:
     return {"size": list(size), "mode": mode, "seed": (seed * 0x9E3779B9) & 0xFFFFFFFF}
 
 
-def _python(folder: Path, language: str, switches: list[dict[str, Any]]) -> list[Any]:
-    """Each switch's answer from Python, as lp-check gives Rust's."""
+def _python(folder: Path, language: str, switches: list[dict[str, Any]],
+            drawn: str | None = None) -> list[Any]:  # fmt: skip
+    """Each switch's answer from Python, as lp-check gives Rust's (``drawn``: the moment the
+    renderer draws its frame of first, a double's bits)."""
     i18n.set_language(language)
     try:
         renderer = Renderer(load_theme(folder), preview=True)
         renderer.snapshot = Snapshot(images={k: _noise(v) for k, v in PICTURES.items()})
+        if drawn is not None:  # (at the first moment of 1970, as lp-check's snapshot is)
+            pictures = {k: _noise(v) for k, v in PICTURES.items()}
+            renderer.render(Snapshot(images=pictures, now=datetime(1970, 1, 1)), now=_float(drawn))
         context = RenderContext(renderer)
         olds: dict[str, Image.Image] = {}  # (the same spec, the same frame: its id stays)
         answers: list[Any] = []
@@ -201,9 +213,12 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
     for scenario in scenarios:
         cases.append(scenario())
     wired = []
-    for n, (size, palette, language, switches) in enumerate(cases):
+    for n, (size, palette, language, switches, *drawn) in enumerate(cases):
         folder = tmp_path / f"t{n}"
-        _theme(folder, size, palette)
+        if drawn:  # (a built-in theme, drawn at a moment first)
+            shutil.copytree(find_theme(drawn[0]["theme"]), folder)
+        else:
+            _theme(folder, size, palette)
         wire = [{"name": s["name"], "steps": s["steps"],
                  "params": {k: _typed(v) for k, v in (s["raw"] or {}).items()}}
                 for s in switches]  # fmt: skip
@@ -211,10 +226,12 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
                       "locale": str(i18n.LOCALE_DIR), "language": language,
                       "images": {k: image(_noise(v)) for k, v in PICTURES.items()},
                       "switches": wire})  # fmt: skip
+        if drawn:
+            wired[-1]["drawn"] = drawn[0]["at"]
     answers = run(wired)
     frames = 0
-    for n, (got, (_, _, language, switches)) in enumerate(zip(answers, cases, strict=True)):
-        want = _python(tmp_path / f"t{n}", language, switches)
+    for n, (got, (_, _, language, switches, *drawn)) in enumerate(zip(answers, cases, strict=True)):
+        want = _python(tmp_path / f"t{n}", language, switches, drawn[0]["at"] if drawn else None)
         assert len(got["switches"]) == len(want), n
         for k, (mine, theirs) in enumerate(zip(got["switches"], want, strict=True)):
             if theirs.get("made"):
@@ -338,22 +355,64 @@ def _across_the_panels() -> tuple[Any, ...]:
              {"own": [0.0, 0.0, 218.0, 55.0], "whole": [0.0, 0.0, 458.0, inf]},
              {"own": [nan, 0.0, 218.0, 55.0], **side}]  # fmt: skip
     switches = []
-    for k, name in enumerate(["slide", "slide-right", "slide-up", "slide-down", "wipe", "light"]):
+    for k, name in enumerate(ACROSS):
         for j, canvas in enumerate(canvases + wrong):
             at = times if j < len(canvases) else (0.3, 0.55)  # (each wrong one plays alone)
             steps = [[_frame(size, "RGB", k), _frame(size, "RGB", 10 + j), _bits(t)] for t in at]
             switches.append({"name": name, "raw": {"canvas": canvas}, "steps": steps})
     once = [[_frame(size, "RGB", 1), _frame(size, "RGB", 2), _bits(0.4)]]
-    switches.append({"name": "iris", "raw": {"canvas": canvases[1]}, "steps": once})
+    switches.append({"name": "blinds", "raw": {"canvas": canvases[1]}, "steps": once})
+    # (a panel a hundredth of a millimetre wide: the comet would be larger than any panel, and
+    # flies without its light)
+    thin = {"own": [5.0, 5.0, 0.01, 900.0], "whole": [0.0, 0.0, 20.0, 20.0]}
+    steps = [[_frame(size, "RGB", 5), _frame(size, "RGB", 6), _bits(t)] for t in (0.2, 0.6)]
+    switches.append({"name": "comet", "raw": {"canvas": thin}, "steps": steps})
     switches.append({"name": "wipe", "raw": {"canvas": canvases[1]},
                      "steps": [[_frame(s, "RGB", 3), _frame(s, "RGB", 4), _bits(0.5)]
                                for s in (size, (60, 240), size)]})  # fmt: skip
     return size, {"info": "#00ccff"}, "en", switches
 
 
+def _cards_coming_in(theme: str, size: tuple[int, int], seed: int) -> Any:
+    """The cascade (and the others that go over all the panels) on a built-in theme as its
+    renderer drew it last: its ground and the cards on it (some under a picture all over,
+    modules, a portrait panel), by themselves and on either of two panels side by side or one
+    above the other; then on frames of another size, where it knows no ground of its own."""
+
+    def scenario() -> tuple[Any, ...]:
+        times = (0.0, 0.1, 0.22, 0.3, 0.42, 0.55, 0.7, 0.85, 0.93, 0.999)
+        w, h = size
+        mm = (w * 0.1527, h * 0.1527)  # (the 12.3"'s pixels a millimetre)
+        side = {"whole": [0.0, 0.0, 2 * mm[0] + 15.0, mm[1]]}
+        above = {"whole": [0.0, 0.0, mm[0], 2 * mm[1] + 15.0]}
+        canvases = [None, {**side, "own": [0.0, 0.0, *mm]},
+                    {**side, "own": [mm[0] + 15.0, 0.0, *mm]},
+                    {**above, "own": [0.0, mm[1] + 15.0, *mm]}]  # fmt: skip
+        switches = []
+        for j, canvas in enumerate(canvases):
+            for k, name in enumerate(["cascade"] * 2 + ["comet", "portal", "shatter", "iris"]):
+                at = times if k < 2 else times[3::3]
+                steps = [[_frame(size, "RGB", seed + k), _frame(size, "RGB", seed + 10 + j),
+                          _bits(t)] for t in at]  # fmt: skip
+                raw = {} if canvas is None else {"canvas": canvas}
+                switches.append({"name": name, "raw": raw, "steps": steps})
+        other = (size[0] // 2, size[1] // 2)
+        steps = [[_frame(other, "RGB", seed), _frame(other, "RGB", seed + 1), _bits(t)]
+                 for t in (0.2, 0.5, 0.9)]  # fmt: skip
+        switches.append({"name": "cascade", "raw": {}, "steps": steps})
+        at = _bits(1_763_000_000.0 + seed)
+        return size, {}, "en", switches, {"theme": theme, "at": at}
+
+    return scenario
+
+
 SCENARIOS = [_entrance_at_its_turns, _entrance_on_another_size, _every_one_at_its_ends,
              _kept_for_another_size, _entrance_on_a_narrow_panel,
-             _the_line_almost_at_its_brightest, _across_the_panels]  # fmt: skip
+             _the_line_almost_at_its_brightest, _across_the_panels,
+             _cards_coming_in("lumen-1920x720", (1920, 720), 1),
+             _cards_coming_in("encore-pair", (1920, 480), 2),
+             _cards_coming_in("arena-480x480", (480, 480), 3),
+             _cards_coming_in("terra-vertical", (480, 1920), 4)]  # fmt: skip
 
 
 def test_transitions_as_python_draws_them(tmp_path: Path) -> None:

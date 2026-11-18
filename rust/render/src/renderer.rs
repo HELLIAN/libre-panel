@@ -578,6 +578,53 @@ impl Renderer {
         Ok(())
     }
 
+    /// beneath: the frame composed last as it lies beneath its widgets, in RGB: the ground with
+    /// what covers all of the panel at the bottom of it (a screen, full-panel widgets, a look's
+    /// grid); and the boxes ([x0, y0, x1, y1]) of the widgets that lie on that, in their order,
+    /// each within the panel (what covers all of it, and a light, none). For a transition that
+    /// brings the widgets in on their ground (the cascade); None before a frame was composed
+    /// here.
+    pub fn beneath(&self) -> Result<Option<(Image, Vec<[i64; 4]>)>> {
+        let Some((_, pieces)) = &self.composed else {
+            return Ok(None);
+        };
+        let (w, h) = (self.theme.width.max(0), self.theme.height.max(0));
+        let size = (w as usize, h as usize);
+        let under = pieces
+            .iter()
+            .take_while(|(_, p)| compose::reach(p, size) == Some((0, 0, w, h)))
+            .count();
+        let mut canvas = match &self.ground_kept {
+            Some(ground) => ground.clone(),
+            None => self.ground()?,
+        };
+        for (id, piece) in &pieces[..under] {
+            if let Err(Failed(e)) = compose::composite(&mut canvas, piece, (0, 0), self.opaque) {
+                self.warn(format!("widget {} failed: {e}", lp_py::repr(id)));
+            }
+        }
+        let mut boxes = Vec::new();
+        for (id, piece) in &pieces[under..] {
+            if id.contains('\0') {
+                continue; // (a light, or a widget's own part over it)
+            }
+            let [x, y, bw, bh] = piece.hit.unwrap_or_else(|| {
+                let (lw, lh) = piece.size();
+                [piece.x, piece.y, lw as i64, lh as i64]
+            });
+            let b = [
+                x.max(0),
+                y.max(0),
+                w.min(x.saturating_add(bw)),
+                h.min(y.saturating_add(bh)),
+            ];
+            if b[2] > b[0] && b[3] > b[1] && b != [0, 0, w, h] {
+                boxes.push(b);
+            }
+        }
+        Ok(Some((compose::as_rgb(&canvas)?, boxes)))
+    }
+
     /// The pieces of the frame composed last, in their order (none before the first, or where
     /// the engine composes): what lies where, for a comparison with Python's, and whether a
     /// piece is the one of a frame before.

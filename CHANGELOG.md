@@ -11,6 +11,15 @@
   *Settings → More panels* shows them and begin from one moment, 0.8 s after the change (0.4 s
   after **▶**). *Settings → Transitions → Across the panels* (`[transitions] canvas`) turns it
   off. The Rust app draws each frame of it bit for bit as Python does.
+- **Three new transitions, and two more over all the panels.** *Cascade*: the ground changes,
+  then the new screen's cards come in one after another, each rising and growing into its place,
+  as a wave along the panels; the cards are taken from how a theme is drawn, so it works with
+  any theme. *Comet*: a comet with a glowing tail and sparks flies across, from one panel into
+  the next, and the new screen opens behind it. *Portal*: a ring of light opens from the middle
+  and the new screen grows through it into its place. The iris and the shatter now go over all
+  the panels too: the circle opens from the middle of all of them, the old screen's tiles fall
+  one after another along them. On one panel by itself each plays on it alone, the iris and the
+  shatter as before. The Rust app draws each frame bit for bit as Python does.
 - **Light that moves.** On a panel that moves, light now moves over what it shows: the end of
   a ring breathes in its colour and now and then a light runs along the ring (past 80 % its end
   glows wider); the newest point of a curve beats with each reading; while a track plays, its

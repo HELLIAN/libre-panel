@@ -509,17 +509,29 @@ random = ["fade", "wipe", "zoom", "iris", "blinds", "dissolve", "light", "tiles"
 | `glitch` | a short digital fault: rows slip, the colours split |
 | `tiles` | the screen turns over tile by tile |
 | `shatter` | the old screen breaks into pieces that fly apart |
+| `cascade` | the ground changes, then the new screen's cards come in one after another, each rising and growing into its place |
+| `comet` | a comet flies across, the new screen opening behind it |
+| `portal` | a ring of light opens from the middle, the new screen growing through it into its place |
 | `random` | another of `random` each time |
 
-**Over all the panels.** With more than one panel, a slide, the wipe and the line of light go
-over all of them as over one screen where they all change at once: a scene put on or off, a
-game, music or the PC at rest coming or going, and **▶**. The panels stand as *Settings → More
-panels* shows them; the new screen runs through the gap between them, a soft shadow at its
-edge, and each panel draws its part from the same moment on (0.8 s after the change, so that
-each has noticed it and made its new screen; 0.4 s after **▶**). Over all of them it takes a
-little longer than on one (1.25 s, the line of light 1.4 s), the pace stretching it as any
-other. *Across the panels* off (`canvas = false`) plays it on each panel by itself, as does any
-other transition and any switch of one panel alone.
+**Over all the panels.** With more than one panel, a slide, the wipe, the iris, the line of
+light, the shatter, the cascade, the comet and the portal go over all of them as over one
+screen where they all change at once: a scene put on or off, a game, music or the PC at rest
+coming or going, and **▶**. The panels stand as *Settings → More panels* shows them; the new
+screen runs through the gap between them (a slide with a soft shadow at its edge), the iris
+and the portal open from the middle of all of them, the shatter's tiles fall one after another
+along them, the cascade's cards come in as a wave along them and the comet flies from one
+panel into the next; each panel draws its part from the same moment on (0.8 s after the
+change, so that each has noticed it and made its new screen; 0.4 s after **▶**). Over all of
+them a slide, the wipe, the line of light, the iris and the shatter take a little longer than
+on one (1.25 s; the line of light 1.4 s, the iris 1.3 s, the shatter 1.8 s); the cascade
+(1.9 s), the comet (1.7 s) and the portal (1.5 s) take as long on one panel as over all; the
+pace stretches each as any other. *Across the panels* off (`canvas = false`) plays it on each
+panel by itself, as does any other transition and any switch of one panel alone.
+
+The cascade takes the new screen's cards from how it is drawn, in any theme: what covers all of
+the panel at the bottom (its background, a full-panel picture or rect, a look's grid) is the
+ground that comes first, and the widgets on it, joined where they overlap, are the cards.
 
 A plugin's transition goes by its name (`myplugin.curtain`, [Plugins](PLUGINS.md)). The old
 setting `transition = "fade"` at the top of `config.toml` still names the default.

@@ -526,7 +526,8 @@ BUILT_IN_TRANSITIONS = {
 # how Settings → Panel → Transitions offers them: the plain ones, then the elaborate ones
 PLAIN_TRANSITIONS = ("cut", "fade", "slide", "slide-right", "slide-up", "slide-down", "wipe",
                      "zoom", "iris", "blinds", "dissolve")  # fmt: skip
-ELABORATE_TRANSITIONS = ("tube", "entrance", "light", "glitch", "tiles", "shatter")
+ELABORATE_TRANSITIONS = ("tube", "entrance", "light", "glitch", "tiles", "shatter", "cascade",
+                         "comet", "portal")  # fmt: skip
 BUILT_IN_STYLES = {"card": CardStyle, "band": BandStyle}
 
 

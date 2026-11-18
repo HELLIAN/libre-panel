@@ -1,12 +1,14 @@
 """One transition over all the panels as one (render/canvas.py): where each panel's part of a
-slide, the wipe and the line of light lies, how the main loop tells a panel where it stands and
-when all of them begin, and that nothing else changes for one panel alone."""
+slide, the wipe, the line of light, the iris, the shatter, the cascade, the comet and the portal
+lies, how the main loop tells a panel where it stands and when all of them begin, and that
+nothing else changes for one panel alone."""
 
 from __future__ import annotations
 
 import time
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -45,15 +47,21 @@ def test_a_canvas_is_four_numbers_for_each_and_nothing_else():
         assert C.canvas_of(bad) is None, bad
 
 
-def test_only_a_slide_the_wipe_and_the_line_of_light_go_over_the_panels():
-    """Given where the panels stand, those take as long as across them all (the pace of
-    Settings → Transitions stretching it); any other plays on its panel alone, as before."""
+def test_only_those_that_can_go_over_the_panels_do():
+    """Given where the panels stand, the slides, the wipe, the line of light, the iris and the
+    shatter take as long as across them all (the pace of Settings → Transitions stretching it),
+    longer than alone; the cascade, the comet and the portal as long as alone, being as long
+    there as in the preview that was liked; any other plays on its panel alone, as before."""
     for name, seconds in C.CANVAS_DURATIONS.items():
         kind = transition((name, {"canvas": canvas(BIG)}))
         assert kind.canvas is not None and kind.duration == seconds, name
         alone = transition(name)
-        assert alone.canvas is None and alone.duration < seconds, name
-    for name in ("fade", "tube", "iris", "zoom", "shatter", "tiles", "glitch"):
+        assert alone.canvas is None, name
+        if name in ("cascade", "comet", "portal"):
+            assert alone.duration == seconds, name
+        else:
+            assert alone.duration < seconds, name
+    for name in ("fade", "tube", "entrance", "zoom", "blinds", "dissolve", "tiles", "glitch"):
         kind = transition((name, {"canvas": canvas(BIG)}))
         assert getattr(kind, "canvas", None) is None, name
     assert transition(("wipe", {"canvas": {"own": BIG}})).canvas is None  # (half a canvas)
@@ -148,6 +156,158 @@ def test_the_line_of_light_crosses_the_panels_as_one_line():
     old, new = frames((1920, 480))
     assert light.frame(old, new, 0.1).getpixel((1900, 240)) == OLD  # (it has not come yet)
     assert light.frame(old, new, 0.98).getpixel((200, 240))[2] >= 200  # (behind it: new)
+
+
+def test_the_iris_opens_from_the_middle_of_all_the_panels():
+    """Across the panels its map is how far each pixel is from the middle of all of them: the
+    same on either side of the gap for the same distance; it opens there first."""
+    big = C.canvas_of({"canvas": canvas(BIG)})
+    bar = C.canvas_of({"canvas": canvas(BAR)})
+    at = C.middle(big.whole)
+    far = C.reach(big.whole, at) + 11.0
+    left, right = C.radial_map(big, (1920, 720), at, far), C.radial_map(bar, (1920, 480), at, far)
+    x, _ = C.pixel(big, (1920, 720), at)
+    assert left.getpixel((min(1919, round(x)), 360)) <= 1  # (the middle: 0)
+    edge_big = left.getpixel((1919, 360))  # (each side of the gap, as far as its way)
+    edge_bar = right.getpixel((0, 240))
+    gap = (BAR[0] - (BIG[0] + BIG[2])) * 255 / far
+    assert edge_bar - edge_big == pytest.approx(gap, abs=2)
+    iris = transition(("iris", {"canvas": canvas(BIG)}))
+    old, new = frames((1920, 720))
+    shot = iris.frame(old, new, 0.3)
+    assert shot.getpixel((min(1919, round(x)), 360)) == NEW and shot.getpixel((0, 0)) == OLD
+    assert iris.frame(old, new, 0.0) == old and iris.frame(old, new, 1.0) == new
+
+
+def test_the_shatter_falls_along_all_the_panels():
+    """The old screen whole at first; the tiles of the left panel go before those of the
+    right one; at the end the new screen, out of the shade."""
+    big = transition(("shatter", {"canvas": canvas(BIG)}))
+    bar = transition(("shatter", {"canvas": canvas(BAR)}))
+    big_old, big_new = frames((1920, 720))
+    bar_old, bar_new = frames((1920, 480))
+    assert big.frame(big_old, big_new, 0.0).tobytes() == big_old.tobytes()
+    assert bar.frame(bar_old, bar_new, 0.0).tobytes() == bar_old.tobytes()
+    t = 0.3
+    assert big.frame(big_old, big_new, t).getpixel((20, 20)) != OLD  # (its first tiles fell)
+    assert bar.frame(bar_old, bar_new, t).getpixel((1900, 460)) == OLD  # (the last not yet)
+    last = bar.frame(bar_old, bar_new, 0.99)
+    assert last.getpixel((960, 240)) == NEW
+
+
+class _Drawn:
+    """A renderer that drew its frame: a ground and the boxes on it (Renderer.beneath)."""
+
+    def __init__(self, size, boxes):
+        self.ground = Image.new("RGB", size, (0, 120, 0))
+        self.boxes = boxes
+
+    def beneath(self):
+        return self.ground, [list(b) for b in self.boxes]
+
+
+def test_the_cascade_brings_the_cards_in_on_their_ground_along_the_panels():
+    """The ground first, then each card where it lies along the way: the left panel's before
+    the right one's; cards that overlap come as one; at the end the new screen whole."""
+    GROUND = (0, 120, 0)
+    big_cards = [(40, 40, 600, 680), (500, 300, 700, 400), (1300, 40, 1880, 680)]
+    contexts = {}
+    for name, own, size, boxes in (("big", BIG, (1920, 720), big_cards),
+                                   ("bar", BAR, (1920, 480), [(100, 40, 1800, 440)])):  # fmt: skip
+        context = SimpleNamespace(palette={}, _renderer=_Drawn(size, boxes))
+        contexts[name] = (transition(("cascade", {"canvas": canvas(own)}), context), size)
+    (big, big_size), (bar, bar_size) = contexts["big"], contexts["bar"]
+    big_old, big_new = frames(big_size)
+    bar_old, bar_new = frames(bar_size)
+    assert big.frame(big_old, big_new, 0.0).tobytes() == big_old.tobytes()
+    early = big.frame(big_old, big_new, 0.29)  # (the ground there, the first card coming)
+    assert early.getpixel((1910, 700)) == GROUND and early.getpixel((1600, 360)) == GROUND
+    assert early.getpixel((300, 360)) != GROUND
+    mid = big.frame(big_old, big_new, 0.5)
+    assert mid.getpixel((300, 360)) == NEW and mid.getpixel((650, 350)) == NEW  # (as one)
+    assert bar.frame(bar_old, bar_new, 0.5).getpixel((960, 240)) == GROUND  # (not yet)
+    assert bar.frame(bar_old, bar_new, 0.8).getpixel((960, 240)) == NEW
+    assert big.frame(big_old, big_new, 0.999).getpixel((1910, 700)) != GROUND  # (all of it)
+    assert big.frame(big_old, big_new, 1.0) == big_new
+
+
+def test_the_cascade_takes_its_ground_and_cards_from_how_a_theme_is_drawn():
+    """What covers all of the panel at the bottom of it is the ground (Encore's picture of
+    the cover all over, its veil); lights and a widget's own parts are no cards."""
+    from libre_panel.render.renderer import Renderer
+    from libre_panel.sensors.demo import demo_snapshot
+    from libre_panel.theme.model import find_theme, load_theme
+
+    renderer = Renderer(load_theme(find_theme("encore-pair")), preview=True)
+    assert renderer.beneath() is None  # (nothing drawn yet)
+    frame, _ = renderer.render(demo_snapshot(), now=1_763_000_000.0)
+    ground, boxes = renderer.beneath()
+    assert ground.size == frame.size and ground.mode == "RGB"
+    plain = Image.new("RGB", frame.size, renderer.color(renderer.theme.background_color)[:3])
+    assert ground.tobytes() != plain.tobytes()  # (the cover's picture and the veil in it)
+    w, h = frame.size
+    assert boxes and all(b != [0, 0, w, h] and 0 <= b[0] < b[2] <= w for b in boxes)
+    renderer.close()
+
+
+def test_the_comet_flies_from_panel_to_panel_and_leaves_the_new_screen_whole():
+    """Its way is the same over both panels; it crosses the left one before the right one;
+    by its end its tail has left them and the new screen is open everywhere."""
+    big = transition(("comet", {"canvas": canvas(BIG)}))
+    bar = transition(("comet", {"canvas": canvas(BAR)}))
+    big_old, big_new = frames((1920, 720))
+    bar_old, bar_new = frames((1920, 480))
+    assert big.frame(big_old, big_new, 0.0).tobytes() == big_old.tobytes()
+    assert bar.frame(bar_old, bar_new, 0.0).tobytes() == bar_old.tobytes()
+
+    def lit(shot: Image.Image) -> int:  # (its light: pixels neither the old nor the new)
+        pixels = np.asarray(shot).reshape(-1, 3)
+        return int((~(pixels == OLD).all(1) & ~(pixels == NEW).all(1)).sum())
+
+    assert lit(big.frame(big_old, big_new, 0.3)) > 0  # (it is over the left one)
+    assert lit(bar.frame(bar_old, bar_new, 0.3)) == 0  # (not yet over the right)
+    assert lit(bar.frame(bar_old, bar_new, 0.75)) > 0
+    for kind, old, new in ((big, big_old, big_new), (bar, bar_old, bar_new)):
+        end = np.asarray(kind.frame(old, new, 0.999)).astype(int)
+        assert np.abs(end - np.array(NEW)).max() <= 3, kind
+
+
+def test_the_portal_opens_from_the_middle_with_its_ring():
+    """The new screen first where the middle of all the panels is; its ring of light lies at
+    the opening's edge; at the end the new screen whole."""
+    big = transition(("portal", {"canvas": canvas(BIG)}))
+    old, new = frames((1920, 720))
+    assert big.frame(old, new, 0.0).tobytes() == old.tobytes()
+    x, _ = C.pixel(C.canvas_of({"canvas": canvas(BIG)}), (1920, 720), C.middle(tuple(WHOLE)))
+    shot = big.frame(old, new, 0.2)
+    assert shot.getpixel((min(1919, round(x)), 360)) == NEW and shot.getpixel((0, 0)) == OLD
+    row = [shot.getpixel((i, 360)) for i in range(1920)]
+    bright = [i for i, c in enumerate(row) if sum(c) > sum(NEW) + 60]  # (the ring's light)
+    assert bright and min(bright) < x
+    assert big.frame(old, new, 1.0) == new
+
+
+def test_the_rings_light_ends_at_its_reach():
+    """A pixel a rounding short of the ring's reach takes the light's last step, not one past
+    it (the ring at a radius where its offset is the float just below the reach)."""
+    import math
+
+    from libre_panel.render.handovers import Portal, _Opening, _ring
+
+    size, reach = (64, 64), Portal.GLOW_MM
+    opening = _Opening(C.alone(size), size, reach, Portal.EDGE_MM)
+    edges = []  # (of pixels farther than its reach: the ring then on the panel, and lit)
+    for d in opening.away[opening.away > reach + 2][::50]:
+        for k in range(-40, 40):
+            r = float(d) - reach + k * math.ulp(float(d) - reach)
+            off = float(d) - r
+            if abs(off) < reach and int((off + reach) * 64) >= len(opening.light[0]):
+                edges.append(r)
+    assert edges  # (there are such radii)
+    for r in edges[:20]:
+        out = Image.new("RGB", size)
+        _ring(out, opening, r, 1.0, (46, 230, 214), (255, 255, 255), reach)
+        assert out.getbbox() is not None
 
 
 @pytest.mark.parametrize("name", list(C.CANVAS_DURATIONS))

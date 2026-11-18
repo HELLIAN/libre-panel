@@ -3194,8 +3194,13 @@ fn run(case: &Value) -> Result<Value, String> {
             // overlays.transition((name, params), RenderContext(renderer)) of a theme's
             // renderer, made anew for each of the case's switches, and the frames it draws: each
             // step an old frame and a new one (frames of noise, as the tests make them; the same
-            // old spec is the same frame), and how far it has gone (a double's bits)
+            // old spec is the same frame), and how far it has gone (a double's bits); where the
+            // case says "drawn" (a moment's bits), the renderer draws its frame of that moment
+            // first, as the panel's loop has before a transition begins (what the cascade
+            // brings in, card by card); where it says "time", each step also tells how long its
+            // frame took, in nanoseconds (to measure, not to compare)
             use lp_render::transitions::Transition;
+            let timed = case["time"].as_bool() == Some(true);
             let env = lp_theme::Env {
                 fonts_dir: case["fonts_dir"].as_str().unwrap_or("").into(),
             };
@@ -3224,6 +3229,11 @@ fn run(case: &Value) -> Result<Value, String> {
             for (key, picture) in case["images"].as_object().into_iter().flatten() {
                 snapshot.images.insert(key.clone(), image_of(picture)?);
             }
+            if let Some(now) = case.get("drawn") {
+                renderer
+                    .render(snapshot.clone(), float_in(now))
+                    .map_err(|e| format!("not drawn: {}", e.0))?;
+            }
             renderer.set_snapshot(snapshot);
             let mut olds: Vec<(String, Image)> = Vec::new();
             let mut answers = Vec::new();
@@ -3249,19 +3259,26 @@ fn run(case: &Value) -> Result<Value, String> {
                     };
                     let new = noise_frame(&step[1]);
                     let t = float_in(&step[2]);
-                    steps.push(
-                        match made.frame(&olds[at].1, at as u64, &new, t, &renderer) {
-                            Ok(out) => json!({
+                    let began = std::time::Instant::now();
+                    let frame = made.frame(&olds[at].1, at as u64, &new, t, &renderer);
+                    let took = began.elapsed().as_nanos() as u64;
+                    steps.push(match frame {
+                        Ok(out) => {
+                            let mut answer = json!({
                                 "size": [out.width(), out.height()],
                                 "mode": out.mode().name(),
                                 "sha256": Sha256::digest(out.as_bytes())
                                     .iter()
                                     .map(|b| format!("{b:02x}"))
                                     .collect::<String>(),
-                            }),
-                            Err(_) => json!({"error": true}),
-                        },
-                    );
+                            });
+                            if timed {
+                                answer["ns"] = json!(took);
+                            }
+                            answer
+                        }
+                        Err(_) => json!({"error": true}),
+                    });
                 }
                 answers.push(json!({
                     "made": true,

@@ -1,13 +1,14 @@
-//! One transition across all the panels, as they stand (render/canvas.py): a slide, a wipe or
-//! the line of light runs over them as over one surface, through the gap between them, and
-//! each panel draws its own part of it, from the same moment on. The transition is told where
-//! this panel stands and where all of them do (`params["canvas"]`: `{"own": [x, y, w, h],
-//! "whole": [x, y, w, h]}`, in millimetres); without that it plays on its panel alone.
+//! One transition across all the panels, as they stand (render/canvas.py): a slide, a wipe,
+//! the line of light, the iris, the shatter, the cascade, the comet or the portal runs over
+//! them as over one surface, through the gap between them, and each panel draws its own part
+//! of it, from the same moment on. The transition is told where this panel stands and where all
+//! of them do (`params["canvas"]`: `{"own": [x, y, w, h], "whole": [x, y, w, h]}`, in
+//! millimetres); without that it plays on its panel alone.
 
 use lp_pixels::{chops, Filter, Image, Mode};
 use lp_py::{Dict, Value};
 
-use crate::light::{py_max, py_min, smooth, whole};
+use crate::light::{clamp, py_max, py_min, smooth, whole};
 use crate::piece::{Failed, Result};
 
 /// how long each takes across the panels (CANVAS_DURATIONS)
@@ -15,6 +16,11 @@ pub fn canvas_duration(name: &str) -> Option<f64> {
     match name {
         "slide" | "slide-right" | "slide-up" | "slide-down" | "wipe" => Some(1.25),
         "light" => Some(1.4),
+        "iris" => Some(1.3),
+        "shatter" => Some(1.8),
+        "cascade" => Some(1.9),
+        "comet" => Some(1.7),
+        "portal" => Some(1.5),
         _ => None,
     }
 }
@@ -33,6 +39,9 @@ pub fn slide_way(name: &str) -> Option<(i64, i64)> {
 const SHADE_MM: f64 = 6.0;
 const SHADE: f64 = 0.45;
 const LIGHT_MARGIN_MM: f64 = 12.0;
+/// a panel by itself, for one that is drawn in millimetres alone too: its shorter side taken
+/// for this, the 9.2" bar's height (ALONE_MM)
+const ALONE_MM: f64 = 56.68;
 
 /// x, y, width, height in millimetres
 pub type Rect = (f64, f64, f64, f64);
@@ -204,4 +213,150 @@ pub fn light_at(canvas: &Canvas, t: f64, w: i64) -> Result<i64> {
     let (left, _, width, _) = canvas.whole;
     let front = left - LIGHT_MARGIN_MM + (width + 2.0 * LIGHT_MARGIN_MM) * smooth(t);
     round_int((front - x) * w as f64 / mw)
+}
+
+// -- in millimetres: a panel by itself or over all of them ---------------------------------------
+
+/// alone: a panel by itself as a canvas of its own.
+pub fn alone((w, h): (usize, usize)) -> Canvas {
+    let mm = ALONE_MM / py_min(w as f64, h as f64);
+    let rect = (0.0, 0.0, w as f64 * mm, h as f64 * mm);
+    Canvas {
+        own: rect,
+        whole: rect,
+    }
+}
+
+/// way_of: along the longer side of all the panels, right, or down where they stand taller
+/// than wide.
+pub fn way_of(canvas: &Canvas) -> (i64, i64) {
+    if canvas.whole.2 >= canvas.whole.3 {
+        (1, 0)
+    } else {
+        (0, 1)
+    }
+}
+
+pub fn middle((x, y, w, h): Rect) -> (f64, f64) {
+    (x + w / 2.0, y + h / 2.0)
+}
+
+/// reach: how far the farthest corner of `rect` is from `at`.
+pub fn reach((x, y, w, h): Rect, at: (f64, f64)) -> f64 {
+    let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)];
+    let far = |(cx, cy): (f64, f64)| ((cx - at.0) * (cx - at.0) + (cy - at.1) * (cy - at.1)).sqrt();
+    corners[1..]
+        .iter()
+        .fold(far(corners[0]), |a, &c| py_max(a, far(c)))
+}
+
+/// per_mm: this panel's pixels per millimetre, across and down.
+pub fn per_mm(canvas: &Canvas, (w, h): (usize, usize)) -> (f64, f64) {
+    (w as f64 / canvas.own.2, h as f64 / canvas.own.3)
+}
+
+/// pixel: where the point `at` (millimetres) is on this panel, in its pixels.
+pub fn pixel(canvas: &Canvas, size: (usize, usize), at: (f64, f64)) -> (f64, f64) {
+    let (sx, sy) = per_mm(canvas, size);
+    ((at.0 - canvas.own.0) * sx, (at.1 - canvas.own.1) * sy)
+}
+
+/// centres: where the middles of this panel's columns and rows are, in millimetres.
+pub fn centres(canvas: &Canvas, size: (usize, usize)) -> (Vec<f64>, Vec<f64>) {
+    let (sx, sy) = per_mm(canvas, size);
+    (
+        (0..size.0)
+            .map(|i| canvas.own.0 + (i as f64 + 0.5) / sx)
+            .collect(),
+        (0..size.1)
+            .map(|i| canvas.own.1 + (i as f64 + 0.5) / sy)
+            .collect(),
+    )
+}
+
+/// levels, of one value: rounded to the nearest level (an even one at a half), within 0 and
+/// 255; what is no number at all, 0.
+pub fn level(v: f64) -> u8 {
+    if v.is_nan() {
+        0
+    } else {
+        v.round_ties_even().clamp(0.0, 255.0) as u8
+    }
+}
+
+/// distances, of one pixel: how far its middle is from a point, the offsets given.
+pub fn distance(dx: f64, dy: f64) -> f64 {
+    (dy * dy + dx * dx).sqrt()
+}
+
+/// radial_map: a map of how far each pixel of this panel is from `at`: 0 there, 255 `far`
+/// away.
+pub fn radial_map(
+    canvas: &Canvas,
+    size: (usize, usize),
+    at: (f64, f64),
+    far: f64,
+) -> Result<Image> {
+    let (xs, ys) = centres(canvas, size);
+    let mut bytes = Vec::with_capacity(size.0 * size.1);
+    for &y in &ys {
+        let dy = y - at.1;
+        bytes.extend(
+            xs.iter()
+                .map(|&x| level(255.0 * distance(x - at.0, dy) / far)),
+        );
+    }
+    Image::from_bytes(Mode::L, size.0, size.1, bytes).map_err(failed)
+}
+
+/// linear_map: a map of how far along `u` (a unit vector) each pixel of this panel is: 0 at
+/// `lo` millimetres, 255 at `hi`.
+pub fn linear_map(
+    canvas: &Canvas,
+    size: (usize, usize),
+    u: (f64, f64),
+    lo: f64,
+    hi: f64,
+) -> Result<Image> {
+    let (xs, ys) = centres(canvas, size);
+    let mut bytes = Vec::with_capacity(size.0 * size.1);
+    for &y in &ys {
+        let down = y * u.1;
+        bytes.extend(
+            xs.iter()
+                .map(|&x| level(255.0 * (down + x * u.0 - lo) / (hi - lo))),
+        );
+    }
+    Image::from_bytes(Mode::L, size.0, size.1, bytes).map_err(failed)
+}
+
+/// threshold: the mask of a map below `level`: 255 where a value is `soft` below it or more, 0
+/// above it, a ramp in between.
+pub fn threshold(level: f64, soft: f64) -> Result<Vec<i64>> {
+    (0..256)
+        .map(|v| {
+            let v = v as f64;
+            if v <= level - soft {
+                Ok(255)
+            } else if v > level {
+                Ok(0)
+            } else {
+                round_int(255.0 * (level - v) / soft)
+            }
+        })
+        .collect()
+}
+
+/// in_out: slow, fast, slow (cubic).
+pub fn in_out(u: f64) -> f64 {
+    let u = clamp(u);
+    if u < 0.5 {
+        4.0 * u * u * u
+    } else {
+        1.0 - (-2.0 * u + 2.0).powf(3.0) / 2.0
+    }
+}
+
+pub fn in_out_sine(u: f64) -> f64 {
+    -((std::f64::consts::PI * clamp(u)).cos() - 1.0) / 2.0
 }

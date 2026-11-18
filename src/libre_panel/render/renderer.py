@@ -1658,6 +1658,34 @@ class Renderer:
         self._fills_looked = now
         scenes.forget_idle(self.FILLS_IDLE_S, now)
 
+    def beneath(self) -> tuple[Image.Image, list[Box]] | None:
+        """The frame composed last as it lies beneath its widgets, in RGB: the ground with what
+        covers all of the panel at the bottom of it (a screen, full-panel widgets, a look's
+        grid); and the boxes ([x0, y0, x1, y1]) of the widgets that lie on that, in their order,
+        each within the panel (what covers all of it, and a light, none). For a transition that
+        brings the widgets in on their ground (render/handovers.py's cascade); None before a
+        frame was composed here."""
+        if self._last is None:
+            return None
+        pieces = self._last[0]
+        w, h = self.theme.width, self.theme.height
+        under = 0
+        while under < len(pieces):
+            x0, y0, x1, y1 = self._extent(pieces[under][1])
+            if x0 > 0 or y0 > 0 or x1 < w or y1 < h:
+                break
+            under += 1
+        ground = self._as_rgb(self._compose_region(pieces[:under], (0, 0, w, h)))
+        boxes: list[Box] = []
+        for wid, piece in pieces[under:]:
+            if "\0" in wid:  # (a light, or a widget's own part over it)
+                continue
+            x, y, bw, bh = piece.box or (piece.x, piece.y, piece.layer.width, piece.layer.height)
+            box = [max(0, x), max(0, y), min(w, x + bw), min(h, y + bh)]
+            if box[2] > box[0] and box[3] > box[1] and box != [0, 0, w, h]:
+                boxes.append(box)
+        return ground, boxes
+
     def _as_rgb(self, canvas: Image.Image) -> Image.Image:
         """The frame of ``canvas``, in RGB: a new picture each time (the loop keeps frames and
         draws on them). An RGBA picture pasted into an RGB one gives its colours as they are,

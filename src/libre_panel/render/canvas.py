@@ -1,6 +1,7 @@
-"""One transition across all the panels, as they stand (Settings → Panels): a slide, a wipe or
-the line of light runs over them as over one surface, through the gap between them, and each
-panel draws its own part of it, from the same moment on.
+"""One transition across all the panels, as they stand (Settings → Panels): a slide, a wipe,
+the line of light, the iris, the shatter, the cascade, the comet or the portal runs over them as
+over one surface, through the gap between them, and each panel draws its own part of it, from
+the same moment on.
 
 A transition is told where this panel stands and where all of them do: ``params["canvas"]`` is
 ``{"own": [x, y, w, h], "whole": [x, y, w, h]}``, in millimetres (arrangement.py). Without it,
@@ -15,9 +16,10 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
-from libre_panel.render.light import smooth
+from libre_panel.render.light import clamp, smooth
 
 # how long each takes across the panels (the preview's, which was liked): longer than on one
 # panel, as the way is longer
@@ -28,12 +30,21 @@ CANVAS_DURATIONS = {
     "slide-down": 1.25,
     "wipe": 1.25,
     "light": 1.4,
+    "iris": 1.3,
+    "shatter": 1.8,
+    "cascade": 1.9,
+    "comet": 1.7,
+    "portal": 1.5,
 }
 # where the content of a slide goes (x, y): "slide" brings the new screen in from the right
 SLIDE_WAYS = {"slide": (-1, 0), "slide-right": (1, 0), "slide-up": (0, -1), "slide-down": (0, 1)}
 SHADE_MM = 6.0  # the shadow the new screen casts on the old one at a slide's seam
 SHADE = 0.45  # its darkest, at the seam
 LIGHT_MARGIN_MM = 12.0  # the line of light begins and ends this far beyond the panels
+# a panel by itself, for one that is drawn in millimetres alone too (the cascade, the comet, the
+# portal): its shorter side taken for this, the 9.2" bar's height, as the sizes of the others
+# are for a panel 480 px high and scaled with the shorter side
+ALONE_MM = 56.68
 
 Rect = tuple[float, float, float, float]
 
@@ -160,3 +171,97 @@ def light_at(canvas: Canvas, t: float, w: int) -> int:
     left, _, width, _ = canvas.whole
     front = left - LIGHT_MARGIN_MM + (width + 2 * LIGHT_MARGIN_MM) * smooth(t)
     return round((front - x) * w / mw)
+
+
+# -- in millimetres: a panel by itself or over all of them ---------------------------------------
+
+
+def alone(size: tuple[int, int]) -> Canvas:
+    """A panel by itself as a canvas of its own (:data:`ALONE_MM`)."""
+    w, h = size
+    mm = ALONE_MM / min(w, h)
+    rect = (0.0, 0.0, w * mm, h * mm)
+    return Canvas(rect, rect)
+
+
+def way_of(canvas: Canvas) -> tuple[int, int]:
+    """Along the longer side of all the panels: right, or down where they stand taller than
+    wide."""
+    return (1, 0) if canvas.whole[2] >= canvas.whole[3] else (0, 1)
+
+
+def middle(rect: Rect) -> tuple[float, float]:
+    x, y, w, h = rect
+    return x + w / 2, y + h / 2
+
+
+def reach(rect: Rect, at: tuple[float, float]) -> float:
+    """How far the farthest corner of ``rect`` is from ``at``."""
+    x, y, w, h = rect
+    return max(math.sqrt((cx - at[0]) * (cx - at[0]) + (cy - at[1]) * (cy - at[1]))
+               for cx, cy in ((x, y), (x + w, y), (x, y + h), (x + w, y + h)))  # fmt: skip
+
+
+def per_mm(canvas: Canvas, size: tuple[int, int]) -> tuple[float, float]:
+    """This panel's pixels per millimetre, across and down."""
+    return size[0] / canvas.own[2], size[1] / canvas.own[3]
+
+
+def pixel(canvas: Canvas, size: tuple[int, int], at: tuple[float, float]) -> tuple[float, float]:
+    """Where the point ``at`` (millimetres) is on this panel, in its pixels (it may be off it)."""
+    sx, sy = per_mm(canvas, size)
+    return (at[0] - canvas.own[0]) * sx, (at[1] - canvas.own[1]) * sy
+
+
+def centres(canvas: Canvas, size: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+    """Where the middles of this panel's columns and rows are, in millimetres."""
+    w, h = size
+    sx, sy = per_mm(canvas, size)
+    return (canvas.own[0] + (np.arange(w) + 0.5) / sx,
+            canvas.own[1] + (np.arange(h) + 0.5) / sy)  # fmt: skip
+
+
+def levels(values: np.ndarray) -> Image.Image:
+    """A map (L) of ``values``, rounded to the nearest level (an even one at a half; what is
+    no number at all, 0)."""
+    rounded = np.clip(np.rint(np.where(np.isnan(values), 0.0, values)), 0, 255)
+    return Image.fromarray(rounded.astype(np.uint8), "L")
+
+
+def distances(canvas: Canvas, size: tuple[int, int], at: tuple[float, float]) -> np.ndarray:
+    """How far the middle of each pixel of this panel is from ``at``, in millimetres."""
+    xs, ys = centres(canvas, size)
+    dx, dy = xs - at[0], ys - at[1]
+    return np.sqrt(dy[:, None] * dy[:, None] + dx[None, :] * dx[None, :])
+
+
+def radial_map(canvas: Canvas, size: tuple[int, int], at: tuple[float, float],
+               far: float) -> Image.Image:  # fmt: skip
+    """A map of how far each pixel of this panel is from ``at``: 0 there, 255 ``far`` away."""
+    return levels(255 * distances(canvas, size, at) / far)
+
+
+def linear_map(canvas: Canvas, size: tuple[int, int], u: tuple[float, float], lo: float,
+               hi: float) -> Image.Image:  # fmt: skip
+    """A map of how far along ``u`` (a unit vector) each pixel of this panel is: 0 at ``lo``
+    millimetres, 255 at ``hi``."""
+    xs, ys = centres(canvas, size)
+    along = ys[:, None] * u[1] + xs[None, :] * u[0]
+    return levels(255 * (along - lo) / (hi - lo))
+
+
+def threshold(level: float, soft: float) -> list[int]:
+    """The mask of a map below ``level``: 255 where a value is ``soft`` below it or more, 0
+    above it, a ramp in between."""
+    return [255 if v <= level - soft else 0 if v > level else round(255 * (level - v) / soft)
+            for v in range(256)]  # fmt: skip
+
+
+def in_out(u: float) -> float:
+    """Slow, fast, slow (cubic)."""
+    u = clamp(u)
+    return 4 * u * u * u if u < 0.5 else 1 - (-2 * u + 2) ** 3 / 2
+
+
+def in_out_sine(u: float) -> float:
+    return -(math.cos(math.pi * clamp(u)) - 1) / 2

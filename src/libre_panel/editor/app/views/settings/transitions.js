@@ -2,8 +2,9 @@
 // config.toml): the default, how fast, and each occasion's own (a game, music, the PC at rest, the
 // screens in turn, the autopilot, the round report, a theme chosen), "random" picking one of a set.
 // "Show on the panel" plays one there, out to a card with its name and back (transition_show.py).
-// With more panels, a slide, the wipe and the line of light go over all of them as one, where
-// they all change at once ([transitions] canvas, render/canvas.py).
+// With more panels, a slide, the wipe, the iris, the line of light, the shatter, the cascade, the
+// comet and the portal go over all of them as one, where they all change at once ([transitions]
+// canvas, render/canvas.py).
 
 import { endpoints } from "../../core/api.js";
 import { t } from "../../core/i18n.js";
@@ -35,6 +36,9 @@ const NAMES = {
   glitch: () => t("Glitch"),
   tiles: () => t("Tiles"),
   shatter: () => t("Shatter"),
+  cascade: () => t("Cascade"),
+  comet: () => t("Comet"),
+  portal: () => t("Portal"),
   [RANDOM]: () => t("Random"),
 };
 
@@ -112,7 +116,7 @@ export function TransitionsCard() {
     <//>
     ${more
       ? html`<${SettingRow} title=${t("Across the panels")}
-          hint=${t("Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.")}>
+          hint=${t("Slides, the wipe, the iris, the line of light, the shatter, the cascade, the comet and the portal run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.")}>
           <${Toggle} label=${t("Across the panels")} checked=${chosen.canvas !== false}
             onChange=${(on) => save({ "transitions.canvas": on })} />
         <//>`

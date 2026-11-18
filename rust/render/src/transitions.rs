@@ -1,7 +1,8 @@
 //! The ways from one screen to the next, as Python draws them: render/overlays.py's cut, fade
 //! and slide; render/transitions.py's tube and entrance, drawn with light; render/handovers.py's
 //! wipe, iris, blinds, dissolve, the slides from each side, zoom, the line of light, the glitch,
-//! the tiles and the shatter. Each is made for a switch with the new theme's colours and the
+//! the tiles, the shatter, the cascade, the comet and the portal. Each is made for a switch
+//! with the new theme's colours and the
 //! parameters a service passed (overlays.transition), and draws its frame of the old screen,
 //! the new one and how far it has gone (0 to 1), what it keeps from frame to frame kept as
 //! Python keeps it: a map or a strip of light for the frame's size, the logo or title with its
@@ -13,9 +14,13 @@ use lp_pixels::{chops, merge, Filter, Image, Mode, Transpose};
 use lp_py::random::Random;
 use lp_py::{Dict, Value};
 
-use crate::canvas::{canvas_duration, canvas_of, light_at, slide, slide_way, wipe_map, Canvas};
+use crate::canvas::{
+    alone, canvas_duration, canvas_of, centres, distance, in_out, in_out_sine, level, light_at,
+    linear_map, middle, per_mm, pixel, radial_map, reach, slide, slide_way, span, threshold,
+    way_of, wipe_map, Canvas,
+};
 use crate::light::{
-    add_light, add_line, draw_tracked, ease_in, ease_out, face, mix, phase, py_max, py_min,
+    add_light, add_line, clamp, draw_tracked, ease_in, ease_out, face, mix, phase, py_max, py_min,
     role_colour, scaled, smooth, tracked_width, whole, Look,
 };
 use crate::piece::{Failed, Result};
@@ -38,6 +43,11 @@ fn trunc_int(x: f64) -> Result<i64> {
 /// math.ceil(x) of a float.
 fn ceil_int(x: f64) -> Result<i64> {
     whole(x, f64::ceil)
+}
+
+/// math.floor(x) of a float.
+fn floor_int(x: f64) -> Result<i64> {
+    whole(x, f64::floor)
 }
 
 /// _rgb: the picture as RGB (itself where it is).
@@ -90,7 +100,11 @@ enum Kind {
     LightLine(Option<((usize, usize), Image)>),
     Glitch,
     Tiles,
-    Shatter(Option<(u64, Vec<Shard>)>),
+    /// its pieces, and its tiles across the panels
+    Shatter(Option<(u64, Vec<Shard>)>, Option<(u64, Vec<Tile>)>),
+    Cascade(Option<Laid>),
+    Comet(Option<Box<Flown>>),
+    Portal(Option<Box<Opening>>),
     /// a plugin's (render/plugin.rs)
     Plugin(Box<dyn crate::plugin::PluginTransition>),
 }
@@ -115,6 +129,8 @@ struct Masked {
     map: Map,
     soft: f64,
     made: Option<((usize, usize), Image)>,
+    /// the iris across the panels: the middle of all of them and how far it opens
+    across: Option<((f64, f64), f64)>,
 }
 
 /// A piece of the old screen as Shatter breaks it: its picture, place, speed and start.
@@ -155,12 +171,25 @@ impl Transition {
             "light" => (1.1, "wait", "over", true, Kind::LightLine(None)),
             "glitch" => (0.7, "wait", "over", false, Kind::Glitch),
             "tiles" => (1.2, "wait", "over", false, Kind::Tiles),
-            "shatter" => (1.3, "wait", "over", false, Kind::Shatter(None)),
+            "shatter" => (1.3, "wait", "over", false, Kind::Shatter(None, None)),
+            "cascade" => (1.9, "wait", "over", false, Kind::Cascade(None)),
+            "comet" => (1.7, "wait", "over", false, Kind::Comet(None)),
+            "portal" => (1.5, "wait", "over", false, Kind::Portal(None)),
             _ => return Transition::plugin(name, params, renderer),
         };
         let name = BUILT_IN.iter().copied().find(|n| *n == name)?;
         // take_canvas: across the panels, at its own pace there
         let canvas = canvas_duration(name).and_then(|d| canvas_of(params).map(|c| (d, c)));
+        let mut kind = kind;
+        if let (Kind::Masked(masked), Some((_, c))) = (&mut kind, &canvas) {
+            if masked.map == Map::Iris {
+                // (it reaches the farthest corner at 255, its edge beyond)
+                let at = middle(c.whole);
+                let far = reach(c.whole, at) + IRIS_EDGE_MM;
+                masked.soft = 255.0 * IRIS_EDGE_MM / far;
+                masked.across = Some((at, far));
+            }
+        }
         Some(Transition {
             name,
             duration: canvas.map_or(duration, |(d, _)| d),
@@ -293,7 +322,13 @@ impl Transition {
             Kind::LightLine(glow) => light_line(glow, old, new, t, &colours, self.canvas.as_ref()),
             Kind::Glitch => glitch(old, new, t),
             Kind::Tiles => tiles(old, new, t, &colours),
-            Kind::Shatter(pieces) => shatter(pieces, old, old_key, new, t, 1.3),
+            Kind::Shatter(pieces, tiles) => match &self.canvas {
+                Some(canvas) => falling(tiles, old, old_key, new, t, canvas, &colours),
+                None => shatter(pieces, old, old_key, new, t, 1.3),
+            },
+            Kind::Cascade(laid) => cascade(laid, old, new, t, self.canvas.as_ref(), renderer),
+            Kind::Comet(flown) => comet(flown, old, new, t, self.canvas.as_ref(), &colours),
+            Kind::Portal(opening) => portal(opening, old, new, t, self.canvas.as_ref(), &colours),
             Kind::Plugin(played) => played.frame(old, new, t).map_err(Failed),
         }
     }
@@ -309,7 +344,7 @@ fn policy(said: &str) -> &'static str {
 }
 
 /// The built-in names (overlays.BUILT_IN_TRANSITIONS).
-pub const BUILT_IN: [&str; 17] = [
+pub const BUILT_IN: [&str; 20] = [
     "cut",
     "fade",
     "slide",
@@ -327,6 +362,9 @@ pub const BUILT_IN: [&str; 17] = [
     "glitch",
     "tiles",
     "shatter",
+    "cascade",
+    "comet",
+    "portal",
 ];
 
 impl Kind {
@@ -335,6 +373,7 @@ impl Kind {
             map,
             soft,
             made: None,
+            across: None,
         })
     }
 }
@@ -742,7 +781,8 @@ fn lettering(
 // threshold -------------------------------------------------------------------------------------
 
 impl Masked {
-    /// `canvas`: the wipe's across all the panels (Wipe._map: wipe_map)
+    /// `canvas`: the wipe's and the iris's across all the panels (Wipe._map: wipe_map; Iris:
+    /// from the middle of all of them, in_out)
     fn frame(
         &mut self,
         old: &Image,
@@ -755,25 +795,18 @@ impl Masked {
         }
         let size = (new.width(), new.height());
         if self.made.as_ref().is_none_or(|(s, _)| *s != size) {
-            let made = match canvas {
-                Some(canvas) if self.map == Map::Wipe => wipe_map(canvas, size.0, size.1)?,
+            let made = match (canvas, self.across) {
+                (Some(canvas), _) if self.map == Map::Wipe => wipe_map(canvas, size.0, size.1)?,
+                (Some(canvas), Some((at, far))) => radial_map(canvas, size, at, far)?,
                 _ => map_of(self.map, size.0, size.1)?,
             };
             self.made = Some((size, made));
         }
-        let level = smooth(t) * (255.0 + self.soft);
-        let lut: Vec<i64> = (0..256)
-            .map(|v| {
-                let v = v as f64;
-                if v <= level - self.soft {
-                    Ok(255)
-                } else if v > level {
-                    Ok(0)
-                } else {
-                    round_int(255.0 * (level - v) / self.soft)
-                }
-            })
-            .collect::<Result<_>>()?;
+        let level = match (canvas, self.across) {
+            (Some(_), Some(_)) => 255.0 * in_out(t),
+            _ => smooth(t) * (255.0 + self.soft),
+        };
+        let lut = threshold(level, self.soft)?;
         let made = &self.made.as_ref().expect("made").1;
         let mask = made.point(&lut).map_err(failed)?;
         chops::composite(&*rgb(new)?, &*rgb(old)?, &mask).map_err(failed)
@@ -1147,4 +1180,833 @@ fn broken(old: &Image) -> Result<Vec<Shard>> {
         y += side;
     }
     Ok(pieces)
+}
+
+// -- across the panels and in millimetres (render/handovers.py): the iris's edge, the shatter's
+// tiles, the cascade's cards, the comet, the portal's ring --------------------------------------
+
+/// Iris.EDGE_MM: across the panels, the iris's soft edge
+const IRIS_EDGE_MM: f64 = 11.0;
+
+/// A tile of the old screen as the shatter across the panels breaks it (_Tile).
+struct Tile {
+    picture: Image,
+    bounds: (i64, i64, i64, i64),
+    drift: f64,
+    turn: f64,
+    start: f64,
+}
+
+/// Shatter.TILE_MM and SHADE
+const TILE_MM: f64 = 19.0;
+const TILE_SHADE: f64 = 0.35;
+
+/// Shatter._tiles_of: the tiles of the old frame across the panels, each with its box, its own
+/// chance (drift, turn) and when it begins, along all the panels.
+fn tiles_of(old: &Image, canvas: &Canvas) -> Result<Vec<Tile>> {
+    let (w, h) = (old.width() as i64, old.height() as i64);
+    let (x, y, mw, mh) = canvas.own;
+    // (no more of them than the panel has pixels)
+    let cols = w.min(4.max(round_int(mw / TILE_MM)?));
+    let rows = h.min(2.max(round_int(mh / TILE_MM)?));
+    let way = way_of(canvas);
+    let (a, b) = span(canvas.whole, way);
+    // (each panel its own chance: two alike side by side do not break alike)
+    let seed = 1009i64
+        .wrapping_mul(round_int(x)?)
+        .wrapping_add(round_int(y)?);
+    let mut chance = Random::new(seed);
+    let picture = rgb(old)?;
+    let mut tiles = Vec::new();
+    for row in 0..rows {
+        for col in 0..cols {
+            let (drift, turn, late) = (chance.random(), chance.random(), chance.random());
+            let edge = |i: i64, n: i64, size: i64| round_int((i * size) as f64 / n as f64);
+            let bounds = (
+                edge(col, cols, w)?,
+                edge(row, rows, h)?,
+                edge(col + 1, cols, w)?,
+                edge(row + 1, rows, h)?,
+            );
+            let cx = x + (col as f64 + 0.5) * mw / cols as f64;
+            let cy = y + (row as f64 + 0.5) * mh / rows as f64;
+            let q = (cx * way.0 as f64 + cy * way.1 as f64 - a) / py_max(0.001, b - a);
+            tiles.push(Tile {
+                picture: crop(&picture, bounds),
+                bounds,
+                drift,
+                turn,
+                start: q * 0.48 + late * 0.06,
+            });
+        }
+    }
+    Ok(tiles)
+}
+
+/// Shatter._falling: across the panels, the tiles drift, turn, shrink and fall one after
+/// another along all of them, the new screen coming out of the shade behind them.
+fn falling(
+    kept: &mut Option<(u64, Vec<Tile>)>,
+    old: &Image,
+    old_key: u64,
+    new: &Image,
+    t: f64,
+    canvas: &Canvas,
+    c: &Colours,
+) -> Result<Image> {
+    if t >= 1.0 {
+        return Ok(new.clone());
+    }
+    if kept.as_ref().is_none_or(|(key, _)| *key != old_key) {
+        *kept = Some((old_key, tiles_of(old, canvas)?));
+    }
+    let dark = TILE_SHADE * (1.0 - smooth(t * 1.4));
+    let base = rgb(new)?;
+    let mut out = if dark > 0.0 {
+        let black = Image::blank(Mode::RGB, base.width(), base.height());
+        chops::blend(&base, &black, dark as f32).map_err(failed)?
+    } else {
+        base.into_owned()
+    };
+    let (sx, sy) = per_mm(canvas, (new.width(), new.height()));
+    let way = way_of(canvas);
+    let edge = colour_of(c.text);
+    let pi = std::f64::consts::PI;
+    for tile in &kept.as_ref().expect("kept").1 {
+        let tt = clamp((t - tile.start) / 0.46);
+        if tt >= 1.0 {
+            continue; // (gone)
+        }
+        if tt <= 0.0 {
+            // (not yet begun: where it was)
+            out.paste(&tile.picture, tile.bounds.0, tile.bounds.1, None)
+                .map_err(failed)?;
+            continue;
+        }
+        let dx = (way.0 as f64 * 22.0 * tt + (tile.drift - 0.5) * 16.0 * tt) * sx;
+        let dy = (way.1 as f64 * 22.0 * tt + 70.0 * tt * tt - 6.0 * (pi * tt).sin()) * sy;
+        let lit = 0.22 * (pi * py_min(1.0, tt * 1.6)).sin();
+        let turn = (tile.turn - 0.5) * 1.5 * tt;
+        lay(
+            &mut out,
+            tile,
+            (dx, dy),
+            turn,
+            1.0 - 0.18 * tt,
+            1.0 - tt.powf(1.7),
+            lit,
+            edge,
+        )?;
+    }
+    Ok(out)
+}
+
+/// _edged: `picture` with a line of `colour` along its edge, `strength` over it.
+fn edged(picture: &Image, strength: f64, colour: [u8; 3]) -> Result<Image> {
+    let mut face = picture.clone();
+    let (w, h) = (face.width() as i64, face.height() as i64);
+    for b in [
+        (0, 0, w, 1),
+        (0, h - 1, w, h),
+        (0, 1, 1, h - 1),
+        (w - 1, 1, w, h - 1),
+    ] {
+        if b.2 > b.0 && b.3 > b.1 {
+            let part = crop(&face, b);
+            let tint = Image::new(Mode::RGB, part.width(), part.height(), &colour);
+            let lit = chops::blend(&part, &tint, strength as f32).map_err(failed)?;
+            face.paste(&lit, b.0, b.1, None).map_err(failed)?;
+        }
+    }
+    Ok(face)
+}
+
+/// _lay: lay `tile` onto `out`, moved by `by`, turned by `turn` (radians, clockwise), grown by
+/// `size` about its middle, `alpha` of it seen, its edge lit.
+#[allow(clippy::too_many_arguments)]
+fn lay(
+    out: &mut Image,
+    tile: &Tile,
+    by: (f64, f64),
+    turn: f64,
+    size: f64,
+    alpha: f64,
+    lit: f64,
+    edge: [u8; 3],
+) -> Result<()> {
+    let face = if lit > 0.004 {
+        Cow::Owned(edged(&tile.picture, lit, edge)?)
+    } else {
+        Cow::Borrowed(&tile.picture)
+    };
+    // (a clear pixel around it: soft edges once turned)
+    let (pw, ph) = (face.width() + 2, face.height() + 2);
+    let mut held = Image::blank(Mode::RGBA, pw, ph);
+    held.paste(&face, 1, 1, None).map_err(failed)?;
+    let (x0, y0, x1, y1) = tile.bounds;
+    let cx = (x0 + x1) as f64 / 2.0 + by.0;
+    let cy = (y0 + y1) as f64 / 2.0 + by.1;
+    let (c, s) = (turn.cos(), turn.sin());
+    let (pwf, phf) = (pw as f64, ph as f64);
+    let hx = size * (c.abs() * pwf + s.abs() * phf) / 2.0;
+    let hy = size * (s.abs() * pwf + c.abs() * phf) / 2.0;
+    let (ox, oy) = (floor_int(cx - hx)?, floor_int(cy - hy)?);
+    let (ow, oh) = (ceil_int(cx + hx)? - ox, ceil_int(cy + hy)? - oy);
+    let (w, h) = (out.width() as i64, out.height() as i64);
+    if ow <= 0 || oh <= 0 || ox >= w || oy >= h || ox + ow <= 0 || oy + oh <= 0 {
+        return Ok(());
+    }
+    // (where each pixel laid comes from in the tile: turned back and shrunk about its middle)
+    let (mx, my) = (pwf / 2.0, phf / 2.0);
+    let (dx, dy) = (ox as f64 - cx, oy as f64 - cy);
+    let data = [
+        c / size,
+        s / size,
+        mx + (c * dx + s * dy) / size,
+        -s / size,
+        c / size,
+        my + (-s * dx + c * dy) / size,
+    ];
+    let mut laid = held
+        .transform(
+            (ow as usize, oh as usize),
+            lp_pixels::Transform::Affine(data),
+            Filter::Bilinear,
+            None,
+        )
+        .map_err(failed)?;
+    if alpha < 0.999 {
+        let lut = (0..256)
+            .map(|v| round_int(v as f64 * alpha))
+            .collect::<Result<Vec<i64>>>()?;
+        let seen = laid
+            .getchannel(3)
+            .and_then(|a| a.point(&lut))
+            .map_err(failed)?;
+        laid.putalpha(&seen).map_err(failed)?;
+    }
+    out.paste(&laid, ox, oy, Some(&laid)).map_err(failed)
+}
+
+/// _joined: boxes ([x0, y0, x1, y1]) joined where they overlap, until none do: a screen's cards.
+fn joined(boxes: &[[i64; 4]]) -> Vec<[i64; 4]> {
+    let mut out = boxes.to_vec();
+    'again: loop {
+        for i in 0..out.len() {
+            for j in i + 1..out.len() {
+                let (a, b) = (out[i], out[j]);
+                if a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3] {
+                    out[i] = [
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        a[2].max(b[2]),
+                        a[3].max(b[3]),
+                    ];
+                    out.remove(j);
+                    continue 'again;
+                }
+            }
+        }
+        return out;
+    }
+}
+
+/// _spaced: each card with a margin around it (its shadow, its glow), within the panel and
+/// short of the cards beside it (to the middle of the gap between).
+fn spaced(cards: &[[i64; 4]], mx: i64, my: i64, w: i64, h: i64) -> Vec<[i64; 4]> {
+    cards
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let mut e = [
+                0.max(a[0] - mx),
+                0.max(a[1] - my),
+                w.min(a[2] + mx),
+                h.min(a[3] + my),
+            ];
+            for (j, b) in cards.iter().enumerate() {
+                if j == i || !(e[0] < b[2] && b[0] < e[2] && e[1] < b[3] && b[1] < e[3]) {
+                    continue;
+                }
+                if b[0] >= a[2] {
+                    e[2] = e[2].min(a[2].max((a[2] + b[0]).div_euclid(2))); // (to the right)
+                } else if b[2] <= a[0] {
+                    e[0] = e[0].max(a[0].min((b[2] + a[0] + 1).div_euclid(2))); // (to the left)
+                } else if b[1] >= a[3] {
+                    e[3] = e[3].min(a[3].max((a[3] + b[1]).div_euclid(2))); // (below)
+                } else if b[3] <= a[1] {
+                    e[1] = e[1].max(a[1].min((b[3] + a[1] + 1).div_euclid(2))); // (above)
+                }
+            }
+            e
+        })
+        .collect()
+}
+
+/// What a cascade works out once for a frame's size: the new screen's ground and its cards
+/// (each a box with its margin, and when along the way it comes, 0 to 1).
+struct Laid {
+    size: (usize, usize),
+    ground: Image,
+    cards: Vec<([i64; 4], f64)>,
+}
+
+/// Cascade's constants
+const CASCADE_GROUND: f64 = 0.28;
+const CASCADE_MARGIN_MM: f64 = 1.2;
+const CASCADE_RISE_MM: f64 = 9.0;
+const CASCADE_SPREAD: f64 = 0.42;
+const CASCADE_COMES: f64 = 0.34;
+const CASCADE_LAST: f64 = 0.84;
+
+/// Cascade._cards: from what the new screen's renderer composed last.
+fn laid_out(new: &Image, canvas: Option<&Canvas>, renderer: &Renderer) -> Result<Laid> {
+    let size = (new.width(), new.height());
+    let (ground, boxes) = match renderer.beneath()? {
+        Some((ground, boxes)) if ground.size() == size => (ground, boxes),
+        // (none known: it fades, as one)
+        _ => (rgb(new)?.into_owned(), Vec::new()),
+    };
+    let (w, h) = (size.0 as i64, size.1 as i64);
+    let canvas = canvas.copied().unwrap_or_else(|| alone(size));
+    let (sx, sy) = per_mm(&canvas, size);
+    let cards = joined(&boxes);
+    let (mx, my) = (
+        w.min(round_int(CASCADE_MARGIN_MM * sx)?),
+        h.min(round_int(CASCADE_MARGIN_MM * sy)?),
+    );
+    let way = way_of(&canvas);
+    let (a, b) = span(canvas.whole, way);
+    let laid = cards
+        .iter()
+        .zip(spaced(&cards, mx, my, w, h))
+        .map(|(card, bounds)| {
+            let cx = canvas.own.0 + (card[0] + card[2]) as f64 / 2.0 / sx;
+            let cy = canvas.own.1 + (card[1] + card[3]) as f64 / 2.0 / sy;
+            let q = (cx * way.0 as f64 + cy * way.1 as f64 - a) / py_max(0.001, b - a);
+            (bounds, q)
+        })
+        .collect();
+    Ok(Laid {
+        size,
+        ground,
+        cards: laid,
+    })
+}
+
+/// Cascade: the ground changes, then the new screen's cards come in one after another, each
+/// rising and growing into its place, as a wave along all the panels or this one; what lies on
+/// no card comes with them at the end.
+fn cascade(
+    kept: &mut Option<Laid>,
+    old: &Image,
+    new: &Image,
+    t: f64,
+    canvas: Option<&Canvas>,
+    renderer: &Renderer,
+) -> Result<Image> {
+    if t >= 1.0 {
+        return Ok(new.clone());
+    }
+    let size = (new.width(), new.height());
+    if kept.as_ref().is_none_or(|laid| laid.size != size) {
+        *kept = Some(laid_out(new, canvas, renderer)?);
+    }
+    let laid = kept.as_ref().expect("laid");
+    let changed = smooth(t / CASCADE_GROUND);
+    let mut out = if changed >= 1.0 {
+        laid.ground.clone()
+    } else {
+        chops::blend(&*rgb(old)?, &laid.ground, changed as f32).map_err(failed)?
+    };
+    let rise = CASCADE_RISE_MM * per_mm(&canvas.copied().unwrap_or_else(|| alone(size)), size).1;
+    let picture = rgb(new)?;
+    for &(bounds, q) in &laid.cards {
+        let e = ease_out((t - (0.2 + q * CASCADE_SPREAD)) / CASCADE_COMES);
+        if e <= 0.0 {
+            continue;
+        }
+        let mut part = crop(&picture, (bounds[0], bounds[1], bounds[2], bounds[3]));
+        let grown = 0.93 + 0.07 * e;
+        let (pw, ph) = (
+            1.max(round_int(part.width() as f64 * grown)?),
+            1.max(round_int(part.height() as f64 * grown)?),
+        );
+        if (pw as usize, ph as usize) != part.size() {
+            part = part
+                .resize(pw as usize, ph as usize, Filter::Bilinear, None, None)
+                .map_err(failed)?;
+        }
+        let x = round_int((bounds[0] + bounds[2]) as f64 / 2.0 - pw as f64 / 2.0)?;
+        let y = (bounds[1] + bounds[3]) as f64 / 2.0 + (1.0 - e) * rise - ph as f64 / 2.0;
+        let y = round_int(y)?;
+        let seen = smooth(e * 1.25);
+        if seen >= 1.0 {
+            out.paste(&part, x, y, None).map_err(failed)?;
+        } else {
+            let v = round_int(255.0 * seen)?.clamp(0, 255) as u8;
+            let mask = Image::new(Mode::L, part.width(), part.height(), &[v]);
+            out.paste(&part, x, y, Some(&mask)).map_err(failed)?;
+        }
+    }
+    let last = smooth((t - CASCADE_LAST) / (1.0 - CASCADE_LAST));
+    if last > 0.0 {
+        chops::blend(&out, &picture, last as f32).map_err(failed)
+    } else {
+        Ok(out)
+    }
+}
+
+/// Comet's constants
+const COMET_MARGIN_MM: f64 = 35.0;
+const COMET_SLANT: f64 = 0.38;
+const COMET_TAIL_MM: f64 = 90.0;
+const COMET_SPOTS: usize = 44;
+const COMET_SPARKS: usize = 22;
+const COMET_HEAD_MM: f64 = 17.0;
+const COMET_LAG_MM: f64 = 12.0;
+const COMET_EDGE_MM: f64 = 45.0;
+/// COMET_MOST: the most pixels its light may have (more: a canvas that says nothing sensible,
+/// and it flies without it)
+const COMET_MOST: i128 = 1 << 22;
+
+/// What a comet works out once for a frame's size (_made_for): its way (where it begins, which
+/// way it goes, how far), the map of where the new screen opens, its light and where its head
+/// is in it.
+struct Flown {
+    size: (usize, usize),
+    begin: (f64, f64),
+    u: (f64, f64),
+    length: f64,
+    seen: Image,
+    /// its light and where its head is in it (None: it flies without it)
+    light: Option<(Image, i64, i64)>,
+}
+
+/// Comet._flight: its way over the canvas, from beyond one side to beyond the other, slanting
+/// down, and on until its tail has left all the panels and the new screen is open on all.
+fn flight(canvas: &Canvas) -> ((f64, f64), (f64, f64), f64) {
+    let (x, y, w, h) = canvas.whole;
+    let (cx, cy) = middle(canvas.whole);
+    let m = COMET_MARGIN_MM;
+    let (begin, end) = if way_of(canvas) == (1, 0) {
+        (
+            (x - m, cy - COMET_SLANT * h),
+            (x + w + m, cy + COMET_SLANT * h),
+        )
+    } else {
+        (
+            (cx - COMET_SLANT * w, y - m),
+            (cx + COMET_SLANT * w, y + h + m),
+        )
+    };
+    let (dx, dy) = (end.0 - begin.0, end.1 - begin.1);
+    let mut length = (dx * dx + dy * dy).sqrt();
+    let u = (dx / length, dy / length);
+    let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)];
+    let along = |(px, py): (f64, f64)| px * u.0 + py * u.1;
+    let farthest = corners[1..]
+        .iter()
+        .fold(along(corners[0]), |a, &c| py_max(a, along(c)));
+    let behind = py_max(COMET_TAIL_MM + 1.0, COMET_LAG_MM + COMET_EDGE_MM);
+    length += py_max(0.0, farthest + behind - (end.0 * u.0 + end.1 * u.1));
+    (begin, u, length)
+}
+
+/// What the comet's light is made of, in the order it is added (_comet_light's parts).
+#[derive(Clone, Copy, PartialEq)]
+enum Part {
+    Spot,
+    Spark,
+    Head,
+}
+
+/// A part of the comet's light: where its middle is from the head (millimetres), how far it
+/// reaches, what it is and how bright.
+type Lit = (f64, f64, f64, Part, f64);
+
+/// _comet_light: the comet's light (RGB, added onto the frame), made once: its tail, spot by
+/// spot in the accent, sparks of white behind its head and the head's halo, white in the
+/// middle; and where its head is in it. None where it would be larger than any panel.
+fn comet_light(
+    accent: [i64; 3],
+    white: [i64; 3],
+    (sx, sy): (f64, f64),
+    u: (f64, f64),
+) -> Result<Option<(Image, i64, i64)>> {
+    let n = (-u.1, u.0);
+    let mut parts: Vec<Lit> = Vec::new();
+    for i in (1..=COMET_SPOTS).rev() {
+        let f = i as f64 / COMET_SPOTS as f64;
+        parts.push((
+            -u.0 * COMET_TAIL_MM * f,
+            -u.1 * COMET_TAIL_MM * f,
+            (0.42 * (1.0 - f) + 0.06) * 10.0,
+            Part::Spot,
+            0.32 * (1.0 - f).powf(1.4),
+        ));
+    }
+    let mut chance = Random::new(0xC0E7);
+    for _ in 0..COMET_SPARKS {
+        let back = 4.0 + chance.random() * 70.0;
+        let side = (chance.random() - 0.5) * 16.0 * (back / 70.0);
+        let small = 0.3 + chance.random() * 0.7;
+        parts.push((
+            -u.0 * back + n.0 * side,
+            -u.1 * back + n.1 * side,
+            small,
+            Part::Spark,
+            0.75 * (1.0 - back / 74.0),
+        ));
+    }
+    parts.push((0.0, 0.0, COMET_HEAD_MM, Part::Head, 1.0));
+    let lowest =
+        |f: &dyn Fn(&Lit) -> f64| parts[1..].iter().fold(f(&parts[0]), |a, p| py_min(a, f(p)));
+    let highest =
+        |f: &dyn Fn(&Lit) -> f64| parts[1..].iter().fold(f(&parts[0]), |a, p| py_max(a, f(p)));
+    let left = floor_int(lowest(&|p| p.0 - p.2) * sx)? - 1;
+    let top = floor_int(lowest(&|p| p.1 - p.2) * sy)? - 1;
+    let right = ceil_int(highest(&|p| p.0 + p.2) * sx)? + 1;
+    let bottom = ceil_int(highest(&|p| p.1 + p.2) * sy)? + 1;
+    if (right as i128 - left as i128) * (bottom as i128 - top as i128) > COMET_MOST {
+        return Ok(None);
+    }
+    let (hx, hy) = (-left, -top);
+    let (lw, lh) = ((right - left) as usize, (bottom - top) as usize);
+    let mut light = vec![0.0f64; lw * lh * 3];
+    let accent = accent.map(|v| v as f64);
+    let white = white.map(|v| v as f64);
+    for &(cx, cy, r, kind, a) in &parts {
+        let (px, py) = (hx as f64 + cx * sx, hy as f64 + cy * sy);
+        let x0 = 0.max(floor_int(px - r * sx)?);
+        let x1 = (lw as i64).min(ceil_int(px + r * sx)? + 1);
+        let y0 = 0.max(floor_int(py - r * sy)?);
+        let y1 = (lh as i64).min(ceil_int(py + r * sy)? + 1);
+        for j in y0..y1 {
+            let dy = (j as f64 + 0.5 - py) / sy;
+            for i in x0..x1 {
+                let dx = (i as f64 + 0.5 - px) / sx;
+                let d = distance(dx, dy);
+                let at = (j as usize * lw + i as usize) * 3;
+                match kind {
+                    Part::Spot => {
+                        // (the accent, fading out to its rim)
+                        let k = a * (1.0 - d / r).max(0.0);
+                        for c in 0..3 {
+                            light[at + c] += accent[c] * k;
+                        }
+                    }
+                    Part::Spark => {
+                        // (a small disc of white, its rim smooth)
+                        let k = a * ((r - d) * sx + 0.5).clamp(0.0, 1.0);
+                        for c in 0..3 {
+                            light[at + c] += white[c] * k;
+                        }
+                    }
+                    Part::Head => {
+                        // (the halo: white in the middle, the accent, nothing at its rim)
+                        let g = d / r;
+                        for c in 0..3 {
+                            let (v0, v1, v2) = (white[c] * 0.95, accent[c] * 0.9, accent[c] * 0.25);
+                            light[at + c] += if g < 0.1 {
+                                v0 + (v1 - v0) * (g / 0.1)
+                            } else if g < 0.35 {
+                                v1 + (v2 - v1) * ((g - 0.1) / 0.25)
+                            } else if g < 1.0 {
+                                v2 * (1.0 - (g - 0.35) / 0.65)
+                            } else {
+                                0.0
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let bytes = light.iter().map(|&v| level(v)).collect();
+    let image = Image::from_bytes(Mode::RGB, lw, lh, bytes).map_err(failed)?;
+    Ok(Some((image, hx, hy)))
+}
+
+/// _add: add `light` onto `out` with its top left at `x`, `y`, where it lies on it.
+fn add_onto(out: &mut Image, light: &Image, x: i64, y: i64) -> Result<()> {
+    let (w, h) = (out.width() as i64, out.height() as i64);
+    let b = (
+        0.max(x),
+        0.max(y),
+        w.min(x + light.width() as i64),
+        h.min(y + light.height() as i64),
+    );
+    if b.2 > b.0 && b.3 > b.1 {
+        let part = crop(light, (b.0 - x, b.1 - y, b.2 - x, b.3 - y));
+        let lit = chops::add(&crop(out, b), &part, 1.0, 0).map_err(failed)?;
+        out.paste(&lit, b.0, b.1, None).map_err(failed)?;
+    }
+    Ok(())
+}
+
+/// Comet: a comet flies across, from one panel into the next or across this one, and the new
+/// screen opens behind it.
+fn comet(
+    kept: &mut Option<Box<Flown>>,
+    old: &Image,
+    new: &Image,
+    t: f64,
+    canvas: Option<&Canvas>,
+    c: &Colours,
+) -> Result<Image> {
+    if t >= 1.0 {
+        return Ok(new.clone());
+    }
+    let size = (new.width(), new.height());
+    let canvas = canvas.copied().unwrap_or_else(|| alone(size));
+    if kept.as_ref().is_none_or(|flown| flown.size != size) {
+        let (begin, u, length) = flight(&canvas);
+        let start = begin.0 * u.0 + begin.1 * u.1 - COMET_LAG_MM;
+        let seen = linear_map(&canvas, size, u, start - COMET_EDGE_MM, start + length)?;
+        let light = comet_light(c.info, c.text, per_mm(&canvas, size), u)?;
+        *kept = Some(Box::new(Flown {
+            size,
+            begin,
+            u,
+            length,
+            seen,
+            light,
+        }));
+    }
+    let flown = kept.as_ref().expect("flown");
+    let far = flown.length + COMET_EDGE_MM;
+    let s = in_out_sine(t) * flown.length;
+    let level = 255.0 * (s + COMET_EDGE_MM) / far;
+    let mask = flown
+        .seen
+        .point(&threshold(level, 255.0 * COMET_EDGE_MM / far)?)
+        .map_err(failed)?;
+    let mut out = chops::composite(&*rgb(new)?, &*rgb(old)?, &mask).map_err(failed)?;
+    if let Some((light, hx, hy)) = &flown.light {
+        let at = (flown.begin.0 + flown.u.0 * s, flown.begin.1 + flown.u.1 * s);
+        let head = pixel(&canvas, size, at);
+        let (x, y) = (round_int(head.0)? - hx, round_int(head.1)? - hy);
+        add_onto(&mut out, light, x, y)?;
+    }
+    Ok(out)
+}
+
+/// Portal's constants
+const PORTAL_EDGE_MM: f64 = 2.0;
+const PORTAL_GROWN: f64 = 0.12;
+const PORTAL_GLOW_MM: f64 = 14.0;
+/// RING_STEPS: the ring's light worked out for every 64th of a millimetre beside it
+const RING_STEPS: f64 = 64.0;
+
+/// What a portal works out once for a frame's size (_Opening): how far it opens and its middle
+/// (millimetres), the map of the opening, where the new screen grows about (pixels), the
+/// middles of the panel's columns and rows (millimetres), the pixels per millimetre and the
+/// ring's light beside it at its full strength (in the accent, in white).
+struct Opening {
+    size: (usize, usize),
+    at: (f64, f64),
+    far: f64,
+    map: Image,
+    near: (f64, f64),
+    xs: Vec<f64>,
+    ys: Vec<f64>,
+    per_mm: f64,
+    light: (Vec<f64>, Vec<f64>),
+}
+
+/// _ring_light: the ring's light beside it at its full strength, for each step from `-reach`
+/// to `reach` (`spx` pixels a millimetre): in the accent, a faint wide band, its bright line and
+/// the line's glow (blurred by a Gaussian of 4 mm, widened by the line); in white, a thin line in
+/// its middle. A band's edge covers as much of a pixel as lies within it.
+fn ring_light(reach: f64, spx: f64) -> Result<(Vec<f64>, Vec<f64>)> {
+    let spread = 2.0 * 4.05 * 4.05;
+    let steps = round_int(2.0 * reach * RING_STEPS)?.max(0);
+    let mut tinted = Vec::with_capacity(steps as usize);
+    let mut whitened = Vec::with_capacity(steps as usize);
+    for k in 0..steps {
+        let off = (k as f64 + 0.5) / RING_STEPS - reach;
+        let away = off.abs();
+        let band = |half: f64| py_min(1.0, py_max(0.0, (half - away) * spx + 0.5));
+        let glow = 0.22 * (-off.powf(2.0) / spread).exp();
+        tinted.push(0.18 * band(4.5) + glow + 0.85 * band(1.1));
+        whitened.push(0.8 * band(0.25));
+    }
+    Ok((tinted, whitened))
+}
+
+fn opening(canvas: &Canvas, size: (usize, usize)) -> Result<Opening> {
+    let at = middle(canvas.whole);
+    let far = reach(canvas.whole, at) + PORTAL_EDGE_MM;
+    let (x, y, w, h) = canvas.own;
+    // (it grows about the middle, or the nearest point of this panel to it)
+    let near = (
+        py_min(py_max(at.0, x), x + w),
+        py_min(py_max(at.1, y), y + h),
+    );
+    let (xs, ys) = centres(canvas, size);
+    Ok(Opening {
+        size,
+        at,
+        far,
+        map: radial_map(canvas, size, at, far)?,
+        near: pixel(canvas, size, near),
+        xs,
+        ys,
+        per_mm: per_mm(canvas, size).0,
+        light: ring_light(PORTAL_GLOW_MM, per_mm(canvas, size).0)?,
+    })
+}
+
+/// Portal: a ring of light opens from the middle (of all the panels), and the new screen
+/// grows through it into its place.
+fn portal(
+    kept: &mut Option<Box<Opening>>,
+    old: &Image,
+    new: &Image,
+    t: f64,
+    canvas: Option<&Canvas>,
+    c: &Colours,
+) -> Result<Image> {
+    if t >= 1.0 {
+        return Ok(new.clone());
+    }
+    let size = (new.width(), new.height());
+    if kept.as_ref().is_none_or(|o| o.size != size) {
+        let canvas = canvas.copied().unwrap_or_else(|| alone(size));
+        *kept = Some(Box::new(opening(&canvas, size)?));
+    }
+    let o = kept.as_ref().expect("opening");
+    let e = in_out_sine(t);
+    let mask = o
+        .map
+        .point(&threshold(255.0 * e, 255.0 * PORTAL_EDGE_MM / o.far)?)
+        .map_err(failed)?;
+    let mut out = rgb(old)?.into_owned();
+    if let Some((b0, b1, b2, b3)) = mask.getbbox(true) {
+        // (the new screen there, grown about the middle)
+        let (w, h) = (size.0 as f64, size.1 as f64);
+        let z = 1.0 + PORTAL_GROWN * (1.0 - e);
+        let (zx, zy) = o.near;
+        let within = |v: f64, most: f64| py_min(most, py_max(0.0, v));
+        let source = (
+            within(zx + (b0 as f64 - zx) / z, w),
+            within(zy + (b1 as f64 - zy) / z, h),
+            within(zx + (b2 as f64 - zx) / z, w),
+            within(zy + (b3 as f64 - zy) / z, h),
+        );
+        let grown = rgb(new)?
+            .resize(b2 - b0, b3 - b1, Filter::Bilinear, Some(source), None)
+            .map_err(failed)?;
+        let part = mask.crop(b0 as i64, b1 as i64, b2 as i64, b3 as i64);
+        out.paste(&grown, b0 as i64, b1 as i64, Some(&part))
+            .map_err(failed)?;
+    }
+    let strength = (std::f64::consts::PI * clamp(t)).sin().powf(0.6);
+    if strength > 0.004 {
+        ring(&mut out, o, e * o.far, strength, c.info, c.text)?;
+    }
+    Ok(out)
+}
+
+/// _ring: the ring of light at `r` millimetres from the middle, `strength` of it, added onto
+/// `out`: a faint wide band and a bright line with its glow in the accent, a thin white line
+/// in its middle. Only the pixels as near it as its light reaches: in each row those within
+/// reach of the circle (a pixel more either side), each then asked as Python asks it, and lit
+/// as its step beside it.
+fn ring(
+    out: &mut Image,
+    o: &Opening,
+    r: f64,
+    strength: f64,
+    accent: [i64; 3],
+    white: [i64; 3],
+) -> Result<()> {
+    let reach = PORTAL_GLOW_MM;
+    let (w, bands) = (out.width(), out.bands());
+    let slack = 1.0 / o.per_mm;
+    // (each step's light in each colour, at this strength)
+    let (tinted, whitened) = &o.light;
+    let lit: Vec<[u8; 3]> = tinted
+        .iter()
+        .zip(whitened)
+        .map(|(&t, &w)| {
+            let (t, w) = (strength * t, strength * w);
+            [0, 1, 2].map(|c| level(accent[c] as f64 * t + white[c] as f64 * w))
+        })
+        .collect();
+    let outer = r + reach;
+    let inner = r - reach;
+    for (j, &y) in o.ys.iter().enumerate() {
+        let dy = y - o.at.1;
+        if dy.abs() > outer + slack {
+            continue;
+        }
+        let wide = (outer * outer - dy * dy).max(0.0).sqrt() + slack;
+        let hole = if inner > dy.abs() {
+            (inner * inner - dy * dy).max(0.0).sqrt() - slack
+        } else {
+            -1.0
+        };
+        let first = o.xs.partition_point(|&x| x < o.at.0 - wide);
+        let last = o.xs.partition_point(|&x| x <= o.at.0 + wide);
+        for i in first..last {
+            let dx = o.xs[i] - o.at.0;
+            if dx.abs() < hole {
+                continue;
+            }
+            let off = distance(dx, dy) - r;
+            let near = off.abs() < reach; // (what is no number at all, not)
+            if !near {
+                continue;
+            }
+            // (a pixel a rounding short of its reach takes the last step, not one past it)
+            let light = lit[(((off + reach) * RING_STEPS) as usize).min(lit.len() - 1)];
+            let at = (j * w + i) * bands;
+            let pixels = out.as_bytes_mut();
+            for c in 0..3 {
+                pixels[at + c] = pixels[at + c].saturating_add(light[c]);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rings_light_ends_at_its_reach() {
+        // (a pixel a rounding short of the ring's reach takes the light's last step, not one
+        // past it: the ring at radii where some pixel's offset is the float just below it)
+        let size = (64, 64);
+        let o = opening(&alone(size), size).unwrap();
+        let steps = o.light.0.len();
+        let mut edges = Vec::new();
+        for &y in &o.ys {
+            for &x in &o.xs {
+                let d = distance(x - o.at.0, y - o.at.1);
+                if d <= PORTAL_GLOW_MM + 2.0 {
+                    continue; // (the ring then on the panel, and lit)
+                }
+                let base = d - PORTAL_GLOW_MM;
+                for k in -40i64..40 {
+                    let r = base + k as f64 * base.abs().max(1e-300) * f64::EPSILON;
+                    let off = d - r;
+                    if off.abs() < PORTAL_GLOW_MM
+                        && ((off + PORTAL_GLOW_MM) * RING_STEPS) as usize >= steps
+                    {
+                        edges.push(r);
+                    }
+                }
+            }
+        }
+        assert!(!edges.is_empty());
+        for &r in edges.iter().take(20) {
+            let mut out = Image::blank(Mode::RGB, size.0, size.1);
+            ring(&mut out, &o, r, 1.0, [46, 230, 214], [255, 255, 255]).unwrap();
+            assert!(out.as_bytes().iter().any(|&v| v > 0));
+        }
+    }
 }
