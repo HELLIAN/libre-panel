@@ -238,7 +238,10 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
     wired = []
     for n, (size, palette, language, switches, *drawn) in enumerate(cases):
         folder = tmp_path / f"t{n}"
-        if drawn:  # (a built-in theme, drawn at a moment first)
+        if drawn and isinstance(drawn[0]["theme"], dict):  # (a theme of its own, drawn first)
+            folder.mkdir()
+            (folder / "theme.json").write_text(json.dumps(drawn[0]["theme"]), encoding="utf-8")
+        elif drawn:  # (a built-in theme, drawn at a moment first)
             shutil.copytree(find_theme(drawn[0]["theme"]), folder)
         else:
             _theme(folder, size, palette)
@@ -377,8 +380,8 @@ def _across_the_panels() -> tuple[Any, ...]:
     on either of two panels side by side with a gap between them and of two one above the
     other, at the times their seams and the line are at the panels' edges, in the gap and
     beyond them; one the canvas does not touch (it keeps its own pace); canvases that say
-    nothing sensible, on which each plays on its panel alone; and the wipe's map made anew for
-    another size."""
+    nothing sensible, on which each plays on its panel alone; the comet over a sliver of a panel
+    and the shatter on one lower than a tile; and the wipe's map made anew for another size."""
     size = (240, 60)
     times = (-0.1, 0.0, 0.05, 0.3, 0.45, 0.5, 0.55, 0.7, 0.95, 0.999, 1.0)
     side = {"whole": [0.0, 0.0, 458.0, 55.0]}
@@ -409,6 +412,13 @@ def _across_the_panels() -> tuple[Any, ...]:
     thin = {"own": [5.0, 5.0, 0.01, 900.0], "whole": [0.0, 0.0, 20.0, 20.0]}
     steps = [[_frame(size, "RGB", 5), _frame(size, "RGB", 6), _bits(t)] for t in (0.2, 0.6)]
     switches.append({"name": "comet", "raw": {"canvas": thin}, "steps": steps})
+    # (a panel lower than a tile and narrower than four: the shatter breaks it into two rows and
+    # four columns at the fewest; at 0.21606493800981494 its first tile is 200.5 / 255 seen, to
+    # the last bit, and its opaque pixels' 200.5 rounds to the even 200, as Python rounds it)
+    low = {"own": [0.0, 0.0, 40.0, 20.0], "whole": [0.0, 0.0, 458.0, 20.0]}
+    fallen = [[_frame(size, "RGB", 5), _frame(size, "RGB", 6), _bits(t)]
+              for t in (0.2, 0.21606493800981494, 0.6)]  # fmt: skip
+    switches.append({"name": "shatter", "raw": {"canvas": low}, "steps": fallen})
     switches.append({"name": "wipe", "raw": {"canvas": canvases[1]},
                      "steps": [[_frame(s, "RGB", 3), _frame(s, "RGB", 4), _bits(0.5)]
                                for s in (size, (60, 240), size)]})  # fmt: skip
@@ -448,6 +458,50 @@ def _cards_coming_in(theme: str, size: tuple[int, int], seed: int) -> Any:
     return scenario
 
 
+def _cards_with_the_demo(theme: str, size: tuple[int, int], seed: int) -> Any:
+    """The cascade on a built-in theme drawn with the demo's readings, alone and on the second of
+    two panels side by side: Encore's pair on a ground of two pieces that cover all of the panel
+    (the cover's blurred light and the veil over it); Encore's square, whose cover light and veil
+    lie above a smaller piece (the cards' ground then, no cards themselves); Contrast, whose
+    lights reach beyond their widgets (laid with them, no cards themselves)."""
+
+    def scenario() -> tuple[Any, ...]:
+        mm = (size[0] * 0.1527, size[1] * 0.1527)
+        side = {"whole": [0.0, 0.0, 2 * mm[0] + 15.0, mm[1]], "own": [mm[0] + 15.0, 0.0, *mm]}
+        switches = []
+        for j, canvas in enumerate([None, side]):
+            steps = [[_frame(size, "RGB", seed), _frame(size, "RGB", seed + 1 + j), _bits(t)]
+                     for t in (0.0, 0.22, 0.55, 0.93)]  # fmt: skip
+            raw = {} if canvas is None else {"canvas": canvas}
+            switches.append({"name": "cascade", "raw": raw, "steps": steps})
+        at = _bits(1_763_000_000.0 + seed)
+        return size, {}, "en", switches, {"theme": theme, "at": at, "demo": True}
+
+    return scenario
+
+
+def _a_veil_over_a_card() -> tuple[Any, ...]:
+    """The cascade on a theme of its own: a card, and over it a veil that covers all of the
+    panel (a widget whose box is the whole panel, above a smaller one: no card itself, nor the
+    ground), alone and on the second of two panels side by side."""
+    size = (320, 160)
+    widgets = [{"type": "rect", "id": "card", "x": 40, "y": 30, "w": 90, "h": 50,
+                "color": "#3A7BD5", "radius": 8},
+               {"type": "rect", "id": "veil", "x": 0, "y": 0, "w": 320, "h": 160,
+                "color": "#10203080"}]  # fmt: skip
+    theme = {"format": THEME_FORMAT, "name": "veiled", "palette": {"bg": "#0B0F14"},
+             "widgets": widgets, "display": {"width": size[0], "height": size[1]}}  # fmt: skip
+    mm = (size[0] * 0.1527, size[1] * 0.1527)
+    side = {"whole": [0.0, 0.0, 2 * mm[0] + 15.0, mm[1]], "own": [mm[0] + 15.0, 0.0, *mm]}
+    switches = []
+    for j, canvas in enumerate([None, side]):
+        steps = [[_frame(size, "RGB", 25), _frame(size, "RGB", 26 + j), _bits(t)]
+                 for t in (0.0, 0.22, 0.4, 0.55, 0.93)]  # fmt: skip
+        switches.append({"name": "cascade", "raw": {} if canvas is None else {"canvas": canvas},
+                         "steps": steps})  # fmt: skip
+    return size, {}, "en", switches, {"theme": theme, "at": _bits(1_763_000_025.0)}
+
+
 def _morphing(old: str, new: str, size: tuple[int, int], seed: int, demo: bool = True) -> Any:
     """The morph from a built-in theme to another as their renderers drew them, with the demo's
     readings or with none (the time, the rings, the numbers and the cover both show fly, their
@@ -477,6 +531,10 @@ SCENARIOS = [_entrance_at_its_turns, _entrance_on_another_size, _every_one_at_it
              _cards_coming_in("encore-pair", (1920, 480), 2),
              _cards_coming_in("arena-480x480", (480, 480), 3),
              _cards_coming_in("terra-vertical", (480, 1920), 4),
+             _cards_with_the_demo("encore-pair", (1920, 480), 16),
+             _cards_with_the_demo("encore-480x480", (480, 480), 19),
+             _cards_with_the_demo("contrast-1920x720", (1920, 720), 22),
+             _a_veil_over_a_card,
              _morphing("lumen-1920x720", "arena-1920x720", (1920, 720), 5),
              _morphing("arena-1920x720", "lumen-1920x720", (1920, 720), 6),
              _morphing("encore-1920x720", "lumen-1920x720", (1920, 720), 7),

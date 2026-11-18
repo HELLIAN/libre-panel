@@ -2196,4 +2196,25 @@ mod tests {
             assert!(out.as_bytes().iter().any(|&v| v > 0));
         }
     }
+
+    #[test]
+    fn cards_that_only_touch_stay_apart() {
+        // (as Python's _joined: boxes that share an edge do not overlap)
+        let beside = [[10, 0, 20, 10], [0, 0, 10, 10]];
+        assert_eq!(joined(&beside), beside.to_vec());
+        let above = [[0, 10, 10, 20], [0, 0, 10, 10]];
+        assert_eq!(joined(&above), above.to_vec());
+        let chain = [[0, 0, 10, 10], [5, 5, 15, 15], [14, 0, 30, 6]];
+        assert_eq!(joined(&chain), vec![[0, 0, 30, 15]]);
+    }
+
+    #[test]
+    fn a_cards_margin_ends_at_the_middle_of_an_odd_gap_as_in_python() {
+        // (Python's _spaced: the card before the gap to its middle rounded down, the one after
+        // it from its middle rounded up; beside and above alike)
+        let beside = spaced(&[[0, 0, 10, 10], [13, 0, 23, 10]], 4, 4, 100, 100);
+        assert_eq!(beside, vec![[0, 0, 11, 14], [12, 0, 27, 14]]);
+        let above = spaced(&[[0, 0, 10, 10], [0, 13, 10, 23]], 4, 4, 100, 100);
+        assert_eq!(above, vec![[0, 0, 14, 11], [0, 12, 14, 27]]);
+    }
 }

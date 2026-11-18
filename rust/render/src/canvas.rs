@@ -364,3 +364,40 @@ pub fn in_out(u: f64) -> f64 {
 pub fn in_out_sine(u: f64) -> f64 {
     -((std::f64::consts::PI * clamp(u)).cos() - 1.0) / 2.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_level_is_the_nearest_an_even_one_at_a_half_within_0_and_255() {
+        // (canvas.levels: numpy's rint of each value, NaN as 0, clipped; what Python gives)
+        let cases = [
+            (2.5, 2),
+            (3.5, 4),
+            (0.5, 0),
+            (1.5, 2),
+            (254.5, 254),
+            (255.5, 255),
+            (127.49999999999999, 127),
+            (-0.5, 0),
+            (-3.0, 0),
+            (300.0, 255),
+            (f64::NAN, 0),
+            (f64::INFINITY, 255),
+            (f64::NEG_INFINITY, 0),
+        ];
+        for (v, want) in cases {
+            assert_eq!(level(v), want, "{v}");
+        }
+    }
+
+    #[test]
+    fn in_out_holds_still_before_and_after_its_way() {
+        // (canvas.in_out clamps its way first: what Python gives)
+        assert_eq!(in_out(-0.5), 0.0);
+        assert_eq!(in_out(1.5), 1.0);
+        assert_eq!(in_out(0.25), 0.0625);
+        assert_eq!(in_out(0.75), 0.9375);
+    }
+}
