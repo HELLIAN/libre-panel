@@ -1364,6 +1364,38 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       63 times). The counter-checks put 25 faults into alarm.rs, and the tests catch all of
       them (the masks kept once the edge is over, which no picture shows, once the test
       counted the masks)
+- [x] the light that moves (render/shine.py) on a panel that moves: a ring gauge's end
+      breathing in its colour, a light running along its arc in turn with the rings before it
+      and, past 80 %, its end glowing wider; a graph's newest point beating once a reading (as
+      often as four times a second where the theme refreshes so); while a track plays the
+      cover's glow round about in its own colours, made at full strength once per cover and each
+      strength of its fade scaled from it in whole numbers, the three bars dancing after
+      "Playing" and the progress's head and sheen; a download's head, its two sheens at its pace
+      (running on from where they were when the pace changes, from the clock where time went
+      back) and the spark at its end; the sun or the moon on its way (by day, with no step of its
+      own, the sun at noon), breathing, and the glint along the day gone. Each light in 12
+      strengths made once for a look and kept, the piece laid before where it stands as it
+      stood, the panel due again when a light takes its next step; none on a calm panel, in the
+      editor's pictures or on a turned widget, the kinds from [shine] and the theme. The tests:
+      33 runs of 15 themes (the built-in ones as a panel shows them with every kind of light or
+      some, at 0, 25 and 50 frames a second, scrolling or not; copies of four that refresh every
+      120 to 400 ms with widgets and modules turned; the editor's pictures; covers dark or black
+      and a dark cover's glow fading out and in a 50th of a second apart; a progress too short
+      for its sheen; a download that speeds up and then goes back in time; the sun's way with no
+      step of its own by day and by night), the frames a moment to a second apart and now and
+      then back in time, the readings changing between them: 581 frames (534 moving), each
+      within two levels of Python's where a lit ring lies under its light, and 3986 lights to
+      the bit, where each lies among the frame's pieces and whether its piece is the one of the
+      step before (2191) or made anew (1795), whether the frame moves on and when it is due
+      again; and a muted volume whose number turns on its glide. The counter-checks put 51
+      faults into shine.rs, its part of renderer.rs and the glide's turn in motion.rs: the tests
+      catch 50 (a cover's glow made anew where its strength stood, a band of no light kept, a
+      beat's shortest period, a short progress's sheen, turned widgets and the editor's pictures
+      shining, a glide's turn told from its start, a download's run back in time, the moon's
+      size and the sun at noon once their cases were added). The other changes nothing that
+      shows: the look ahead's last step taken at exactly 0.5 s or not, which the clock's sums
+      reach almost never (2 of 200 000 moments at 30 000 s, none at 1000 s or at today's time),
+      and then only when the panel is due again
 - [x] the panel's own screens (render/bootscreen.py, render/bootlooks.py and the mark of
       branding.py): the boot logo and the standby clip of any panel of the catalog, in
       landscape or upright, at its size and smaller for the app (without the dither there), in
