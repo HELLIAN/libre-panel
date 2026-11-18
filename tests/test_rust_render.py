@@ -8776,7 +8776,8 @@ def test_the_panel_tests_cards_are_doctor_pys() -> None:
 # -- the light that moves (render/shine.py) -------------------------------------------------------
 
 SHINE_THEMES = ["lumen-1920x720", "lumen", "encore-1920x720", "studio-1920x720", "studio",
-                "arena-1920x720", "orbit", "slate", "nimbus", "libre-default", "round-report"]  # fmt: skip
+                "arena-1920x720", "orbit", "slate", "nimbus", "libre-default",
+                "round-report"]  # fmt: skip
 
 
 def _shine_downloads(rng: random.Random) -> Any:
@@ -8787,7 +8788,9 @@ def _shine_downloads(rng: random.Random) -> Any:
     state = {"phase": rng.choice(["downloading"] * 4 + ["paused", "done", "installing"]),
              "name": "Space Game", "source": "steam", "bytes": loaded,
              "rate": rng.choice([0, 1e5, 3.2e6, 4.7e7, 2e8, 1e12, None, "x", True]),
-             "remaining_s": 345, "history": [rng.uniform(0, 5e7) for _ in range(rng.choice([0, 1, 2, 40]))]}  # fmt: skip
+             "remaining_s": 345,
+             "history": [rng.uniform(0, 5e7)
+                         for _ in range(rng.choice([0, 1, 2, 40]))]}  # fmt: skip
     if rng.random() < 0.8:
         state["total"] = total
     return rng.choice([json.dumps(state)] * 6 + [None, "{"])
@@ -8857,8 +8860,8 @@ def test_moving_light_as_python_draws_it() -> None:
                 readings["media.playing"] = Reading("media.playing", rng.choice([0, 1]))
                 readings.pop("media.state", None)
             if rng.random() < 0.3:
-                readings["sun.progress"] = Reading("sun.progress",
-                                                   rng.choice([0.0, 0.002, 0.3, 0.71, 1.0, None]))  # fmt: skip
+                progress = rng.choice([0.0, 0.002, 0.3, 0.71, 1.0, None])
+                readings["sun.progress"] = Reading("sun.progress", progress)
                 readings["sun.up"] = Reading("sun.up", rng.choice([0, 1, None]))
             if rng.random() < 0.4:
                 readings["downloads"] = Reading("downloads", _shine_downloads(rng))
