@@ -8847,6 +8847,7 @@ def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
     # one of the step before, whether the frame moves on and when it is due again; the frames
     # themselves within two levels, where a lit ring, its light made in floating point to a
     # level, lies under them. Besides: covers dark or black, whose glow is faint or none; a
+    # download whose frames go back in time; the sun's way with no step of its own; a
     # progress too short for its sheen; copies of themes that refresh more often than twice a
     # second, whose graphs beat as often as four times a second, with widgets and modules turned
     # (which shine not); and the editor's pictures, which shine not)
@@ -8935,4 +8936,27 @@ def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
             steps.append((dataclasses.replace(snapshot, readings=readings), now + k * 0.02))
         got = compare(find_theme(name), list(KINDS), 25, False, steps, False)
         drawn, moving = drawn + got[0], moving + got[1]
-    assert drawn > 380 and moving > 250, (drawn, moving)
+    # (a download that speeds up, its sheen running on at its new pace from where it was, and
+    # whose frames then go back in time: its sheen starts again from the clock; and the sun's
+    # way with no step of its own, by day the sun at noon and by night the moon)
+    snapshot = _demo()
+
+    def loading(rate: float) -> Snapshot:
+        state = {"phase": "downloading", "name": "Space Game", "source": "steam", "bytes": 4e8,
+                 "total": 1e9, "rate": rate, "remaining_s": 345, "history": []}  # fmt: skip
+        readings = {**snapshot.readings, "downloads": Reading("downloads", json.dumps(state))}
+        return dataclasses.replace(snapshot, readings=readings)
+
+    slow, fast = loading(3.2e6), loading(2e8)
+    steps = [(slow, 1500.0 + 0.04 * k) for k in range(6)]
+    steps += [(fast, 1500.24 + 0.04 * k) for k in range(6)]
+    steps += [(fast, t) for t in (1500.3, 1500.34, 1500.38, 1500.1, 1500.14)]
+    got = compare(find_theme("lumen"), list(KINDS), 25, False, steps, False)
+    drawn, moving = drawn + got[0], moving + got[1]
+    for up in (1, 0):
+        sky = {**snapshot.readings, "sun.progress": Reading("sun.progress", None),
+               "sun.up": Reading("sun.up", up)}  # fmt: skip
+        steps = [(dataclasses.replace(snapshot, readings=sky), 1500.0 + 0.1 * k) for k in range(12)]
+        got = compare(find_theme("nimbus"), list(KINDS), 25, False, steps, False)
+        drawn, moving = drawn + got[0], moving + got[1]
+    assert drawn > 400 and moving > 250, (drawn, moving)
