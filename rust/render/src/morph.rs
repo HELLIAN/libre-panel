@@ -3,8 +3,11 @@
 //! without what flies and each thing that flies, alone; and a thing laid where its flight has
 //! got to. The same steps as Python's, in the same order: the same pixels.
 
-use std::collections::{HashMap, HashSet};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use lp_pixels::{Filter, Image, Mode};
 use lp_py::{Dict, Value};
@@ -281,30 +284,352 @@ pub fn lay(
         round_int(middle.0 - dw / 2.0)?,
         round_int(middle.1 - dh / 2.0)?,
     );
-    let mut body = if size != part.body.size() {
-        (part
-            .body
-            .resize(size.0, size.1, Filter::Bicubic, None, None))
-        .map_err(failed)?
-    } else {
-        part.body.clone()
-    };
-    if alpha < 1.0 {
-        let a = body.getchannel(3).map_err(failed)?;
-        let a = a.point(&faded(alpha)).map_err(failed)?;
-        body.putalpha(&a).map_err(failed)?;
+    // (a fade the levels of its alpha and of its light, in place: as point() gives them; the
+    // part itself where it is laid as it is)
+    let fade: Option<Vec<u8>> = (alpha < 1.0).then(|| {
+        faded(alpha)
+            .iter()
+            .map(|&v| v.clamp(0, 255) as u8)
+            .collect()
+    });
+    // (only what lies on `out` made of it: a window of a resize is the resize cut to it)
+    let (sw, sh) = (size.0 as i64, size.1 as i64);
+    let (ow, oh) = (out.width() as i64, out.height() as i64);
+    let window = (
+        (-x).clamp(0, sw),
+        (-y).clamp(0, sh),
+        (ow - x).clamp(0, sw),
+        (oh - y).clamp(0, sh),
+    );
+    if window.0 >= window.2 || window.1 >= window.3 {
+        return Ok(()); // (none of it on `out`)
     }
-    out.paste(&body, x, y, Some(&body)).map_err(failed)?;
-    if let Some(light) = &part.light {
-        let mut light = if size != light.size() {
-            (light.resize(size.0, size.1, Filter::Bicubic, None, None)).map_err(failed)?
+    let (mut body, at) = sized(&part.body, size, window, (x, y))?;
+    if let Some(fade) = &fade {
+        let body = body.to_mut();
+        if body.mode() == Mode::RGBA {
+            for px in body.as_bytes_mut().chunks_exact_mut(4) {
+                px[3] = fade[usize::from(px[3])];
+            }
         } else {
-            light.clone()
-        };
-        if alpha < 1.0 {
-            light = light.point(&faded(alpha).repeat(3)).map_err(failed)?;
+            let a = body.getchannel(3).map_err(failed)?;
+            let a = a.point(&faded(alpha)).map_err(failed)?;
+            body.putalpha(&a).map_err(failed)?;
         }
-        compose::add_light(out, &light, x, y)?;
+    }
+    out.paste(&body, at.0, at.1, Some(&body)).map_err(failed)?;
+    if let Some(light) = &part.light {
+        let (mut light, at) = sized(light, size, window, (x, y))?;
+        if let Some(fade) = &fade {
+            for v in light.to_mut().as_bytes_mut() {
+                *v = fade[usize::from(*v)];
+            }
+        }
+        compose::add_light(out, &light, at.0, at.1)?;
     }
     Ok(())
+}
+
+/// `image` at `size` (bicubic), made only within `window` of it where that is not all of it:
+/// the picture and where its top left corner goes, `at` being the whole one's.
+fn sized(
+    image: &Image,
+    size: (usize, usize),
+    window: (i64, i64, i64, i64),
+    at: (i64, i64),
+) -> Result<(Cow<'_, Image>, (i64, i64))> {
+    if size == image.size() {
+        return Ok((Cow::Borrowed(image), at));
+    }
+    let (x0, y0, x1, y1) = window;
+    let made = if window == (0, 0, size.0 as i64, size.1 as i64) {
+        image.resize(size.0, size.1, Filter::Bicubic, None, None)
+    } else {
+        let window = (x0 as usize, y0 as usize, x1 as usize, y1 as usize);
+        image.resize_window(size.0, size.1, Filter::Bicubic, window)
+    };
+    Ok((Cow::Owned(made.map_err(failed)?), (at.0 + x0, at.1 + y0)))
+}
+
+// -- over all the panels as one (render/canvas.py): what one shows flies to where another does --
+
+/// BOARD_KEEP_S: a switch's screens are forgotten this long after they were first told.
+const BOARD_KEEP_S: f64 = 60.0;
+
+/// Seen: a panel's part in a switch over all the panels: where it stands (millimetres, the
+/// canvas's own), its frames' size and what its old screen and its new one show (things, in its
+/// own pixels).
+pub struct Seen {
+    pub own: crate::canvas::Rect,
+    pub size: (usize, usize),
+    pub old: HashMap<String, Found>,
+    pub new: HashMap<String, Found>,
+}
+
+impl Seen {
+    /// mm: a box of this panel's (x0, y0, x1, y1, pixels) on all the panels: x, y, w, h in
+    /// millimetres.
+    pub fn mm(&self, b: (i64, i64, i64, i64)) -> crate::canvas::Rect {
+        let sx = self.size.0 as f64 / self.own.2;
+        let sy = self.size.1 as f64 / self.own.3;
+        (
+            self.own.0 + b.0 as f64 / sx,
+            self.own.1 + b.1 as f64 / sy,
+            (b.2 - b.0) as f64 / sx,
+            (b.3 - b.1) as f64 / sy,
+        )
+    }
+}
+
+/// A panel's parts of what flies, by thing and screen (false: the old one, true: the new one).
+pub type Given = HashMap<(String, bool), Arc<Part>>;
+
+/// _Switch: one switch's screens on the Board.
+struct Switch {
+    at: Instant,
+    seen: BTreeMap<i64, Arc<Seen>>,
+    parts: BTreeMap<i64, Arc<Given>>,
+    done: BTreeSet<i64>,
+}
+
+/// Board: the panels' screens at one switch over all of them, told one another (each panel's
+/// loop draws its own part, in its own thread): first what each panel's two screens show where
+/// (Seen), then each panel's parts of what flies from it or to it (take_apart's, by thing and
+/// screen), so that every panel lays every flight that crosses it. A switch is forgotten once
+/// every panel has laid out its flights, or BOARD_KEEP_S after it was first told.
+pub struct Board {
+    switches: Mutex<HashMap<String, Switch>>,
+}
+
+/// BOARD: the app's one board, which all its panels share.
+pub fn board() -> &'static Board {
+    static BOARD: OnceLock<Board> = OnceLock::new();
+    BOARD.get_or_init(|| Board {
+        switches: Mutex::new(HashMap::new()),
+    })
+}
+
+impl Board {
+    fn switches(&self) -> std::sync::MutexGuard<'_, HashMap<String, Switch>> {
+        self.switches
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// tell: panel `panel` says what its screens show at the switch `key`.
+    pub fn tell(&self, key: &str, panel: i64, seen: Arc<Seen>) {
+        let now = Instant::now();
+        let mut switches = self.switches();
+        switches.retain(|_, s| now.duration_since(s.at).as_secs_f64() <= BOARD_KEEP_S);
+        let switch = switches.entry(key.to_string()).or_insert_with(|| Switch {
+            at: now,
+            seen: BTreeMap::new(),
+            parts: BTreeMap::new(),
+            done: BTreeSet::new(),
+        });
+        switch.seen.insert(panel, seen);
+    }
+
+    /// give: panel `panel`'s parts of what flies.
+    pub fn give(&self, key: &str, panel: i64, parts: Given) {
+        if let Some(switch) = self.switches().get_mut(key) {
+            switch.parts.insert(panel, Arc::new(parts));
+        }
+    }
+
+    /// done: panel `panel` has its flights; the switch goes once all `panels` have.
+    pub fn done(&self, key: &str, panel: i64, panels: i64) {
+        let mut switches = self.switches();
+        if let Some(switch) = switches.get_mut(key) {
+            switch.done.insert(panel);
+            if switch.done.len() as i64 >= panels {
+                switches.remove(key);
+            }
+        }
+    }
+
+    pub fn seen(&self, key: &str) -> BTreeMap<i64, Arc<Seen>> {
+        self.switches()
+            .get(key)
+            .map(|s| s.seen.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn parts(&self, key: &str) -> BTreeMap<i64, Arc<Given>> {
+        self.switches()
+            .get(key)
+            .map(|s| s.parts.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// paired: what flies over all the panels: each thing (its key) from the panel whose old screen
+/// shows it to the one whose new screen does; on its own panel where both of that panel's
+/// screens show it, else from the one panel left that showed it to the one left that shows it
+/// (none where more are left); the largest first (on the panels, in square millimetres), the
+/// rest by key and panels.
+pub fn paired(seen: &BTreeMap<i64, Arc<Seen>>) -> Vec<(String, i64, i64)> {
+    let olds: BTreeSet<&String> = seen.values().flat_map(|s| s.old.keys()).collect();
+    let news: BTreeSet<&String> = seen.values().flat_map(|s| s.new.keys()).collect();
+    let mut flights = Vec::new();
+    for &key in olds.intersection(&news) {
+        let was: Vec<i64> = (seen.iter())
+            .filter(|(_, s)| s.old.contains_key(key))
+            .map(|(&i, _)| i)
+            .collect();
+        let comes: Vec<i64> = (seen.iter())
+            .filter(|(_, s)| s.new.contains_key(key))
+            .map(|(&i, _)| i)
+            .collect();
+        let both: Vec<i64> = was.iter().copied().filter(|i| comes.contains(i)).collect();
+        flights.extend(both.iter().map(|&i| (key.clone(), i, i)));
+        let left: Vec<i64> = was.iter().copied().filter(|i| !both.contains(i)).collect();
+        let right: Vec<i64> = comes
+            .iter()
+            .copied()
+            .filter(|i| !both.contains(i))
+            .collect();
+        if let ([from], [to]) = (left.as_slice(), right.as_slice()) {
+            flights.push((key.clone(), *from, *to));
+        }
+    }
+    let area = |f: &(String, i64, i64)| {
+        let s = &seen[&f.1];
+        let (_, _, w, h) = s.mm(s.old[&f.0].1);
+        w * h
+    };
+    flights.sort_by(|a, b| {
+        (area(b).partial_cmp(&area(a)))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.cmp(b))
+    });
+    flights
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Things a screen shows, by key: each its box (x0, y0, x1, y1, pixels).
+    type Shown<'a> = [(&'a str, (i64, i64, i64, i64))];
+
+    /// A panel's Seen: where it stands, and its things' boxes (each of one piece).
+    fn told(own: crate::canvas::Rect, old: &Shown, new: &Shown) -> Arc<Seen> {
+        let found = |things: &Shown| {
+            (things.iter())
+                .map(|(k, b)| (k.to_string(), (vec![0], *b)))
+                .collect()
+        };
+        Arc::new(Seen {
+            own,
+            size: (100, 50),
+            old: found(old),
+            new: found(new),
+        })
+    }
+
+    #[test]
+    fn over_all_the_panels_a_thing_stays_on_its_panel_or_flies_to_the_one_left() {
+        let (a, b) = ((0.0, 0.0, 100.0, 50.0), (110.0, 0.0, 100.0, 50.0));
+        let mut seen = BTreeMap::new();
+        let old = [
+            ("time", (0, 0, 40, 20)),
+            ("picture:x", (0, 0, 50, 50)),
+            ("ring:y", (0, 0, 9, 9)),
+        ];
+        seen.insert(0, told(a, &old, &[("time", (50, 0, 90, 20))]));
+        let new = [
+            ("picture:x", (10, 0, 60, 50)),
+            ("ring:y", (1, 1, 9, 9)),
+            ("number:z", (0, 0, 5, 5)),
+        ];
+        seen.insert(1, told(b, &[("ring:y", (0, 0, 9, 9))], &new));
+        // (the largest first: the picture 50 x 50 mm, the time 40 x 20, the ring 9 x 9)
+        let named = |f: &[(&str, i64, i64)]| -> Vec<(String, i64, i64)> {
+            f.iter().map(|(k, i, j)| (k.to_string(), *i, *j)).collect()
+        };
+        assert_eq!(
+            paired(&seen),
+            named(&[("picture:x", 0, 1), ("time", 0, 0), ("ring:y", 1, 1)])
+        );
+        // (two panels left with it and one to come to: it stays where it is, with its panel)
+        seen.insert(
+            2,
+            told(
+                (220.0, 0.0, 100.0, 50.0),
+                &[("picture:x", (0, 0, 10, 10))],
+                &[],
+            ),
+        );
+        assert!(!paired(&seen).contains(&("picture:x".to_string(), 0, 1)));
+        assert_eq!(seen[&1].mm((10, 0, 60, 50)), (120.0, 0.0, 50.0, 50.0)); // (its pixels, mm here)
+    }
+
+    #[test]
+    fn the_board_forgets_a_switch_once_every_panel_has_its_flights() {
+        let own = (0.0, 0.0, 100.0, 50.0);
+        let key = "the board forgets";
+        board().give(key, 0, Given::new()); // (nothing told yet: nothing kept)
+        assert!(board().parts(key).is_empty());
+        board().tell(key, 0, told(own, &[], &[]));
+        board().tell(key, 1, told(own, &[], &[]));
+        assert_eq!(
+            board().seen(key).keys().copied().collect::<Vec<_>>(),
+            [0, 1]
+        );
+        board().give(key, 1, Given::new());
+        assert_eq!(board().parts(key).keys().copied().collect::<Vec<_>>(), [1]);
+        board().done(key, 0, 2);
+        assert_eq!(board().seen(key).len(), 2); // (the other one not yet)
+        board().done(key, 1, 2);
+        assert!(board().seen(key).is_empty() && board().parts(key).is_empty());
+    }
+
+    #[test]
+    fn a_part_laid_over_the_edge_is_the_part_laid_on_more_cut_to_the_frame() {
+        // (only the window on the frame is made of it: the same pixels, its light too)
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 16) as u8
+        };
+        let mut body = Image::blank(Mode::RGBA, 37, 23);
+        body.as_bytes_mut().iter_mut().for_each(|v| *v = next());
+        let mut light = Image::blank(Mode::RGB, 37, 23);
+        light
+            .as_bytes_mut()
+            .iter_mut()
+            .for_each(|v| *v = next() / 4);
+        let part = Part {
+            bounds: (0, 0, 37, 23),
+            body,
+            light: Some(light),
+        };
+        let pad = 64;
+        let mut ground = Image::blank(Mode::RGB, 64 + 2 * pad, 40 + 2 * pad);
+        ground.as_bytes_mut().iter_mut().for_each(|v| *v = next());
+        let cut =
+            |image: &Image| image.crop(pad as i64, pad as i64, pad as i64 + 64, pad as i64 + 40);
+        let frame = cut(&ground);
+        for (middle, room, alpha) in [
+            ((2.3, 5.0), (50.0, 31.0), 1.0),
+            ((61.7, 38.2), (29.0, 40.0), 0.6),
+            ((30.0, -3.4), (74.0, 47.0), 0.35),
+            ((-9.0, 20.0), (37.0, 23.0), 0.8), // (its own size: laid as it is)
+            ((-40.0, 20.0), (30.0, 30.0), 1.0), // (none of it on the frame)
+        ] {
+            let mut on = frame.clone();
+            lay(&mut on, &part, middle, room, alpha).unwrap();
+            let mut more = ground.clone();
+            let moved = (middle.0 + pad as f64, middle.1 + pad as f64);
+            lay(&mut more, &part, moved, room, alpha).unwrap();
+            assert!(on == cut(&more), "{middle:?} {room:?} {alpha}");
+            assert!(
+                on != frame || middle.0 < 0.0 && room.0 == 30.0,
+                "{middle:?}"
+            );
+        }
+    }
 }

@@ -17,6 +17,10 @@ from PIL import Image
 
 HOLD_S = 1.2  # the card stays this long between the two ways
 GIVE_UP_S = 30.0  # a request not taken up by then is forgotten
+# A morph shown to see it turns the screen into another of Libre Panel's themes and back, as a
+# switch between two screens does (the card shows nothing the screen shows): Lumen's and
+# Arena's share the time, the rings and the readings, and each turns into the other
+MORPH_PAIR = ("lumen", "arena")
 
 _lock = threading.Lock()
 _numbers = itertools.count(1)
@@ -78,6 +82,24 @@ def adopt(state: Any) -> None:
         if _asked is not None and _asked[0] == number:
             return
     show(str(name), str(label), float(age), int(number))
+
+
+def morph_partner(shown: str) -> str:
+    """The theme a morph shown to see it turns the screen ``shown`` into: Arena's version of
+    the same kind from Lumen's ("arena-pair" from "lumen-pair-1920x720"), Lumen's from Arena's,
+    Lumen from any other (its version for the panel: theme_for)."""
+    from libre_panel.theme.model import ThemeError, find_theme, version_stem
+
+    stem = version_stem(shown)
+    for one, other in (MORPH_PAIR, MORPH_PAIR[::-1]):
+        if stem == one or stem.startswith(one + "-"):
+            kind = other + stem[len(one) :]
+            try:
+                find_theme(kind)
+            except ThemeError:
+                return other
+            return kind
+    return MORPH_PAIR[0]
 
 
 @lru_cache(maxsize=4)

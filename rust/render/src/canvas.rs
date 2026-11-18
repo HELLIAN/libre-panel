@@ -21,6 +21,7 @@ pub fn canvas_duration(name: &str) -> Option<f64> {
         "cascade" => Some(1.9),
         "comet" => Some(1.7),
         "portal" => Some(1.5),
+        "morph" => Some(2.4),
         _ => None,
     }
 }

@@ -716,18 +716,24 @@ def _blend(
 
 
 def _hand_before(kind: Any, was: Any, snapshot: Any, now: float) -> None:
-    """The old screen for a morph (render/handovers.py), from the renderer that drew it: its
-    last frame as it was composed; composed here once where its layers went to the engine."""
+    """The old screen for a morph (render/handovers.py), from the renderer that drew it."""
     if getattr(kind, "name", None) != "morph" or not hasattr(kind, "set_before"):
         return
-    parting = was.parting()
+    kind.set_before(_parting_of(was, snapshot, now))
+
+
+def _parting_of(renderer: Any, snapshot: Any, now: float) -> Any:
+    """The frame ``renderer`` composed last, as it was composed (Renderer.parting), for a
+    morph to take apart; composed here once where its layers went to the engine; None where
+    it cannot be (the morph fades)."""
+    parting = renderer.parting()
     if parting is None and snapshot is not None:
         try:
-            was.render(snapshot, now)
-            parting = was.parting()
+            renderer.render(snapshot, now)
+            parting = renderer.parting()
         except Exception:  # (it fades instead)
-            log.exception("the old screen could not be drawn for the morph")
-    kind.set_before(parting)
+            log.exception("the screen could not be drawn for the morph")
+    return parting
 
 
 def _begin(
@@ -1135,19 +1141,26 @@ class MainLoop:
         left, top = min(r[0] for r in shown), min(r[1] for r in shown)
         right, bottom = max(r[0] + r[2] for r in shown), max(r[1] + r[3] for r in shown)
         whole = [float(left), float(top), float(right - left), float(bottom - top)]
-        return {"own": [float(v) for v in own], "whole": whole}
+        # (and which of them this is and how many there are: a morph's things fly between them)
+        return {"own": [float(v) for v in own], "whole": whole, "panel": index,
+                "panels": len(shown)}  # fmt: skip
 
     def _together(self, before: Config, after: Config, occasion: str, leaving: bool) -> float:
         """How much later this panel's part of a transition over all the panels begins: every
         panel at the same moment, :data:`SWEEP_LEAD_S` after the change (each notices it in its
-        own time, and warms its theme first). A scene's from the moment config.toml was
-        written; a game's, music's or the rest's from the moment the first panel to come to it
-        did (:func:`_moment`)."""
-        if before.scene != after.scene and after.stamp is not None:
-            begins = after.stamp / 1e9 + SWEEP_LEAD_S  # (on the wall clock)
-        else:
-            begins = _moment((occasion, leaving))
+        own time, and warms its theme first)."""
+        begins = MainLoop._together_at(before, after, occasion, leaving)
         return max(0.0, min(SWEEP_LEAD_S, begins - time.time()))
+
+    @staticmethod
+    def _together_at(before: Config, after: Config, occasion: str, leaving: bool) -> float:
+        """When a transition over all the panels begins on every panel, on the wall clock: a
+        scene's from the moment config.toml was written; a game's, music's or the rest's from
+        the moment the first panel to come to it did (:func:`_moment`). The same on every
+        panel: what tells their parts of one switch apart from another's."""
+        if before.scene != after.scene and after.stamp is not None:
+            return after.stamp / 1e9 + SWEEP_LEAD_S
+        return _moment((occasion, leaving))
 
     def _sweep(self, before: Config, after: Config) -> float:
         """How much later this panel's transition begins: when every panel's theme changes
@@ -1579,6 +1592,9 @@ class MainLoop:
                             # a slide, the wipe or the line of light goes over them as one
                             together = before.scene != config.scene or occasion in TOGETHER
                             canvas = self._canvas(config) if together else None
+                            if canvas is not None:  # (the switch, as every panel knows it)
+                                at = MainLoop._together_at(before, config, occasion, leaving)
+                                canvas["key"] = f"switch {at!r}"
                             # a calm panel changes at once: a fade is a whole picture a frame
                             kind = None if calm(config, display) else handover(
                                 config, occasion, leaving, chosen, RenderContext(renderer),
@@ -1726,7 +1742,7 @@ class MainLoop:
                         told(wanted)
                 if checking is not None:
                     frame = colour_show.picture(frame.size, checking[0])
-                frame = self._show_transition(frame, renderer, config, display, now)
+                frame = self._show_transition(frame, renderer, config, display, now, shown)
                 if identify.showing():  # which panel is which: its number instead, a moment
                     accent = renderer.theme.palette.get("accent") or "#2EE6D6"
                     frame = identify.picture(number, frame.size, accent)
@@ -1845,9 +1861,16 @@ class MainLoop:
         return boxes  # type: ignore[return-value]
 
     def _show_transition(
-        self, frame: Image.Image, renderer: Renderer, config: Config, display: Any, now: float
+        self,
+        frame: Image.Image,
+        renderer: Renderer,
+        config: Config,
+        display: Any,
+        now: float,
+        shown: str = "",
     ) -> Image.Image:
-        """The frame while a transition is shown to see it (transition_show.py), else ``frame``."""
+        """The frame while a transition is shown to see it (transition_show.py), else ``frame``
+        (``shown``: the theme on the panel, which a morph turns into another and back)."""
         asked = transition_show.asked()
         if asked is None:
             self.showing = None
@@ -1868,6 +1891,7 @@ class MainLoop:
             void, ink = role_color(context, "void"), role_color(context, "text")
             card = transition_show.card(label, frame.size, void, ink)
             self.showing = transition_show.Show(number, frame, card, make)
+            self._morph_shown(self.showing, shown, renderer, config, now)
             if getattr(self.showing.out, "canvas", None) is not None:  # all from one moment
                 self.showing.began = now + transition_show.lead(number)
         out = self.showing.frame(frame, now)
@@ -1876,6 +1900,45 @@ class MainLoop:
             self.showing = None
             return frame
         return out
+
+    def _morph_shown(
+        self, show: Any, shown: str, renderer: Renderer, config: Config, now: float
+    ) -> None:
+        """A morph shown to see it turns the screen into another of Libre Panel's themes
+        (transition_show.morph_partner), drawn with the readings of now, which stays in the
+        card's place, and back: what both show flies. Where either cannot be drawn, or is of
+        another size, it fades to the card and back."""
+        out, back = show.out, show.back
+        if getattr(out, "name", None) != "morph" or not hasattr(back, "set_before"):
+            return
+        before = _parting_of(renderer, self.snapshot, now)
+        if before is None or self.snapshot is None:
+            return
+        try:
+            named = transition_show.morph_partner(shown)
+            theme = load_theme(find_theme(theme_for(named, config.device.orientation,
+                                                    before.size)))  # fmt: skip
+            dress = self._dress(config)
+            dressed = self._dressed(self._laid_out(config, theme), config,
+                                    self._look_source(dress[0]))  # fmt: skip
+            other = Renderer(dressed, motion=self.motion.copy(), backdrop=self._backdrop(dress[1]))
+            other.fan_choices = fan.Choices.of(config)
+            other.symbols = config.symbols
+            other.render(self.snapshot, now)
+            after = other.parting()
+            other.close()
+        except Exception:  # (it fades instead)
+            log.exception("the theme a morph shown turns the screen into could not be drawn")
+            return
+        if after is None or after.size != before.size or after.frame is None:
+            return
+        show.card = after.frame if after.frame.mode == "RGB" else after.frame.convert("RGB")
+        out.set_before(before)
+        out.set_after(after)
+        back.set_before(after)
+        for way, kind in (("out", out), ("back", back)):  # (each way a switch of its own)
+            if hasattr(kind, "across"):
+                kind.across(f"show {show.number} {way}")
 
     def rest(self) -> float | None:
         """A streaming panel's rest: while nothing on it moves (no glide, no graph that

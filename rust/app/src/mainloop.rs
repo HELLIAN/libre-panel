@@ -375,8 +375,9 @@ static MOMENTS: Mutex<Vec<((&'static str, bool), f64)>> = Mutex::new(Vec::new())
 
 /// The canvas of the panel `index` of those standing at `rects` (millimetres, the first
 /// panel's first; None for one whose size is not known): `{"own": [x, y, w, h], "whole":
-/// [x, y, w, h]}`, around all of them that are known; None for this one not known, or for
-/// fewer than two known.
+/// [x, y, w, h]}`, around all of them that are known, and which of them this is and how many
+/// there are ("panel", "panels": a morph's things fly between them); None for this one not
+/// known, or for fewer than two known.
 fn canvas_of(rects: &[Option<crate::arrangement::Rect>], index: usize) -> Option<Value> {
     let own = rects.get(index).copied().flatten()?;
     let shown: Vec<_> = rects.iter().flatten().copied().collect();
@@ -400,6 +401,8 @@ fn canvas_of(rects: &[Option<crate::arrangement::Rect>], index: usize) -> Option
         "whole".into(),
         rect((left, top, right - left, bottom - top)),
     );
+    canvas.insert("panel".into(), Value::int(index as i64));
+    canvas.insert("panels".into(), Value::int(shown.len() as i64));
     Some(Value::Dict(canvas))
 }
 
@@ -797,7 +800,12 @@ impl MainLoop {
         // all the panels change at once (a scene, a game, music, the rest): a slide, the wipe
         // or the line of light goes over them as one
         let together = self.scene_before != self.config.scene || TOGETHER.contains(&occasion);
-        let canvas = if together { self.canvas() } else { None };
+        let mut canvas = if together { self.canvas() } else { None };
+        if let Some(Value::Dict(canvas)) = canvas.as_mut() {
+            // (the switch, as every panel knows it)
+            let at = self.together_at(occasion, leaving);
+            canvas.insert("key".into(), Value::Str(format!("switch {at:?}")));
+        }
         let (moment, _) = moment();
         self.blends += 1;
         let mut kind = switch::handover(
@@ -1292,17 +1300,22 @@ impl MainLoop {
 
     /// _together: how much later this panel's part of a transition over all the panels
     /// begins: every panel at the same moment, [`SWEEP_LEAD_S`] after the change (each notices
-    /// it in its own time, and warms its theme first). A scene's from the moment config.toml
-    /// was written; a game's, music's or the rest's from the moment the first panel to come to
-    /// it did ([`shared_moment`]).
+    /// it in its own time, and warms its theme first).
     fn together(&self, occasion: &'static str, leaving: bool) -> f64 {
-        let begins = match self.config.stamp {
+        (self.together_at(occasion, leaving) - wall_clock()).clamp(0.0, SWEEP_LEAD_S)
+    }
+
+    /// _together_at: when a transition over all the panels begins on every panel, on the wall
+    /// clock: a scene's from the moment config.toml was written; a game's, music's or the
+    /// rest's from the moment the first panel to come to it did ([`shared_moment`]). The same
+    /// on every panel: what tells their parts of one switch apart from another's.
+    fn together_at(&self, occasion: &'static str, leaving: bool) -> f64 {
+        match self.config.stamp {
             Some(stamp) if self.scene_before != self.config.scene => {
-                stamp as f64 / 1e9 + SWEEP_LEAD_S // (on the wall clock)
+                stamp as f64 / 1e9 + SWEEP_LEAD_S
             }
             _ => shared_moment((occasion, leaving)),
-        };
-        (begins - wall_clock()).clamp(0.0, SWEEP_LEAD_S)
+        }
     }
 
     /// The part of the picture across the panels followed: a new one (another picture, a
@@ -1591,7 +1604,22 @@ impl MainLoop {
                 )
             };
             let picked = now.to_bits() as usize;
-            let (out, back) = (made(picked), made(picked.wrapping_add(1)));
+            let (mut out, mut back) = (made(picked), made(picked.wrapping_add(1)));
+            let mut card = card;
+            // (a morph turns the screen into another theme and back: what both show flies)
+            if let (Some(out), Some(back)) = (out.as_mut(), back.as_mut()) {
+                if out.name == "morph" {
+                    if let Some((before, after, picture)) = self.morph_shown(renderer, now) {
+                        card = picture;
+                        out.set_before(Some(before));
+                        out.set_after(Some(after.clone()));
+                        back.set_before(Some(after));
+                        // (each way a switch of its own, over all the panels)
+                        out.across(&format!("show {number} out"));
+                        back.across(&format!("show {number} back"));
+                    }
+                }
+            }
             let mut show = crate::transition_show::Show::new(number, &frame, card, out, back);
             if show.on_canvas() {
                 // (all from one moment)
@@ -1616,6 +1644,48 @@ impl MainLoop {
                 frame
             }
         }
+    }
+
+    /// _morph_shown: for a morph shown to see it, the screen as `renderer` composed it last,
+    /// another of Libre Panel's themes (transition_show::morph_partner) drawn with the readings
+    /// of now as it composed it, and its frame, which stays in the card's place; None where
+    /// either cannot be drawn, or is of another size (it fades to the card and back).
+    fn morph_shown(
+        &self,
+        renderer: &Renderer,
+        now: f64,
+    ) -> Option<(lp_render::morph::Parting, lp_render::morph::Parting, Image)> {
+        let before = renderer.parting().ok().flatten()?;
+        let snapshot = self.snapshot.clone()?;
+        let (w, h) = before.size();
+        let named = crate::transition_show::morph_partner(&self.shown, &self.places);
+        let orientation = &self.config.device.orientation;
+        let version = versions::theme_for(
+            &named,
+            orientation,
+            Some((w as i64, h as i64)),
+            &self.places,
+        );
+        let drawn = self.renderer_of(&version).and_then(|mut other| {
+            other.render_shared(snapshot, now).map_err(|e| e.0)?;
+            other.parting().map_err(|e| e.0)
+        });
+        let after = match drawn {
+            Ok(after) => after?,
+            Err(why) => {
+                say(&format!("{version} not drawn for the morph shown: {why}"));
+                return None;
+            }
+        };
+        if after.size() != (w, h) {
+            return None;
+        }
+        let frame = after.frame.as_ref()?;
+        let picture = match frame.mode() {
+            lp_pixels::Mode::RGB => frame.clone(),
+            _ => frame.convert(lp_pixels::Mode::RGB).ok()?,
+        };
+        Some((before, after, picture))
     }
 
     /// The frame as it goes out: upside down on a panel mounted so.
@@ -2292,13 +2362,15 @@ mod canvas_tests {
     const BIG: (f64, f64, f64, f64) = (0.0, 0.0, 292.5, 109.7);
     const BAR: (f64, f64, f64, f64) = (322.5, 26.2, 226.7, 56.7);
 
-    fn told(own: (f64, f64, f64, f64), whole: (f64, f64, f64, f64)) -> Option<Value> {
+    fn told(own: (f64, f64, f64, f64), whole: (f64, f64, f64, f64), panel: i64) -> Option<Value> {
         let rect = |(x, y, w, h): (f64, f64, f64, f64)| {
             Value::List([x, y, w, h].into_iter().map(Value::Float).collect())
         };
         let mut canvas = lp_py::Dict::default();
         canvas.insert("own".into(), rect(own));
         canvas.insert("whole".into(), rect(whole));
+        canvas.insert("panel".into(), Value::int(panel));
+        canvas.insert("panels".into(), Value::int(2)); // (the two whose size is known)
         Some(Value::Dict(canvas))
     }
 
@@ -2306,8 +2378,8 @@ mod canvas_tests {
     fn a_panel_is_told_where_it_and_all_of_them_stand() {
         let whole = (0.0, 0.0, 322.5 + 226.7, 109.7);
         let rects = [Some(BIG), None, Some(BAR)];
-        assert_eq!(canvas_of(&rects, 0), told(BIG, whole));
-        assert_eq!(canvas_of(&rects, 2), told(BAR, whole)); // ([[panels]][1]: the third)
+        assert_eq!(canvas_of(&rects, 0), told(BIG, whole, 0));
+        assert_eq!(canvas_of(&rects, 2), told(BAR, whole, 2)); // ([[panels]][1]: the third)
         assert_eq!(canvas_of(&rects, 1), None); // (one whose size is not known)
         assert_eq!(canvas_of(&rects, 3), None);
         assert_eq!(canvas_of(&[Some(BIG)], 0), None); // (one panel)

@@ -1360,19 +1360,33 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       in lp-py for the squares, the faults and the pieces (the Mersenne Twister seeded with an
       int as CPython seeds it, and random(), uniform(), randrange() and getrandbits(), the same
       numbers). The main loop plays them with R5 and hands the morph the parting of the screen
-      it leaves (drawn once more where the engine composed it). The morph's first frame, which
-      takes both screens apart, takes 13.5 to 17.7 ms on a 12.3" with the demo's readings (Lumen
-      to Arena and back, Encore to Lumen), each after it 3.6 to 4.8 ms (the median). The tests:
-      120 themes of other colours, sizes (1x1 to 1920x480, either way round) and languages, with
-      up to three switches each (their old frame now and then another, now and then told where
-      the panels stand), at times on their way, at their ends and past them; and twenty-two
-      scenarios for what those seldom meet: the entrance at each turn of its timeline in every
-      kind, on another size and on a panel narrower than its band; every transition at its
-      start, its end and where the line of light is almost at its brightest, a shatter whose old
-      frame changes; the maps and the strip of light kept for a size; slides, the wipe, the line
-      of light, the iris, the shatter, the cascade, the comet and the portal over all the panels
-      as one (render/canvas.py: either of two panels side by side or one above the other, at the
-      times their seams and the line are at the panels' edges, in the gap and beyond, a
+      it leaves (drawn once more where the engine composed it); it tells each panel which one it
+      is, how many there are and the switch's key, and a morph shown with ▶ turns the screen
+      into another theme with the readings of now (transition_show's morph_partner: Lumen into
+      Arena's version of the same kind, Arena into Lumen's, any other into Lumen) and back. Over
+      all the panels the morph's board is render/morph.py's (morph.rs's board(), kept in the
+      process: what each screen shows where, in millimetres, then each panel's parts of what
+      flies from it or to it; a panel waits for the others until the things begin to fly), and
+      lp-check's transition op plays the panels beside it in step, as the test plays them in
+      Python. A thing is made only where it lies on the panel: its resize only within the window
+      there (lp-pixels' resize_window, each pixel the whole resize's: the same weights, the
+      passes in the same order, the first rounded to 8 bits either way), its fade in place. The
+      morph's first frame, which takes both screens apart, takes 13.5 to 17.7 ms on a 12.3" with
+      the demo's readings (Lumen to Arena and back, Encore to Lumen), each after it 3.6
+      to 4.8 ms (the median). Over two 12.3" panels side by side, when music comes (Lumen's pair
+      to Encore's, the cover crossing from the first panel to the second), a frame on the first
+      panel takes 5.8 to 6.0 ms (the median), the four where the things turn into their new look
+      19 to 21 ms; the windows spare 10 % of the morph's instructions there, on either panel.
+      The tests: 120 themes of other colours, sizes (1x1 to 1920x480, either way round) and
+      languages, with up to three switches each (their old frame now and then another, now and
+      then told where the panels stand), at times on their way, at their ends and past them; and
+      twenty-six scenarios for what those seldom meet: the entrance at each turn of its timeline
+      in every kind, on another size and on a panel narrower than its band; every transition at
+      its start, its end and where the line of light is almost at its brightest, a shatter whose
+      old frame changes; the maps and the strip of light kept for a size; slides, the wipe, the
+      line of light, the iris, the shatter, the cascade, the comet and the portal over all the
+      panels as one (render/canvas.py: either of two panels side by side or one above the other,
+      at the times their seams and the line are at the panels' edges, in the gap and beyond, a
       transition the canvas does not touch, canvases that say nothing sensible, a comet over a
       sliver of a panel, a shatter on a panel lower than a tile (at one moment its first tile
       seen 200.5 / 255 to the last bit, which rounds to the even 200 in both), the wipe's map
@@ -1386,22 +1400,24 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       two panels; the morph from Lumen to Arena and back and from Encore to Lumen at 1920x720,
       from Lumen to Arena as a pair and at 480x480 and from Arena to Lumen upright, with the
       demo's readings, pictures and moment, and from Lumen to Arena with none, at the turns of
-      its timeline and on frames of another size (where it fades): 2865 frames to the bit, 1344
-      of them over the panels, 794 of the cascade, the comet and the portal and 88 of the morph;
-      the morph's other 24, with the demo's readings, within 2 levels (315 pixels in all, in the
-      glow of rings and bars, which the renderer draws within a level); and random's draws of
-      132 seeds. The counter-checks put 110 faults into transitions.rs and 10 into random.rs:
-      the tests catch 107 and 8 (squares, the early light of an entrance's edges, the music's
-      track joined to its text, the room a narrow panel leaves and the line almost at its
-      brightest once their scenarios were added; the old and new frames of the tests had been
-      one and the same picture, seeds a few apart making the same noise, until the seeds were
-      spread). The other five change nothing: a map's value at the very edge of its soft band is
-      255 whether it is taken as inside or worked out (the ramp gives 255 there); the text that
-      types in from 1.25 s is none until 1.3 s; a halo's margin of 50u instead of 60u loses
-      nothing, its light being none that far from the picture even of an opaque logo, at every
-      size (measured); the lowest bit of the Mersenne Twister's first tempering mask meets the
-      zeros its shift brings in; and of the first word of its seeded state only the top bit is
-      ever used (as its authors' note says). The second round's counter-checks put 109 faults
+      its timeline and on frames of another size (where it fades); Lumen's screen shown with ▶
+      into Arena's; and over two 12.3" panels side by side, a gap between them, this one either
+      of them, once standing lower, once with the other never coming: 2901 frames to the bit,
+      1370 of them over the panels, 794 of the cascade, the comet and the portal and 124 of the
+      morph; the morph's other 37, with the demo's readings, within 2 levels (455 pixels in all,
+      in the glow of rings and bars, which the renderer draws within a level); and random's
+      draws of 132 seeds. The counter-checks put 110 faults into transitions.rs and 10 into
+      random.rs: the tests catch 107 and 8 (squares, the early light of an entrance's edges, the
+      music's track joined to its text, the room a narrow panel leaves and the line almost at
+      its brightest once their scenarios were added; the old and new frames of the tests had
+      been one and the same picture, seeds a few apart making the same noise, until the seeds
+      were spread). The other five change nothing: a map's value at the very edge of its soft
+      band is 255 whether it is taken as inside or worked out (the ramp gives 255 there); the
+      text that types in from 1.25 s is none until 1.3 s; a halo's margin of 50u instead of 60u
+      loses nothing, its light being none that far from the picture even of an opaque logo, at
+      every size (measured); the lowest bit of the Mersenne Twister's first tempering mask meets
+      the zeros its shift brings in; and of the first word of its seeded state only the top bit
+      is ever used (as its authors' note says). The second round's counter-checks put 109 faults
       into canvas.rs (15), the iris, the shatter, the cascade, the comet and the portal in
       transitions.rs (82), renderer.rs's beneath (4) and the pixel operations they use (8): the
       comparisons catch 94 (a ground of more than one piece, lights and a veil kept out of the

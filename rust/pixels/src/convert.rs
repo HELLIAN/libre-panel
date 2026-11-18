@@ -51,14 +51,13 @@ impl Image {
             }
             (RGBA, RGBa) => {
                 // rgbA2rgba (sic): each colour band times its alpha, rounded
-                for p in src.chunks_exact(4) {
+                out.resize(n * 4, 0);
+                for (o, p) in out.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
                     let a = u32::from(p[3]);
-                    out.extend_from_slice(&[
-                        muldiv255(u32::from(p[0]), a) as u8,
-                        muldiv255(u32::from(p[1]), a) as u8,
-                        muldiv255(u32::from(p[2]), a) as u8,
-                        p[3],
-                    ]);
+                    o[0] = muldiv255(u32::from(p[0]), a) as u8;
+                    o[1] = muldiv255(u32::from(p[1]), a) as u8;
+                    o[2] = muldiv255(u32::from(p[2]), a) as u8;
+                    o[3] = p[3];
                 }
             }
             (RGBa, RGBA) => {

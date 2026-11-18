@@ -11,10 +11,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from libre_panel import app
+from libre_panel import app, transition_show
 from libre_panel.plugins.render import RenderContext
 from libre_panel.render import morph as M
-from libre_panel.render.handovers import Morph
+from libre_panel.render.handovers import HANDOVERS, Morph
 from libre_panel.render.light import smooth
 from libre_panel.render.overlays import ELABORATE_TRANSITIONS, transition
 from libre_panel.render.renderer import Piece, Renderer
@@ -165,3 +165,124 @@ def test_the_app_hands_the_morph_the_screen_it_leaves():
     plain = SimpleNamespace(name="fade")
     app._hand_before(plain, was, None, WHEN)
     assert not hasattr(plain, "_before")
+
+
+@pytest.mark.parametrize(
+    ("shown", "partner"),
+    [
+        ("lumen-1920x720", "arena"),
+        ("lumen", "arena"),
+        ("lumen-pair-1920x720", "arena-pair"),
+        ("arena-vertical", "lumen"),
+        ("arena-companion-1920x720", "lumen-companion"),
+        ("lumen-clock-640x180", "arena"),  # (Arena has no clock of its own: Arena itself)
+        ("encore-1920x720", "lumen"),
+        ("", "lumen"),
+    ],
+)
+def test_a_morph_shown_turns_lumen_into_arena_and_any_other_into_lumen(shown, partner):
+    assert transition_show.morph_partner(shown) == partner
+
+
+def test_a_morph_shown_turns_the_screen_into_another_theme_and_back():
+    from libre_panel.config import Config
+    from libre_panel.render.motion import Motion
+
+    renderer = drawn("lumen-1920x720")
+    loop = SimpleNamespace(
+        snapshot=demo_snapshot(fixed_time=1_760_000_000.0),
+        motion=Motion(),
+        _dress=lambda config: (None, None),
+        _dressed=app.MainLoop._dressed,
+        _laid_out=lambda config, theme: theme,
+        _look_source=lambda look: None,
+        _backdrop=app.MainLoop._backdrop,
+    )
+    held = renderer.parting().frame.convert("RGB")
+    card = transition_show.card("Morph", held.size, (0, 0, 0), (255, 255, 255))
+    show = transition_show.Show(1, held, card, lambda: Morph(RenderContext(renderer), {}))
+    app.MainLoop._morph_shown(loop, show, "lumen-1920x720", renderer, Config(), WHEN)
+    assert show.card is not card and show.card.size == held.size  # (Arena, drawn now)
+    show.out.frame(held, show.card, 0.5)
+    show.back.frame(show.card, held, 0.5)
+    assert len(show.out._made[3]) >= 5 and len(show.back._made[3]) >= 5  # (what both show flies)
+    there = {was.box for was, _ in show.out._made[3]}
+    back = {comes.box for _, comes in show.back._made[3]}
+    assert there == back  # (and back to where it was)
+    # (another transition, or no readings yet: the card as it was)
+    plain = transition_show.Show(2, held, card, lambda: HANDOVERS["wipe"]())
+    app.MainLoop._morph_shown(loop, plain, "lumen-1920x720", renderer, Config(), WHEN)
+    assert plain.card is card
+    loop.snapshot = None
+    bare = transition_show.Show(3, held, card, lambda: Morph(RenderContext(renderer), {}))
+    app.MainLoop._morph_shown(loop, bare, "lumen-1920x720", renderer, Config(), WHEN)
+    assert bare.card is card
+
+
+def _seen(own, old, new):
+    return M.Seen(own, (100, 50), {k: ([0], box) for k, box in old.items()},
+                  {k: ([0], box) for k, box in new.items()})  # fmt: skip
+
+
+def test_over_all_the_panels_a_thing_stays_on_its_panel_or_flies_to_the_one_left():
+    a, b = (0.0, 0.0, 100.0, 50.0), (110.0, 0.0, 100.0, 50.0)
+    seen = {
+        0: _seen(a, {"time": (0, 0, 40, 20), "picture:x": (0, 0, 50, 50), "ring:y": (0, 0, 9, 9)},
+                 {"time": (50, 0, 90, 20)}),
+        1: _seen(b, {"ring:y": (0, 0, 9, 9)},
+                 {"picture:x": (10, 0, 60, 50), "ring:y": (1, 1, 9, 9), "number:z": (0, 0, 5, 5)}),
+    }  # fmt: skip
+    flights = M.paired(seen)
+    # (the largest first: the picture 50 x 50 mm, the time 40 x 20, the ring 9 x 9)
+    assert flights == [("picture:x", 0, 1), ("time", 0, 0), ("ring:y", 1, 1)]
+    # (two panels left with it and one to come to: it stays where it is, with its panel)
+    seen[2] = _seen((220.0, 0.0, 100.0, 50.0), {"picture:x": (0, 0, 10, 10)}, {})
+    assert ("picture:x", 0, 1) not in M.paired(seen)
+    assert seen[1].mm((10, 0, 60, 50)) == (120.0, 0.0, 50.0, 50.0)  # (its pixels, mm here)
+
+
+def _across(pairs, rects, key):
+    whole = [0.0, 0.0, max(r[0] + r[2] for r in rects), max(r[1] + r[3] for r in rects)]
+    made = []
+    for i, (old, new) in enumerate(pairs):
+        was, now = drawn(old), drawn(new)
+        context = RenderContext(now)
+        context.before = was.parting()  # type: ignore[attr-defined]
+        canvas = {"own": rects[i], "whole": whole, "panel": i, "panels": len(pairs), "key": key}
+        frames = (was.parting().frame.convert("RGB"), now.parting().frame.convert("RGB"))
+        made.append((transition(("morph", {"canvas": canvas}), context), *frames))
+    return made
+
+
+def test_over_all_the_panels_the_cover_flies_from_one_panel_to_the_other():
+    # (music comes: Lumen's cover on the left panel is the companion's on the right one)
+    rects = [[0.0, 0.0, 292.0, 109.5], [300.0, 0.0, 292.0, 109.5]]
+    (left, l_old, l_new), (right, r_old, r_new) = _across(
+        [("lumen-pair-1920x720", "encore-pair-1920x720"),
+         ("lumen-companion-1920x720", "encore-companion-1920x720")], rects, "music")  # fmt: skip
+    assert left.duration == right.duration == 2.4  # (longer over the panels)
+    first = left.frame(l_old, l_new, 0.0)
+    assert first.tobytes() == l_old.tobytes()  # (the other one not yet: the old screen)
+    right.frame(r_old, r_new, 0.0)
+    left.frame(l_old, l_new, 0.0)
+    right.frame(r_old, r_new, 0.03)
+    assert left._made is not None and right._made is not None
+    flights = [(was is not comes and seen_was.own[0], seen_comes.own[0])
+               for seen_was, was, seen_comes, comes in right._made[3]]  # fmt: skip
+    assert (0.0, 300.0) in flights  # (the cover, from the left panel to the right one)
+    # (on its way through the gap it shows on both: the right edge of one, the left of the other)
+    mid_left = np.asarray(left.frame(l_old, l_new, 0.55), np.int16)
+    mid_right = np.asarray(right.frame(r_old, r_new, 0.55), np.int16)
+    assert mid_left[:, -40:].any() and mid_right[:, :40].any()
+    assert right.frame(r_old, r_new, 1.0) is r_new
+
+
+def test_over_all_the_panels_one_that_never_comes_is_left_out_once_they_fly():
+    rects = [[0.0, 0.0, 292.0, 109.5], [300.0, 0.0, 292.0, 109.5]]
+    (left, old, new), _ = _across(
+        [("lumen-1920x720", "arena-1920x720"), ("lumen-companion-1920x720",
+         "encore-companion-1920x720")], rects, "alone")  # fmt: skip
+    waiting = left.frame(old, new, 0.03)
+    assert left._made is None and waiting.size == old.size
+    left.frame(old, new, 0.2)  # (the things fly: with the panels that came, this one)
+    assert left._made is not None and len(left._made[3]) >= 5

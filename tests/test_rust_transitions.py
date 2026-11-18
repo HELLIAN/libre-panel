@@ -104,11 +104,16 @@ DRAWN_ON = datetime(2025, 11, 13, 14, 26, 40)
 
 
 def _python(folder: Path, language: str, switches: list[dict[str, Any]], drawn: str | None = None,
-            before: tuple[Path, str] | None = None, demo: bool = False) -> list[Any]:  # fmt: skip
+            before: tuple[Path, str] | None = None, demo: bool = False,
+            after: tuple[Path, str] | None = None,
+            beside: list[dict[str, Any]] | None = None) -> list[Any]:  # fmt: skip
     """Each switch's answer from Python, as lp-check gives Rust's (``drawn``: the moment the
     renderer draws its frame of first, a double's bits; ``before``: the old screen's theme and
     the moment it was drawn at, which the morph takes apart; ``demo``: both drawn with the
-    demo's readings)."""
+    demo's readings; ``after``: the new screen's, where it is not the renderer's: what a morph
+    shown to see it turns the screen into; ``beside``: the other panels a morph over all of
+    them takes part with, each its theme, the moment, its old screen's and its canvas, which
+    play in step with it from the moment it begins, as lp-check plays them)."""
 
     def seen() -> Snapshot:  # (its clocks at DRAWN_ON, as lp-check's snapshot is told)
         pictures = {k: _noise(v) for k, v in PICTURES.items()}
@@ -130,6 +135,12 @@ def _python(folder: Path, language: str, switches: list[dict[str, Any]], drawn: 
             was.render(seen(), now=_float(before[1]))
             context.before = was.parting()  # type: ignore[attr-defined]
             was.close()
+        into = None
+        if after is not None:
+            other = Renderer(load_theme(after[0]), preview=True)
+            other.render(seen(), now=_float(after[1]))
+            into = other.parting()
+            other.close()
         olds: dict[str, Image.Image] = {}  # (the same spec, the same frame: its id stays)
         answers: list[Any] = []
         for switch in switches:
@@ -137,6 +148,16 @@ def _python(folder: Path, language: str, switches: list[dict[str, Any]], drawn: 
             if made is None:
                 answers.append({"made": False})
                 continue
+            if into is not None and hasattr(made, "set_after"):
+                made.set_after(into)
+            if beside and switch["steps"]:  # (the others say theirs, this one, they theirs)
+                others = [_beside(other, switch["raw"], seen()) for other in beside]
+                for other, blank in others:
+                    other.frame(blank, blank, 0.0)
+                old_spec, new_spec, _ = switch["steps"][0]
+                made.frame(_noise(old_spec), _noise(new_spec), 0.0)
+                for other, blank in others:
+                    other.frame(blank, blank, 0.0)
             steps = []
             for old_spec, new_spec, t in switch["steps"]:
                 old = olds.setdefault(json.dumps(old_spec), _noise(old_spec))
@@ -156,6 +177,21 @@ def _python(folder: Path, language: str, switches: list[dict[str, Any]], drawn: 
         return answers
     finally:
         i18n.set_language("en")
+
+
+def _beside(other: dict[str, Any], raw: dict[str, Any], snapshot: Snapshot) -> tuple[Any, Any]:
+    """Another panel's part of a morph over all the panels: its theme drawn at its moment, its
+    old screen's at its own, and the switch's key in its canvas; and a frame of its size."""
+    renderer = Renderer(load_theme(Path(other["theme"])), preview=True)
+    renderer.render(snapshot, now=_float(other["at"]))
+    context = RenderContext(renderer)
+    was = Renderer(load_theme(Path(other["before"]["theme"])), preview=True)
+    was.render(snapshot, now=_float(other["before"]["at"]))
+    context.before = was.parting()  # type: ignore[attr-defined]
+    was.close()
+    canvas = {**other["canvas"], "key": raw["canvas"]["key"]}
+    made = overlays.transition(("morph", {"canvas": canvas}), context)
+    return made, Image.new("RGB", (renderer.theme.width, renderer.theme.height))
 
 
 def _theme(folder: Path, size: tuple[int, int], palette: dict[str, str]) -> None:
@@ -265,13 +301,21 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
         if drawn and "before" in drawn[0]:  # (the old screen, which the morph takes apart)
             old = drawn[0]["before"]
             wired[-1]["before"] = {"theme": str(find_theme(old["theme"])), "drawn": old["at"]}
+        if drawn and "after" in drawn[0]:  # (the new one, where it is not the renderer's)
+            new = drawn[0]["after"]
+            wired[-1]["after"] = {"theme": str(find_theme(new["theme"])), "drawn": new["at"]}
+        if drawn and "beside" in drawn[0]:  # (the other panels of a morph over all of them)
+            wired[-1]["beside"] = [_wired(other, True) for other in drawn[0]["beside"]]
     answers = run(wired)
     frames = 0
     for n, (got, (_, _, language, switches, *drawn)) in enumerate(zip(answers, cases, strict=True)):
         old = drawn[0].get("before") if drawn else None
         before = (find_theme(old["theme"]), old["at"]) if old else None
+        new = drawn[0].get("after") if drawn else None
+        after = (find_theme(new["theme"]), new["at"]) if new else None
+        beside = [_wired(other) for other in drawn[0].get("beside", [])] if drawn else None
         want = _python(tmp_path / f"t{n}", language, switches, drawn[0]["at"] if drawn else None,
-                       before, bool(drawn and drawn[0].get("demo")))  # fmt: skip
+                       before, bool(drawn and drawn[0].get("demo")), after, beside)  # fmt: skip
         assert len(got["switches"]) == len(want), n
         for k, (mine, theirs) in enumerate(zip(got["switches"], want, strict=True)):
             if theirs.get("made"):
@@ -285,6 +329,15 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
                     frames += "sha256" in b or "size" in b
             assert mine == theirs, (n, k, switches[k]["name"], mine, theirs)
     return frames
+
+
+def _wired(other: dict[str, Any], typed: bool = False) -> dict[str, Any]:
+    """Another panel of a morph over all of them, its themes found (``typed``: its canvas as
+    lp-check is told it)."""
+    was = other["before"]
+    return {"theme": str(find_theme(other["theme"])), "at": other["at"],
+            "before": {"theme": str(find_theme(was["theme"])), "at": was["at"]},
+            "canvas": _typed(other["canvas"]) if typed else other["canvas"]}  # fmt: skip
 
 
 # -- scenarios: what the random switches seldom meet, every time ----------------------------
@@ -502,7 +555,8 @@ def _a_veil_over_a_card() -> tuple[Any, ...]:
     return size, {}, "en", switches, {"theme": theme, "at": _bits(1_763_000_025.0)}
 
 
-def _morphing(old: str, new: str, size: tuple[int, int], seed: int, demo: bool = True) -> Any:
+def _morphing(old: str, new: str, size: tuple[int, int], seed: int, demo: bool = True,
+              into: str | None = None) -> Any:  # fmt: skip
     """The morph from a built-in theme to another as their renderers drew them, with the demo's
     readings or with none (the time, the rings, the numbers and the cover both show fly, their
     lights with them; the rest fades): at the turns of its timeline; and on frames of another
@@ -519,7 +573,43 @@ def _morphing(old: str, new: str, size: tuple[int, int], seed: int, demo: bool =
                     {"name": "morph", "raw": {}, "steps": apart}]  # fmt: skip
         at = _bits(1_763_000_000.0 + seed)
         was = {"theme": old, "at": _bits(1_762_999_990.0 + seed)}
-        return size, {}, "en", switches, {"theme": new, "at": at, "before": was, "demo": demo}
+        drawn = {"theme": new, "at": at, "before": was, "demo": demo}
+        if into is not None:  # (as shown to see it: into another theme than the renderer's)
+            drawn["after"] = {"theme": into, "at": _bits(1_763_000_005.0 + seed)}
+        return size, {}, "en", switches, drawn
+
+    return scenario
+
+
+def _morphing_across(me: int, seed: int, top: float = 0.0, alone: bool = False) -> Any:
+    """The morph over two panels side by side, a gap between them: music comes, Lumen's cover
+    on the left panel flies to the companion's on the right one, the time and the track's
+    numbers fly on the left; this panel the left or the right, the other playing in step
+    (``alone``: the other never comes; this one waits for it till the things begin to fly);
+    ``top``: where both stand from the top, in millimetres."""
+    themes = [("lumen-pair-1920x720", "encore-pair-1920x720"),
+              ("lumen-companion-1920x720", "encore-companion-1920x720")]  # fmt: skip
+    rects = [[0.0, top, 292.5, 109.7], [300.5, top, 292.5, 109.7]]  # (12.3" panels, 8 mm apart)
+    whole = [0.0, top, 593.0, 109.7]
+
+    def scenario() -> tuple[Any, ...]:
+        size = (1920, 720)
+        times = (0.0, 0.06, 0.2, 0.35, 0.45, 0.5, 0.55, 0.65, 0.8, 0.95, 1.0)
+        steps = [[_frame(size, "RGB", seed), _frame(size, "RGB", seed + 1), _bits(t)]
+                 for t in times]  # fmt: skip
+        canvas = {"own": rects[me], "whole": whole, "panel": me, "panels": 2,
+                  "key": f"music {seed}"}  # fmt: skip
+        other = 1 - me
+        beside = [{"theme": themes[other][1], "at": _bits(1_763_000_000.0 + seed),
+                   "before": {"theme": themes[other][0], "at": _bits(1_762_999_990.0 + seed)},
+                   "canvas": {"own": rects[other], "whole": whole, "panel": other,
+                              "panels": 2}}]  # fmt: skip
+        old, new = themes[me]
+        drawn = {"theme": new, "at": _bits(1_763_000_000.0 + seed), "demo": True,
+                 "before": {"theme": old, "at": _bits(1_762_999_990.0 + seed)}}  # fmt: skip
+        if not alone:
+            drawn["beside"] = beside
+        return size, {}, "en", [{"name": "morph", "raw": {"canvas": canvas}, "steps": steps}], drawn
 
     return scenario
 
@@ -541,7 +631,11 @@ SCENARIOS = [_entrance_at_its_turns, _entrance_on_another_size, _every_one_at_it
              _morphing("lumen-pair", "arena-pair", (1920, 480), 8),
              _morphing("arena-vertical", "lumen-vertical", (480, 1920), 9),
              _morphing("lumen-480x480", "arena-480x480", (480, 480), 10),
-             _morphing("lumen-1920x720", "arena-1920x720", (1920, 720), 11, False)]  # fmt: skip
+             _morphing("lumen-1920x720", "arena-1920x720", (1920, 720), 11, False),
+             _morphing("lumen-1920x720", "lumen-1920x720", (1920, 720), 12,
+                       into="arena-1920x720"),
+             _morphing_across(0, 13), _morphing_across(1, 14, top=20.0),
+             _morphing_across(0, 15, alone=True)]  # fmt: skip
 
 
 def test_transitions_as_python_draws_them(tmp_path: Path) -> None:

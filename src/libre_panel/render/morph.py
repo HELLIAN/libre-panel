@@ -12,6 +12,8 @@ frame, a text, an icon) or shown more than once, apart, stays with its screen an
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -231,3 +233,115 @@ def lay(
         if alpha < 1:
             light = light.point(faded(alpha) * 3)
         Renderer._add_light(out, light, x, y)
+
+
+# -- over all the panels as one (render/canvas.py): what one shows flies to where another does --
+
+BOARD_KEEP_S = 60.0  # a switch's screens are forgotten this long after they were first told
+
+Box = tuple[int, int, int, int]
+Found = dict[str, tuple[list[int], Box]]
+
+
+@dataclass(eq=False)
+class Seen:
+    """A panel's part in a switch over all the panels: where it stands (millimetres, the
+    canvas's ``own``), its frames' size and what its old screen and its new one show (things,
+    in its own pixels)."""
+
+    own: tuple[float, float, float, float]
+    size: tuple[int, int]
+    old: Found
+    new: Found
+
+    def mm(self, box: Box) -> tuple[float, float, float, float]:
+        """A box of this panel's ([x0, y0, x1, y1], pixels) on all the panels: [x, y, w, h] in
+        millimetres."""
+        sx, sy = self.size[0] / self.own[2], self.size[1] / self.own[3]
+        return (self.own[0] + box[0] / sx, self.own[1] + box[1] / sy,
+                (box[2] - box[0]) / sx, (box[3] - box[1]) / sy)  # fmt: skip
+
+
+@dataclass(eq=False)
+class _Switch:
+    at: float  # (when it was first told, on the monotonic clock)
+    seen: dict[int, Seen]
+    parts: dict[int, dict[Any, Part]]
+    done: set[int]
+
+
+class Board:
+    """The panels' screens at one switch over all of them, told one another (each panel's loop
+    draws its own part): first what each panel's two screens show where (:class:`Seen`), then
+    each panel's parts of what flies from it or to it (:func:`take_apart`'s, by thing and
+    screen), so that every panel lays every flight that crosses it. A switch is forgotten once
+    every panel has laid out its flights, or :data:`BOARD_KEEP_S` after it was first told."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._switches: dict[str, _Switch] = {}
+
+    def tell(self, key: str, panel: int, seen: Seen) -> None:
+        """Panel ``panel`` says what its screens show at the switch ``key``."""
+        now = time.monotonic()
+        with self._lock:
+            for known, switch in list(self._switches.items()):
+                if switch.at < now - BOARD_KEEP_S:
+                    del self._switches[known]
+            self._switches.setdefault(key, _Switch(now, {}, {}, set())).seen[panel] = seen
+
+    def give(self, key: str, panel: int, parts: dict[Any, Part]) -> None:
+        """Panel ``panel``'s parts of what flies (by (thing, "old" or "new"))."""
+        with self._lock:
+            switch = self._switches.get(key)
+            if switch is not None:
+                switch.parts[panel] = parts
+
+    def done(self, key: str, panel: int, panels: int) -> None:
+        """Panel ``panel`` has its flights: the switch goes once all ``panels`` have."""
+        with self._lock:
+            switch = self._switches.get(key)
+            if switch is not None:
+                switch.done.add(panel)
+                if len(switch.done) >= panels:
+                    del self._switches[key]
+
+    def seen(self, key: str) -> dict[int, Seen]:
+        with self._lock:
+            switch = self._switches.get(key)
+            return dict(switch.seen) if switch is not None else {}
+
+    def parts(self, key: str) -> dict[int, dict[Any, Part]]:
+        with self._lock:
+            switch = self._switches.get(key)
+            return dict(switch.parts) if switch is not None else {}
+
+
+BOARD = Board()
+
+
+def paired(seen: dict[int, Seen]) -> list[tuple[str, int, int]]:
+    """What flies over all the panels: each thing (its key) from the panel whose old screen
+    shows it to the one whose new screen does; on its own panel where both of that panel's
+    screens show it, else from the one panel left that showed it to the one left that shows it
+    (none where more are left); the largest first (on the panels, in square millimetres), the
+    rest by key and panels."""
+    olds = {k for s in seen.values() for k in s.old}
+    news = {k for s in seen.values() for k in s.new}
+    flights: list[tuple[str, int, int]] = []
+    for key in sorted(olds & news):
+        was = [i for i in sorted(seen) if key in seen[i].old]
+        comes = [i for i in sorted(seen) if key in seen[i].new]
+        both = [i for i in was if i in comes]
+        flights += [(key, i, i) for i in both]
+        left = [i for i in was if i not in both]
+        right = [i for i in comes if i not in both]
+        if len(left) == 1 and len(right) == 1:
+            flights.append((key, left[0], right[0]))
+
+    def area(flight: tuple[str, int, int]) -> float:
+        _x, _y, w, h = seen[flight[1]].mm(seen[flight[1]].old[flight[0]][1])
+        return w * h
+
+    flights.sort(key=lambda f: (-area(f), f))
+    return flights

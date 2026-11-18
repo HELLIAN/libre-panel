@@ -35,6 +35,7 @@ CANVAS_DURATIONS = {
     "cascade": 1.9,
     "comet": 1.7,
     "portal": 1.5,
+    "morph": 2.4,
 }
 # where the content of a slide goes (x, y): "slide" brings the new screen in from the right
 SLIDE_WAYS = {"slide": (-1, 0), "slide-right": (1, 0), "slide-up": (0, -1), "slide-down": (0, 1)}

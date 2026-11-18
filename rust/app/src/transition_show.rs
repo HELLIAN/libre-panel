@@ -16,6 +16,28 @@ use lp_render::Renderer;
 const HOLD_S: f64 = 1.2;
 /// a request not taken up by then is forgotten
 const GIVE_UP_S: f64 = 30.0;
+/// A morph shown to see it turns the screen into another of Libre Panel's themes and back, as
+/// a switch between two screens does (the card shows nothing the screen shows): Lumen's and
+/// Arena's share the time, the rings and the readings, and each turns into the other.
+pub const MORPH_PAIR: (&str, &str) = ("lumen", "arena");
+
+/// morph_partner: the theme a morph shown to see it turns the screen `shown` into: Arena's
+/// version of the same kind from Lumen's ("arena-pair" from "lumen-pair-1920x720"), Lumen's
+/// from Arena's, Lumen from any other (its version for the panel: theme_for).
+pub fn morph_partner(shown: &str, places: &lp_theme::versions::Places) -> String {
+    let stem = lp_theme::versions::version_stem(shown);
+    let (lumen, arena) = MORPH_PAIR;
+    for (one, other) in [(lumen, arena), (arena, lumen)] {
+        if stem == one || stem.starts_with(&format!("{one}-")) {
+            let kind = format!("{other}{}", &stem[one.len()..]);
+            return match lp_theme::versions::find_theme(&kind, places) {
+                Ok(_) => kind,
+                Err(_) => other.to_string(),
+            };
+        }
+    }
+    lumen.to_string()
+}
 
 /// The request on now: its number, the transition's name, its words for the card, when.
 static ASKED: Mutex<Option<(u64, String, String, Instant)>> = Mutex::new(None);
@@ -157,5 +179,27 @@ mod tests {
         assert_eq!(lead(number + 1), 0.0);
         done(number);
         assert_eq!(lead(number), 0.0);
+    }
+
+    #[test]
+    fn a_morph_shown_turns_lumen_into_arena_and_any_other_into_lumen() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let places = lp_theme::versions::Places {
+            user: root.join("no-such-folder"),
+            plugins: Vec::new(),
+            builtin: root.join("src/libre_panel/themes"),
+        };
+        for (shown, partner) in [
+            ("lumen-1920x720", "arena"),
+            ("lumen", "arena"),
+            ("lumen-pair-1920x720", "arena-pair"),
+            ("arena-vertical", "lumen"),
+            ("arena-companion-1920x720", "lumen-companion"),
+            ("lumen-clock-640x180", "arena"),
+            ("encore-1920x720", "lumen"),
+            ("", "lumen"),
+        ] {
+            assert_eq!(morph_partner(shown, &places), partner, "{shown}");
+        }
     }
 }

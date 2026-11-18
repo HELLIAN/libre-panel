@@ -3201,7 +3201,11 @@ fn run(case: &Value) -> Result<Value, String> {
             // month, day, hour, minute, second, microsecond]), its readings those of "snapshot"
             // where it gives one; where it says "pictures", each step also gives its frame (to
             // look at, not to compare); where it says "time", each step
-            // also tells how long its frame took, in nanoseconds (to measure, not to compare)
+            // also tells how long its frame took, in nanoseconds (to measure, not to compare);
+            // where it says "beside" (each another panel's "theme" and moment "at", its old
+            // screen's "before" ({"theme", "at"}) and its "canvas"), a morph over all the panels
+            // plays with them: they say theirs, this one its own, they theirs again, before its
+            // steps (as the tests' Python plays them)
             use lp_render::transitions::Transition;
             let timed = case["time"].as_bool() == Some(true);
             let pictures = case["pictures"].as_bool() == Some(true);
@@ -3264,7 +3268,25 @@ fn run(case: &Value) -> Result<Value, String> {
                 }
                 None => None,
             };
-            renderer.set_snapshot(snapshot);
+            // (and "after": the new screen's, where it is not the renderer's: what a morph shown
+            // to see it turns the screen into)
+            let after = match case.get("after") {
+                Some(new) => {
+                    let theme = lp_theme::load_theme(
+                        std::path::Path::new(new["theme"].as_str().unwrap_or("")),
+                        &env,
+                    )
+                    .map_err(|e| e.msg)?;
+                    let mut other =
+                        lp_render::Renderer::new(theme, &env, options).map_err(|e| e.0)?;
+                    other
+                        .render(snapshot.clone(), float_in(&new["drawn"]))
+                        .map_err(|e| format!("not drawn after: {}", e.0))?;
+                    other.parting().map_err(|e| e.0)?
+                }
+                None => None,
+            };
+            renderer.set_snapshot(snapshot.clone()); // (and the panels beside, if any)
             let mut olds: Vec<(String, Image)> = Vec::new();
             let mut answers = Vec::new();
             for spec in case["switches"].as_array().into_iter().flatten() {
@@ -3278,6 +3300,26 @@ fn run(case: &Value) -> Result<Value, String> {
                     continue;
                 };
                 made.set_before(before.clone());
+                made.set_after(after.clone());
+                let first = spec["steps"].as_array().and_then(|steps| steps.first());
+                if let (Some(beside), Some(first)) = (case["beside"].as_array(), first) {
+                    let key = params.get("canvas").and_then(|c| match c {
+                        lp_py::Value::Dict(c) => c.get("key").cloned(),
+                        _ => None,
+                    });
+                    let mut others = Vec::new();
+                    for other in beside {
+                        others.push(beside_of(other, key.clone(), &snapshot, &env, options)?);
+                    }
+                    for (renderer, made, blank) in &mut others {
+                        let _ = made.frame(blank, 0, blank, 0.0, renderer);
+                    }
+                    let (old, new) = (noise_frame(&first[0]), noise_frame(&first[1]));
+                    let _ = made.frame(&old, u64::MAX, &new, 0.0, &renderer);
+                    for (renderer, made, blank) in &mut others {
+                        let _ = made.frame(blank, 0, blank, 0.0, renderer);
+                    }
+                }
                 let mut steps = Vec::new();
                 for step in spec["steps"].as_array().into_iter().flatten() {
                     let key = step[0].to_string();
@@ -4032,6 +4074,56 @@ fn noise_frame(spec: &Value) -> Image {
 
 /// A value as the tests give it with its type: `{"f": bits in hex}`, `{"i": decimal}`,
 /// `{"s": text}`, `{"b": bool}`, `{"l": [...]}`, `{"d": {key: ...}}`; anything else None.
+/// Another panel's part of a morph over all the panels (the transition op's "beside"): its
+/// theme drawn at its moment, its old screen's at its own, the morph made with its canvas and
+/// the switch's key; and a frame of its size.
+fn beside_of(
+    other: &Value,
+    key: Option<lp_py::Value>,
+    snapshot: &lp_render::snapshot::Snapshot,
+    env: &lp_theme::Env,
+    options: lp_render::Options,
+) -> Result<
+    (
+        lp_render::Renderer,
+        lp_render::transitions::Transition,
+        Image,
+    ),
+    String,
+> {
+    let float_in =
+        |v: &Value| f64::from_bits(u64::from_str_radix(v.as_str().unwrap_or("0"), 16).unwrap_or(0));
+    let drawn = |theme: &Value, at: &Value| -> Result<lp_render::Renderer, String> {
+        let theme = lp_theme::load_theme(std::path::Path::new(theme.as_str().unwrap_or("")), env)
+            .map_err(|e| e.msg)?;
+        let mut renderer = lp_render::Renderer::new(theme, env, options).map_err(|e| e.0)?;
+        renderer
+            .render(snapshot.clone(), float_in(at))
+            .map_err(|e| format!("not drawn beside: {}", e.0))?;
+        Ok(renderer)
+    };
+    let renderer = drawn(&other["theme"], &other["at"])?;
+    let was = drawn(&other["before"]["theme"], &other["before"]["at"])?;
+    let mut canvas = match typed(&other["canvas"]) {
+        lp_py::Value::Dict(canvas) => canvas,
+        _ => lp_py::Dict::default(),
+    };
+    if let Some(key) = key {
+        canvas.insert("key".to_string(), key);
+    }
+    let mut params = lp_py::Dict::default();
+    params.insert("canvas".to_string(), lp_py::Value::Dict(canvas));
+    let mut made = lp_render::transitions::Transition::new("morph", &params, &renderer)
+        .ok_or("no morph beside")?;
+    made.set_before(was.parting().map_err(|e| e.0)?);
+    let (w, h) = (
+        renderer.theme.width as usize,
+        renderer.theme.height as usize,
+    );
+    let blank = Image::new(lp_pixels::Mode::RGB, w, h, &[0, 0, 0]);
+    Ok((renderer, made, blank))
+}
+
 fn typed(v: &Value) -> lp_py::Value {
     if let Some(h) = v["f"].as_str() {
         lp_py::Value::Float(f64::from_bits(u64::from_str_radix(h, 16).unwrap_or(0)))

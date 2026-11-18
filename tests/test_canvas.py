@@ -334,9 +334,10 @@ def _loop(rects, panel=None, on=True):
 def test_a_panel_is_told_where_it_and_all_of_them_stand():
     rects = [tuple(BIG), None, tuple(BAR)]
     first, _ = _loop(rects)
-    assert first() == {"own": BIG, "whole": WHOLE}
+    # (and which of them it is and how many there are: what a morph's things fly between)
+    assert first() == {"own": BIG, "whole": WHOLE, "panel": 0, "panels": 2}
     beside, _ = _loop(rects, panel=1)  # [[panels]][1]: the third
-    assert beside() == {"own": BAR, "whole": WHOLE}
+    assert beside() == {"own": BAR, "whole": WHOLE, "panel": 2, "panels": 2}
     assert _loop(rects, panel=0)[0]() is None  # (one whose size is not known)
     assert _loop([tuple(BIG)])[0]() is None  # (one panel)
     assert _loop(rects, on=False)[0]() is None  # ([transitions] canvas = false)

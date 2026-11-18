@@ -28,7 +28,11 @@
   readings (Lumen to Arena, Arena to Lumen, Encore to Lumen), its first frame, which takes both
   screens apart, takes 13.5 to 17.7 ms, each frame after it 3.6 to 4.8 ms (the median). The Rust
   app draws it as Python does, to the bit but in the glow of a screen's rings and bars, which
-  its renderer draws within a level: there a pixel now and then a level or two apart.
+  its renderer draws within a level: there a pixel now and then a level or two apart. Over all
+  the panels a thing flies from the panel that showed it to the one that shows it now, through
+  the gap between them: when music comes, Lumen's cover on the first panel flies to the
+  companion's on the second. Shown with **▶**, it turns the screen into Arena's version of the
+  theme (Arena's into Lumen's, any other into Lumen) and back, so that something flies.
 - **Light that moves.** On a panel that moves, light now moves over what it shows: the end of
   a ring breathes in its colour and now and then a light runs along the ring (past 80 % its end
   glows wider); the newest point of a curve beats with each reading; while a track plays, its

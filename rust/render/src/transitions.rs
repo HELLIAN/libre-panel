@@ -9,6 +9,8 @@
 //! halo, the pieces of the old screen.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use lp_pixels::{chops, Filter, Image, Mode, Transpose};
 use lp_py::random::Random;
@@ -183,6 +185,9 @@ impl Transition {
         // take_canvas: across the panels, at its own pace there
         let canvas = canvas_duration(name).zip(canvas_of(params));
         let mut kind = kind;
+        if let Kind::Morph(morph) = &mut kind {
+            morph.placed(params, canvas.is_some());
+        }
         if let (Kind::Masked(masked), Some((_, c))) = (&mut kind, &canvas) {
             if masked.map == Map::Iris {
                 // (it reaches the farthest corner at 255, its edge beyond)
@@ -209,6 +214,24 @@ impl Transition {
     pub fn set_before(&mut self, before: Option<crate::morph::Parting>) {
         if let Kind::Morph(morph) = &mut self.kind {
             morph.before = before;
+        }
+    }
+
+    /// across: the switch over all the panels the morph is this panel's part of (its key on
+    /// the Board: crate::morph::board), where the canvas tells which panel this is and how many
+    /// there are; the others take nothing of it.
+    pub fn across(&mut self, key: &str) {
+        if let Kind::Morph(morph) = &mut self.kind {
+            morph.go_across(key);
+        }
+    }
+
+    /// The new screen as a renderer composed it (Renderer::parting), where it is not the one
+    /// the transition's renderer draws: another theme a morph shown to see it turns the screen
+    /// into (transition_show.rs); the others take nothing of it.
+    pub fn set_after(&mut self, after: Option<crate::morph::Parting>) {
+        if let Kind::Morph(morph) = &mut self.kind {
+            morph.after = after;
         }
     }
 
@@ -337,7 +360,7 @@ impl Transition {
                 None => shatter(pieces, old, old_key, new, t, 1.3),
             },
             Kind::Cascade(laid) => cascade(laid, old, new, t, self.canvas.as_ref(), renderer),
-            Kind::Morph(morph) => morph.frame(old, new, t, renderer),
+            Kind::Morph(morph) => morph.frame(old, new, t, self.canvas.as_ref(), renderer),
             Kind::Comet(flown) => comet(flown, old, new, t, self.canvas.as_ref(), &colours),
             Kind::Portal(opening) => portal(opening, old, new, t, self.canvas.as_ref(), &colours),
             Kind::Plugin(played) => played.frame(old, new, t).map_err(Failed),
@@ -2040,76 +2063,284 @@ const MORPH_FLIGHT: (f64, f64) = (0.06, 0.9);
 const MORPH_TURN: (f64, f64) = (0.35, 0.65);
 const MORPH_LIFT_MM: f64 = 7.0;
 
-/// Morph: the old screen (its renderer's parting, until taken apart) and what was made of both.
+/// Morph: the old screen (its renderer's parting, until taken apart), the new one where it is
+/// not the renderer's, and what was made of both. Over all the panels (render/canvas.py): this
+/// panel's number and how many there are (the canvas tells them), the switch they all take part
+/// in (its key on the Board: crate::morph::board), what this panel told the others and what it
+/// took apart for them.
 #[derive(Default)]
 pub struct Morph {
     before: Option<crate::morph::Parting>,
+    after: Option<crate::morph::Parting>,
     made: Option<Flights>,
+    place: Option<(i64, i64)>,
+    across: Option<(String, i64, i64)>,
+    told: Option<Told>,
+    given: Option<Taken>,
 }
 
+/// What a panel told the others (its Seen) and the two screens it will take apart.
+type Told = (
+    Arc<crate::morph::Seen>,
+    crate::morph::Parting,
+    crate::morph::Parting,
+);
+
+/// What flies over all the panels, and this panel's two screens without what flies from it or
+/// to it.
+type Taken = (Vec<(String, i64, i64)>, Image, Image);
+
+/// A flight over all the panels: where its old part's panel stands and its old part, where its
+/// new part's panel stands and its new part.
+type Crossing = (
+    Arc<crate::morph::Seen>,
+    Arc<crate::morph::Part>,
+    Arc<crate::morph::Seen>,
+    Arc<crate::morph::Part>,
+);
+
 /// Morph._made: the size, the old screen without what flies, the new one without it, the
-/// things that fly (each its old part and its new one, the largest first) and the dark.
+/// things that fly (each its old part and its new one, the largest first; over all the panels:
+/// `crossing`, each where it is on them) and the dark.
 struct Flights {
     size: (usize, usize),
     old_without: Image,
     new_without: Image,
     flights: Vec<(crate::morph::Part, crate::morph::Part)>,
+    crossing: Vec<Crossing>,
     dark: Image,
 }
 
+/// What a frame of the morph is made of: a fade (nothing to take apart), the wait for the
+/// other panels (the old screen, fading as it would) or the flights.
+enum Ready<'a> {
+    Fade,
+    Wait,
+    Go(&'a Flights),
+}
+
 impl Morph {
-    /// _flights: worked out once both screens are known; None where there is nothing to take
-    /// apart (the old screen unknown, or of another size): it fades.
-    fn flights(&mut self, new: &Image, renderer: &Renderer) -> Result<Option<&Flights>> {
+    /// The morph's place over all the panels, from its parameters (`canvas`'s "panel",
+    /// "panels" and "key": whole numbers, a string), where it goes over them (`on_canvas`).
+    fn placed(&mut self, params: &Dict, on_canvas: bool) {
+        let Some(Value::Dict(spec)) = params.get("canvas") else {
+            return;
+        };
+        let count = |key: &str| match spec.get(key) {
+            Some(Value::Int(n)) => i64::try_from(n).ok(),
+            _ => None,
+        };
+        if let (true, Some(panel), Some(panels)) = (on_canvas, count("panel"), count("panels")) {
+            self.place = Some((panel, panels));
+        }
+        if let Some(Value::Str(key)) = spec.get("key") {
+            self.go_across(key);
+        }
+    }
+
+    /// across: the switch over all the panels this is this panel's part of: its key on the
+    /// Board (where the canvas tells which panel this is and how many there are).
+    fn go_across(&mut self, key: &str) {
+        if let Some((panel, panels)) = self.place {
+            self.across = Some((key.to_string(), panel, panels));
+        }
+    }
+
+    /// _screens: the old screen and the new one, both of `size`; None while either is not
+    /// known (asked again at the next frame) or where they are of another size.
+    fn screens(
+        &mut self,
+        size: (usize, usize),
+        renderer: &Renderer,
+    ) -> Result<Option<(crate::morph::Parting, crate::morph::Parting)>> {
+        if self.before.as_ref().is_none_or(|b| b.size() != size) {
+            return Ok(None);
+        }
+        let (after, given) = match self.after.take() {
+            Some(after) => (after, true),
+            None => match renderer.parting()? {
+                Some(after) => (after, false),
+                None => return Ok(None), // (not drawn yet: asked again at the next frame)
+            },
+        };
+        if after.size() != size {
+            self.after = given.then_some(after);
+            return Ok(None);
+        }
+        // (what they held is in the parts now)
+        Ok(self.before.take().map(|before| (before, after)))
+    }
+
+    /// _flights: worked out once both screens are known; a fade where there is nothing to take
+    /// apart (the old screen unknown, or of another size).
+    fn flights(
+        &mut self,
+        new: &Image,
+        t: f64,
+        canvas: Option<&Canvas>,
+        renderer: &Renderer,
+    ) -> Result<Ready<'_>> {
         use crate::morph::{take_apart, things};
         let size = (new.width(), new.height());
         if self.made.is_none() {
-            let Some(before) = self.before.as_ref().filter(|b| b.size() == size) else {
-                return Ok(None);
-            };
-            let Some(after) = renderer.parting()?.filter(|a| a.size() == size) else {
-                return Ok(None); // (not drawn yet: asked again at the next frame)
-            };
-            let (old_things, new_things) = (things(before), things(&after));
-            let area = |b: (i64, i64, i64, i64)| (b.2 - b.0) * (b.3 - b.1);
-            let mut shared: Vec<&String> = (old_things.keys())
-                .filter(|k| new_things.contains_key(*k))
-                .collect();
-            shared.sort_by(|a, b| {
-                (area(old_things[*b].1).cmp(&area(old_things[*a].1))).then_with(|| a.cmp(b))
-            });
-            let taken = |found: &std::collections::HashMap<String, crate::morph::Found>| {
-                (shared.iter())
-                    .map(|k| ((*k).clone(), found[*k].clone()))
-                    .collect::<Vec<_>>()
-            };
-            let (old_without, mut old_parts) = take_apart(before, &taken(&old_things))?;
-            let (new_without, mut new_parts) = take_apart(&after, &taken(&new_things))?;
-            let flights = (shared.iter())
-                .filter_map(|k| Some((old_parts.remove(*k)?, new_parts.remove(*k)?)))
-                .collect();
-            let dark = Image::new(Mode::RGB, size.0, size.1, &[0, 0, 0]);
-            self.made = Some(Flights {
-                size,
-                old_without,
-                new_without,
-                flights,
-                dark,
-            });
-            self.before = None; // (what it held is in the parts now)
+            if self.across.is_some() {
+                if let Some(canvas) = canvas {
+                    if !self.flights_across(size, t, canvas, renderer)? {
+                        return Ok(Ready::Wait);
+                    }
+                }
+            } else {
+                let Some((before, after)) = self.screens(size, renderer)? else {
+                    return Ok(Ready::Fade);
+                };
+                let (old_things, new_things) = (things(&before), things(&after));
+                let area = |b: (i64, i64, i64, i64)| (b.2 - b.0) * (b.3 - b.1);
+                let mut shared: Vec<&String> = (old_things.keys())
+                    .filter(|k| new_things.contains_key(*k))
+                    .collect();
+                shared.sort_by(|a, b| {
+                    (area(old_things[*b].1).cmp(&area(old_things[*a].1))).then_with(|| a.cmp(b))
+                });
+                let taken = |found: &HashMap<String, crate::morph::Found>| {
+                    (shared.iter())
+                        .map(|k| ((*k).clone(), found[*k].clone()))
+                        .collect::<Vec<_>>()
+                };
+                let (old_without, mut old_parts) = take_apart(&before, &taken(&old_things))?;
+                let (new_without, mut new_parts) = take_apart(&after, &taken(&new_things))?;
+                let flights = (shared.iter())
+                    .filter_map(|k| Some((old_parts.remove(*k)?, new_parts.remove(*k)?)))
+                    .collect();
+                self.made = Some(Flights {
+                    size,
+                    old_without,
+                    new_without,
+                    flights,
+                    crossing: Vec::new(),
+                    dark: Image::new(Mode::RGB, size.0, size.1, &[0, 0, 0]),
+                });
+            }
         }
-        Ok(self.made.as_ref().filter(|m| m.size == size))
+        Ok(match self.made.as_ref().filter(|m| m.size == size) {
+            Some(made) => Ready::Go(made),
+            None => Ready::Fade,
+        })
     }
 
-    fn frame(&mut self, old: &Image, new: &Image, t: f64, renderer: &Renderer) -> Result<Image> {
+    /// _flights_across: the flights over all the panels: this panel says what its screens show
+    /// (the Board), takes apart what flies from it or to it once every panel has said it, gives
+    /// those parts, and has every flight once every panel has given its own: each laid on its
+    /// way in millimetres, a part from one panel laid on another. Till then (or where the others
+    /// never come, from the moment the things begin to fly) it waits: false, or goes on with the
+    /// panels that came. The screens not known yet (asked again at the next frame), or of
+    /// another size: nothing made, a fade.
+    fn flights_across(
+        &mut self,
+        size: (usize, usize),
+        t: f64,
+        canvas: &Canvas,
+        renderer: &Renderer,
+    ) -> Result<bool> {
+        use crate::morph::{board, paired, take_apart, things, Seen};
+        let Some((key, me, panels)) = self.across.clone() else {
+            return Ok(true);
+        };
+        // (the things begin to fly: with the panels that came)
+        let late = t >= MORPH_FLIGHT.0;
+        if self.told.is_none() && self.given.is_none() {
+            let Some((before, after)) = self.screens(size, renderer)? else {
+                return Ok(true);
+            };
+            let seen = Arc::new(Seen {
+                own: canvas.own,
+                size,
+                old: things(&before),
+                new: things(&after),
+            });
+            board().tell(&key, me, seen.clone());
+            self.told = Some((seen, before, after));
+        }
+        let seen = board().seen(&key);
+        if (seen.len() as i64) < panels && !late {
+            return Ok(false);
+        }
+        if let Some((own, before, after)) = self.told.take() {
+            let flights = paired(&seen);
+            let taken = |found: &HashMap<String, crate::morph::Found>,
+                         mine: &dyn Fn(i64, i64) -> bool| {
+                (flights.iter())
+                    .filter(|(_, i, j)| mine(*i, *j))
+                    .filter_map(|(k, _, _)| Some((k.clone(), found.get(k)?.clone())))
+                    .collect::<Vec<_>>()
+            };
+            let (old_without, old_parts) = take_apart(&before, &taken(&own.old, &|i, _| i == me))?;
+            let (new_without, new_parts) = take_apart(&after, &taken(&own.new, &|_, j| j == me))?;
+            let mut parts: crate::morph::Given = HashMap::new();
+            for (screen, taken) in [(false, old_parts), (true, new_parts)] {
+                parts.extend(taken.into_iter().map(|(k, p)| ((k, screen), Arc::new(p))));
+            }
+            board().give(&key, me, parts);
+            self.given = Some((flights, old_without, new_without));
+        }
+        let given = board().parts(&key);
+        if let Some((flights, _, _)) = &self.given {
+            let needed = flights.iter().flat_map(|(_, i, j)| [*i, *j]);
+            if !late && needed.into_iter().any(|i| !given.contains_key(&i)) {
+                return Ok(false);
+            }
+        }
+        let Some((flights, old_without, new_without)) = self.given.take() else {
+            return Ok(true);
+        };
+        let crossing = (flights.into_iter())
+            .filter_map(|(k, i, j)| {
+                let was = given.get(&i)?.get(&(k.clone(), false))?;
+                let comes = given.get(&j)?.get(&(k, true))?;
+                Some((
+                    seen.get(&i)?.clone(),
+                    was.clone(),
+                    seen.get(&j)?.clone(),
+                    comes.clone(),
+                ))
+            })
+            .collect();
+        self.made = Some(Flights {
+            size,
+            old_without,
+            new_without,
+            flights: Vec::new(),
+            crossing,
+            dark: Image::new(Mode::RGB, size.0, size.1, &[0, 0, 0]),
+        });
+        board().done(&key, me, panels);
+        Ok(true)
+    }
+
+    fn frame(
+        &mut self,
+        old: &Image,
+        new: &Image,
+        t: f64,
+        canvas: Option<&Canvas>,
+        renderer: &Renderer,
+    ) -> Result<Image> {
         if t >= 1.0 {
             return Ok(new.clone());
         }
-        let Some(made) = self.flights(new, renderer)? else {
-            // (nothing to take apart: a fade)
-            return chops::blend(&*rgb(old)?, &*rgb(new)?, smooth(t) as f32).map_err(failed);
-        };
         let gone = 1.0 - smooth(t / MORPH_OUT);
+        let across = self.across.is_some();
+        let made = match self.flights(new, t, canvas, renderer)? {
+            Ready::Go(made) => made,
+            Ready::Wait => {
+                // (the other panels not yet: the old screen, fading as it would)
+                let dark = Image::new(Mode::RGB, new.width(), new.height(), &[0, 0, 0]);
+                return over(dark, &*rgb(old)?, gone);
+            }
+            Ready::Fade => {
+                // (nothing to take apart: a fade)
+                return chops::blend(&*rgb(old)?, &*rgb(new)?, smooth(t) as f32).map_err(failed);
+            }
+        };
         let mut out = if gone <= 0.0 || gone >= 1.0 {
             (if gone <= 0.0 {
                 &made.dark
@@ -2125,6 +2356,9 @@ impl Morph {
         let (a, b) = MORPH_FLIGHT;
         let e = in_out((t - a) / (b - a));
         let turned = smooth((e - MORPH_TURN.0) / (MORPH_TURN.1 - MORPH_TURN.0));
+        if let (Some(canvas), true) = (canvas, across) {
+            lay_across(&mut out, &made.crossing, canvas, e, turned)?;
+        }
         let high = MORPH_LIFT_MM * per_mm(&alone(made.size), made.size).1;
         let lift = high * (std::f64::consts::PI * e).sin();
         for (was, comes) in &made.flights {
@@ -2145,6 +2379,46 @@ impl Morph {
         let last = smooth((t - MORPH_LAST) / (1.0 - MORPH_LAST));
         over(out, &*rgb(new)?, last)
     }
+}
+
+/// _lay_across: each flight over all the panels where it is now, in millimetres, laid on this
+/// panel where it is on it.
+fn lay_across(
+    out: &mut Image,
+    crossing: &[Crossing],
+    canvas: &Canvas,
+    e: f64,
+    turned: f64,
+) -> Result<()> {
+    let (w, h) = (out.width() as f64, out.height() as f64);
+    let (sx, sy) = per_mm(canvas, (out.width(), out.height()));
+    let lift = MORPH_LIFT_MM * (std::f64::consts::PI * e).sin();
+    for (seen_was, was, seen_comes, comes) in crossing {
+        let corners = |(x, y, w, h): (i64, i64, i64, i64)| (x, y, x + w, y + h);
+        let (ax, ay, aw, ah) = seen_was.mm(corners(was.bounds));
+        let (bx, by, bw, bh) = seen_comes.mm(corners(comes.bounds));
+        // (up where it has room for its arc, above all the panels' top)
+        let rise = if py_min(ay, by) - canvas.whole.1 >= MORPH_LIFT_MM {
+            -lift
+        } else {
+            lift
+        };
+        let mx = ax + aw / 2.0 + (bx + bw / 2.0 - ax - aw / 2.0) * e;
+        let my = ay + ah / 2.0 + (by + bh / 2.0 - ay - ah / 2.0) * e + rise;
+        let (rw, rh) = (aw + (bw - aw) * e, ah + (bh - ah) * e);
+        let middle = ((mx - canvas.own.0) * sx, (my - canvas.own.1) * sy);
+        let room = (rw * sx, rh * sy);
+        if middle.0 + room.0 / 2.0 < 0.0
+            || middle.0 - room.0 / 2.0 > w
+            || middle.1 + room.1 / 2.0 < 0.0
+            || middle.1 - room.1 / 2.0 > h
+        {
+            continue; // (not on this panel now)
+        }
+        crate::morph::lay(out, was, middle, room, 1.0 - turned)?;
+        crate::morph::lay(out, comes, middle, room, turned)?;
+    }
+    Ok(())
 }
 
 /// _mixed: `b` over `a` by `share`: `a` at none, `b` at all of it (a frame copied no more

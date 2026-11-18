@@ -425,6 +425,118 @@ impl Image {
     }
 }
 
+/// The places ``from..to`` of ``c``, their inputs counted from the first any of them takes; and
+/// the inputs they take (``first..end`` of the picture's).
+fn window_of(c: &Coeffs, from: usize, to: usize) -> (Coeffs, usize, usize) {
+    let bounds = &c.bounds[from..to];
+    let first = bounds.iter().map(|b| b.0).min().unwrap_or(0);
+    let end = bounds.iter().map(|b| b.0 + b.1).max().unwrap_or(first);
+    let cut = Coeffs {
+        ksize: c.ksize,
+        bounds: bounds.iter().map(|&(m, n)| (m - first, n)).collect(),
+        kk: c.kk[from * c.ksize..to * c.ksize].to_vec(),
+    };
+    (cut, first, end)
+}
+
+/// resample_8 of a window: ``src`` the inputs it takes, ``cv`` and ``ch`` its places (None where
+/// that pass is not made), the passes in the order the whole picture's sizes ask for.
+fn resample_8_window(
+    src: &Image,
+    rows_first: bool,
+    cv: Option<&Coeffs>,
+    ch: Option<&Coeffs>,
+) -> Image {
+    #[cfg(target_arch = "x86_64")]
+    {
+        static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *READY.get_or_init(|| std::arch::is_x86_feature_detected!("avx2")) {
+            // SAFETY: the processor has AVX2.
+            return unsafe { resample_8_window_avx2(src, rows_first, cv, ch) };
+        }
+    }
+    resample_8_window_body(src, rows_first, cv, ch)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn resample_8_window_avx2(
+    src: &Image,
+    rows_first: bool,
+    cv: Option<&Coeffs>,
+    ch: Option<&Coeffs>,
+) -> Image {
+    resample_8_window_body(src, rows_first, cv, ch)
+}
+
+#[inline(always)]
+fn resample_8_window_body(
+    src: &Image,
+    rows_first: bool,
+    cv: Option<&Coeffs>,
+    ch: Option<&Coeffs>,
+) -> Image {
+    match (cv, ch) {
+        (Some(cv), Some(ch)) if !rows_first => {
+            horizontal_8(&vertical_8(src, 0, cv), 0, cv.bounds.len(), ch)
+        }
+        (Some(cv), Some(ch)) => vertical_8(&horizontal_8(src, 0, src.height, ch), 0, cv),
+        (Some(cv), None) => vertical_8(src, 0, cv),
+        (None, Some(ch)) => horizontal_8(src, 0, src.height, ch),
+        (None, None) => src.clone(),
+    }
+}
+
+impl Image {
+    /// resize((w, h), filter) cut to ``window`` (left, top, right, bottom of the resized
+    /// picture): only the window's pixels made, and only of the inputs they take. Each is the
+    /// whole resize's: Resample.c makes every pixel of a pass of the inputs under its weights
+    /// alone, the first pass rounded to 8 bits either way, and the passes go in the order the
+    /// whole picture's sizes ask for.
+    pub fn resize_window(
+        &self,
+        w: usize,
+        h: usize,
+        filter: Filter,
+        window: (usize, usize, usize, usize),
+    ) -> Result<Image> {
+        let (x0, y0, x1, y1) = window;
+        if x0 >= x1 || y0 >= y1 || x1 > w || y1 > h {
+            return error("the window is not within the resized picture");
+        }
+        if filter == Filter::Nearest || (w, h) == self.size() || window == (0, 0, w, h) {
+            let whole = self.resize(w, h, filter, None, None)?;
+            return Ok(whole.crop(x0 as i64, y0 as i64, x1 as i64, y1 as i64));
+        }
+        let (in_w, in_h) = self.size();
+        let cut = |size: usize, out: usize, from: usize, to: usize| {
+            let (c, first, end) = window_of(&coeffs(size, 0.0, size as f32, out, filter), from, to);
+            (Some(c), first, end)
+        };
+        let (cv, ya, yb) = if h != in_h {
+            cut(in_h, h, y0, y1)
+        } else {
+            (None, y0, y1)
+        };
+        let (ch, xa, xb) = if w != in_w {
+            cut(in_w, w, x0, x1)
+        } else {
+            (None, x0, x1)
+        };
+        let mut inputs = self.crop(xa as i64, ya as i64, xb as i64, yb as i64);
+        let rgba = self.mode == Mode::RGBA; // (premultiplied, as resize takes it)
+        if rgba {
+            inputs = inputs.convert(Mode::RGBa)?;
+        }
+        let rows_first = horizontal_first(in_w, in_h, w, h);
+        let made = resample_8_window(&inputs, rows_first, cv.as_ref(), ch.as_ref());
+        if rgba {
+            return made.convert(Mode::RGBA);
+        }
+        Ok(made)
+    }
+}
+
 /// The rows of a float picture from ``first`` on (``rows`` of them), each resampled to ``c``'s
 /// width: doubles summed, the result a float.
 fn horizontal_f(src: &FloatImage, first: usize, rows: usize, c: &Coeffs) -> FloatImage {
@@ -712,4 +824,77 @@ pub fn resize_16(
         return Ok(vertical_16(src, width, 0, &cv));
     }
     Ok(src.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_window_of_a_resize_is_the_resize_cut_to_it() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 16) as u8
+        };
+        // (smaller, larger, the columns first where the height shrinks most, one way only)
+        let sizes = [
+            ((40, 30), (25, 19)),
+            ((40, 30), (83, 61)),
+            ((40, 30), (40, 11)),
+            ((40, 30), (17, 30)),
+            ((40, 30), (40, 47)),
+            ((7, 90), (13, 20)),
+            ((120, 9), (31, 9)),
+        ];
+        let filters = [
+            Filter::Bicubic,
+            Filter::Bilinear,
+            Filter::Lanczos,
+            Filter::Box,
+            Filter::Hamming,
+            Filter::Nearest,
+        ];
+        for mode in [Mode::L, Mode::RGB, Mode::RGBA, Mode::RGBa] {
+            for ((iw, ih), (w, h)) in sizes {
+                let mut src = Image::blank(mode, iw, ih);
+                for v in src.data.iter_mut() {
+                    *v = next();
+                }
+                for filter in filters {
+                    let whole = src.resize(w, h, filter, None, None).unwrap();
+                    for window in [
+                        (0, 0, w, h),
+                        (0, 0, w / 2, h),
+                        (w / 3, 0, w, h),
+                        (0, h / 2, w, h),
+                        (w / 4, h / 3, w - w / 5, h - 1),
+                        (w - 1, h - 1, w, h),
+                        (1, 1, 2, 2),
+                    ] {
+                        let (x0, y0, x1, y1) = window;
+                        let cut = whole.crop(x0 as i64, y0 as i64, x1 as i64, y1 as i64);
+                        let got = src.resize_window(w, h, filter, window).unwrap();
+                        assert!(
+                            got == cut,
+                            "{mode:?} {iw}x{ih} to {w}x{h} {filter:?} {window:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_window_not_within_the_resized_picture_is_refused() {
+        let src = Image::blank(Mode::L, 4, 4);
+        for window in [(0, 0, 0, 2), (1, 1, 9, 2), (2, 2, 1, 3)] {
+            assert!(
+                src.resize_window(8, 8, Filter::Bicubic, window).is_err(),
+                "{window:?}"
+            );
+        }
+    }
 }

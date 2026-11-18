@@ -516,19 +516,21 @@ random = ["fade", "wipe", "zoom", "iris", "blinds", "dissolve", "light", "tiles"
 | `random` | another of `random` each time |
 
 **Over all the panels.** With more than one panel, a slide, the wipe, the iris, the line of
-light, the shatter, the cascade, the comet and the portal go over all of them as over one
-screen where they all change at once: a scene put on or off, a game, music or the PC at rest
-coming or going, and **▶**. The panels stand as *Settings → More panels* shows them; the new
-screen runs through the gap between them (a slide with a soft shadow at its edge), the iris
-and the portal open from the middle of all of them, the shatter's tiles fall one after another
-along them, the cascade's cards come in as a wave along them and the comet flies from one
-panel into the next; each panel draws its part from the same moment on (0.8 s after the
-change, so that each has noticed it and made its new screen; 0.4 s after **▶**). Over all of
-them a slide, the wipe, the line of light, the iris and the shatter take a little longer than
-on one (1.25 s; the line of light 1.4 s, the iris 1.3 s, the shatter 1.8 s); the cascade
-(1.9 s), the comet (1.7 s) and the portal (1.5 s) take as long on one panel as over all; the
-pace stretches each as any other. *Across the panels* off (`canvas = false`) plays it on each
-panel by itself, as does any other transition and any switch of one panel alone.
+light, the shatter, the cascade, the comet, the portal and the morph go over all of them as
+over one screen where they all change at once: a scene put on or off, a game, music or the PC
+at rest coming or going, and **▶**. The panels stand as *Settings → More panels* shows them;
+the new screen runs through the gap between them (a slide with a soft shadow at its edge), the
+iris and the portal open from the middle of all of them, the shatter's tiles fall one after
+another along them, the cascade's cards come in as a wave along them, the comet flies from one
+panel into the next and what the morph carries flies from the panel that showed it to the one
+that shows it now; each panel draws its part from the same moment on (0.8 s after the change,
+so that each has noticed it and made its new screen; 0.4 s after **▶**). Over all of them a
+slide, the wipe, the line of light, the iris, the shatter and the morph take a little longer
+than on one (1.25 s; the line of light 1.4 s, the iris 1.3 s, the shatter 1.8 s, the morph
+2.4 s); the cascade (1.9 s), the comet (1.7 s) and the portal (1.5 s) take as long on one panel
+as over all; the pace stretches each as any other. *Across the panels* off (`canvas = false`)
+plays it on each panel by itself, as does any other transition and any switch of one panel
+alone.
 
 The cascade takes the new screen's cards from how it is drawn, in any theme: what covers all of
 the panel at the bottom (its background, a full-panel picture or rect, a look's grid) is the
@@ -544,6 +546,18 @@ the end the new screen as it is now. What is shown more than once apart (a readi
 here and there), what covers all of the panel and what is the same on any screen (a frame, a
 text, an icon) stays with its screen and fades. Two screens of other sizes, or a switch with
 nothing on the panel before, simply fade.
+
+Over all the panels the morph carries a thing from the panel that showed it to the one that
+shows it now, through the gap between them: when music comes, the cover on the first panel
+flies to the second where only the second shows it then. What both screens of one panel show
+flies on that panel; where more than one other panel showed it, or shows it now, it fades with
+its screen. The panels tell one another what their screens show; each waits for the others
+until the things begin to fly (0.14 s in) and goes on with those that came.
+
+Shown to see it (**▶**), the morph turns the screen into another of Libre Panel's themes and
+back, both with the readings of the moment: Lumen into Arena's version of the same kind (the
+pair into Arena's pair), Arena into Lumen's, any other into Lumen. Where the other theme cannot
+be drawn for the panel, it fades to the card and back.
 
 A plugin's transition goes by its name (`myplugin.curtain`, [Plugins](PLUGINS.md)). The old
 setting `transition = "fade"` at the top of `config.toml` still names the default.

@@ -51,7 +51,7 @@ from libre_panel.render.light import (
     role_color,
     smooth,
 )
-from libre_panel.render.morph import lay, take_apart, things
+from libre_panel.render.morph import BOARD, Seen, lay, paired, take_apart, things
 
 
 def _rgb(image: Image.Image) -> Image.Image:
@@ -938,7 +938,8 @@ class Morph(Transition):
     render/morph.py) flies from its old place to its new one, on an arc, growing or shrinking
     to its new size and turning into its new look on the way; the rest of the old screen fades
     out and the new one's fades in after it, so the things in flight stand out; at the end the
-    new screen as it is drawn now."""
+    new screen as it is drawn now. Over all the panels (render/canvas.py) a thing flies from
+    where one panel showed it to where another shows it, through the gap between them."""
 
     name = "morph"
     api = 1
@@ -954,27 +955,66 @@ class Morph(Transition):
     def __init__(self, context: Any = None, params: dict[str, Any] | None = None) -> None:
         super().__init__(context, params)
         self._before = getattr(context, "before", None)  # (the old screen: Renderer.parting)
+        self._after: Any = None  # (the new one, where it is not the renderer's)
         self._made: Any = None
+        self.canvas = take_canvas(self)
+        # over all the panels: the switch they all take part in, this panel's number and how
+        # many there are (the app tells them: Board)
+        spec = self.params.get("canvas")
+        spec = spec if isinstance(spec, dict) else {}
+        panel, panels = spec.get("panel"), spec.get("panels")
+        counted = all(isinstance(v, int) and not isinstance(v, bool) for v in (panel, panels))
+        self._place = (panel, panels) if self.canvas is not None and counted else None
+        self._across: Any = None
+        if isinstance(spec.get("key"), str):
+            self.across(spec["key"])
+        self._told: Any = None  # (this panel's: what it said, then what it took apart)
+        self._given: Any = None
+
+    def across(self, key: str) -> None:
+        """The switch over all the panels this is this panel's part of: its key on the
+        :data:`BOARD` (where the canvas tells which panel this is and how many there are)."""
+        if self._place is not None:
+            self._across = (key, *self._place)
 
     def set_before(self, before: Any) -> None:
         """The old screen as its renderer composed it last (Renderer.parting): what it takes
         apart (the app gives it once the transition is chosen)."""
         self._before = before
 
-    def _flights(self, new: Image.Image) -> Any:
+    def set_after(self, after: Any) -> None:
+        """The new screen as a renderer composed it (Renderer.parting), where it is not the
+        one the transition's renderer draws: another theme a morph shown to see it turns the
+        screen into (transition_show.py)."""
+        self._after = after
+
+    def _screens(self, new: Image.Image) -> Any:
+        """The old screen and the new one, both of ``new``'s size; None while either is not
+        known (asked again at the next frame) or where they are of another size."""
+        before = self._before
+        if before is None or before.size != new.size:
+            return None
+        after = self._after
+        if after is None:
+            renderer = getattr(self.context, "_renderer", None)
+            after = getattr(renderer, "parting", lambda: None)()
+        if after is None or after.size != new.size:
+            return None  # (not drawn yet: asked again at the next frame)
+        return before, after
+
+    def _flights(self, new: Image.Image, t: float) -> Any:
         """The old screen without what flies, the new one without it, the things that fly
         (each its old part and its new one, the largest first) and the dark under them; worked
         out once both screens are known. None where there is nothing to take apart (the old
         screen unknown, or of another size): it fades."""
         if self._made is not None:
             return self._made if self._made[0] == new.size else None
-        before = self._before
-        if before is None or before.size != new.size:
+        if self._across is not None:
+            return self._flights_across(new, t)
+        screens = self._screens(new)
+        if screens is None:
             return None
-        renderer = getattr(self.context, "_renderer", None)
-        after = getattr(renderer, "parting", lambda: None)()
-        if after is None or after.size != new.size:
-            return None  # (not drawn yet: asked again at the next frame)
+        before, after = screens
         old_things, new_things = things(before), things(after)
         shared = sorted(old_things.keys() & new_things.keys(),
                         key=lambda k: (-_area(old_things[k][1]), k))  # fmt: skip
@@ -982,13 +1022,64 @@ class Morph(Transition):
         new_without, new_parts = take_apart(after, {k: new_things[k] for k in shared})
         flights = [(old_parts[k], new_parts[k]) for k in shared]
         self._made = (new.size, old_without, new_without, flights, Image.new("RGB", new.size))
-        self._before = None  # (what it held is in the parts now)
+        self._before = self._after = None  # (what they held is in the parts now)
+        return self._made
+
+    def _flights_across(self, new: Image.Image, t: float) -> Any:
+        """:meth:`_flights` over all the panels: this panel says what its screens show (the
+        Board), takes apart what flies from it or to it once every panel has said it, gives
+        those parts, and lays every flight once every panel has given its own: each on its way
+        in millimetres, a part from one panel laid on another. Till then (or where the others
+        never come, from the moment the things begin to fly) it waits: None, or with the
+        panels that came."""
+        key, me, panels = self._across
+        late = t >= self.FLIGHT[0]  # (the things begin to fly: with the panels that came)
+        if self._told is None and self._given is None:
+            screens = self._screens(new)
+            if screens is None:
+                return None
+            before, after = screens
+            seen = Seen(self.canvas.own, new.size, things(before), things(after))
+            BOARD.tell(key, me, seen)
+            self._told = (seen, before, after)
+            self._before = self._after = None
+        seen = BOARD.seen(key)
+        if len(seen) < panels and not late:
+            return "wait"
+        if self._given is None:
+            own, before, after = self._told
+            flights = paired(seen)
+            old_without, old_parts = take_apart(
+                before, {k: own.old[k] for k, i, _ in flights if i == me}
+            )
+            new_without, new_parts = take_apart(
+                after, {k: own.new[k] for k, _, j in flights if j == me})  # fmt: skip
+            parts = {(k, "old"): p for k, p in old_parts.items()}
+            parts.update({(k, "new"): p for k, p in new_parts.items()})
+            BOARD.give(key, me, parts)
+            self._given = (flights, old_without, new_without)
+            self._told = None
+        flights, old_without, new_without = self._given
+        given = BOARD.parts(key)
+        needed = {i for _, i, _ in flights} | {j for _, _, j in flights}
+        if not late and any(i not in given for i in needed):
+            return "wait"
+        laid = []
+        for k, i, j in flights:
+            was, comes = given.get(i, {}).get((k, "old")), given.get(j, {}).get((k, "new"))
+            if was is not None and comes is not None and i in seen and j in seen:
+                laid.append((seen[i], was, seen[j], comes))
+        self._made = (new.size, old_without, new_without, laid, Image.new("RGB", new.size))
+        self._given = None
+        BOARD.done(key, me, panels)
         return self._made
 
     def frame(self, old: Image.Image, new: Image.Image, t: float) -> Image.Image:
         if t >= 1.0:
             return new
-        made = self._flights(new)
+        made = self._flights(new, t)
+        if made == "wait":  # (the other panels not yet: the old screen, fading as it would)
+            return _mixed(Image.new("RGB", new.size), _rgb(old), 1 - smooth(t / self.OUT))
         if made is None:  # (nothing to take apart: a fade)
             return Image.blend(_rgb(old), _rgb(new), smooth(t))
         _, old_without, new_without, flights, dark = made
@@ -999,6 +1090,9 @@ class Morph(Transition):
         a, b = self.FLIGHT
         e = in_out((t - a) / (b - a))
         turned = smooth((e - self.TURN[0]) / (self.TURN[1] - self.TURN[0]))
+        if self._across is not None:
+            self._lay_across(out, flights, e, turned)
+            return _mixed(out, _rgb(new), smooth((t - self.LAST) / (1 - self.LAST)))
         high = self.LIFT_MM * per_mm(alone(new.size), new.size)[1]
         lift = high * math.sin(math.pi * e)
         for was, comes in flights:
@@ -1011,6 +1105,37 @@ class Morph(Transition):
             lay(out, was, middle, room, 1 - turned)
             lay(out, comes, middle, room, turned)
         return _mixed(out, _rgb(new), smooth((t - self.LAST) / (1 - self.LAST)))
+
+    def _lay_across(self, out: Image.Image, flights: Any, e: float, turned: float) -> None:
+        """Each flight over all the panels where it is now, in millimetres, laid on this
+        panel where it is on it."""
+        canvas = self.canvas
+        sx, sy = per_mm(canvas, out.size)
+        lift = self.LIFT_MM * math.sin(math.pi * e)
+        for seen_was, was, seen_comes, comes in flights:
+            ax, ay, aw, ah = seen_was.mm(_corners(was.box))
+            bx, by, bw, bh = seen_comes.mm(_corners(comes.box))
+            # (up where it has room for its arc, above all the panels' top)
+            rise = -lift if min(ay, by) - canvas.whole[1] >= self.LIFT_MM else lift
+            mx = ax + aw / 2 + (bx + bw / 2 - ax - aw / 2) * e
+            my = ay + ah / 2 + (by + bh / 2 - ay - ah / 2) * e + rise
+            rw, rh = aw + (bw - aw) * e, ah + (bh - ah) * e
+            middle = ((mx - canvas.own[0]) * sx, (my - canvas.own[1]) * sy)
+            room = (rw * sx, rh * sy)
+            if (
+                middle[0] + room[0] / 2 < 0
+                or middle[0] - room[0] / 2 > out.width
+                or middle[1] + room[1] / 2 < 0
+                or middle[1] - room[1] / 2 > out.height
+            ):
+                continue  # (not on this panel now)
+            lay(out, was, middle, room, 1 - turned)
+            lay(out, comes, middle, room, turned)
+
+
+def _corners(box: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """A part's box ([x, y, w, h]) as its corners ([x0, y0, x1, y1])."""
+    return box[0], box[1], box[0] + box[2], box[1] + box[3]
 
 
 def _area(box: tuple[int, int, int, int]) -> int:
