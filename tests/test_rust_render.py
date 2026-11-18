@@ -7104,7 +7104,9 @@ def test_a_muted_volume_whose_number_glides_past_its_value_as_python_shows_it(
 ) -> None:
     # (the volume's number with a glide of its own, muted as it glides past a new value: the
     # word stands for it, its glide goes on, and while it passes its value its colour is not
-    # told it was drawn, so after the muting it fades on or starts anew as in Python)
+    # told it was drawn, so after the muting it fades on or starts anew as in Python; and one
+    # that comes back low while the number still rises fast, muted past the moment its glide
+    # turns: its colour is told from that moment, and fades on after the muting)
     folder = tmp_path / "muted"
     folder.mkdir()
     widget = {
@@ -7126,11 +7128,13 @@ def test_a_muted_volume_whose_number_glides_past_its_value_as_python_shows_it(
         "palette": {name: "#808080" for name in PALETTE}, "background": {"color": "#101418"},
         "widgets": [widget]}), encoding="utf-8")  # fmt: skip
     cases, expected = [], []
-    for jump, back, muted in [(200, 6, range(6, 18)), (200, 6, range(5, 15)),
-                              (90, 14, range(14, 26))]:  # fmt: skip
+    for jump, back, then, muted, frames in [(200, 6, 65, range(6, 18), 46),
+                                            (200, 6, 65, range(5, 15), 46),
+                                            (90, 14, 65, range(14, 26), 54),
+                                            (200, 6, 20, range(6, 30), 60)]:  # fmt: skip
         steps, given = [], []
-        for k in range(back + 40):
-            volume = 10 if k < 2 else jump if k < back else 65
+        for k in range(frames):
+            volume = 10 if k < 2 else jump if k < back else then
             readings = {"audio.volume": Reading("audio.volume", volume),
                         "audio.muted": Reading("audio.muted", int(k in muted))}  # fmt: skip
             steps.append((Snapshot(readings=readings), 700.0 + k / 32))
@@ -7138,7 +7142,7 @@ def test_a_muted_volume_whose_number_glides_past_its_value_as_python_shows_it(
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
         expected.append(_python_moving(folder, steps))
     drawn, moving = _compare_moving(cases, expected)
-    assert drawn == 46 + 46 + 54 and moving > 40, (drawn, moving)
+    assert drawn == 46 + 46 + 54 + 60 and moving > 40, (drawn, moving)
 
 
 def test_a_glide_of_more_milliseconds_than_a_float_holds_rust_leaves_out(tmp_path: Path) -> None:
@@ -8797,28 +8801,35 @@ def _shine_downloads(rng: random.Random) -> Any:
 
 
 def _python_shining(folder: Path, steps: list[tuple[Snapshot, float]], kinds: list[str],
-                    fps: float, continuous: bool) -> list[dict[str, Any]]:  # fmt: skip
+                    fps: float, continuous: bool,
+                    preview: bool = False) -> list[dict[str, Any]]:  # fmt: skip
     """A panel's moving frames with the light of ``kinds`` (render/shine.py), one after another
     by one renderer as the panels' loop draws them, each at its time: its pixels, and each of
     its pieces in their order with where it lies, whether it is light added and, for a light,
-    its own pixels' mode and SHA-256."""
+    its own pixels' mode and SHA-256 and whether it is the piece of the step before (not made
+    anew)."""
     import numpy as np
 
-    renderer = Renderer(load_theme(folder), animate=True, preview=False)
+    renderer = Renderer(load_theme(folder), animate=True, preview=preview)
     renderer.fps = fps
     renderer.continuous = continuous
     renderer.shine.kinds = frozenset(kinds)
     lists._RAN.clear()
     out: list[dict[str, Any]] = []
+    before: dict[str, Any] = {}  # (the lights of the step before: kept, so none's id is reused)
     for snapshot, now in steps:
         try:
             frame, boxes = renderer.render(snapshot, now=now)
-            lights = []
+            lights, lit = [], {}
             for wid, piece in renderer._last[0] if renderer._last else []:
-                own = piece.layer
+                own, kept = piece.layer, None
+                light = "\0shine-" in wid
                 sum_ = (f"{own.mode} {hashlib.sha256(own.tobytes()).hexdigest()}"
-                        if "\0shine-" in wid else None)  # fmt: skip
-                lights.append([wid, piece.x, piece.y, piece.add, sum_])
+                        if light else None)  # fmt: skip
+                if light:
+                    kept, lit[wid] = before.get(wid) is piece, piece
+                lights.append([wid, piece.x, piece.y, piece.add, sum_, kept])
+            before = lit
             out.append({"frame": np.asarray(frame), "boxes": boxes, "moving": renderer.moving,
                         "due": renderer.due, "lights": lights})  # fmt: skip
         except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
@@ -8826,27 +8837,67 @@ def _python_shining(folder: Path, steps: list[tuple[Snapshot, float]], kinds: li
     return out
 
 
-def test_moving_light_as_python_draws_it() -> None:
+def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
     # (the built-in themes as a panel shows them, every kind of light on or some: rings that
     # breathe and sweep, graphs that beat, a cover that glows while music plays or comes and goes
     # as it stops, the bars after "Playing", the progress's head and sheen, a download's sheen
     # and spark at its pace, the sun or the moon breathing and the glint on its way; the frames a
     # moment to a second apart, now and then back in time, the readings changing between them;
-    # each light to the bit, where it lies among the frame's pieces, whether the frame moves on
-    # and when it is due again; the frames themselves within two levels, where a lit ring, its
-    # light made in floating point to a level, lies under them)
+    # each light to the bit, where it lies among the frame's pieces and whether its piece is the
+    # one of the step before, whether the frame moves on and when it is due again; the frames
+    # themselves within two levels, where a lit ring, its light made in floating point to a
+    # level, lies under them. Besides: covers dark or black, whose glow is faint or none; a
+    # progress too short for its sheen; copies of themes that refresh more often than twice a
+    # second, whose graphs beat as often as four times a second, with widgets and modules turned
+    # (which shine not); and the editor's pictures, which shine not)
     import dataclasses
+    import shutil
+
+    from PIL import Image
 
     from libre_panel.render.shine import KINDS
     from libre_panel.theme.model import find_theme
 
+    def compare(folder: Path, kinds: list[str], fps: float, continuous: bool,
+                steps: list[tuple[Snapshot, float]], preview: bool) -> tuple[int, int]:  # fmt: skip
+        given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
+        case = {"folder": str(folder), "dither": False, "animate": True, "fps": fps,
+                "preview": preview, "continuous": continuous, "shine": kinds, "steps": given,
+                "bytes": True, "lights": True}  # fmt: skip
+        python = _python_shining(folder, steps, kinds, fps, continuous, preview)
+        return _compare_moving([case], [python], level=True, within=2)
+
     rng = random.Random(0x5417E)
     drawn = moving = 0
-    for n in range(2 * len(SHINE_THEMES)):  # (a theme at a time: each step carries its pictures)
-        folder = find_theme(SHINE_THEMES[n % len(SHINE_THEMES)])
-        kinds = list(KINDS) if n < len(SHINE_THEMES) else rng.sample(KINDS, rng.randrange(0, 5))
+    turnable = {"gauge", "graph", "module", "bar"}
+    plans = [(name, n >= len(SHINE_THEMES), False, False)
+             for n, name in enumerate(SHINE_THEMES + SHINE_THEMES)]  # fmt: skip
+    plans += [(name, False, True, False) for name in ["lumen", "arena-1920x720", "studio", "orbit"]]
+    plans += [(name, False, False, True) for name in ["lumen-1920x720", "encore-1920x720"]]
+    for n, (name, some, copied, preview) in enumerate(plans):  # (a theme at a time: each step
+        folder = find_theme(name)  # carries its pictures)
+        if copied:  # (a copy that refreshes faster, some of its parts turned)
+            folder = shutil.copytree(folder, tmp_path / f"{name}-{n}")
+            data = json.loads((folder / "theme.json").read_text(encoding="utf-8"))
+            data["refresh_ms"] = rng.choice([120, 250, 400])
+            for widget in data.get("widgets", []):
+                if widget.get("type") in turnable and rng.random() < 0.35:
+                    widget["rotate"] = rng.choice([90, 180, 270, 12.5])
+            (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
+        kinds = rng.sample(KINDS, rng.randrange(0, 5)) if some else list(KINDS)
         fps, continuous = rng.choice([0, 25, 50]), rng.random() < 0.5
         snapshot = _demo()
+        if rng.random() < 0.4:  # (a cover dark or black: its glow faint, or none)
+            side = (rng.randrange(20, 90), rng.randrange(20, 90))
+            dark = rng.choice([Image.new("RGB", side),
+                               noise(rng, "RGB", side).point(lambda v: v // 60),
+                               noise(rng, "RGB", side).point(lambda v: v // 20)])  # fmt: skip
+            images = {**snapshot.images, "media.cover": dark}
+            snapshot = dataclasses.replace(snapshot, images=images)
+        if rng.random() < 0.4:  # (a progress too short for its sheen, from the start)
+            short = Reading("media.progress", rng.choice([0, 0.5, 1.5, 2.5]))
+            readings = {**snapshot.readings, "media.progress": short}
+            snapshot = dataclasses.replace(snapshot, readings=readings)
         now = rng.uniform(1000, 2000)
         steps: list[tuple[Snapshot, float]] = []
         for _ in range(rng.randrange(8, 18)):
@@ -8855,7 +8906,8 @@ def test_moving_light_as_python_draws_it() -> None:
             readings = dict(snapshot.readings)
             for key in ("cpu.load", "gpu.load", "mem.load", "media.progress"):
                 if key in readings and rng.random() < 0.5:
-                    readings[key] = Reading(key, rng.choice([0, 3.5, 47.0, 79.9, 81.0, 100, 120]))
+                    readings[key] = Reading(key, rng.choice([0, 0.5, 1.5, 3.5, 47.0, 79.9, 81.0,
+                                                             100, 120]))  # fmt: skip
             if rng.random() < 0.3:
                 readings["media.playing"] = Reading("media.playing", rng.choice([0, 1]))
                 readings.pop("media.state", None)
@@ -8866,11 +8918,21 @@ def test_moving_light_as_python_draws_it() -> None:
             if rng.random() < 0.4:
                 readings["downloads"] = Reading("downloads", _shine_downloads(rng))
             snapshot = dataclasses.replace(snapshot, readings=readings)
-        given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
-        case = {"folder": str(folder), "dither": False, "animate": True, "fps": fps,
-                "preview": False, "continuous": continuous, "shine": kinds, "steps": given,
-                "bytes": True, "lights": True}  # fmt: skip
-        got = _compare_moving([case], [_python_shining(folder, steps, kinds, fps, continuous)],
-                              level=True, within=2)  # fmt: skip
+        got = compare(folder, kinds, fps, continuous, steps, preview)
         drawn, moving = drawn + got[0], moving + got[1]
-    assert drawn > 200 and moving > 100, (drawn, moving)
+    # (a dark cover's glow as the music stops and starts again, a frame every 50th of a second:
+    # each step of its fade, the faintest where a band of it has no light left)
+    for name, shade in (("lumen", 60), ("encore-1920x720", 20)):
+        side = (rng.randrange(20, 90), rng.randrange(20, 90))
+        cover = noise(rng, "RGB", side).point(lambda v, shade=shade: v // shade)
+        snapshot = _demo()
+        snapshot = dataclasses.replace(snapshot, images={**snapshot.images, "media.cover": cover})
+        now, steps = rng.uniform(1000, 2000), []
+        for k in range(90):
+            playing = Reading("media.playing", 0 if 15 <= k < 55 else 1)
+            readings = {**snapshot.readings, "media.playing": playing}
+            readings.pop("media.state", None)
+            steps.append((dataclasses.replace(snapshot, readings=readings), now + k * 0.02))
+        got = compare(find_theme(name), list(KINDS), 25, False, steps, False)
+        drawn, moving = drawn + got[0], moving + got[1]
+    assert drawn > 380 and moving > 250, (drawn, moving)

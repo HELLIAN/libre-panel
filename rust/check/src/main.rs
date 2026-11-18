@@ -2749,6 +2749,12 @@ fn run(case: &Value) -> Result<Value, String> {
                     renderer.video_fps = c["video_fps"].as_u64().map(|f| f as u32);
                     renderer.video_keys = c["video_keys"].as_bool().unwrap_or(false);
                     let bytes = c["bytes"].as_bool() == Some(true);
+                    // (the moving lights of the step before, kept alive so that one of this
+                    // step is told the same piece by itself, not by an address used again)
+                    let mut lit_before: std::collections::HashMap<
+                        String,
+                        std::rc::Rc<lp_render::Piece>,
+                    > = std::collections::HashMap::new();
                     let mut frame_at = |snapshot: &Value, now: f64, sample: &Value| {
                         // (fresh readings taken at a time, the next after a while: as the loop
                         // tells the renderer before the frame)
@@ -2775,14 +2781,17 @@ fn run(case: &Value) -> Result<Value, String> {
                                 }
                                 // (where asked: each piece of the frame in its order, where it
                                 // lies and whether it is light added; a moving light's own
-                                // pixels as their SHA-256, its mode first)
+                                // pixels as their SHA-256, its mode first, and whether its piece
+                                // is the one of the step before, not made anew)
                                 // ("all": every piece's own pixels so, not only a light's)
                                 let all = c["lights"].as_str() == Some("all");
                                 if all || c["lights"].as_bool() == Some(true) {
+                                    let mut lit = std::collections::HashMap::new();
                                     let pieces: Vec<Value> = renderer
                                         .composed_pieces()
                                         .map(|(id, p)| {
-                                            let sum = (all || id.contains("\0shine-")).then(|| {
+                                            let light = id.contains("\0shine-");
+                                            let sum = (all || light).then(|| {
                                                 let sum = Sha256::digest(p.layer.as_bytes());
                                                 let hex: String = sum
                                                     .iter()
@@ -2790,9 +2799,16 @@ fn run(case: &Value) -> Result<Value, String> {
                                                     .collect();
                                                 format!("{} {hex}", p.layer.mode().name())
                                             });
-                                            json!([id, p.x, p.y, p.add, sum])
+                                            let kept = light.then(|| {
+                                                lit.insert(id.to_string(), std::rc::Rc::clone(p));
+                                                lit_before
+                                                    .get(id)
+                                                    .is_some_and(|b| std::rc::Rc::ptr_eq(b, p))
+                                            });
+                                            json!([id, p.x, p.y, p.add, sum, kept])
                                         })
                                         .collect();
+                                    lit_before = lit;
                                     out["lights"] = json!(pieces);
                                 }
                                 out

@@ -579,11 +579,12 @@ impl Renderer {
     }
 
     /// The pieces of the frame composed last, in their order (none before the first, or where
-    /// the engine composes): what lies where, for a comparison with Python's.
-    pub fn composed_pieces(&self) -> impl Iterator<Item = (&str, &Piece)> {
+    /// the engine composes): what lies where, for a comparison with Python's, and whether a
+    /// piece is the one of a frame before.
+    pub fn composed_pieces(&self) -> impl Iterator<Item = (&str, &Rc<Piece>)> {
         self.composed
             .iter()
-            .flat_map(|(_, pieces)| pieces.iter().map(|(id, p)| (id.as_str(), p.as_ref())))
+            .flat_map(|(_, pieces)| pieces.iter().map(|(id, p)| (id.as_str(), p)))
     }
 
     /// What each slot shows in the frame drawn last, by its id: the card on show, the frame's
