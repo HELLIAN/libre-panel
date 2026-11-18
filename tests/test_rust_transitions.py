@@ -327,13 +327,21 @@ def _across_the_panels() -> tuple[Any, ...]:
     canvases = [{**side, "own": [0.0, 0.0, 218.0, 55.0]}, {**side, "own": [240, 0, 218, 55]},
                 {**above, "own": [0.0, 0.0, 218.0, 55.0]},
                 {**above, "own": [0.0, 77.0, 218.0, 55.0]}]  # fmt: skip
+    inf, nan = float("inf"), float("nan")
     wrong = [{"own": [0, 0, 218, 55]}, {"own": [0, 0, -1, 55], **side}, {"own": None, **side},
              {"own": [False, 0, 218, 55], **side},
-             {"own": [0, 0, 218, 55], "whole": "x"}]  # fmt: skip
+             {"own": [0, 0, 218, 55], "whole": "x"},
+             # (a width or a height of 0, here or over all; one past every number)
+             {"own": [0, 0, 0, 55], **side}, {"own": [0, 0, 218, 0], **side},
+             {"own": [0, 0, 218, 55], "whole": [0.0, 0.0, 0.0, 55.0]},
+             {"own": [0.0, 0.0, inf, 55.0], **side}, {"own": [inf, 0.0, 218.0, 55.0], **side},
+             {"own": [0.0, 0.0, 218.0, 55.0], "whole": [0.0, 0.0, 458.0, inf]},
+             {"own": [nan, 0.0, 218.0, 55.0], **side}]  # fmt: skip
     switches = []
     for k, name in enumerate(["slide", "slide-right", "slide-up", "slide-down", "wipe", "light"]):
-        for j, canvas in enumerate(canvases + wrong[k % len(wrong) :][:1]):
-            steps = [[_frame(size, "RGB", k), _frame(size, "RGB", 10 + j), _bits(t)] for t in times]
+        for j, canvas in enumerate(canvases + wrong):
+            at = times if j < len(canvases) else (0.3, 0.55)  # (each wrong one plays alone)
+            steps = [[_frame(size, "RGB", k), _frame(size, "RGB", 10 + j), _bits(t)] for t in at]
             switches.append({"name": name, "raw": {"canvas": canvas}, "steps": steps})
     once = [[_frame(size, "RGB", 1), _frame(size, "RGB", 2), _bits(0.4)]]
     switches.append({"name": "iris", "raw": {"canvas": canvases[1]}, "steps": once})
