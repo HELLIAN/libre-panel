@@ -3190,6 +3190,84 @@ fn run(case: &Value) -> Result<Value, String> {
                 }
             }
         }
+        "shown" => {
+            // morph.shown_as of each of the case's widgets (typed, as typed() takes them): what
+            // each shows, for the morph to find it on the next screen; null where it cannot tell
+            let shown: Vec<Value> = case["widgets"]
+                .as_array()
+                .map(|all| {
+                    all.iter()
+                        .map(|w| match typed(w) {
+                            lp_py::Value::Dict(d) => {
+                                lp_render::morph::shown_as(&d).map_or(Value::Null, Value::from)
+                            }
+                            _ => Value::Null,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            json!({ "shown": shown })
+        }
+        "things" => {
+            // morph.things and morph._where of a frame of the case's pieces (each of a blank
+            // layer: "wid", "x", "y", "w", "h", "add", "light" [x, y, w, h], "frosted"
+            // [x, y, w, h] its backdrop's box) on a panel of "size", "shows" what each widget
+            // shows: each thing's pieces and box, and where the pieces "gone" are laid again
+            use lp_render::morph::{laid_again, things, Parting};
+            use lp_render::piece::Piece;
+            let n = |v: &Value| v.as_i64().unwrap_or(0);
+            let size = (n(&case["size"][0]) as usize, n(&case["size"][1]) as usize);
+            let blank = |w: &Value, h: &Value| {
+                Image::new(
+                    Mode::RGBA,
+                    n(w).max(0) as usize,
+                    n(h).max(0) as usize,
+                    &[0, 0, 0, 0],
+                )
+            };
+            let mut pieces = Vec::new();
+            for p in case["pieces"].as_array().into_iter().flatten() {
+                let mut piece = Piece::new(blank(&p["w"], &p["h"]), n(&p["x"]), n(&p["y"]));
+                piece.add = p["add"].as_bool() == Some(true);
+                if let Some(l) = p["light"].as_array() {
+                    piece.light = Some(Box::new(Piece::new(
+                        blank(&l[2], &l[3]),
+                        n(&l[0]),
+                        n(&l[1]),
+                    )));
+                }
+                if let Some(b) = p["frosted"].as_array() {
+                    piece.hit = Some([n(&b[0]), n(&b[1]), n(&b[2]), n(&b[3])]);
+                    let mask = |v: &Value| n(v).max(0) as usize;
+                    piece.backdrop = Some(Image::new(Mode::L, mask(&b[2]), mask(&b[3]), &[255]));
+                }
+                let wid = p["wid"].as_str().unwrap_or("").to_string();
+                pieces.push((wid, std::rc::Rc::new(piece)));
+            }
+            let shows = (case["shows"].as_object().into_iter().flatten())
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect();
+            let parting = Parting {
+                ground: Image::new(Mode::RGB, size.0, size.1, &[0, 0, 0]),
+                pieces,
+                shows,
+                opaque: true,
+                frame: None,
+            };
+            let mut found: Vec<(String, Value)> = things(&parting)
+                .into_iter()
+                .map(|(key, (places, b))| (key, json!([places, [b.0, b.1, b.2, b.3]])))
+                .collect();
+            found.sort_by(|a, b| a.0.cmp(&b.0));
+            let gone = (case["gone"].as_array().into_iter().flatten())
+                .filter_map(|v| v.as_u64().map(|i| i as usize))
+                .collect();
+            let again: Vec<Value> = laid_again(&parting, &gone)
+                .into_iter()
+                .map(|r| json!([r.0, r.1, r.2, r.3]))
+                .collect();
+            json!({ "things": found.into_iter().collect::<serde_json::Map<_, _>>(), "again": again })
+        }
         "transition" => {
             // overlays.transition((name, params), RenderContext(renderer)) of a theme's
             // renderer, made anew for each of the case's switches, and the frames it draws: each

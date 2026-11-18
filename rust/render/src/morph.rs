@@ -219,7 +219,7 @@ fn meet(a: (i64, i64, i64, i64), b: (i64, i64, i64, i64)) -> bool {
 /// _where: where the pieces `gone` left their pixels, one box each, each grown over the whole
 /// box of every frosted backdrop it touches (its blur takes all of the box under it), until
 /// none grows: what is laid again without them.
-fn laid_again(parting: &Parting, gone: &HashSet<usize>) -> Vec<(i64, i64, i64, i64)> {
+pub fn laid_again(parting: &Parting, gone: &HashSet<usize>) -> Vec<(i64, i64, i64, i64)> {
     let size = parting.size();
     let mut sorted: Vec<usize> = gone.iter().copied().collect();
     sorted.sort_unstable();
