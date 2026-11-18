@@ -745,8 +745,9 @@ def test_a_collection_does_not_lead_a_first_start_or_the_quick_list(app_url, iso
         page.wait_for_selector(".start.first .theme-card")
         assert page.locator(".theme-collection").count() == 0  # nothing of a collection is offered
         # made for the 9.2" panel: Libre Panel's own, its default first, the others A to Z
-        assert shown_themes(page) == ["lumen", "almanac", "almanac-analog", "arena", "encore",
-                                      "contrast", "studio"]  # fmt: skip
+        assert shown_themes(page) == ["lumen", "almanac", "almanac-analog", "arena", "arena-v2",
+                                      "encore", "encore-v2", "contrast", "lumen-v2",
+                                      "studio"]  # fmt: skip
         page.get_by_role("button", name="See all").click()
         expect(page.locator(".theme-collection")).to_have_count(2)  # closed, at the end
         assert page.locator(".theme-card[data-theme='nimbus']").count() == 0
