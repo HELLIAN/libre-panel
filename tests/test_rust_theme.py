@@ -165,7 +165,7 @@ def _block(data: dict[str, Any], key: str) -> dict[str, Any]:
 
 def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
     """One slip somewhere in a theme's data."""
-    kind = rng.randrange(14)
+    kind = rng.randrange(15)
     widgets = data.get("widgets") if isinstance(data.get("widgets"), list) else []
     if kind == 0:
         key = rng.choice(_TOP)
@@ -236,6 +236,11 @@ def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
         kinds = [{"type": "module", "module": rng.choice(["ring", "nope", 3]), "col": _odd(rng)}]
         modules_ = {f"m{i}": rng.choice([*kinds, {"type": "rect"}, _odd(rng)]) for i in range(3)}
         data["detached"] = rng.choice([_odd(rng), modules_])
+    elif kind == 13:
+        shine = [True, False, None, [], ["rings"], ["sun", "rings", "sun"], ["glitter"], "rings",
+                 [1], ["music", None], {}]  # fmt: skip
+        key = rng.choice(["shine", "shine", "shine", "smoothing_ms", "zz"])
+        _block(data, "animation")[key] = rng.choice(shine) if rng.random() < 0.8 else _odd(rng)
     else:
         part = rng.choice(["style", "grid", "background"])
         keys = {

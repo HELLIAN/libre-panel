@@ -226,16 +226,26 @@ def test_numbers_drawn_again_or_not_show_the_same():
     assert formatted[kept] < formatted[anew] / 2  # between the readings: drawn no more
 
 
-def test_a_glide_that_passes_its_value_says_so():
+def test_a_glide_that_turns_says_so():
+    # (one that passes its value, and one that goes on away from it first: the number either
+    # shows still changes, also where it reads as its value now)
     motion = Motion()
     for k in range(11):  # from 0 to 100, a frame every 20 ms
         motion.glide("v", 0.0 if k == 0 else 100.0, k / 50, 0.4, 0.02)
-    assert not motion.passes("v", 0.2)  # from where it stood: only nearer
+    assert not motion.turns("v", 0.2)  # from where it stood: only nearer
     value, speed = motion.glide("v", 100.0, 0.2, 0.4, 0.02)
     assert 60 < value < 70 and speed > 200
     motion.glide("v", 72.0, 0.22, 0.4, 0.02)  # close ahead of it as it goes fast: passes it
-    assert motion.passes("v", 0.205) and not motion.passes("v", 0.3)  # (then only nearer)
-    assert not motion.passes("unknown", 0.0)
+    assert motion.turns("v", 0.205) and motion.turns("v", 0.24)  # (past it, still away)
+    assert not motion.turns("v", 0.4)  # (then only nearer)
+    for k in range(11):  # from 100 down to 0
+        motion.glide("w", 100.0 if k == 0 else 0.0, k / 50, 0.4, 0.02)
+    value, speed = motion.glide("w", 0.0, 0.2, 0.4, 0.02)
+    assert speed < -200
+    motion.glide("w", value + 2.0, 0.22, 0.4, 0.02)  # just above it as it goes down: away first
+    after, _ = motion.glide("w", value + 2.0, 0.26, 0.4, 0.02)
+    assert motion.turns("w", 0.22) and after < value  # (it went on down, away from its value)
+    assert not motion.turns("w", 0.6) and not motion.turns("unknown", 0.0)
 
 
 def rules():

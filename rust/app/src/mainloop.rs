@@ -1839,6 +1839,12 @@ impl MainLoop {
         }
         renderer.fps = self.fps() as f64; // (the mode's, the panel's video's, config.toml's)
 
+        // nothing glides, turns or breathes on a calm panel (it would be sent every frame)
+        renderer.options.animate = self.config.fps > 1 && !self.calm();
+        // the light that moves: the kinds [shine] has on, of the ones the theme shows
+        let kinds = shine_kinds(&self.config, &renderer.theme);
+        renderer.shine.borrow_mut().set_kinds(kinds);
+
         // the readings, at the theme's pace; between them the last ones at the time of now
         let every = match (&self.config.refresh_ms, &renderer.theme.refresh_ms) {
             (Some(ms), _) => lp_py::num::int_to_float(ms).unwrap_or(1000.0),
@@ -2242,6 +2248,18 @@ impl MainLoop {
         }
         self.close_panel();
     }
+}
+
+/// shine_kinds: the kinds of moving light a panel shows (render/shine.py): those `[shine]` has
+/// on, of the ones the theme shows (`animation.shine`; all where it names none).
+fn shine_kinds<'a>(config: &'a Config, theme: &'a lp_theme::Theme) -> Vec<&'a str> {
+    let own = theme.shine.as_deref();
+    config
+        .shine
+        .kinds()
+        .into_iter()
+        .filter(|kind| own.is_none_or(|own| own.iter().any(|o| o == kind)))
+        .collect()
 }
 
 #[cfg(test)]

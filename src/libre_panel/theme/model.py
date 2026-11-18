@@ -563,6 +563,8 @@ class Theme:
     palette: dict[str, str] = field(default_factory=dict)
     font: str = DEFAULT_FONT
     smoothing_ms: int = 400
+    # the kinds of moving light it shows (animation.shine: render/shine.py), None: all of them
+    shine: tuple[str, ...] | None = None
     screen: dict[str, Any] | None = None  # {"name": ..., "options": {...}}: a plugin draws
     # messages from services: where, how long, which kinds not, and a plugin style
     toast: dict[str, Any] = field(default_factory=lambda: dict(TOAST_DEFAULTS))
@@ -618,7 +620,10 @@ class Theme:
             "font": self.font,
             "background": self._background(),
             "refresh_ms": self.refresh_ms,
-            "animation": {"smoothing_ms": self.smoothing_ms},
+            "animation": {
+                "smoothing_ms": self.smoothing_ms,
+                **({} if self.shine is None else {"shine": list(self.shine)}),
+            },
             "widgets": deepcopy(self.widgets),
         }
         if self.grid is not None:
@@ -1135,6 +1140,7 @@ def parse_theme(data: Any, root: Path | None = None) -> Theme:
     smoothing_ms = _coerce("int", animation.get("smoothing_ms", 400), "animation.smoothing_ms")
     if not 0 <= smoothing_ms <= 5000:
         raise ThemeError("animation.smoothing_ms: must be between 0 and 5000")
+    shine = _parse_shine(animation.get("shine"))
     background = data.get("background", {}) or {}
     if not isinstance(background, dict):
         raise ThemeError('background must be an object, e.g. {"color": "#101418"}')
@@ -1192,6 +1198,7 @@ def parse_theme(data: Any, root: Path | None = None) -> Theme:
         palette=palette,
         font=font,
         smoothing_ms=smoothing_ms,
+        shine=shine,
         widgets=widgets,
         grid=_parse_grid(data.get("grid")),
         style=_parse_style(data.get("style"), root),
@@ -1203,6 +1210,25 @@ def parse_theme(data: Any, root: Path | None = None) -> Theme:
         root=root,
         warnings=warnings,
     )
+
+
+# the kinds of light that move over a panel that moves (render/shine.py's KINDS)
+SHINE_KINDS = ("rings", "graphs", "music", "downloads", "sun")
+
+
+def _parse_shine(value: Any) -> tuple[str, ...] | None:
+    """``animation.shine``: the kinds of moving light a theme shows, in the order of
+    :data:`SHINE_KINDS`; true (or none given) all of them, false none."""
+    if value is None or value is True:
+        return None
+    if value is False:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(kind, str) for kind in value):
+        raise ThemeError(f"animation.shine: true, false or a list of {', '.join(SHINE_KINDS)}")
+    for kind in value:
+        if kind not in SHINE_KINDS:
+            raise ThemeError(f"animation.shine: {kind!r} is none of {', '.join(SHINE_KINDS)}")
+    return tuple(kind for kind in SHINE_KINDS if kind in value)
 
 
 def load_theme(folder: Path) -> Theme:

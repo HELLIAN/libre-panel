@@ -1296,6 +1296,7 @@ def test_the_settings_that_name_a_program_or_a_file_are_the_ones_locked():
         "transitions.game",
         "transitions.media", "transitions.idle", "transitions.sequence", "transitions.autopilot",
         "transitions.report", "transitions.manual",
+        "shine.rings", "shine.graphs", "shine.music", "shine.downloads", "shine.sun",
     }  # fmt: skip
     assert set(RULES) == names | {"video.ffmpeg", "device.output"}, "tell what the new one names"
     assert {name for name in RULES if names_a_path(name)} == {"video.ffmpeg", "device.output"}
@@ -1443,6 +1444,22 @@ def test_the_transitions_are_read_and_written_by_occasion(server):
     for bad in ({"transitions.media": "warp"}, {"transitions.speed": "light"},
                 {"transitions.random": ["random"]}, {"transitions.random": []},
                 {"transitions.default": ""}):  # fmt: skip
+        assert write(server, **bad)[0] == 400, bad
+
+
+def test_the_moving_light_is_read_and_written_kind_by_kind(server):
+    status, data = request(server, "GET", "/api/settings")
+    assert status == 200 and data["config"]["shine"] == dict.fromkeys(
+        ("rings", "graphs", "music", "downloads", "sun"), True
+    )
+    status, data = write(server, **{"shine.rings": False, "shine.sun": False})
+    assert status == 200, data
+    assert data["config"]["shine"]["rings"] is False and data["config"]["shine"]["music"] is True
+    assert load_config().shine.kinds() == frozenset({"graphs", "music", "downloads"})
+    assert "[shine]" in config_text() and "rings = false" in config_text()
+    assert write(server, **{"shine.rings": True})[0] == 200
+    assert load_config().shine.rings is True
+    for bad in ({"shine.music": 1}, {"shine.nope": True}, {"shine": False}):
         assert write(server, **bad)[0] == 400, bad
 
 

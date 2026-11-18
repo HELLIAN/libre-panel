@@ -3012,7 +3012,15 @@
     "Write at my own risk": "Записать на свой страх и риск",
     "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Экраны запуска на этой панели ещё никто не пробовал: они записываются на неё, только если вы согласитесь попробовать на свой страх и риск, в Настройки → Панель → Экран запуска.",
     "Across the panels": "Через все панели",
-    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Сдвиги, шторка и линия света проходят по всем панелям как по одной, через зазор между ними, так, как они стоят в разделе «Другие панели», когда сцена, игра, музыка или простой ПК меняет их все."
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Сдвиги, шторка и линия света проходят по всем панелям как по одной, через зазор между ними, так, как они стоят в разделе «Другие панели», когда сцена, игра, музыка или простой ПК меняет их все.",
+    "Moving light": "Движущийся свет",
+    "Light that moves over rings, curves, music, downloads and the sun. Made to cost little: each light is made once and only laid anew where it moves.": "Свет, который скользит по кольцам, графикам, музыке, загрузкам и солнцу. Сделан так, чтобы почти ничего не стоить: каждый свет создаётся один раз и заново кладётся только там, где он движется.",
+    "Calm motion: nothing moves on this panel.": "Спокойное движение: на этой панели ничего не движется.",
+    "The end of a ring breathes in its colour, and now and then a light runs along it. Over 80 % its end glows wider.": "Конец кольца дышит его цветом, и время от времени по нему пробегает свет. Выше 80 % его конец светится шире.",
+    "The newest point of a curve beats with each reading.": "Самая новая точка графика бьётся с каждым показанием.",
+    "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "Пока играет трек, его обложка светится своими цветами, три полоски танцуют после его состояния, а свет бежит по шкале прогресса.",
+    "A sheen runs along a download's progress, the faster the faster it loads.": "По прогрессу загрузки бежит блик — тем быстрее, чем быстрее она идёт.",
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "Солнце на своём пути или луна мягко светится, а искра бежит по пути, который день уже прошёл."
   },
   "fields": {
     "night": "ночь",

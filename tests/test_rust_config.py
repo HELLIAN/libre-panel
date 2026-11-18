@@ -154,7 +154,7 @@ KEYS = [
     "refresh_ms", "check_updates", "allow_notify", "tray_icon", "switches", "hotkeys", "device",
     "video",
     "sensors", "hardware", "weather", "services", "modes", "sequence", "panels", "scenes",
-    "scene", "transitions", "nope",
+    "scene", "transitions", "shine", "nope",
     *(f"device.{key}" for key in DEVICE),
     *(f"video.{key}" for key in (
         "mode", "fps", "device_fps", "crf", "preset", "profile", "encoder", "engine_sends",
@@ -163,6 +163,7 @@ KEYS = [
     *(f"transitions.{key}" for key in (
         "default", "speed", "canvas", "game", "media", "idle", "sequence", "autopilot",
         "report", "manual", "random", "nope")),
+    *(f"shine.{key}" for key in ("rings", "graphs", "music", "downloads", "sun", "nope")),
     "sensors.providers", "sensors.linux", "hardware.fans", "hardware.cpu_name",
     "hardware.gpu_name", "hardware.memory_name", "hardware.fan_look", "hardware.fan_paint",
     "weather.enabled", "weather.provider", "weather.latitude", "weather.longitude",

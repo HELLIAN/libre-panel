@@ -787,10 +787,7 @@ class LitGauge(Finish):
     def draw(self, renderer, widget, snapshot, now):
         if min(widget["w"], widget["h"]) < 8 or widget["thickness"] < 2:
             return renderer._draw_gauge(widget, snapshot, now)
-        value = renderer._eased(widget, _number(snapshot.value(widget["sensor"])), now)
-        frac = _fraction(value, widget["min"], widget["max"], widget.get("scale", "linear"))
-        sweep = abs(widget["end_angle"] - widget["start_angle"])
-        frac = _steps(frac, math.radians(sweep) * max(widget["w"], widget["h"]) / 2)
+        value, frac = renderer._gauge_fraction(widget, snapshot, now)
         paint = renderer._rule_paint(widget, value, now)
         native = renderer.native_rings  # (its picture made later, if at all: here)
         return renderer._cached(

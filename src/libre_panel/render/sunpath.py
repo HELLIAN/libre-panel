@@ -31,7 +31,7 @@ def step(progress: Any) -> int | None:
     return round(p * STEPS)
 
 
-class _Way:
+class Way:
     """Where the arc lies on a picture of w x h (px, :data:`OVER` times them when drawn)."""
 
     def __init__(self, w: int, h: int, thickness: float) -> None:
@@ -66,7 +66,7 @@ def _reduced(image: Image.Image) -> Image.Image:
 
 def ground(w: int, h: int, thickness: float, track: Any) -> Image.Image:
     """The horizon (fading out at its ends) and the day's way, dotted, in ``track``."""
-    way = _Way(w, h, thickness)
+    way = Way(w, h, thickness)
     image = Image.new("RGBA", (w * OVER, h * OVER), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     # the horizon: a hairline that fades towards its ends
@@ -93,7 +93,7 @@ def day(w: int, h: int, thickness: float, progress: float, colour: Any,
         deep: Any) -> Image.Image:  # fmt: skip
     """The day gone (sunrise to ``progress``) as a line from ``deep`` to ``colour`` in its own
     soft light, and the sun where it stands, glowing."""
-    way = _Way(w, h, thickness)
+    way = Way(w, h, thickness)
     big = Image.new("RGBA", (w * OVER, h * OVER), (0, 0, 0, 0))
     draw = ImageDraw.Draw(big)
     n = max(2, round(48 * progress))
@@ -137,7 +137,7 @@ def day(w: int, h: int, thickness: float, progress: float, colour: Any,
 
 def night(w: int, h: int, thickness: float, colour: Any) -> Image.Image:
     """The moon's crescent over the middle of the way, in ``colour``, softly lit."""
-    way = _Way(w, h, thickness)
+    way = Way(w, h, thickness)
     x, y = way.at(0.5)
     r = way.sun * 1.05
     big = Image.new("L", (w * OVER, h * OVER), 0)

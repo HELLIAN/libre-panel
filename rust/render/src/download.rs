@@ -38,7 +38,7 @@ const GRAPH_LEAST: f64 = 40.0;
 /// the share of the line's colour under it, at its top (of 255)
 const GRAPH_FILL: f64 = 105.0;
 /// the speeds a state carries: the graph's width, if there is room
-const HISTORY: usize = 180;
+pub(crate) const HISTORY: usize = 180;
 /// how much further apart than their size lines may stand in a taller box
 const SPREAD: f64 = 1.45;
 /// a box less wide than this many times its height stacks the card
@@ -46,7 +46,7 @@ const STACK_ASPECT: f64 = 2.4;
 /// the progress's thickness
 const BAR_H: f64 = 6.0;
 const GRAPH_X: f64 = 392.0;
-const MB: f64 = 1048576.0;
+pub(crate) const MB: f64 = 1048576.0;
 /// seconds a stretch of light takes to and fro, for a download of unknown size
 const RUN: f64 = 2.4;
 /// its share of the groove
@@ -322,13 +322,13 @@ const STACKED: Ref = Ref {
 
 /// Layout: the size of things (the reference's, times g), the distance of lines, where the
 /// reference's top edge lies, the margins, the graph's box, whether the card is stacked.
-struct Layout {
-    g: f64,
+pub(crate) struct Layout {
+    pub(crate) g: f64,
     gy: f64,
     top: f64,
     left: f64,
     right: f64,
-    graph: Option<(f64, f64, f64, f64)>,
+    pub(crate) graph: Option<(f64, f64, f64, f64)>,
     stacked: bool,
     r: &'static Ref,
 }
@@ -342,7 +342,7 @@ impl Layout {
 
 /// layout: where things go in a box of w x h: the reference's numbers, as large as the box
 /// allows; a taller box spreads its lines a little; one nearly square or tall stacks the card.
-fn layout(w: i64, h: i64) -> Layout {
+pub(crate) fn layout(w: i64, h: i64) -> Layout {
     let (wf, hf) = (w as f64, h as f64);
     let stacked = wf < STACK_ASPECT * hf;
     let r = if stacked { &STACKED } else { &WIDE };
@@ -372,7 +372,7 @@ fn layout(w: i64, h: i64) -> Layout {
 }
 
 /// rail: the progress's groove: x0, y0, x1, y1.
-fn rail(lay: &Layout) -> (f64, f64, f64, f64) {
+pub(crate) fn rail(lay: &Layout) -> (f64, f64, f64, f64) {
     let y = lay.y(lay.r.bar);
     (lay.left, y, lay.right, y + py_max(3.0, BAR_H * lay.g))
 }
@@ -581,7 +581,7 @@ impl Renderer {
 
     /// accent: the progress's colour: the widget's, the `done` colour for a finished download,
     /// a muted one while it waits.
-    fn download_accent(&self, w: &Dict, phase: &str) -> Result<Rgba> {
+    pub(crate) fn download_accent(&self, w: &Dict, phase: &str) -> Result<Rgba> {
         let key = match phase {
             "done" => "done",
             "paused" => "muted",

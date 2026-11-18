@@ -3012,7 +3012,15 @@
     "Write at my own risk": "自己責任で書き込む",
     "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "このパネルで起動画面を試した人はまだいません。設定 → パネル → 起動画面 で、自己責任で試すことに同意した場合にだけ書き込まれます。",
     "Across the panels": "全パネルをまたいで",
-    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "スライド、ワイプ、光のラインが、パネル間のすき間も通って全パネルを一枚のように流れます。配置は「その他のパネル」での並びのとおりです。シーン、ゲーム、音楽、PCの休止ですべてのパネルが切り替わるときに働きます。"
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "スライド、ワイプ、光のラインが、パネル間のすき間も通って全パネルを一枚のように流れます。配置は「その他のパネル」での並びのとおりです。シーン、ゲーム、音楽、PCの休止ですべてのパネルが切り替わるときに働きます。",
+    "Moving light": "動く光",
+    "Light that moves over rings, curves, music, downloads and the sun. Made to cost little: each light is made once and only laid anew where it moves.": "リング、グラフ、音楽、ダウンロード、太陽の上を光が動きます。負荷が少ないように作られています。光は一度だけ作られ、動く場所だけ置き直されます。",
+    "Calm motion: nothing moves on this panel.": "穏やかな動き：このパネルでは何も動きません。",
+    "The end of a ring breathes in its colour, and now and then a light runs along it. Over 80 % its end glows wider.": "リングの先端がその色で息づき、ときどき光がリングを走ります。80 % を超えると先端がより大きく光ります。",
+    "The newest point of a curve beats with each reading.": "グラフの最新の点が、測定値ごとに脈打ちます。",
+    "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "曲の再生中、ジャケットが自分の色で光り、状態の後ろで3本のバーが踊り、進行バーに沿って光が走ります。",
+    "A sheen runs along a download's progress, the faster the faster it loads.": "ダウンロードの進行に沿って輝きが走ります。速く読み込むほど速く走ります。",
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "道の上の太陽、または月がやわらかく光り、その日がすでにたどった道に沿ってきらめきが走ります。"
   },
   "fields": {
     "night": "夜",

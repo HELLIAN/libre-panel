@@ -3012,7 +3012,15 @@
     "Write at my own risk": "Gravar por minha conta e risco",
     "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Ninguém testou ainda telas de inicialização neste painel: elas só são gravadas nele se você aceitar testar, por sua conta e risco, em Configurações → Painel → Tela de inicialização.",
     "Across the panels": "Através dos painéis",
-    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Os deslizamentos, a varredura e a linha de luz percorrem todos os painéis como um só, atravessando o espaço entre eles, tal como estão em Mais painéis, quando uma cena, um jogo, a música ou o PC em repouso muda todos eles."
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Os deslizamentos, a varredura e a linha de luz percorrem todos os painéis como um só, atravessando o espaço entre eles, tal como estão em Mais painéis, quando uma cena, um jogo, a música ou o PC em repouso muda todos eles.",
+    "Moving light": "Luz em movimento",
+    "Light that moves over rings, curves, music, downloads and the sun. Made to cost little: each light is made once and only laid anew where it moves.": "Luz que percorre anéis, curvas, música, downloads e o sol. Feita para custar pouco: cada luz é criada uma vez e só volta a ser colocada onde se move.",
+    "Calm motion: nothing moves on this panel.": "Movimento calmo: nada se move neste painel.",
+    "The end of a ring breathes in its colour, and now and then a light runs along it. Over 80 % its end glows wider.": "A ponta de um anel respira na sua cor e, de vez em quando, uma luz percorre-o. Acima de 80 % a ponta brilha mais larga.",
+    "The newest point of a curve beats with each reading.": "O ponto mais recente de uma curva pulsa a cada leitura.",
+    "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "Enquanto uma faixa toca, a capa brilha nas suas próprias cores, três barras dançam depois do estado e uma luz percorre o progresso.",
+    "A sheen runs along a download's progress, the faster the faster it loads.": "Um brilho percorre o progresso de um download, tanto mais rápido quanto mais rápido descarrega.",
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "O sol no seu caminho, ou a lua, brilha suavemente, e um cintilar percorre o caminho que o dia já fez."
   },
   "fields": {
     "night": "noite",

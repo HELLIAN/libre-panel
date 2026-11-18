@@ -363,17 +363,21 @@ impl Motion {
         self.fed.contains_key(key)
     }
 
-    /// Whether the glide of `key` passes its target after `t`, to come back to it from the
-    /// other side; a glide that does not only comes nearer its target until the next reading.
-    pub fn passes(&self, key: &str, t: f64) -> bool {
+    /// Whether the glide of `key` turns after `t`: it goes on away from its target a while
+    /// before it comes back to it, past it (a new reading that came while it went fast towards
+    /// it) or not yet there (one that came while it went the other way), so the number it shows
+    /// still changes; a glide that does not only comes nearer its target until the next reading.
+    pub fn turns(&self, key: &str, t: f64) -> bool {
         let Some(p) = self.springs.get(key).and_then(|s| s.piece(t)) else {
             return false;
         };
         if p.target.is_none() || p.omega <= 0.0 {
             return false;
         }
+        // (the speed is (speed - omega * curve * dt) * exp(-omega * dt): it turns at dt = speed /
+        // (omega * curve), 1 / omega after it passes its target where it does)
         let curve = p.speed + p.omega * p.error;
-        curve != 0.0 && -p.error / curve > t - p.start
+        curve != 0.0 && p.speed / (p.omega * curve) > t - p.start
     }
 
     /// The gliding value of `key` at `t` (None if it was not drawn then).

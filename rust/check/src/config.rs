@@ -5,7 +5,8 @@
 
 use lp_config::{
     Config, DeviceConfig, Error, HardwareConfig, ModeConfig, PanelConfig, SceneConfig,
-    SensorsConfig, SequenceConfig, ServicesConfig, TransitionsConfig, VideoConfig, WeatherConfig,
+    SensorsConfig, SequenceConfig, ServicesConfig, ShineConfig, TransitionsConfig, VideoConfig,
+    WeatherConfig,
 };
 use lp_py::toml::{Table, Toml};
 use serde_json::{json, Value};
@@ -185,6 +186,15 @@ fn transitions(t: &TransitionsConfig) -> Value {
     ])
 }
 
+fn shine(s: &ShineConfig) -> Value {
+    object(
+        lp_config::SHINE_KINDS
+            .into_iter()
+            .map(|kind| (kind, flag(s.on(kind))))
+            .collect(),
+    )
+}
+
 fn sequence(s: &SequenceConfig) -> Value {
     let steps = s.steps.iter().map(|step| {
         object(vec![
@@ -225,6 +235,7 @@ fn config(c: &Config) -> Value {
         ("fps", whole(c.fps)),
         ("transition", text(&c.transition)),
         ("transitions", transitions(&c.transitions)),
+        ("shine", shine(&c.shine)),
         (
             "check_updates",
             maybe(&c.check_updates, |check| flag(*check)),

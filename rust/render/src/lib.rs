@@ -49,6 +49,7 @@ mod roll;
 pub mod scene;
 pub mod shapes;
 pub mod shared;
+pub mod shine;
 mod slot;
 pub mod snapshot;
 mod sunpath;

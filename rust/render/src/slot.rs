@@ -794,6 +794,20 @@ impl Slot {
         Ok(self.changing(Some(&piece), 1)?.map(Rc::new))
     }
 
+    /// The parts of the card that goes whose names begin with `prefix` (a widget's lights).
+    pub(crate) fn frozen_parts(&self, prefix: &str) -> Vec<String> {
+        self.frozen
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect()
+    }
+
+    /// A part the card on show no longer has (a light that went out): not kept for its change.
+    pub(crate) fn forget(&mut self, part: &str) {
+        self.last.shift_remove(part);
+    }
+
     /// leave: a part of the card that goes: what it showed last, as the change has it.
     pub fn leave(&self, part: &str) -> Result<Option<Rc<Piece>>> {
         if self.leaving.is_none() {

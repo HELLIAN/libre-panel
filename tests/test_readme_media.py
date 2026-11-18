@@ -325,7 +325,9 @@ def test_the_tube_goes_to_the_other_screen_and_back(clip):
     tube = clip("theme-tube")
     assert differ(tube, 5, 28) > 12  # another screen from 2.5 s on
     assert differ(tube, 5, 12) > 5  # a line of light opens between the two at 1.2 s
-    assert differ(tube, 5, tube.frames.count - 1) < 3.5  # back where it began (graphs moved on)
+    # back where it began (the other screen is ~33 apart): its graphs and readings moved on, and
+    # its moving light is at other steps (half a second into it, it is ~3.8 from its first frame)
+    assert differ(tube, 5, tube.frames.count - 1) < 5
 
 
 def test_the_entrance_darkens_the_panel_for_the_game_and_the_end(clip):

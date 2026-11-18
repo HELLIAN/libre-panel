@@ -114,6 +114,19 @@ Also built in: the round report after a game ([Libre Panel's screens](#libre-pan
   `"per_frame": true` (older themes) means a point a pixel apart, `w / 25`
   seconds. Without video mode a graph shows `history` readings. While its
   sensor has no value, a graph in video mode moves on with a gap.
+- Optional: `animation.shine` names the kinds of moving light the theme shows, of
+  `"rings"`, `"graphs"`, `"music"`, `"downloads"` and `"sun"` (`["rings", "sun"]`);
+  `true` or left out: all of them, `false`: none. The light falls on the widgets as
+  they are: a ring gauge's end breathes in its colour and a light runs along its
+  arc (past 80 % its end glows wider), a graph's newest point beats once a reading,
+  an album cover (`"src": "@media.cover"`, not blurred) glows round about in its own
+  colours while a track plays, with three bars after the `media.state` text and a
+  light on the `media.progress` bar, a download's progress has a sheen, and a
+  `sunpath` sun or moon glows with a glint along the day gone. The user turns each
+  kind on or off (`[shine]`, *Settings → Panel → Moving light*); a panel shows the
+  kinds both allow. It costs little: each light is made once per strength (12) and
+  only laid anew where it moves; a widget turned with `rotate` has none, and a calm
+  panel or the editor's pictures none at all.
 - Optional: `"collection"` names a set the theme belongs to (themes made to
   go together), and galleries keep the set apart, at their end. Leave it out
   for a theme on its own.

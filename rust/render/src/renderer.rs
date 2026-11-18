@@ -297,6 +297,9 @@ pub struct Renderer {
     /// when something wants a new frame, not before (Python's due: a turning globe's next
     /// step); None for nothing
     pub due: Option<f64>,
+    /// the light that moves over rings, graphs, music, downloads and the sun (shine.rs), on a
+    /// panel that moves; its kinds set by the app (config.toml's [shine], the theme's)
+    pub shine: Rc<RefCell<crate::shine::Shine>>,
     /// the pieces of turned widgets, turned, by id: as they were and how they were turned
     /// (_turned): a piece turned as it was the frame before is that frame's again
     turned: HashMap<String, (Rc<Piece>, Turn, Rc<Piece>)>,
@@ -467,6 +470,7 @@ impl Renderer {
             analog_halos: crate::analog::Faces::default(),
             earths: HashMap::new(),
             due: None,
+            shine: Rc::default(),
             turned: HashMap::new(),
             over: HashMap::new(),
             bars_laid: RefCell::new(Vec::new()),
@@ -572,6 +576,14 @@ impl Renderer {
             }
         }
         Ok(())
+    }
+
+    /// The pieces of the frame composed last, in their order (none before the first, or where
+    /// the engine composes): what lies where, for a comparison with Python's.
+    pub fn composed_pieces(&self) -> impl Iterator<Item = (&str, &Piece)> {
+        self.composed
+            .iter()
+            .flat_map(|(_, pieces)| pieces.iter().map(|(id, p)| (id.as_str(), p.as_ref())))
     }
 
     /// What each slot shows in the frame drawn last, by its id: the card on show, the frame's
@@ -798,6 +810,141 @@ impl Renderer {
             self.moving = true;
         }
         turning.rotor
+    }
+
+    /// _due_at: something wants a new frame at `at` (its next step), not before.
+    pub(crate) fn due_at(&mut self, at: f64) {
+        self.due = Some(match self.due {
+            Some(due) if due <= at => due,
+            _ => at,
+        });
+    }
+
+    /// _gauge_fraction: a ring's value now (gliding) and the share of its sweep that is lit,
+    /// in steps of the supersampled grid.
+    pub(crate) fn gauge_fraction(
+        &mut self,
+        w: &Dict,
+        snapshot: &Snapshot,
+    ) -> Result<(Option<f64>, f64)> {
+        let value = self.eased(w, number(&snapshot.value(widget::text(w, "sensor"))));
+        let (lo, hi) = (
+            widget::number(w, "min", 0.0),
+            widget::number(w, "max", 100.0),
+        );
+        let frac = bar::fraction(value, lo, hi, widget::text(w, "scale"));
+        // (the arc's length on the ring, as many steps of the supersampled grid)
+        let sweep =
+            (widget::number(w, "end_angle", 405.0) - widget::number(w, "start_angle", 135.0)).abs();
+        let size = widget::int(w, "w", 120).max(widget::int(w, "h", 120));
+        let length = sweep.to_radians() * size as f64 / 2.0;
+        Ok((value, gauge::steps_along(frac, length)?))
+    }
+
+    /// _bar_fraction: a bar's value now (gliding) and the share of its length that is full, in
+    /// steps of the supersampled grid.
+    pub(crate) fn bar_fraction(
+        &mut self,
+        w: &Dict,
+        snapshot: &Snapshot,
+    ) -> Result<(Option<f64>, f64)> {
+        let value = self.eased(w, number(&snapshot.value(widget::text(w, "sensor"))));
+        let (lo, hi) = (
+            widget::number(w, "min", 0.0),
+            widget::number(w, "max", 100.0),
+        );
+        let frac = bar::fraction(value, lo, hi, widget::text(w, "scale"));
+        let horizontal = matches!(widget::text(w, "direction"), "right" | "left");
+        let length = widget::int(w, if horizontal { "w" } else { "h" }, 0);
+        Ok((value, bar::steps(frac, length)?))
+    }
+
+    /// _shine_over: the moving light over widget `w` (shine.rs), of its piece as drawn, carried
+    /// with its card where it lies in a card slot: as the card was while it rolls up. None over
+    /// a turned widget; one that fails is left out, the frame drawn on.
+    fn shine_over(
+        &mut self,
+        w: &Dict,
+        (module, slot_id, how): (Option<&Dict>, Option<&str>, Option<OnShow>),
+        drawn: Option<&Rc<Piece>>,
+        snapshot: &Snapshot,
+        pieces: &mut Pieces,
+    ) {
+        let id = widget::text(w, "id").to_string();
+        if how == Some(OnShow::Frozen) {
+            let Some(slot) = slot_id.and_then(|sid| self.slots.get(sid)) else {
+                return;
+            };
+            let mut failed = None;
+            for key in slot.frozen_parts(&format!("{id}\0shine-")) {
+                match slot.leave(&key) {
+                    Ok(Some(top)) => pieces.push((key, top)),
+                    Ok(None) => {}
+                    Err(e) => failed = Some(e),
+                }
+            }
+            if let Some(e) = failed {
+                self.warn(format!(
+                    "widget {}: its light failed: {e}",
+                    lp_py::repr(&id)
+                ));
+            }
+            return;
+        }
+        let turned = |d: &Dict| {
+            let angle = match d.get("rotate") {
+                Some(v) if v.truthy() => widget::number(d, "rotate", 0.0),
+                _ => 0.0,
+            };
+            angle % 360.0 != 0.0
+        };
+        if turned(w) || module.is_some_and(turned) {
+            return;
+        }
+        let Some(piece) = drawn else {
+            return;
+        };
+        let shine = Rc::clone(&self.shine);
+        let at = self.at;
+        let lights = crate::prof::part("shine", || {
+            shine.borrow_mut().over(self, w, piece, snapshot, at)
+        });
+        let lights = match lights {
+            Ok(lights) => lights,
+            Err(e) => {
+                self.warn(format!(
+                    "widget {}: its light failed: {e}",
+                    lp_py::repr(&id)
+                ));
+                return;
+            }
+        };
+        for (name, top) in lights {
+            let key = format!("{id}\0shine-{name}");
+            match slot_id.and_then(|sid| self.slots.get_mut(sid)) {
+                Some(slot) => {
+                    let Some(top) = top else {
+                        slot.forget(&key);
+                        continue;
+                    };
+                    match slot.live(&key, top) {
+                        Ok(Some(top)) => pieces.push((key, top)),
+                        Ok(None) => {}
+                        Err(e) => {
+                            self.warn(format!(
+                                "widget {}: its light failed: {e}",
+                                lp_py::repr(&id)
+                            ));
+                        }
+                    }
+                }
+                None => {
+                    if let Some(top) = top {
+                        pieces.push((key, top));
+                    }
+                }
+            }
+        }
     }
 
     /// _lead: the time between two planned frames (0: not known).
@@ -1376,24 +1523,13 @@ impl Renderer {
                     return Drawn::Unported("numbers a float does not hold as they are".into());
                 }
                 let snapshot = self.snapshot.clone().unwrap_or_default();
-                // (in a moving frame on its glide to the reading)
-                let value = self.eased(&w, number(&snapshot.value(widget::text(&w, "sensor"))));
                 let Some(rules) = metric::rules_of(&w) else {
                     return Drawn::Unported("colour rules above NaN".into());
                 };
-                let (lo, hi) = (
-                    widget::number(&w, "min", 0.0),
-                    widget::number(&w, "max", 100.0),
-                );
-                let frac = bar::fraction(value, lo, hi, widget::text(&w, "scale"));
-                // (the arc's length on the ring, as many steps of the supersampled grid)
-                let sweep = (widget::number(&w, "end_angle", 405.0)
-                    - widget::number(&w, "start_angle", 135.0))
-                .abs();
-                let size = widget::int(&w, "w", 120).max(widget::int(&w, "h", 120));
-                let length = sweep.to_radians() * size as f64 / 2.0;
-                let (frac, paint) = match gauge::steps_along(frac, length)
-                    .and_then(|frac| Ok((frac, self.rule_paint(&w, value, &rules)?)))
+                // (in a moving frame on its glide to the reading)
+                let (frac, paint) = match self
+                    .gauge_fraction(&w, &snapshot)
+                    .and_then(|(value, frac)| Ok((frac, self.rule_paint(&w, value, &rules)?)))
                 {
                     Ok(made) => made,
                     Err(e) => return Drawn::Failed(e),
@@ -1934,6 +2070,10 @@ impl Renderer {
         // (Motion.begin: the springs of values long gone go, the others forget old pieces)
         self.moving = false;
         self.due = None;
+        let shining = self.options.animate && !self.options.preview && self.shine.borrow().any();
+        if shining {
+            self.shine.borrow_mut().begin();
+        }
         self.video_drawn = None;
         let (glide, lead) = (self.glide_s(None), self.lead());
         let readings = |key: &str| {
@@ -2025,6 +2165,8 @@ impl Renderer {
                     continue;
                 }
             };
+            // (as drawn, before its card's change has it: its lights' source)
+            let as_drawn = (how != Some(OnShow::Frozen)).then(|| Rc::clone(&piece));
             // (the card on show: kept for when it goes, cut or moved as a change or a slide
             // has it)
             let piece = match (how, &slot_id) {
@@ -2091,6 +2233,10 @@ impl Renderer {
                     pieces.push((format!("{id}\0{name}"), top));
                 }
             }
+            if shining {
+                let parts = (module.as_deref(), slot_id.as_deref(), how);
+                self.shine_over(w, parts, as_drawn.as_ref(), &snapshot, &mut pieces);
+            }
             if let Some(module) = &module {
                 let mid = widget::text(module, "id").to_string();
                 if let Some(b) = self.module_boxes.get(&mid) {
@@ -2102,6 +2248,9 @@ impl Renderer {
                 continue;
             }
             boxes.insert(id, piece.bounds());
+        }
+        if shining {
+            self.shine.borrow_mut().end();
         }
         let ending = crate::prof::Span::new("render end");
         // the slots' frames, over their cards
@@ -2378,6 +2527,7 @@ impl Renderer {
                 canvas
             }
         };
+        self.underlays.keep_current(&pieces);
         for (id, e) in failed {
             self.warn(format!("widget {} failed: {e}", lp_py::repr(&id)));
         }

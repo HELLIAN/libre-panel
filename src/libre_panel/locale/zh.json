@@ -3012,7 +3012,15 @@
     "Write at my own risk": "自担风险写入",
     "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "还没有人在这块面板上试过启动画面：只有在你同意自担风险试用时才会写入，位置在 设置 → 面板 → 启动画面。",
     "Across the panels": "跨越所有面板",
-    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "推移、擦除和光线会把所有面板当作一块，穿过面板之间的空隙依次划过，位置按“更多面板”中的摆放；在场景、游戏、音乐或电脑空闲让所有面板一起切换时生效。"
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "推移、擦除和光线会把所有面板当作一块，穿过面板之间的空隙依次划过，位置按“更多面板”中的摆放；在场景、游戏、音乐或电脑空闲让所有面板一起切换时生效。",
+    "Moving light": "流动的光",
+    "Light that moves over rings, curves, music, downloads and the sun. Made to cost little: each light is made once and only laid anew where it moves.": "光在圆环、曲线、音乐、下载和太阳上流动。为低负载而设计：每道光只生成一次，只在移动的地方重新放置。",
+    "Calm motion: nothing moves on this panel.": "平静的动态：此面板上没有任何东西在动。",
+    "The end of a ring breathes in its colour, and now and then a light runs along it. Over 80 % its end glows wider.": "圆环的末端以它的颜色呼吸，不时有一道光沿着它流过。超过 80 % 时，末端的光晕会更大。",
+    "The newest point of a curve beats with each reading.": "曲线最新的点随每次读数跳动。",
+    "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "播放时，封面以自身的颜色发光，状态后面有三根条在跳动，一道光沿着进度流动。",
+    "A sheen runs along a download's progress, the faster the faster it loads.": "一道光泽沿着下载进度流动，下载越快，流得越快。",
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "路径上的太阳或月亮柔和地发光，一道闪光沿着白天已走过的路径流过。"
   },
   "fields": {
     "night": "夜晚",

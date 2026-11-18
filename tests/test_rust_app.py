@@ -108,15 +108,20 @@ def test_it_draws_a_theme_into_a_png_file(tmp_path: Path) -> None:
     with Image.open(out) as frame:
         assert frame.size == (1920, 480) and frame.mode == "RGB"
         assert len(frame.getcolors(1 << 24)) > 500  # (a picture, not one colour)
-        card = frame.crop((30, 30, 330, 330))
+        cover = frame.crop((87, 85, 303, 301))  # (the middle of the album's cover, 67-323)
+        below = frame.crop((67, 323, 323, 345)).convert("L")
     assert not out.with_name("frame.png.tmp").exists()
     # the demo's pictures come with its readings (DemoProvider.images): the album's cover is
-    # on the card as the preview shows it, where the loop drew the note that stands for none
+    # on the card as the preview shows it, where the loop drew the note that stands for none;
+    # round about it the loop's frame has its glow while the track plays (render/shine.py), the
+    # preview none
     assert _run(tmp_path, "preview", "lumen", "-o", str(tmp_path / "preview.png")).returncode == 0
     with Image.open(tmp_path / "preview.png") as preview:
-        shown = preview.convert("RGB").crop((30, 30, 330, 330))
-    assert len(card.getcolors(1 << 24)) > 2000
-    assert max(ImageStat.Stat(ImageChops.difference(card, shown)).mean) < 1.0
+        shown = preview.convert("RGB").crop((87, 85, 303, 301))
+        dark = preview.convert("L").crop((67, 323, 323, 345))
+    assert len(cover.getcolors(1 << 24)) > 2000
+    assert max(ImageStat.Stat(ImageChops.difference(cover, shown)).mean) < 1.0
+    assert ImageStat.Stat(below).mean[0] > ImageStat.Stat(dark).mean[0] + 10
 
 
 @draws
@@ -1074,8 +1079,10 @@ def test_frames_go_to_the_engine_as_their_layers_and_it_composes_them_as_the_app
     assert int(summed[1]) + close == int(summed[2]), done.stderr
     went = re.search(r"video: (\d+) layers went to the engine, ([\d.]+) MB", done.stderr)
     assert went is not None, done.stderr
-    # (fewer layers than frames times pieces: those that stay go once)
-    assert 0 < int(went[1]) < 150 * 20
+    # (fewer layers than frames times pieces: those that stay go once; the moving light,
+    # render/shine.py, goes at each of its steps, a graph's beat and a ring's head where their
+    # end moves on: ~2400 without it, ~3200 with it)
+    assert 0 < int(went[1]) < 150 * 25
     assert rig.fake.commands[-1] == 102  # (the last frame left on the panel, as with pixels)
     rig.config(VIDEO + "engine_layers = false\n")
     done = rig.run("run", "--demo", "--frames", "30", LP_SCENE_CHECK="1")

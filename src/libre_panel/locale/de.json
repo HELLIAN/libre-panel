@@ -3012,7 +3012,15 @@
     "Write at my own risk": "Auf eigenes Risiko schreiben",
     "No one has tried start screens on this panel yet: they are written to it only where you agree to try it, at your own risk, in Settings → Panel → Start screen.": "Startbildschirme hat auf diesem Panel noch niemand ausprobiert: Sie werden nur darauf geschrieben, wenn du zustimmst, es auf eigenes Risiko auszuprobieren, unter Einstellungen → Panel → Startbildschirm.",
     "Across the panels": "Über alle Panels",
-    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Schieben, Wischen und die Lichtlinie laufen als eine Bewegung über alle Panels, durch den Spalt zwischen ihnen, so wie sie unter „Weitere Panels“ stehen, wenn eine Szene, ein Spiel, Musik oder die Ruhe des PCs sie alle wechselt."
+    "Slides, the wipe and the line of light run over all panels as one, through the gap between them, as they stand under More panels, when a scene, a game, music or the PC at rest changes them all.": "Schieben, Wischen und die Lichtlinie laufen als eine Bewegung über alle Panels, durch den Spalt zwischen ihnen, so wie sie unter „Weitere Panels“ stehen, wenn eine Szene, ein Spiel, Musik oder die Ruhe des PCs sie alle wechselt.",
+    "Moving light": "Bewegtes Licht",
+    "Light that moves over rings, curves, music, downloads and the sun. Made to cost little: each light is made once and only laid anew where it moves.": "Licht, das über Ringe, Verläufe, Musik, Downloads und die Sonne wandert. Sparsam gebaut: Jedes Licht entsteht einmal und wird nur dort neu gelegt, wo es sich bewegt.",
+    "Calm motion: nothing moves on this panel.": "Ruhige Bewegung: Auf diesem Panel bewegt sich nichts.",
+    "The end of a ring breathes in its colour, and now and then a light runs along it. Over 80 % its end glows wider.": "Das Ende eines Rings atmet in seiner Farbe, und hin und wieder läuft ein Licht an ihm entlang. Über 80 % glüht sein Ende weiter auf.",
+    "The newest point of a curve beats with each reading.": "Der neueste Punkt einer Kurve schlägt mit jedem Messwert.",
+    "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "Während ein Titel läuft, leuchtet sein Cover in seinen eigenen Farben, drei Balken tanzen hinter dem Status und ein Licht läuft den Fortschritt entlang.",
+    "A sheen runs along a download's progress, the faster the faster it loads.": "Ein Glanz läuft den Fortschritt eines Downloads entlang – je schneller er lädt, desto schneller.",
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "Die Sonne auf ihrem Weg oder der Mond leuchtet sanft, und ein Funkeln läuft den Weg entlang, den der Tag schon gegangen ist."
   },
   "fields": {
     "night": "Nacht",

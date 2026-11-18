@@ -663,6 +663,28 @@ class TransitionsConfig:
     random: list[str] = field(default_factory=lambda: list(RANDOM_TRANSITIONS))
 
 
+# The light that moves over a panel that moves ([shine], render/shine.py), each kind of it
+SHINE_KINDS = ("rings", "graphs", "music", "downloads", "sun")
+
+
+@dataclass
+class ShineConfig:
+    """Which light moves over a panel that moves ([shine]): a ring's end that breathes and a
+    sweep along it, a graph's end that beats, a cover that glows while music plays (with the
+    bars after "Playing" and the progress's light), a download's sheen, the sun's glow and
+    glint. A theme may show fewer (its ``animation.shine``)."""
+
+    rings: bool = True
+    graphs: bool = True
+    music: bool = True
+    downloads: bool = True
+    sun: bool = True
+
+    def kinds(self) -> frozenset[str]:
+        """The kinds that are on."""
+        return frozenset(kind for kind in SHINE_KINDS if getattr(self, kind))
+
+
 @dataclass
 class SequenceConfig:
     """Screens in turn (libre_panel.sequence): the steps, and whether they show."""
@@ -741,6 +763,7 @@ class Config:
     # between themes: the default of [transitions], which config.toml may still name here
     transition: str = "fade"
     transitions: TransitionsConfig = field(default_factory=TransitionsConfig)
+    shine: ShineConfig = field(default_factory=ShineConfig)  # [shine]: the light that moves
     check_updates: bool | None = None  # a look for a newer version once a day; None: not asked
     allow_notify: bool = False  # other programs may show a notice (notify.py)
     tray_icon: bool = False  # its icon in the notification area (the tray), with its menu
@@ -881,6 +904,15 @@ def _transitions(cfg: Config, table: dict[str, Any]) -> None:
             raise ConfigError(f"unknown setting {name!r}")
 
 
+def _shine(cfg: Config, table: dict[str, Any]) -> None:
+    """``[shine]``: each kind of the light that moves, on or off (SHINE_KINDS)."""
+    for key, value in table.items():
+        name = f"shine.{key}"
+        if key not in SHINE_KINDS:
+            raise ConfigError(f"unknown setting {name!r}")
+        setattr(cfg.shine, key, _expect(value, bool, name))
+
+
 def _expect(value: Any, kind: type | tuple[type, ...], name: str) -> Any:
     # bool is an int subclass; never accept it where a number is expected.
     if isinstance(value, bool) and kind is not bool:
@@ -1004,6 +1036,7 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
             data["transition"], "transition"
         )
     _transitions(cfg, _expect(data.get("transitions", {}), dict, "transitions"))
+    _shine(cfg, _expect(data.get("shine", {}), dict, "shine"))
     if "symbols" in data:
         cfg.symbols = _expect(data["symbols"], str, "symbols").strip()
         if cfg.symbols not in SYMBOL_PACKS:

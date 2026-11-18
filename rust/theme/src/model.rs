@@ -172,6 +172,8 @@ pub struct Theme {
     pub palette: Dict,
     pub font: String,
     pub smoothing_ms: i64,
+    /// the kinds of moving light it shows (animation.shine: render/shine.py), None: all of them
+    pub shine: Option<Vec<String>>,
     pub screen: Option<Dict>,
     pub toast: Dict,
     pub grid: Option<Dict>,
@@ -256,6 +258,10 @@ impl Theme {
         d.insert("refresh_ms".into(), self.refresh_ms.clone());
         let mut animation = Dict::default();
         animation.insert("smoothing_ms".into(), self.smoothing_ms.into());
+        if let Some(shine) = &self.shine {
+            let kinds = shine.iter().map(|kind| Value::Str(kind.clone())).collect();
+            animation.insert("shine".into(), Value::List(kinds));
+        }
         d.insert("animation".into(), Value::Dict(animation));
         let widgets = self.widgets.iter().cloned().map(Value::Dict).collect();
         d.insert("widgets".into(), Value::List(widgets));
@@ -602,6 +608,40 @@ fn check_paths(
         }
     }
     Ok(())
+}
+
+/// The kinds of light that move over a panel that moves (render/shine.py's KINDS).
+pub const SHINE_KINDS: [&str; 5] = ["rings", "graphs", "music", "downloads", "sun"];
+
+/// _parse_shine: `animation.shine`, the kinds of moving light a theme shows, in the order of
+/// SHINE_KINDS; true (or none given) all of them, false none.
+fn parse_shine(value: Option<&Value>) -> Result<Option<Vec<String>>> {
+    let items = match value {
+        None | Some(Value::None) | Some(Value::Bool(true)) => return Ok(None),
+        Some(Value::Bool(false)) => return Ok(Some(Vec::new())),
+        Some(Value::List(items)) if items.iter().all(|kind| matches!(kind, Value::Str(_))) => items,
+        Some(_) => {
+            return refuse(format!(
+                "animation.shine: true, false or a list of {}",
+                SHINE_KINDS.join(", ")
+            ))
+        }
+    };
+    let kinds: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+    if let Some(kind) = kinds.iter().find(|kind| !SHINE_KINDS.contains(kind)) {
+        return refuse(format!(
+            "animation.shine: {} is none of {}",
+            lp_py::repr(kind),
+            SHINE_KINDS.join(", ")
+        ));
+    }
+    Ok(Some(
+        SHINE_KINDS
+            .into_iter()
+            .filter(|kind| kinds.contains(kind))
+            .map(str::to_string)
+            .collect(),
+    ))
 }
 
 fn get(d: &Dict, key: &str, default: Value) -> Value {
@@ -1280,6 +1320,7 @@ pub fn parse_theme(data: &Value, root: Option<&Path>, env: &Env) -> Result<Theme
         return refuse("animation.smoothing_ms: must be between 0 and 5000");
     }
     let smoothing_ms = small(&smoothing);
+    let shine = parse_shine(animation.get("shine"))?;
     let background = match object_or_empty(data, "background") {
         Value::Dict(d) => d,
         _ => return refuse("background must be an object, e.g. {\"color\": \"#101418\"}"),
@@ -1400,6 +1441,7 @@ pub fn parse_theme(data: &Value, root: Option<&Path>, env: &Env) -> Result<Theme
         palette,
         font,
         smoothing_ms,
+        shine,
         widgets,
         grid,
         style,

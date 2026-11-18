@@ -83,6 +83,17 @@ fps = 10                       # 1-60; values glide between readings
 # card_transition = "fade"     # from one card to the next: "light" (the default, a line of
                                # light), "fade", "slide", "rise", "wipe", "cut", "random"
 
+# [shine]                      # the light that moves (Settings → Panel → Moving light),
+# rings = true                 # each kind on or off (left out: on): a ring's end breathes
+# graphs = true                # in its colour, a light runs along it now and then, past
+# music = true                 # 80 % it glows wider; a graph's newest point beats with each
+# downloads = true             # reading; while a track plays its cover glows in its own
+# sun = true                   # colours, three bars dance after "Playing" and a light runs
+                               # along its progress; a download's sheen, the faster the
+                               # faster it loads; the sun (by night the moon) glows softly
+                               # and a glint runs along the day gone. A theme may show fewer
+                               # (its animation.shine); nothing of it on a calm panel
+
 # [[panels]]                   # a panel beside this one (see "More panels at once")
 # theme = "lumen"
 # model = "turing-3.5"

@@ -6798,12 +6798,13 @@ def _python_moving(folder: Path, steps: list[tuple[Snapshot, float]], fps: float
 
 
 def _compare_moving(cases: list[dict[str, Any]], expected: list[list[dict[str, Any]] | None],
-                    level: bool = False) -> tuple[int, int]:  # fmt: skip
+                    level: bool = False, within: int = 1) -> tuple[int, int]:  # fmt: skip
     """Rust's moving frames against Python's, step after step: each to the bit (`level`: within
-    a level, now and then, where light is blurred in floating point), its boxes, whether it
-    moves on and when it is due again. After a frame Rust does not draw, the rest of its steps
-    are left (what moves went on in Python's alone). How many were drawn, and of them how many
-    move on."""
+    a level, now and then, where light is blurred in floating point; `within` levels where such
+    a light is laid over the panel), its boxes, whether it moves on and when it is due again,
+    and where asked its pieces ("lights"). After a frame Rust does not draw, the rest of its
+    steps are left (what moves went on in Python's alone). How many were drawn, and of them how
+    many move on."""
     import numpy as np
 
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
@@ -6821,14 +6822,17 @@ def _compare_moving(cases: list[dict[str, Any]], expected: list[list[dict[str, A
                 break
             if level:
                 apart = np.abs(np.asarray(picture(g["frame"]), int) - np.asarray(w["frame"], int))
-                assert apart.max() <= 1, (n, i)
+                assert apart.max() <= within, (n, i)
                 differ += int((apart.max(axis=2) > 0).sum())
                 total += apart.shape[0] * apart.shape[1]
-            else:
-                assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (n, i)
+            else:  # (the frame, or its sum where it was not kept)
+                sha = w.get("sha256") or hashlib.sha256(w["frame"].tobytes()).hexdigest()
+                assert g["sha256"] == sha, (n, i)
             assert g["boxes"] == w["boxes"], (n, i)
             assert g["moving"] == w["moving"], (n, i)
             assert g["due"] == w["due"], (n, i)
+            if "lights" in w:
+                assert g["lights"] == w["lights"], (n, i)
             drawn += 1
             moving += w["moving"]
     assert differ <= total // 10000, (differ, total)
@@ -8767,3 +8771,103 @@ def test_the_panel_tests_cards_are_doctor_pys() -> None:
         if mine.tobytes() != want.tobytes():
             differ = sum(a != b for a, b in zip(mine.getdata(), want.getdata(), strict=True))
             raise AssertionError(f"{asked[n]}: {differ} pixels differ")
+
+
+# -- the light that moves (render/shine.py) -------------------------------------------------------
+
+SHINE_THEMES = ["lumen-1920x720", "lumen", "encore-1920x720", "studio-1920x720", "studio",
+                "arena-1920x720", "orbit", "slate", "nimbus", "libre-default", "round-report"]  # fmt: skip
+
+
+def _shine_downloads(rng: random.Random) -> Any:
+    """A download's state as the service publishes it: loading at a pace, paused, done, of a
+    size not known, with a history of speeds or none; or what is no download."""
+    total = rng.choice([24e9, 1.5e9, 3e6])
+    loaded = total * rng.choice([0.0, 0.01, 0.37, 0.5, 0.93, 1.0])
+    state = {"phase": rng.choice(["downloading"] * 4 + ["paused", "done", "installing"]),
+             "name": "Space Game", "source": "steam", "bytes": loaded,
+             "rate": rng.choice([0, 1e5, 3.2e6, 4.7e7, 2e8, 1e12, None, "x", True]),
+             "remaining_s": 345, "history": [rng.uniform(0, 5e7) for _ in range(rng.choice([0, 1, 2, 40]))]}  # fmt: skip
+    if rng.random() < 0.8:
+        state["total"] = total
+    return rng.choice([json.dumps(state)] * 6 + [None, "{"])
+
+
+def _python_shining(folder: Path, steps: list[tuple[Snapshot, float]], kinds: list[str],
+                    fps: float, continuous: bool) -> list[dict[str, Any]]:  # fmt: skip
+    """A panel's moving frames with the light of ``kinds`` (render/shine.py), one after another
+    by one renderer as the panels' loop draws them, each at its time: its pixels, and each of
+    its pieces in their order with where it lies, whether it is light added and, for a light,
+    its own pixels' mode and SHA-256."""
+    import numpy as np
+
+    renderer = Renderer(load_theme(folder), animate=True, preview=False)
+    renderer.fps = fps
+    renderer.continuous = continuous
+    renderer.shine.kinds = frozenset(kinds)
+    lists._RAN.clear()
+    out: list[dict[str, Any]] = []
+    for snapshot, now in steps:
+        try:
+            frame, boxes = renderer.render(snapshot, now=now)
+            lights = []
+            for wid, piece in renderer._last[0] if renderer._last else []:
+                own = piece.layer
+                sum_ = (f"{own.mode} {hashlib.sha256(own.tobytes()).hexdigest()}"
+                        if "\0shine-" in wid else None)  # fmt: skip
+                lights.append([wid, piece.x, piece.y, piece.add, sum_])
+            out.append({"frame": np.asarray(frame), "boxes": boxes, "moving": renderer.moving,
+                        "due": renderer.due, "lights": lights})  # fmt: skip
+        except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
+            out.append({"failed": f"{type(error).__name__}: {error}"})
+    return out
+
+
+def test_moving_light_as_python_draws_it() -> None:
+    # (the built-in themes as a panel shows them, every kind of light on or some: rings that
+    # breathe and sweep, graphs that beat, a cover that glows while music plays or comes and goes
+    # as it stops, the bars after "Playing", the progress's head and sheen, a download's sheen
+    # and spark at its pace, the sun or the moon breathing and the glint on its way; the frames a
+    # moment to a second apart, now and then back in time, the readings changing between them;
+    # each light to the bit, where it lies among the frame's pieces, whether the frame moves on
+    # and when it is due again; the frames themselves within two levels, where a lit ring, its
+    # light made in floating point to a level, lies under them)
+    import dataclasses
+
+    from libre_panel.render.shine import KINDS
+    from libre_panel.theme.model import find_theme
+
+    rng = random.Random(0x5417E)
+    drawn = moving = 0
+    for n in range(2 * len(SHINE_THEMES)):  # (a theme at a time: each step carries its pictures)
+        folder = find_theme(SHINE_THEMES[n % len(SHINE_THEMES)])
+        kinds = list(KINDS) if n < len(SHINE_THEMES) else rng.sample(KINDS, rng.randrange(0, 5))
+        fps, continuous = rng.choice([0, 25, 50]), rng.random() < 0.5
+        snapshot = _demo()
+        now = rng.uniform(1000, 2000)
+        steps: list[tuple[Snapshot, float]] = []
+        for _ in range(rng.randrange(8, 18)):
+            steps.append((snapshot, now))
+            now += rng.choice([0.02, 0.04, 0.04, 0.04, 0.1, 0.25, 0.5, 1.0, 1.3, 0, -0.1])
+            readings = dict(snapshot.readings)
+            for key in ("cpu.load", "gpu.load", "mem.load", "media.progress"):
+                if key in readings and rng.random() < 0.5:
+                    readings[key] = Reading(key, rng.choice([0, 3.5, 47.0, 79.9, 81.0, 100, 120]))
+            if rng.random() < 0.3:
+                readings["media.playing"] = Reading("media.playing", rng.choice([0, 1]))
+                readings.pop("media.state", None)
+            if rng.random() < 0.3:
+                readings["sun.progress"] = Reading("sun.progress",
+                                                   rng.choice([0.0, 0.002, 0.3, 0.71, 1.0, None]))  # fmt: skip
+                readings["sun.up"] = Reading("sun.up", rng.choice([0, 1, None]))
+            if rng.random() < 0.4:
+                readings["downloads"] = Reading("downloads", _shine_downloads(rng))
+            snapshot = dataclasses.replace(snapshot, readings=readings)
+        given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
+        case = {"folder": str(folder), "dither": False, "animate": True, "fps": fps,
+                "preview": False, "continuous": continuous, "shine": kinds, "steps": given,
+                "bytes": True, "lights": True}  # fmt: skip
+        got = _compare_moving([case], [_python_shining(folder, steps, kinds, fps, continuous)],
+                              level=True, within=2)  # fmt: skip
+        drawn, moving = drawn + got[0], moving + got[1]
+    assert drawn > 200 and moving > 100, (drawn, moving)

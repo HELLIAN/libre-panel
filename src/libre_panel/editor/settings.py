@@ -29,6 +29,7 @@ from libre_panel.config import (
     MORE_PANELS,
     MOTIONS,
     RANDOM_TRANSITION,
+    SHINE_KINDS,
     STILLS,
     SYMBOL_PACKS,
     TRANSITION_OCCASIONS,
@@ -527,6 +528,8 @@ class Settings:
                     **config.transitions.occasions,
                     "random": list(config.transitions.random),
                 },
+                # the light that moves over a panel that moves (Settings → Panel → Moving light)
+                "shine": {kind: getattr(config.shine, kind) for kind in SHINE_KINDS},
                 "switches": {theme: dict(chosen) for theme, chosen in config.switches.items()},
                 # the panels beside this one ([[panels]]): written back whole ("panels")
                 "panels": [
@@ -1533,6 +1536,7 @@ RULES: dict[str, Any] = {
         for occasion in TRANSITION_OCCASIONS
     },
     "transitions.random": _rule_random,
+    **{f"shine.{kind}": (lambda n, v, c: _flag(n, v)) for kind in SHINE_KINDS},
     "device.output": lambda n, v, c: _text(n, v, 260, required=True),
     "device.port": lambda n, v, c: _text(n, v, 64),
     "video.mode": lambda n, v, c: _choice(n, v, ("auto", "on", "off")),

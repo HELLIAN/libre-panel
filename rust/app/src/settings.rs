@@ -751,6 +751,16 @@ impl Settings<'_> {
             ("across", text(&config.across)),
             // how the panel goes from one screen to the next
             ("transitions", Value::Dict(transitions)),
+            // the light that moves over a panel that moves (Settings → Panel → Moving light)
+            (
+                "shine",
+                Value::Dict(
+                    lp_config::SHINE_KINDS
+                        .into_iter()
+                        .map(|kind| (kind.to_string(), Value::Bool(config.shine.on(kind))))
+                        .collect(),
+                ),
+            ),
             ("switches", Value::Dict(switches)),
             // the panels beside this one ([[panels]]): written back whole ("panels")
             ("panels", Value::List(panels)),
@@ -2429,6 +2439,9 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
         "transitions.default" => rule_transition(name, value, false),
         "transitions.speed" => choice(name, value, &speeds),
         "transitions.canvas" => flag(name, value),
+        "shine.rings" | "shine.graphs" | "shine.music" | "shine.downloads" | "shine.sun" => {
+            flag(name, value)
+        }
         "transitions.random" => rule_random(name, value),
         "device.output" => plain_text(name, value, 260, true).map(Value::Str),
         "device.port" => a_text(name, value, 64),

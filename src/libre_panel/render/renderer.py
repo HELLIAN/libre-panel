@@ -45,6 +45,7 @@ from libre_panel.render.formatting import FormatError, auto_format, safe_format
 from libre_panel.render.kept import MB, Kept, cached, size_of
 from libre_panel.render.motion import MAX_POINTS, RATE, History, Motion, Spring, grid
 from libre_panel.render.motion import number as motion_number
+from libre_panel.render.shine import Shine
 from libre_panel.sensors.base import TRACE_LAG_S, Snapshot, want
 from libre_panel.theme.model import COVER_COLOR, SWITCH, Theme, ThemeError, resolve_asset
 from libre_panel.theme.modules import SLOT_KINDS, slot_cards
@@ -829,6 +830,9 @@ class Renderer:
         # a graph that scrolls steps a reading at a time, gliding, and rests between (config.toml
         # graph_steps; one with its own fine course, Arena's frame rate, scrolls on)
         self.graph_steps = False
+        # the light that moves over rings, graphs, music, downloads and the sun (render/shine.py),
+        # on a panel that moves; its kinds set by the app (config.toml [shine], the theme's)
+        self.shine = Shine(self)
         self.sample_before: float | None = None  # when the reading before the last was taken
         # the person's choice of the theme's switches (Theme.switches): {"frames": False}; one
         # not chosen is as the theme has it
@@ -1561,8 +1565,19 @@ class Renderer:
         return self._ground().crop(region)
 
     def _keep_underlay(self, region: tuple[int, int, int, int], under: list[Piece], part) -> None:
-        # (its bytes are the picture's: the pieces under it are the frame's own)
+        # (its bytes are the picture's: the pieces under it are the frame's own, and what lies
+        # under pieces the frame no longer has goes with the frame: _forget_underlays)
         self._underlays.put(region, (under, part.copy()), size_of(part))
+
+    def _forget_underlays(self, pieces: list[tuple[str, Piece]]) -> None:
+        """What lay under pieces that are not in the frame any more goes: it serves no frame
+        after, and it would keep their pictures (the size of the panel, some) alive."""
+        if not len(self._underlays):
+            return
+        now = {id(piece) for _, piece in pieces}
+        for region, (under, _part) in self._underlays.items():
+            if any(id(piece) not in now for piece in under):
+                self._underlays.pop(region)
 
     def _compose(self, pieces: list[tuple[str, Piece]]) -> Image.Image:
         theme = self.theme
@@ -1585,6 +1600,7 @@ class Renderer:
             canvas = last[1]
             for region in regions:
                 canvas.paste(self._compose_region(pieces, region, changed), region[:2])
+        self._forget_underlays(pieces)
         self._last = (pieces, canvas)
         return canvas
 
@@ -1951,6 +1967,9 @@ class Renderer:
         self.due = None
         self.snapshot = snapshot
         self.motion.begin(snapshot.readings, now, self._glide_s(), self._lead())
+        shining = bool(self.shine.kinds) and self.animate and not self.preview
+        if shining:
+            self.shine.begin()
         self._video_drawn = None
         boxes: dict[str, Box] = {}
         pieces: list[tuple[str, Piece]] = []
@@ -1984,14 +2003,15 @@ class Renderer:
                 or getattr(self, f"_draw_{widget['type']}", None)
                 or self._draw_plugin
             )
+            drawn = None  # (as drawn, before its card's change has it: its lights' source)
             try:
                 if how == "frozen":  # a card rolling up: what it showed before
                     piece = slot.leave(widget["id"])
                 else:
                     if widget["type"] == "metric":
-                        piece = self._metric(draw, widget, snapshot, now)
+                        piece = drawn = self._metric(draw, widget, snapshot, now)
                     else:
-                        piece = draw(widget, snapshot, now)
+                        piece = drawn = draw(widget, snapshot, now)
                     if how == "live":
                         piece = slot.live(widget["id"], piece)
             except Exception as exc:  # one broken widget must not blank the panel
@@ -2020,6 +2040,8 @@ class Renderer:
                 for top, name in over:
                     if top is not None:
                         pieces.append((f"{widget['id']}\0{name}", top))
+            if shining:
+                self._shine_over(widget, module, slot, how, drawn, snapshot, now, pieces)
             if module is not None:
                 boxes[module["id"]] = self.module_boxes[module["id"]]
                 continue
@@ -2031,6 +2053,8 @@ class Renderer:
                 piece.layer.width,
                 piece.layer.height,
             ]
+        if shining:
+            self.shine.end()
         for slot in self._slots.values():  # frame and line of light, over the cards
             slot.overlay(pieces)
         if turns or self._turned:
@@ -2061,6 +2085,49 @@ class Renderer:
             frame = self._as_rgb(canvas)
             self._handed = frame if self.keep_static else None
         return frame, boxes
+
+    def _shine_over(
+        self,
+        widget: dict[str, Any],
+        module: dict[str, Any] | None,
+        slot: Any,
+        how: str | None,
+        piece: Piece | None,
+        snapshot: Snapshot,
+        now: float,
+        pieces: list[tuple[str, Piece]],
+    ) -> None:
+        """The moving light over ``widget`` (render/shine.py), of ``piece`` as it was drawn,
+        carried with its card where it lies in a card slot: as the card was while it rolls up.
+        None over a turned widget; one that fails is left out, the frame drawn on."""
+        wid = widget["id"]
+        if how == "frozen":
+            prefix = f"{wid}\0shine-"
+            for key in [k for k in slot.frozen if k.startswith(prefix)]:
+                top = slot.leave(key)
+                if top is not None:
+                    pieces.append((key, top))
+            return
+        if float(widget.get("rotate") or 0) % 360 or (
+            module is not None and float(module.get("rotate") or 0) % 360
+        ):
+            return
+        if piece is None:
+            return
+        try:
+            lights = self.shine.over(widget, piece, snapshot, now)
+        except Exception as exc:  # (a light must not blank the panel either)
+            self._warn(f"widget {wid!r}: its light failed: {exc}")
+            return
+        for name, top in lights:
+            key = f"{wid}\0shine-{name}"
+            if slot is not None:
+                if top is None:
+                    slot.last.pop(key, None)
+                    continue
+                top = slot.live(key, top)
+            if top is not None:
+                pieces.append((key, top))
 
     # -- turned widgets ----------------------------------------------------
 
@@ -2426,9 +2493,10 @@ class Renderer:
         """A metric as ``draw`` draws it (with its finish), or the piece it drew the frame before
         where drawing it again would draw the same, as for most of a frame's metrics between two
         readings: its reading the same object (a new reading is another; the volume's muting
-        too), and then neither its number gliding nor its colour fading, nor its glide to pass
-        its value (a number on the way it did not show) or a new text of it being made in the
-        helper thread. Its glide and colour are told it was drawn now, as drawing it would."""
+        too), and then neither its number gliding nor its colour fading, nor its glide to turn
+        (past its value, or away from it first: a number on the way it did not show) or a new
+        text of it being made in the helper thread. Its glide and colour are told it was drawn
+        now, as drawing it would."""
         wid, readings = widget["id"], snapshot.readings
         reading = readings.get(widget["sensor"])
         muted = readings.get(MUTED) if widget["sensor"] == VOLUME else None
@@ -2457,7 +2525,7 @@ class Renderer:
             if spring in self.motion.fed:  # (a fine course: its number goes on along it)
                 return False
             self.motion.glide(spring, value, now, glide, self._lead())
-            if self.motion.passes(spring, now):
+            if self.motion.turns(spring, now):
                 return False
         if widget.get("color_rules"):
             self._rule_step(widget, value, now)
@@ -4150,13 +4218,20 @@ class Renderer:
 
     def _draw_bar(self, widget: dict[str, Any], snapshot: Snapshot, now: float) -> Piece | None:
         x, y, w, h = widget["x"], widget["y"], widget["w"], widget["h"]
-        target = _number(snapshot.value(widget["sensor"]))
-        value = self._eased(widget, target, now)
-        frac = _fraction(value, widget["min"], widget["max"], widget.get("scale", "linear"))
-        frac = _steps(frac, w if widget["direction"] in ("right", "left") else h)
+        value, frac = self._bar_fraction(widget, snapshot, now)
         paint = self._rule_paint(widget, value, now)
         key = (frac, paint)
         return self._cached(widget, key, lambda: self._bar_piece(widget, frac, paint, x, y, w, h))
+
+    def _bar_fraction(
+        self, widget: dict[str, Any], snapshot: Snapshot, now: float
+    ) -> tuple[float | None, float]:
+        """A bar's value at ``now`` (gliding) and the share of its length that is full, in
+        steps of the supersampled grid."""
+        value = self._eased(widget, _number(snapshot.value(widget["sensor"])), now)
+        frac = _fraction(value, widget["min"], widget["max"], widget.get("scale", "linear"))
+        length = widget["w"] if widget["direction"] in ("right", "left") else widget["h"]
+        return value, _steps(frac, length)
 
     def _bar_piece(
         self,
@@ -4262,13 +4337,19 @@ class Renderer:
         return [_lerp(a, b, i / max(1, n - 1)) for i in range(n)]
 
     def _draw_gauge(self, widget: dict[str, Any], snapshot: Snapshot, now: float) -> Piece | None:
-        target = _number(snapshot.value(widget["sensor"]))
-        value = self._eased(widget, target, now)
-        frac = _fraction(value, widget["min"], widget["max"], widget.get("scale", "linear"))
-        sweep = abs(widget["end_angle"] - widget["start_angle"])
-        frac = _steps(frac, math.radians(sweep) * max(widget["w"], widget["h"]) / 2)
+        value, frac = self._gauge_fraction(widget, snapshot, now)
         paint = self._rule_paint(widget, value, now)
         return self._cached(widget, (frac, paint), lambda: self._gauge_piece(widget, frac, paint))
+
+    def _gauge_fraction(
+        self, widget: dict[str, Any], snapshot: Snapshot, now: float
+    ) -> tuple[float | None, float]:
+        """A ring's value at ``now`` (gliding) and the share of its sweep that is lit, in steps
+        of the supersampled grid."""
+        value = self._eased(widget, _number(snapshot.value(widget["sensor"])), now)
+        frac = _fraction(value, widget["min"], widget["max"], widget.get("scale", "linear"))
+        sweep = abs(widget["end_angle"] - widget["start_angle"])
+        return value, _steps(frac, math.radians(sweep) * max(widget["w"], widget["h"]) / 2)
 
     def _gauge_piece(
         self, widget: dict[str, Any], frac: float, paint: tuple[RGBA, RGBA | None]
@@ -4400,6 +4481,16 @@ class Renderer:
         widget's glow around it, where the line ends: at the right edge, at the newest value.
         Drawn in quarter pixels, as SPUR II draws it, so it glides with the value. None where
         the line has no end (too few points, no value)."""
+        end = self._graph_end(widget, snapshot, now)
+        if end is None:
+            return None
+        return self._dot(widget, *end, self.color(widget["color"]))
+
+    def _graph_end(
+        self, widget: dict[str, Any], snapshot: Snapshot, now: float
+    ) -> tuple[float, float] | None:
+        """Where a graph's line ends (px): at the right edge, at the newest value. None where it
+        has no end (too few points, no value)."""
         if self.continuous:  # (where it draws its fine course, the dot ends that)
             widget = self._traced(widget, snapshot)[0]
         x, y, w = widget["x"], widget["y"], widget["w"]
@@ -4426,8 +4517,7 @@ class Renderer:
         if widget.get("direction") == "down":  # it hangs from the top edge
             row = first + last - row
         # the curve's end in pixels (the last point is a quarter of a pixel inside the edge)
-        cx, cy = x + w - 0.5 / scale, y + (row + 0.5) / scale
-        return self._dot(widget, cx, cy, self.color(widget["color"]))
+        return x + w - 0.5 / scale, y + (row + 0.5) / scale
 
     def _draw_bar_dot(self, widget: dict[str, Any], snapshot: Snapshot, now: float) -> Piece | None:
         """A bar's end dot: a dot of ``end_dot`` px radius in the bar's colour where it

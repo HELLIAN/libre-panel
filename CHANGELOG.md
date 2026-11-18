@@ -11,8 +11,35 @@
   *Settings → More panels* shows them and begin from one moment, 0.8 s after the change (0.4 s
   after **▶**). *Settings → Transitions → Across the panels* (`[transitions] canvas`) turns it
   off. The Rust app draws each frame of it bit for bit as Python does.
+- **Light that moves.** On a panel that moves, light now moves over what it shows: the end of
+  a ring breathes in its colour and now and then a light runs along the ring (past 80 % its end
+  glows wider); the newest point of a curve beats with each reading; while a track plays, its
+  cover glows round about in its own colours, three bars dance after "Playing" and a light runs
+  along its progress; a download's progress has a sheen, the faster the faster it loads; the
+  sun on its way (by night the moon) glows softly and a glint runs along the day gone. Each kind
+  can be turned off in *Settings → Panel → Moving light* (`[shine]`), a theme may show fewer
+  (`animation.shine`), and a calm panel shows none. Each light is made once and only laid anew
+  where it moves. Measured on a 12.3" at 25 fps with the demo's readings (the app and its
+  engine, share of a core): Lumen 21 % with it, against 24 % before without it; Encore while
+  music plays 10 % (6 % without it, 7 % before), as its bars and sheen ask for 25 pictures a
+  second instead of 13. The Rust app draws every light bit for bit as Python does.
+
+**Changed**
+- **Less work and memory for what was there.** Found while measuring the light: the Rust app
+  worked out a cover's colour (`@cover`, and a card's frame while a track plays) anew each time
+  it drew, 0.7 ms each, where Python keeps it per picture; now it keeps it too (Encore without
+  the light 4.7–6.5 % instead of 6.8–8.1 %, Lumen 19–20 % instead of 23–26 %). And where a
+  part of a frame was laid again, what lay under it kept the pictures under it alive after
+  they had changed, which only the region's own bytes were counted for: that goes with the
+  frame now, in both apps (Orbit 87 instead of 91 MB, and 93 instead of 180 MB with the light).
 
 **Fixed**
+- **A number gliding to a new reading no longer stands still on the way.** Where its glide first
+  ran away from the reading, or past it, the number was taken as already there and showed the
+  value of a moment before while its ring or bar went on. It follows its glide now, in both
+  apps.
+- **The Rust app keeps a calm panel calm** (`[device] motion`, the older USB serial panels by
+  themselves), as the Python app does: nothing glides, turns or breathes on it.
 - **The JONSBO DS339 is said to be connected while it shows the panel's theme** (its owner's
   report). *Settings → Panel*, the overview and *Status → Diagnose* said "not connected": the
   search never finds a USB display chip by itself, as USB-to-HDMI adapters have the same one.

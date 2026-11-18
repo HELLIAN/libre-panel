@@ -339,6 +339,56 @@ impl Default for TransitionsConfig {
     }
 }
 
+/// The light that moves over a panel that moves (`[shine]`, render/shine.py), each kind of it.
+pub const SHINE_KINDS: [&str; 5] = ["rings", "graphs", "music", "downloads", "sun"];
+
+/// `[shine]`: which light moves over a panel that moves: a ring's end that breathes and a
+/// sweep along it, a graph's end that beats, a cover that glows while music plays (with the
+/// bars after "Playing" and the progress's light), a download's sheen, the sun's glow and
+/// glint. A theme may show fewer (its `animation.shine`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShineConfig {
+    pub rings: bool,
+    pub graphs: bool,
+    pub music: bool,
+    pub downloads: bool,
+    pub sun: bool,
+}
+
+impl Default for ShineConfig {
+    fn default() -> ShineConfig {
+        ShineConfig {
+            rings: true,
+            graphs: true,
+            music: true,
+            downloads: true,
+            sun: true,
+        }
+    }
+}
+
+impl ShineConfig {
+    /// Whether the kind `kind` (one of SHINE_KINDS) is on.
+    pub fn on(&self, kind: &str) -> bool {
+        match kind {
+            "rings" => self.rings,
+            "graphs" => self.graphs,
+            "music" => self.music,
+            "downloads" => self.downloads,
+            "sun" => self.sun,
+            _ => false,
+        }
+    }
+
+    /// The kinds that are on, in SHINE_KINDS's order.
+    pub fn kinds(&self) -> Vec<&'static str> {
+        SHINE_KINDS
+            .into_iter()
+            .filter(|kind| self.on(kind))
+            .collect()
+    }
+}
+
 /// `[sequence]`: the themes shown one after the other.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SequenceConfig {
@@ -409,6 +459,8 @@ pub struct Config {
     pub fps: i64,
     pub transition: String,
     pub transitions: TransitionsConfig,
+    /// `[shine]`: the light that moves
+    pub shine: ShineConfig,
     pub check_updates: Option<bool>,
     pub allow_notify: bool,
     /// its icon in the notification area (the tray), with its menu
@@ -455,6 +507,7 @@ impl Config {
             fps: 10,
             transition: "fade".into(),
             transitions: TransitionsConfig::default(),
+            shine: ShineConfig::default(),
             check_updates: None,
             allow_notify: false,
             tray_icon: false,
@@ -858,6 +911,28 @@ fn transitions(cfg: &mut Config, table: &Table) -> Result<()> {
                 )))
             }
         }
+    }
+    Ok(())
+}
+
+/// _shine: `[shine]` into the config: each kind of the light that moves, on or off.
+fn shine(cfg: &mut Config, table: &Table) -> Result<()> {
+    for (key, value) in table {
+        let name = format!("shine.{key}");
+        let on = match key.as_str() {
+            "rings" => &mut cfg.shine.rings,
+            "graphs" => &mut cfg.shine.graphs,
+            "music" => &mut cfg.shine.music,
+            "downloads" => &mut cfg.shine.downloads,
+            "sun" => &mut cfg.shine.sun,
+            _ => {
+                return Err(config_error(format!(
+                    "unknown setting {}",
+                    lp_py::repr(&name)
+                )))
+            }
+        };
+        *on = bool_of(value, &name)?;
     }
     Ok(())
 }
@@ -1440,6 +1515,7 @@ pub fn parse_config(data: &Table, path: Option<&Path>, platform: &str) -> Result
         cfg.transition = cfg.transitions.default.clone();
     }
     transitions(&mut cfg, table_of(data, "transitions", &empty)?)?;
+    shine(&mut cfg, table_of(data, "shine", &empty)?)?;
     if let Some(value) = data.get("symbols") {
         cfg.symbols = lp_py::strip(str_of(value, "symbols")?).to_string();
         if !SYMBOL_PACKS.contains(&cfg.symbols.as_str()) {

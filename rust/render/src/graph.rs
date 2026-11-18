@@ -816,6 +816,16 @@ impl Renderer {
     /// the line ends, at the right edge, at the newest value of the history (in the range the
     /// graph keeps, else its values'), with the widget's glow; none where the line has no end.
     pub(crate) fn graph_dot(&self, w: &Dict, snapshot: &Snapshot) -> Result<Option<Over>> {
+        let Some((cx, cy)) = self.graph_end(w, snapshot)? else {
+            return Ok(None);
+        };
+        let colour = self.colour_of(w, "color")?.unwrap_or([0; 4]);
+        self.dot(w, cx, cy, colour).map(Some)
+    }
+
+    /// _graph_end: where a graph's line ends (px): at the right edge, at the newest value.
+    /// None where it has no end (too few points, no value).
+    pub(crate) fn graph_end(&self, w: &Dict, snapshot: &Snapshot) -> Result<Option<(f64, f64)>> {
         if self.continuous {
             // the curve is drawn from the gliding value: so is its end, where the curve is
             // drawn in this frame
@@ -823,7 +833,7 @@ impl Renderer {
                 return Ok(None);
             };
             let s = crate::timeline::STRIP_SCALE;
-            return self.end_dot(&w, value, &range, s).map(Some);
+            return end_at(&w, value, &range, s).map(Some);
         }
         let (values, _) = history_of(snapshot, w);
         let value = if values.len() > 1 {
@@ -845,27 +855,27 @@ impl Renderer {
         let (Some(value), Some(range)) = (value, range) else {
             return Ok(None);
         };
-        self.end_dot(w, value, &range, SUPERSAMPLE as i64).map(Some)
+        end_at(w, value, &range, SUPERSAMPLE as i64).map(Some)
     }
+}
 
-    /// The end dot at `value` in `range`, its row worked out at scale `s`.
-    fn end_dot(&self, w: &Dict, value: f64, range: &Range, s: i64) -> Result<Over> {
-        let (first, last) = range_rows(w, s);
-        let frac = fraction(value, range, widget::text(w, "scale"))?;
-        let mut row = first + (last - first) * (1.0 - frac);
-        if widget::text(w, "direction") == "down" {
-            row = first + last - row;
-        }
-        let (x, y, gw) = (
-            widget::int(w, "x", 0),
-            widget::int(w, "y", 0),
-            widget::int(w, "w", 200),
-        );
-        let cx = x.saturating_add(gw) as f64 - 0.5 / s as f64;
-        let cy = y as f64 + (row + 0.5) / s as f64;
-        let colour = self.colour_of(w, "color")?.unwrap_or([0; 4]);
-        self.dot(w, cx, cy, colour)
+/// Where a graph's line ends at `value` in `range`, its row worked out at scale `s` (the last
+/// point is a quarter of a pixel inside the edge).
+fn end_at(w: &Dict, value: f64, range: &Range, s: i64) -> Result<(f64, f64)> {
+    let (first, last) = range_rows(w, s);
+    let frac = fraction(value, range, widget::text(w, "scale"))?;
+    let mut row = first + (last - first) * (1.0 - frac);
+    if widget::text(w, "direction") == "down" {
+        row = first + last - row;
     }
+    let (x, y, gw) = (
+        widget::int(w, "x", 0),
+        widget::int(w, "y", 0),
+        widget::int(w, "w", 200),
+    );
+    let cx = x.saturating_add(gw) as f64 - 0.5 / s as f64;
+    let cy = y as f64 + (row + 0.5) / s as f64;
+    Ok((cx, cy))
 }
 
 // -- the lit finish's line --------------------------------------------------------------------

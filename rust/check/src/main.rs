@@ -2706,6 +2706,12 @@ fn run(case: &Value) -> Result<Value, String> {
                     // (video mode: every frame reaches the panel, the graphs scroll on in each,
                     // as the loop sets it for a panel that streams)
                     renderer.continuous = c["continuous"].as_bool().unwrap_or(false);
+                    // (the light that moves, of the kinds the person and the theme let shine,
+                    // as the loop sets them)
+                    if let Some(kinds) = c["shine"].as_array() {
+                        let kinds = kinds.iter().filter_map(|k| k.as_str());
+                        renderer.shine.borrow_mut().set_kinds(kinds);
+                    }
                     // (what the person chose for the fans, as the app sets it: a look and paint
                     // for all, and for some by their sensor)
                     if let Some(chosen) = c["fan_choices"].as_object() {
@@ -2766,6 +2772,28 @@ fn run(case: &Value) -> Result<Value, String> {
                                     "moving": renderer.moving, "due": renderer.due});
                                 if bytes {
                                     out["frame"] = value_of(&frame);
+                                }
+                                // (where asked: each piece of the frame in its order, where it
+                                // lies and whether it is light added; a moving light's own
+                                // pixels as their SHA-256, its mode first)
+                                // ("all": every piece's own pixels so, not only a light's)
+                                let all = c["lights"].as_str() == Some("all");
+                                if all || c["lights"].as_bool() == Some(true) {
+                                    let pieces: Vec<Value> = renderer
+                                        .composed_pieces()
+                                        .map(|(id, p)| {
+                                            let sum = (all || id.contains("\0shine-")).then(|| {
+                                                let sum = Sha256::digest(p.layer.as_bytes());
+                                                let hex: String = sum
+                                                    .iter()
+                                                    .map(|b| format!("{b:02x}"))
+                                                    .collect();
+                                                format!("{} {hex}", p.layer.mode().name())
+                                            });
+                                            json!([id, p.x, p.y, p.add, sum])
+                                        })
+                                        .collect();
+                                    out["lights"] = json!(pieces);
                                 }
                                 out
                             }

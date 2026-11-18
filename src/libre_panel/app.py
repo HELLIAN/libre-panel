@@ -598,6 +598,14 @@ def _alarm(snapshot: Snapshot | None) -> bool:
     return snapshot is not None and snapshot.value(ALARM) == 1
 
 
+def shine_kinds(config: Config, theme: Any) -> frozenset[str]:
+    """The kinds of moving light a panel shows (render/shine.py): those [shine] has on, of the
+    ones the theme shows (``animation.shine``; all where it names none)."""
+    kinds = config.shine.kinds()
+    own = getattr(theme, "shine", None)
+    return kinds if own is None else kinds & frozenset(own)
+
+
 def calm(config: Config, display: Any) -> bool:
     """Whether the panel's motion is kept calm (``[device] motion``): a picture a second, no
     gliding, turning or fading, for a slow panel (a USB serial one) by itself."""
@@ -1640,6 +1648,7 @@ class MainLoop:
                 renderer.fps = _fps(config, host, display)  # screens may pace animations by it
                 # nothing glides, turns or breathes on a calm panel (it would be sent every frame)
                 renderer.animate = config.fps > 1 and not calm(config, display)
+                renderer.shine.kinds = shine_kinds(config, renderer.theme)
                 if host is not None:  # (while the panel is away they wait there, the newest)
                     toasts.add(host.take_toasts())
                 go_on = getattr(blend[0], "toasts", "wait") in ("over", "hide") if blend else True
