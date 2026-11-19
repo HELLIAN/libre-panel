@@ -131,6 +131,14 @@
   new version's wheel. Until now pip and pipx installed the Python app.
 
 **Fixed**
+- **"Energy this month" is the month's again.** The background app started its services before
+  it told them where their files are: the power count found none of its totals as it
+  started, so today and this month began at nothing at every start, and the month showed what
+  today did; the memory and the cooling advice could not make their files at the first try.
+  The services know their folder before any starts now. Where the memory runs, the power
+  count also starts from what it recorded of today and of this month where that is more (as
+  *Status → History* adds them up), so the month counts from its first day, the days before
+  this version included.
 - **A module whose service is off says so in Design.** Power use, Timer, AI activity and the
   Download card show what their service reports, and every service is off until it is switched
   on; Design's picture then showed sample values, while the panel showed nothing there. The

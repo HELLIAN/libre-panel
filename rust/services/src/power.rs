@@ -8,7 +8,10 @@
 //! Readings: `power.watts`, `power.today` and `power.month` (kWh), with a price
 //! `power.today.cost` and `power.month.cost` (in the currency). The totals are kept in the
 //! service's folder (`power.json`) every minute and when it stops, so a restart loses
-//! nothing; a new day and a new month begin at zero. Time the PC sleeps is not counted.
+//! nothing; a new day and a new month begin at zero. Time the PC sleeps is not counted. Where
+//! the memory keeps the power readings the count is made of, today and this month start from
+//! what it recorded of them where that is more (the minutes this count did not run, as the
+//! app's History adds them up), so the month is the month's from its first day.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -76,6 +79,38 @@ impl Core {
     /// The readings the watts are made of.
     pub fn keys(&self) -> &[String] {
         &self.keys
+    }
+
+    /// The memory's columns of the readings the watts are made of (memory.rs's means of
+    /// cpu.power and gpu.power); None where they are any other, which the memory does not
+    /// keep as such.
+    pub fn recorded_columns(&self) -> Option<Vec<&'static str>> {
+        let mut columns = Vec::new();
+        for key in &self.keys {
+            let column = match key.as_str() {
+                "cpu.power" => "cpu_power",
+                "gpu.power" => "gpu_power",
+                _ => return None,
+            };
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
+        (!columns.is_empty()).then_some(columns)
+    }
+
+    /// The energy (Wh) of `minutes` minutes whose means of the watts add up to `watt_minutes`,
+    /// with the rest of the PC for each of them, as the app's History counts it.
+    pub fn energy_of(&self, minutes: f64, watt_minutes: f64) -> f64 {
+        (watt_minutes + self.rest * minutes) / 60.0
+    }
+
+    /// at_least: today's and this month's energy (Wh) no less than what the memory recorded
+    /// of them, `today_wh` and `month_wh`: the time this count did not run (an older version
+    /// that read none of its totals at a start, a stop before it kept them).
+    pub fn at_least(&mut self, today_wh: f64, month_wh: f64) {
+        self.today_wh = self.today_wh.max(today_wh);
+        self.month_wh = self.month_wh.max(month_wh).max(self.today_wh);
     }
 
     /// The totals kept before (power.json's text, where there is one), as far as they are
@@ -192,6 +227,31 @@ impl Core {
     }
 }
 
+/// What the memory recorded of today's and this month's energy (Wh) up to `wall`, where it
+/// keeps the readings the count is made of in its own place (memory.db in the memory's folder
+/// beside this service's); None where it does not.
+fn recorded(host: &ServiceHost, core: &Core, wall: &DateTime) -> Option<(f64, f64)> {
+    let columns = core.recorded_columns()?;
+    let folder = host.data_dir()?;
+    let database = (folder.parent()?)
+        .join("memory")
+        .join(crate::memory_store::DATABASE);
+    if !database.is_file() {
+        return None;
+    }
+    let zone = lp_py::zones::local()?;
+    let since = |day: u32| {
+        let midnight = DateTime::date(wall.year, wall.month, day);
+        lp_py::zones::timestamp(zone, &midnight, false).map(|t| t.floor() as i64)
+    };
+    let energy = |since: i64| {
+        let (minutes, watt_minutes) =
+            crate::memory_store::watt_minutes(&database, since, &columns)?;
+        Some(core.energy_of(minutes, watt_minutes))
+    };
+    Some((energy(since(wall.day)?)?, energy(since(1)?)?))
+}
+
 fn wall_now() -> Option<DateTime> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -269,6 +329,9 @@ impl Service for Power {
             .and_then(|folder| std::fs::read_to_string(folder.join(FILE)).ok());
         if let (Ok(mut core), Some(wall)) = (shared.core.lock(), wall_now()) {
             core.0.load(kept.as_deref(), &wall);
+            if let Some((today_wh, month_wh)) = recorded(&shared.host, &core.0, &wall) {
+                core.0.at_least(today_wh, month_wh);
+            }
             let keys: Vec<&str> = core.0.keys().iter().map(String::as_str).collect();
             shared.host.want(&keys);
         }
@@ -304,5 +367,108 @@ impl Service for Power {
 
     fn stop(&mut self) {
         self.shared.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn core(keys: &[&str], rest: f64) -> Core {
+        let keys: Vec<Value> = keys.iter().map(|key| Value::Str((*key).into())).collect();
+        Core::new(&keys, rest, 0.3, "€")
+    }
+
+    fn noon(day: u32) -> DateTime {
+        DateTime {
+            hour: 12,
+            ..DateTime::date(2026, 11, day)
+        }
+    }
+
+    #[test]
+    fn the_memory_keeps_the_processor_s_and_the_graphics_card_s_power_alone() {
+        let both = core(&["gpu.power", "cpu.power", "cpu.power"], 0.0);
+        assert_eq!(
+            both.recorded_columns(),
+            Some(vec!["gpu_power", "cpu_power"])
+        );
+        assert_eq!(
+            core(&["cpu.power"], 0.0).recorded_columns(),
+            Some(vec!["cpu_power"])
+        );
+        assert_eq!(
+            core(&["cpu.power", "psu.out"], 0.0).recorded_columns(),
+            None
+        );
+        assert_eq!(core(&[], 0.0).recorded_columns(), None);
+    }
+
+    #[test]
+    fn what_the_memory_recorded_raises_today_and_the_month_and_never_lowers_them() {
+        let mut count = core(&["cpu.power", "gpu.power"], 50.0);
+        let kept =
+            r#"{"day": "2026-11-19", "today_wh": 100.0, "month": "2026-11", "month_wh": 150.0}"#;
+        count.load(Some(kept), &noon(19));
+        count.at_least(80.0, 900.0); // (the memory: less of today, more of the month)
+        assert_eq!((count.today_wh, count.month_wh), (100.0, 900.0));
+        count.at_least(120.0, 50.0);
+        assert_eq!((count.today_wh, count.month_wh), (120.0, 900.0));
+        let mut fresh = core(&["cpu.power"], 0.0);
+        fresh.load(None, &noon(19));
+        fresh.at_least(200.0, 0.0); // (the month is never less than its day)
+        assert_eq!((fresh.today_wh, fresh.month_wh), (200.0, 200.0));
+        // (a minute of 300 W and the rest's 50 W: 5.83 Wh)
+        assert!((count.energy_of(1.0, 300.0) - 5.833_333).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_memory_s_minutes_of_today_and_the_month_add_up_as_history_counts_them() {
+        let settings = std::env::temp_dir().join(format!("lp-power-{}", std::process::id()));
+        let memory = settings.join("plugins-data").join("memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        let database = memory.join(crate::memory_store::DATABASE);
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE minutes (ts INTEGER PRIMARY KEY, cpu_power REAL, gpu_power REAL)",
+            )
+            .unwrap();
+        let zone = lp_py::zones::local().unwrap();
+        let at = |day: u32, minute: u32| {
+            let moment = DateTime {
+                minute,
+                ..DateTime::date(2026, 11, day)
+            };
+            lp_py::zones::timestamp(zone, &moment, false).unwrap() as i64
+        };
+        let rows = [
+            (at(1, 0) - 60, Some(500.0), Some(500.0)), // (October's last minute: not counted)
+            (at(1, 0), Some(100.0), Some(200.0)),
+            (at(5, 30), Some(100.0), None),
+            (at(19, 1), Some(60.0), Some(120.0)),
+            (at(19, 2), None, None), // (no power read: only the rest)
+        ];
+        for (ts, cpu, gpu) in rows {
+            let sql = "INSERT INTO minutes VALUES (?1, ?2, ?3)";
+            connection
+                .execute(sql, rusqlite::params![ts, cpu, gpu])
+                .unwrap();
+        }
+        drop(connection);
+        let hub = crate::host::PluginHost::new(Box::new(|| 0.0));
+        hub.set_data_dir(settings.join("plugins-data"));
+        let host = ServiceHost::new(&hub, "power");
+        let count = core(&["cpu.power", "gpu.power"], 30.0);
+        let found = recorded(&host, &count, &noon(19));
+        let only_cpu = recorded(&host, &core(&["cpu.power"], 0.0), &noon(19));
+        let other = recorded(&host, &core(&["psu.out"], 0.0), &noon(19));
+        let _ = std::fs::remove_dir_all(&settings);
+        // today: 180 W and 0 W over 2 minutes, with 30 W of rest each; the month: 580 W over 4
+        let (today, month) = found.unwrap();
+        assert!((today - (180.0 + 60.0) / 60.0).abs() < 1e-9, "{today}");
+        assert!((month - (580.0 + 120.0) / 60.0).abs() < 1e-9, "{month}");
+        assert_eq!(only_cpu, Some((60.0 / 60.0, 260.0 / 60.0)));
+        assert_eq!(other, None);
     }
 }

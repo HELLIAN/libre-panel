@@ -629,7 +629,7 @@ pub struct BackgroundApp {
 impl BackgroundApp {
     pub fn new(home: Home, asked: Asked) -> Arc<BackgroundApp> {
         let config_file = asked.config.clone().unwrap_or_else(|| home.config_file());
-        let company = Company::new();
+        let company = Company::new(&home.settings);
         Arc::new_cyclic(|app: &Weak<BackgroundApp>| {
             let pressed = app.clone();
             let act: hotkeys::Fire = Arc::new(move |action: &str| {

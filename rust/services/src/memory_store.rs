@@ -163,6 +163,27 @@ fn add_columns(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// watt_minutes: the minutes kept since `since` (Unix seconds) and the sum of the means of
+/// `columns` in them, as the app's History adds up the power of a span (its summary); None
+/// where a column is none of the means or the database cannot be read.
+pub fn watt_minutes(path: &std::path::Path, since: i64, columns: &[&str]) -> Option<(f64, f64)> {
+    if columns.is_empty() || columns.iter().any(|column| !MEANS.contains(column)) {
+        return None;
+    }
+    let sums: Vec<String> = (columns.iter())
+        .map(|column| format!("COALESCE(SUM({column}), 0)"))
+        .collect();
+    let query = format!(
+        "SELECT COUNT(*), {} FROM minutes WHERE ts >= ?1",
+        sums.join(" + ")
+    );
+    let connection = read_only(path).ok()?;
+    let found = connection.query_row(&query, [since], |row| {
+        Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))
+    });
+    found.ok()
+}
+
 /// read_only: the database for reading only (the writer may be at work; WAL lets both).
 pub fn read_only(path: &std::path::Path) -> rusqlite::Result<Connection> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)

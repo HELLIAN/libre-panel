@@ -460,7 +460,8 @@ pub(crate) fn moment() -> (Moment, bool) {
 impl MainLoop {
     /// A loop with services of its own, which end with it.
     pub fn new(home: Home, asked: Asked) -> Result<MainLoop, String> {
-        MainLoop::with(home, asked, Company::new(), true, Arc::default())
+        let company = Company::new(&home.settings);
+        MainLoop::with(home, asked, company, true, Arc::default())
     }
 
     /// A loop in the `company` of the background app: its services go on when the loop ends
@@ -503,7 +504,6 @@ impl MainLoop {
                 Delivery::shown()
             }
         })));
-        host.set_data_dir(home.settings.join("plugins-data"));
         let themes = home.places();
         host.set_themes(Some(Box::new(move |name| {
             versions::find_theme(name, &themes).is_ok()

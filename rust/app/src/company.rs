@@ -27,10 +27,18 @@ pub struct Company {
     also: Mutex<Option<Also>>,
 }
 
+/// `<settings>/plugins-data`: where each service keeps its files (power's totals, the memory's
+/// database)
+pub const SERVICES_DATA: &str = "plugins-data";
+
 impl Company {
-    pub fn new() -> Arc<Company> {
+    /// The services' host and manager, with the folder of their files under `settings` known
+    /// before any of them starts: a service reads what it kept as it starts (the power count
+    /// its totals), and one that makes its file then (the memory) would fail without it.
+    pub fn new(settings: &std::path::Path) -> Arc<Company> {
         let began = Instant::now();
         let host = PluginHost::new(Box::new(move || began.elapsed().as_secs_f64()));
+        host.set_data_dir(settings.join(SERVICES_DATA));
         let manager = Manager::new(&host, crate::services::parts());
         Arc::new(Company {
             began,
@@ -154,5 +162,20 @@ impl Company {
 
     pub fn close(&self) {
         self.host.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_services_know_their_folder_before_any_of_them_starts() {
+        let settings = std::env::temp_dir().join(format!("lp-company-{}", std::process::id()));
+        let company = Company::new(&settings);
+        let host = lp_services::host::ServiceHost::new(&company.host, "power");
+        let folder = host.data_dir();
+        let _ = std::fs::remove_dir_all(&settings);
+        assert_eq!(folder, Some(settings.join(SERVICES_DATA).join("power")));
     }
 }

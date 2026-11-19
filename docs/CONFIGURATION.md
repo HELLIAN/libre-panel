@@ -1410,7 +1410,11 @@ currency = "€"
 `power.watts`, `power.today` and `power.month` (kWh), with a price `power.today.cost` and
 `power.month.cost`. The totals are kept in the service's folder (`plugins-data/power/`) every
 minute and when it stops, so a restart loses nothing; a new day and a new month begin at
-zero, and time the PC sleeps is not counted.
+zero, and time the PC sleeps is not counted. Where the [memory](#memory-and-round-report) runs and the totals
+are made of `cpu.power` and `gpu.power` (as they are unless `sensors` names others), they
+start from what it recorded of today and of this month where that is more, as *Status →
+History* adds them up: so "this month" is the month from its first day, also for the time
+the count did not run.
 
 ### Waveshare USB monitor (experimental)
 

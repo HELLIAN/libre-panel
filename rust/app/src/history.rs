@@ -48,7 +48,7 @@ pub fn database(config: &lp_config::Config) -> PathBuf {
     };
     if given.is_empty() {
         return lp_config::dirs::config_dir()
-            .join("plugins-data")
+            .join(crate::company::SERVICES_DATA)
             .join("memory")
             .join(DATABASE);
     }

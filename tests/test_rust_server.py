@@ -475,6 +475,68 @@ def test_a_paused_panel_keeps_no_blocks_for_a_frame_that_does_not_come(tmp_path:
             program.communicate(timeout=30)
 
 
+def test_the_background_app_s_power_count_goes_on_from_what_it_kept_and_the_memory_recorded(
+    tmp_path: Path,
+) -> None:
+    """The background app started its services before their folder was known: the power count
+    read none of its totals and began each start at nothing, so "this month" was "today"
+    (issue 56). It goes on from power.json now, and where the memory recorded more of today
+    or this month (the minutes it ran without the count, as History adds them up), from that."""
+    import sqlite3
+    from datetime import datetime
+
+    (tmp_path / "config.toml").write_text(
+        'theme = "slate"\nfps = 2\n[device]\ndriver = "virtual"\noutput = "panel.png"\n'
+        '[sensors]\nproviders = []\n[services]\nenabled = ["power"]\n',
+        encoding="utf-8",
+    )
+    now = datetime.now()
+    data = tmp_path / "plugins-data"
+    (data / "power").mkdir(parents=True)
+    kept = {"day": now.strftime("%Y-%m-%d"), "today_wh": 1000.0,
+            "month": now.strftime("%Y-%m"), "month_wh": 2000.0}  # fmt: skip
+    (data / "power" / "power.json").write_text(json.dumps(kept), encoding="utf-8")
+    (data / "memory").mkdir()
+    con = sqlite3.connect(data / "memory" / "memory.db")
+    con.execute("CREATE TABLE minutes (ts INTEGER PRIMARY KEY, cpu_power REAL, gpu_power REAL)")
+    first = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+    for n in range(600):  # ten hours of 500 W from the month's first minute: 5 kWh
+        con.execute("INSERT INTO minutes VALUES (?, ?, NULL)", (first + 60 * n, 500.0))
+    con.execute("INSERT INTO minutes VALUES (?, 900.0, 900.0)", (first - 60,))  # (the month before)
+    con.commit()
+    con.close()
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries()}  # fmt: skip
+    with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          encoding="utf-8") as program:  # fmt: skip
+        try:
+            assert program.stdout is not None
+            address = program.stdout.readline().split(" running at ")[1].split()[0]
+            port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
+
+            def readings() -> dict[str, Any] | None:
+                request = _get("/api/readings?keys=power.today,power.month", WITH)
+                request = request.replace("{host}", f"localhost:{port}")
+                status, _, answer = _asked(port, request.replace("{token}", token).encode())
+                assert status.split()[1] == "200", answer
+                found = json.loads(answer)["readings"]
+                # (the samples' stand-ins until the count's own come)
+                published = [
+                    found.get(key, {}).get("sample") for key in ("power.today", "power.month")
+                ]
+                return found if published == [False, False] else None
+
+            found = _waited(readings, 40)
+        finally:
+            program.kill()
+            program.communicate(timeout=30)
+    assert found, "the power count published nothing"
+    today = 5.0 if now.day == 1 else 1.0  # (on the 1st the memory's minutes are today's too)
+    assert found["power.today"]["value"] == pytest.approx(today, abs=0.002), found
+    assert found["power.month"]["value"] == pytest.approx(5.0, abs=0.002), found
+
+
 def test_a_transition_is_shown_on_the_panel_as_transition_show_py_shows_it(
     tmp_path: Path,
 ) -> None:
