@@ -489,8 +489,8 @@ def test_the_shared_parts_have_names_rings_and_escape(app_url, isolated_home):  
             focused = page.evaluate(FOCUSED)
             assert focused["ring"], focused
             seen.append(focused["text"].split("\n")[0])
-        assert seen[:9] == ["Libre Panel: start", "Lumen", "Start", "Design", "Look", "Status",
-                            "Player", "Screen", "Search or command …"]  # fmt: skip
+        assert seen[:9] == ["Libre Panel: start", "Start", "Design", "Look", "Status", "Player",
+                            "Screen", "Search or command …", "Lumen"]  # fmt: skip
         assert seen[-1] == "Settings"
         for opener, floating, root in (
             (".panel-chip", ".popover", ".popover"),
