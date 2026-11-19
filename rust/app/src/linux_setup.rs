@@ -863,6 +863,12 @@ fn may_use(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+        // LP_TEST_RIGHTS=user is the tests' own (as lp_devices::rights has it): a user who
+        // neither owns the node nor is in its group, whoever runs them (a container is root)
+        if std::env::var("LP_TEST_RIGHTS").as_deref() == Ok("user") {
+            return std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o006 == 0o006);
+        }
         let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
             return false;
         };

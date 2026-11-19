@@ -5,9 +5,12 @@ import contextlib
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -95,12 +98,20 @@ class _RustApp(AppUrl):
             env.setdefault("LP_SETUP_SYSTEM", "other")
             env.setdefault("LP_LINUX_ROOT", "/no/such/root")
             env.setdefault("LP_TEST_RIGHTS", "user")  # (conftest.py's not_elevated)
+            # the plugins installed in a test run in this Python's plugin host
+            env.setdefault("LIBRE_PANEL_PLUGIN_HOST", sys.executable)
+            env.setdefault("LIBRE_PANEL_PLUGIN_HOST_ARGS", "-m libre_panel.plugin_host")
             port = self.split(":")[2].split("/")[0]
             command = [str(_program()), "editor", "--port", port]
             self.process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE, encoding="utf-8")  # fmt: skip
             said = self.process.stdout.readline()
             self._token = said.split("#token=")[1].split()[0]
+            # what it says from then on is read as it says it (a pipe nobody reads stops the
+            # program once it is full) and kept for a test that fails
+            self.said = [said]
+            for stream in (self.process.stdout, self.process.stderr):
+                threading.Thread(target=self.said.extend, args=(stream,), daemon=True).start()
         return self._token
 
     def stop(self):
@@ -110,7 +121,7 @@ class _RustApp(AppUrl):
             self.process.terminate()
         else:
             self.process.send_signal(signal.SIGINT)
-        self.process.communicate(timeout=30)
+        self.process.wait(30)  # (what it says is read already)
 
 
 def _rust_app_url():
@@ -4676,32 +4687,27 @@ def test_without_hardware_names_nothing_shows(app_url):
 # that records what pkexec is asked to run.
 
 APPIMAGE = "/home/someone/Apps/Libre_Panel-x86_64.AppImage"
+SETUP_REPORT = {
+    "ok": True,
+    "results": [
+        {"id": "udev", "status": "done", "items": {"/etc/udev/rules.d/60.rules": "written"}},
+        {"id": "modules", "status": "done", "items": {"it87": "none", "nct6775": "loaded"}},
+        {"id": "reload", "status": "done", "items": {}},
+    ],
+}
 
 
 class Pkexec:
     """The administrator's rights: ``answer`` is what the run ends with (exit code, standard
     output, standard error); ``gate`` holds it back while the "password window" is open."""
 
-    def __init__(self, answer=None):
-        import json
-        import threading
+    appimage = APPIMAGE
 
+    def __init__(self, answer=None):
         self.asked = []
         self.gate = threading.Event()
         self.gate.set()
-        report = {
-            "ok": True,
-            "results": [
-                {
-                    "id": "udev",
-                    "status": "done",
-                    "items": {"/etc/udev/rules.d/60.rules": "written"},
-                },
-                {"id": "modules", "status": "done", "items": {"it87": "none", "nct6775": "loaded"}},
-                {"id": "reload", "status": "done", "items": {}},
-            ],
-        }
-        self.answer = answer or (0, json.dumps(report), "")
+        self.answer = answer or (0, json.dumps(SETUP_REPORT), "")
 
     def __call__(self, argv):
         self.asked.append(tuple(argv))
@@ -4709,8 +4715,99 @@ class Pkexec:
         return self.answer
 
 
+class _FileGate:
+    """A gate the stand-in program sees: open while its file is there."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def set(self):
+        self.path.touch()
+
+    def clear(self):
+        self.path.unlink(missing_ok=True)
+
+
+class ProgramPkexec(Pkexec):
+    """The same for the Rust app: a program named pkexec first on PATH, which writes down what
+    it is asked to run (named as the system's /usr/bin/pkexec) and ends as ``answer`` says,
+    once its gate is open."""
+
+    def __init__(self, folder, answer=None):
+        super().__init__(answer)
+        self.folder = folder
+        folder.mkdir(parents=True)
+        code, out, err = self.answer
+        (folder / "code").write_text(str(code), encoding="utf-8")
+        (folder / "out").write_text(out, encoding="utf-8")
+        (folder / "err").write_text(err, encoding="utf-8")
+        self.gate = _FileGate(folder / "gate")
+        self.gate.set()
+        self.appimage = str(folder.parent / "Apps" / "Libre_Panel-x86_64.AppImage")
+        Path(self.appimage).parent.mkdir()
+        Path(self.appimage).write_bytes(b"")
+        here = shlex.quote(str(folder))
+        program = folder / "bin" / "pkexec"
+        program.parent.mkdir()
+        program.write_text(
+            "#!/bin/sh\n"
+            f"here={here}\n"
+            "(IFS='\t'; printf '%s\\n' \"$*\") >> \"$here/asked\"\n"
+            "n=0\n"
+            'while [ ! -e "$here/gate" ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n + 1)); done\n'
+            'cat "$here/out"\n'
+            'cat "$here/err" >&2\n'
+            'exit "$(cat "$here/code")"\n',
+            encoding="utf-8",
+        )
+        program.chmod(0o755)
+
+    @property
+    def asked(self):
+        path = self.folder / "asked"
+        lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+        return [("/usr/bin/pkexec", *line.split("\t")) for line in lines]
+
+    @asked.setter
+    def asked(self, value):
+        pass  # (what was asked is the program's file)
+
+
+def _lay_out_a_linux_pc(root, facts):
+    """``facts`` (as linux_setup.Facts has them) as a computer laid out in a folder, where the
+    Rust app looks (LP_SETUP_ROOT)."""
+
+    def write(name, text, mode=None):
+        path = root / name.lstrip("/")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        if mode is not None:
+            path.chmod(mode)
+
+    root.mkdir()
+    for name, value in facts["dmi"].items():
+        write(f"sys/class/dmi/id/{name}", f"{value}\n")
+    listed = "".join(f"kernel/drivers/hwmon/{name}.ko.zst:\n" for name in facts["available"])
+    write(f"lib/modules/{os.uname().release}/modules.dep", listed)
+    for name, text in facts["files"].items():
+        if text is not None:
+            write(name, text)
+    if facts["panel"]:
+        for name, value in {"idVendor": "1cbe", "idProduct": "0088", "busnum": "1",
+                            "devnum": "2"}.items():  # fmt: skip
+            write(f"sys/bus/usb/devices/1-2/{name}", f"{value}\n")
+        write("dev/bus/usb/001/002", "", 0o600 if facts["panel_denied"] else 0o666)
+    for counter in facts["rapl"]:
+        write(counter, "123\n", 0o400 if counter in facts["rapl_closed"] else 0o444)
+    if facts.get("rule_elsewhere"):
+        from test_rust_app import DATA
+
+        rule = (DATA / "assets" / "60-libre-panel.rules").read_text(encoding="utf-8")
+        write("usr/lib/udev/rules.d/70-uaccess-panels.rules", rule)
+
+
 @pytest.fixture
-def linux_pc(monkeypatch):
+def linux_pc(monkeypatch, tmp_path):
     """A Linux desktop with polkit, whose setup is not done: ``linux_pc(...)`` changes the facts
     and the answer; it gives the stand-in for pkexec."""
     from libre_panel import linux_rights as rights
@@ -4728,6 +4825,21 @@ def linux_pc(monkeypatch):
             "rapl_closed": ("/sys/class/powercap/intel-rapl:0/energy_uj",),
             **changes,
         }
+        if RUST:
+            # the computer in a folder, pkexec on PATH, the app an AppImage; without a way to
+            # ask, no desktop to show polkit's window on
+            pkexec = ProgramPkexec(tmp_path / "pkexec", answer)
+            _lay_out_a_linux_pc(tmp_path / "pc", facts)
+            monkeypatch.setenv("LP_SETUP_ROOT", str(tmp_path / "pc"))
+            monkeypatch.setenv("LP_SETUP_SYSTEM", "linux")
+            monkeypatch.setenv("APPIMAGE", pkexec.appimage)
+            monkeypatch.setenv("PATH", f"{pkexec.folder / 'bin'}{os.pathsep}{os.environ['PATH']}")
+            if method:
+                monkeypatch.setenv("DISPLAY", ":0")
+            else:
+                monkeypatch.delenv("DISPLAY", raising=False)
+                monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+            return pkexec
         computer = setup.Facts(**facts)
         monkeypatch.setattr(setup, "gather", lambda *args, **kwargs: computer)
         monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: True)
@@ -4814,6 +4926,7 @@ def test_start_stays_quiet_where_nothing_is_missing(app_url, isolated_home, linu
 def test_another_system_has_no_setup(app_url, isolated_home, linux_pc, monkeypatch):
     linux_pc()
     monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: False)
+    monkeypatch.setenv("LP_SETUP_SYSTEM", "other")  # (the Rust app's word for it)
     with start_with_setup(app_url, isolated_home) as page:
         page.wait_for_function(
             "window.libre.store.get().unlockInfo !== null"
@@ -4833,7 +4946,7 @@ def test_one_click_asks_pkexec_and_tells_how_it_went(app_url, isolated_home, lin
         assert pkexec.asked[0] == (
             "/usr/bin/pkexec",
             "--disable-internal-agent",
-            APPIMAGE,
+            pkexec.appimage,
             "system-setup",
             "--linux",
             "--json",  # (the energy counters stay closed: they were not asked for)
@@ -4903,7 +5016,7 @@ def test_without_a_way_to_ask_the_terminal_command_is_all_there_is(
         expect(card.get_by_role("button", name="Set up")).to_be_disabled()
         expect(card).to_contain_text("This system cannot show a password window from here")
         command = card.locator(".command")
-        assert command.inner_text() == f"sudo {APPIMAGE} system-setup --linux"
+        assert command.inner_text() == f"sudo {pkexec.appimage} system-setup --linux"
         assert pkexec.asked == []
 
 
@@ -4921,7 +5034,8 @@ def test_settings_sensors_has_the_setup_beside_the_sources(app_url, linux_pc):
         expect(card.locator("h2")).to_have_text("Set up sensors and panel access")
         assert "Nothing else is changed" in card.inner_text()
         card.locator("summary", has_text="Or in a terminal").click()  # always there, never needed
-        expect(card.locator(".command")).to_have_text(f"sudo {APPIMAGE} system-setup --linux")
+        command = f"sudo {pkexec.appimage} system-setup --linux"
+        expect(card.locator(".command")).to_have_text(command)
         card.get_by_role("button", name="Set up").click()
         waits_for(page, lambda: len(pkexec.asked) == 1)
         expect(card.locator(".setup-result")).to_be_visible()
