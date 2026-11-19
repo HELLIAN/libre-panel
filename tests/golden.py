@@ -46,24 +46,40 @@ def places(**named: Path | str) -> None:
     _places[:] = sorted(set(found), key=lambda pair: -len(pair[0]))
 
 
-def _plain(value: Any) -> Any:
-    if isinstance(value, str):
-        for spelled, word in _places:
-            if spelled and spelled in value:
-                start = value.find(spelled)
-                while start != -1:
-                    end = start + len(spelled)
-                    # (the rest of that path with "/" between its parts)
-                    tail = re.match(r"[^\s\"'():,;]*", value[end:])
-                    rest = tail.group(0).replace("\\", "/") if tail else ""
-                    value = value[:start] + word + rest + value[end + len(rest) :]
-                    start = value.find(spelled, start + len(word))
-        return value
-    if isinstance(value, list):
-        return [_plain(item) for item in value]
-    if isinstance(value, dict):
-        return {_plain(key): _plain(item) for key, item in value.items()}
+def _plain_text(value: str) -> str:
+    for spelled, word in _places:
+        if spelled and spelled in value:
+            start = value.find(spelled)
+            while start != -1:
+                end = start + len(spelled)
+                # (the rest of that path with "/" between its parts)
+                tail = re.match(r"[^\s\"'():,;]*", value[end:])
+                rest = tail.group(0).replace("\\", "/") if tail else ""
+                value = value[:start] + word + rest + value[end + len(rest) :]
+                start = value.find(spelled, start + len(word))
     return value
+
+
+def _plain(value: Any) -> Any:
+    """The answer with the places taken out of its texts and keys; without calling itself, as
+    an answer nests as deep as a reader lets it (a TOML value about 500 levels)."""
+    holder = [value]
+    todo: list[tuple[Any, Any]] = [(holder, 0)]  # (where an item is, its index or key)
+    while todo:
+        into, at = todo.pop()
+        item = into[at]
+        if isinstance(item, str):
+            into[at] = _plain_text(item)
+        elif isinstance(item, list):
+            into[at] = made = list(item)
+            todo.extend((made, n) for n in range(len(made)))
+        elif isinstance(item, dict):
+            into[at] = made = {
+                (_plain_text(key) if isinstance(key, str) else key): each
+                for key, each in item.items()
+            }
+            todo.extend((made, key) for key in made)
+    return holder[0]
 
 
 def digest(value: Any) -> str:
