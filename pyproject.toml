@@ -104,3 +104,6 @@ select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "kept: a comparison whose expectations are the Python app's answers as kept (tests/golden.py)",
+]

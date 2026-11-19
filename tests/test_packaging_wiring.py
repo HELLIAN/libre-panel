@@ -170,6 +170,17 @@ def test_the_language_chosen_in_the_setup_is_the_apps_on_a_new_install():
     assert "Result := NewInstall and (ActiveLanguage <> Offered);" in chosen
 
 
+def test_ci_runs_every_comparison_with_the_rust_crates_where_they_are_built():
+    """Only CI's rust job builds lp-check and the program: elsewhere a comparison skips. A file of
+    comparisons left out of its lists would never run anywhere (the light field's and the
+    morph's were, for a while)."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = ci.split("\n  rust:", 1)[1].split("\n  try:", 1)[0]
+    listed = set(re.findall(r"tests/(test_rust_\w+\.py)", job))
+    comparisons = {path.name for path in (ROOT / "tests").glob("test_rust_*.py")}
+    assert comparisons - listed == set()
+
+
 def test_ci_runs_every_test_that_needs_a_browser_where_there_is_one():
     """Only CI's desktop job has Playwright and Chromium: elsewhere a test that needs them skips.
     A file of such tests left out of its list would never run anywhere."""

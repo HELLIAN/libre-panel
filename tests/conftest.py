@@ -28,6 +28,33 @@ def pytest_runtest_logreport(report):
     sys.__stdout__.flush()
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Whether the test itself passed, for what it kept (golden.py)."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        item._golden_passed = report.passed
+
+
+@pytest.fixture(autouse=True)
+def _golden(request, tmp_path_factory):
+    """lp-check's answers to the test, against those kept (golden.py), or kept anew."""
+    import golden
+
+    if not golden._places:
+        root = Path(__file__).resolve().parent.parent
+        golden.places(tmp=tmp_path_factory.getbasetemp(), data=root / "data", repo=root)
+    golden.begin(Path(str(request.node.fspath)).stem, request.node.name)
+    if request.node.get_closest_marker("kept") and not golden.RECORDING:
+        assert golden.has_kept(), "nothing was kept for this test (LP_GOLDEN=record keeps it)"
+    yield
+    unasked = golden.unasked()
+    passed = getattr(request.node, "_golden_passed", False)
+    golden.end(passed)
+    assert not passed or unasked == 0, f"{unasked} of the calls kept for this test were not made"
+
+
 # On GitHub Actions a test that hangs ends the run after ten minutes, with every thread's stack
 # in a file that the workflow prints (pytest captures the standard error a test writes to),
 # instead of holding the job until its limit cuts it off as "cancelled" with nothing said.

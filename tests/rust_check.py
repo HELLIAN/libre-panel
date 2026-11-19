@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import golden
 import pytest
 from PIL import Image
 
@@ -144,6 +145,7 @@ def run(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # (one answer a line: split at "\n" only, as JSON leaves U+2028 and the like as they are)
     answers = [json.loads(line) for line in done.stdout.split("\n") if line]
     assert len(answers) == len(cases), done.stderr
+    golden.answered(answers)  # (against those kept, where the test kept some)
     return answers
 
 
