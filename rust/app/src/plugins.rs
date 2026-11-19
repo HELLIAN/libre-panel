@@ -82,7 +82,9 @@ pub fn folders(settings: &Path) -> Vec<PathBuf> {
 
 /// The plugin host's program and the arguments before its own: LIBRE_PANEL_PLUGIN_HOST (and
 /// LIBRE_PANEL_PLUGIN_HOST_ARGS, split at blanks: `-m libre_panel.plugin_host` for a Python),
-/// else the downloads' libre-panel-plugins in "plugin-host" beside this program.
+/// else the downloads' libre-panel-plugins in "plugin-host" beside this program, else an
+/// install's (pip, pipx: the plugin host's command of the Python environment the app is in,
+/// see [`install_commands`]).
 pub fn program() -> Option<(PathBuf, Vec<String>)> {
     if let Some(named) = std::env::var_os("LIBRE_PANEL_PLUGIN_HOST").filter(|v| !v.is_empty()) {
         let args = std::env::var("LIBRE_PANEL_PLUGIN_HOST_ARGS").unwrap_or_default();
@@ -95,8 +97,52 @@ pub fn program() -> Option<(PathBuf, Vec<String>)> {
     } else {
         "libre-panel-plugins"
     };
-    let beside = exe.parent()?.join("plugin-host").join(name);
-    beside.is_file().then(|| (beside, Vec::new()))
+    let folder = exe.parent()?;
+    std::iter::once(folder.join("plugin-host"))
+        .chain(install_commands(folder))
+        .map(|commands| commands.join(name))
+        .find(|file| file.is_file())
+        .map(|file| (file, Vec::new()))
+}
+
+/// Where an install keeps its commands, seen from the folder of the app's program: that
+/// folder itself (on Linux the programs are the environment's commands, in its `bin`); on
+/// Windows, where the app is in `libre-panel` of the environment (packaging/platform_wheel.py),
+/// `Scripts` beside it, or, for a user's install, `Python3XY\Scripts` beside it (the newest
+/// first).
+fn install_commands(folder: &Path) -> Vec<PathBuf> {
+    let beside = vec![folder.to_path_buf()];
+    let Some(root) = folder.parent().filter(|_| cfg!(windows)) else {
+        return beside;
+    };
+    let mut users: Vec<PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("Python"))
+        })
+        .map(|path| path.join("Scripts"))
+        .collect();
+    users.sort_by_key(|path| std::cmp::Reverse(python_number(path)));
+    beside
+        .into_iter()
+        .chain(std::iter::once(root.join("Scripts")))
+        .chain(users)
+        .collect()
+}
+
+/// The number of a `Python3XY` folder's version (312 of Python312), to take the newest first.
+fn python_number(scripts: &Path) -> u32 {
+    scripts
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("Python"))
+        .and_then(|digits| digits.parse().ok())
+        .unwrap_or(0)
 }
 
 type Answer = (Dict, Vec<u8>);

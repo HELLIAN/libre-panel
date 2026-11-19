@@ -33,8 +33,9 @@ With the downloads:
   points at the AppImage file; if you move it, enable autostart again. The
   AppImage needs FUSE, which desktop distributions include.
 
-Installed with pip, add the `tray` extra:
-`pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel"`.
+Installed with pip or pipx, from the release's wheel for the system (Linux:
+`…-manylinux_…_x86_64.whl`, Windows: `…-win_amd64.whl`):
+`pipx install "libre-panel @ <the wheel's link>"`. The tray is in it.
 
 ## Updating
 
@@ -68,8 +69,8 @@ By hand, as ever: quit Libre Panel, download the file from the
 [releases](https://github.com/syntensa/libre-panel/releases) and put it where the old one was (the
 setup does that by itself and keeps your settings, which are not in the program's folder; for
 the zip, take the `data` folder along). `sha256sum -c SHA256SUMS --ignore-missing` in the
-download's folder checks it. Installed with pip:
-`pipx install --force "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v<version>"`.
+download's folder checks it. Installed with pip or pipx: the update card shows the command,
+`pipx install --force "libre-panel @ <the new version's wheel>"`.
 
 ## Tray menu
 

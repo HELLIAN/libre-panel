@@ -411,6 +411,7 @@ NEWER = {
     "published": "2026-11-01T10:00:00Z",
     "asset": {"name": SETUP_FILE, "url": FILES_OF + SETUP_FILE, "size": 100_000_000},
     "sums": FILES_OF + "SHA256SUMS",
+    "wheel": "",
 }
 
 
@@ -507,13 +508,20 @@ def test_the_linux_tarball_is_downloaded_and_its_folder_shown(app_url):  # noqa:
 
 
 def test_installed_with_pip_about_gives_the_command_and_no_button(app_url):  # noqa: F811
-    pip = {**NEWER, "download": "", "asset": None, "sums": ""}
+    wheel = FILES_OF + "libre_panel-9.1.0-py3-none-manylinux_2_35_x86_64.whl"
+    pip = {**NEWER, "download": "", "asset": None, "sums": "", "wheel": wheel}
     routes = {"**/api/update*": newer_out("python", pip)}
     with browser_page(app_url, "settings/about", routes=routes) as page:
         row = page.locator("[data-about-update]")
-        expect(row.locator("code")).to_contain_text("libre-panel@v9.1.0")
+        expect(row.locator("code")).to_have_text(f'pipx install --force "libre-panel @ {wheel}"')
         expect(row.get_by_role("button", name="Update to 9.1.0")).to_have_count(0)
         expect(row.get_by_role("link", name="What is new")).to_be_visible()
+    # a release without a wheel for this platform: no command, the page
+    routes = {"**/api/update*": newer_out("python", {**pip, "wheel": ""})}
+    with browser_page(app_url, "settings/about", routes=routes) as page:
+        row = page.locator("[data-about-update]")
+        expect(row.get_by_role("link", name="What is new")).to_be_visible()
+        expect(row.locator("code")).to_have_count(0)
 
 
 def test_start_s_card_of_the_new_version_has_the_button_too(app_url, isolated_home):  # noqa: F811

@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -116,6 +117,7 @@ def test_switched_on_github_is_asked_once_a_day_and_the_answer_kept(rig):
         "published": "2026-11-01T10:00:00Z",
         "asset": None,  # not among the release's own files: no "Update to"
         "sums": "",
+        "wheel": "",  # (pip's: the platform's wheel, whose command is shown)
     }
     kept = json.loads(rig.path.read_text())
     assert kept["latest"]["version"] == "9.1.0"
@@ -220,10 +222,15 @@ FILES = {
 }
 
 
+# the platform wheels release.yml attaches (packaging/platform_wheel.py)
+WHEELS = {"linux": "manylinux_2_35_x86_64", "win32": "win_amd64"}
+
+
 def release(tag="v9.1.0", sums=True, **flags):
     """A release as GitHub's API gives it, with every file release.yml attaches."""
     names = [name.replace("9.1.0", tag[1:]) for name in FILES.values()]
-    names += [f"libre_panel-{tag[1:]}-py3-none-any.whl"] + (["SHA256SUMS"] if sums else [])
+    names += [f"libre_panel-{tag[1:]}-py3-none-{end}.whl" for end in WHEELS.values()]
+    names += ["SHA256SUMS"] if sums else []
     assets = [
         {"name": name, "size": 1000 + n, "browser_download_url": f"{RELEASE_FILES}{tag}/{name}"}
         for n, name in enumerate(names)
@@ -241,6 +248,10 @@ def test_the_release_s_file_for_each_kind_of_install(rig):
         }
         assert latest["sums"] == f"{RELEASE_FILES}v9.1.0/SHA256SUMS"
     assert updates._release(release(), "python")["asset"] is None  # pip: the command
+    platform = WHEELS["win32" if sys.platform == "win32" else "linux"]
+    wheel = f"libre_panel-9.1.0-py3-none-{platform}.whl"
+    assert updates._release(release(), "python")["wheel"] == f"{RELEASE_FILES}v9.1.0/{wheel}"
+    assert all(updates._release(release(), kind)["wheel"] == "" for kind in FILES)
     # a file of another release, of another project or elsewhere is not taken; nor odd names
     other = release()
     other["assets"][0]["browser_download_url"] = f"{RELEASE_FILES}v9.0.0/{FILES['setup']}"
@@ -250,6 +261,10 @@ def test_the_release_s_file_for_each_kind_of_install(rig):
     other["assets"][3]["name"] = "../libre-panel-9.1.0-linux-x64.tar.gz"
     for kind in ("setup", "appimage", "linux"):
         assert updates._release(other, kind)["asset"] is None
+    for asset in other["assets"]:
+        if asset["name"].endswith(".whl"):
+            asset["browser_download_url"] = f"{RELEASE_FILES}v9.0.0/{asset['name']}"
+    assert updates._release(other, "python")["wheel"] == ""
     assert updates._release(release(sums=False), "setup")["sums"] == ""
 
 

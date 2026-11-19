@@ -39,8 +39,17 @@ below), so that the work can be picked up where it stands.
   Libre Panel's package, in the downloads beside the app, started only where plugin folders are
   installed. Every kind of part works as in the Python app; the app and the host speak
   through a pipe.
-- **`pip install libre-panel` ends**: Libre Panel comes as its downloads (Windows installer and
-  zip, Linux AppImage).
+- **pip and pipx install the Rust app**: a release carries a wheel for Linux and one for Windows
+  (packaging/platform_wheel.py) with the app as its downloads carry it: the programs, the
+  engine and its licences in `tools`, Libre Panel's files in `share/libre-panel`, on Linux
+  Pillow's libraries in `lib/libre-panel` (the program names them to itself), on Windows the
+  sensor service. The Python package in them is the plugin host's (its command
+  `libre-panel-plugins`, found beside the app). On Linux the programs are the commands (pipx
+  links them; the app finds its files from where the link leads); on Windows pipx copies a
+  command it cannot link, so the app has a folder of its own (`libre-panel` of the
+  environment) and its command is a small Python starter, libre_panel/launch.py, which runs it
+  (what starts at login starts the program itself). An install is told from a download by its
+  files beside the folder of its program: its update card shows pipx's command.
 
 ## How it stays the same
 

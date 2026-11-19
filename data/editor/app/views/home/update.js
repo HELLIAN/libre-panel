@@ -42,14 +42,17 @@ export async function setCheckUpdates(on) {
   if (await saveSettings({ check_updates: on })) await loadUpdate();
 }
 
-/** How to get the new version where there is no download for it: pip's command (from GitHub). */
-const pipCommand = (version) =>
-  `pipx install --force "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v${version}"`;
+/** How an install with pip or pipx gets the new version: pipx's command with the release's
+ * wheel for this platform (the server's `latest.wheel`). */
+const pipCommand = (wheel) => `pipx install --force "libre-panel @ ${wheel}"`;
 
-/** Installed with pip: the command that brings `version` (there is no button for it). */
-export const PipCommand = ({ version }) =>
-  html`<p class="update-card-command">${t("Installed with pip: this command brings the new version.")}
-    <code class="mono">${pipCommand(version)}</code></p>`;
+/** Installed with pip: the command that brings the new version (there is no button for it);
+ * nothing where the release has no wheel for this platform. */
+export const PipCommand = ({ wheel }) =>
+  wheel
+    ? html`<p class="update-card-command">${t("Installed with pip: this command brings the new version.")}
+    <code class="mono">${pipCommand(wheel)}</code></p>`
+    : null;
 
 const BUSY = ["downloading", "verifying", "installing"];
 const POLL_MS = 500;
@@ -200,7 +203,7 @@ function NewVersion({ update }) {
       <h2 id="update-card-title">${t("Libre Panel {version} is out", { version: latest.version })}</h2>
       ${latest.notes ? html`<p>${latest.notes}</p>` : null}
       <p class="update-card-now muted">${t("You have {version}.", { version: update.current })}</p>
-      ${kind === "python" && !latest.download ? html`<${PipCommand} version=${latest.version} />` : null}
+      ${kind === "python" ? html`<${PipCommand} wheel=${latest.wheel} />` : null}
       <${UpdateNow} update=${update} />
       <div class="update-card-form">
         ${latest.download ? external(latest.download, t("Download"), !latest.asset) : null}

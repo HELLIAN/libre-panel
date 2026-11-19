@@ -1632,7 +1632,60 @@ fn own_handles() {
     }
 }
 
+/// The libraries of C that draw as Pillow draws (FreeType, HarfBuzz, libjpeg, libwebp: Pillow's
+/// own), named to the program where it carries them and nothing names them yet: in `lib`
+/// beside it (the AppImage's and the Linux archive's folder) or in `lib/libre-panel` beside
+/// its `bin` (an install's: pip and pipx put them there). Nothing goes into LD_LIBRARY_PATH, so
+/// that the window and the tray icon use the system's GTK with the system's libraries. Done
+/// first, before a thread is started; on Windows the DLLs beside the program are found by
+/// their names.
+fn name_own_libraries() {
+    const OWN: [(&str, &str); 6] = [
+        ("LP_LIBFREETYPE", "libfreetype"),
+        ("LP_LIBHARFBUZZ", "libharfbuzz"),
+        ("LP_LIBJPEG", "libjpeg"),
+        ("LP_LIBWEBPDEMUX", "libwebpdemux"),
+        ("LP_LIBWEBPMUX", "libwebpmux"),
+        ("LP_LIBWEBP", "libwebp-"),
+    ];
+    if cfg!(windows) {
+        return;
+    }
+    let Ok(program) = std::env::current_exe() else {
+        return;
+    };
+    let program = std::fs::canonicalize(&program).unwrap_or(program);
+    let Some(beside) = program.parent() else {
+        return;
+    };
+    let mut folders = vec![beside.join("lib")];
+    if let Some(above) = beside.parent() {
+        folders.push(above.join("lib").join("libre-panel"));
+    }
+    for folder in folders {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        files.sort();
+        for (variable, prefix) in OWN {
+            if std::env::var_os(variable).is_some() {
+                continue;
+            }
+            let named = |file: &&PathBuf| {
+                file.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(prefix))
+            };
+            if let Some(file) = files.iter().find(named) {
+                std::env::set_var(variable, file);
+            }
+        }
+    }
+}
+
 pub fn main(default: &str) -> ExitCode {
+    name_own_libraries();
     own_handles();
     logs::log_panics();
     let mut args: Vec<String> = std::env::args().skip(1).collect();

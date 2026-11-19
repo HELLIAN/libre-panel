@@ -135,6 +135,9 @@ ASSET_ENDINGS = {
     "appimage": "-x86_64.AppImage",
     "linux": "-linux-x64.tar.gz",
 }
+# the end of the name of this platform's wheel on a release (packaging/platform_wheel.py),
+# whose pipx command Start shows an install with pip or pipx
+WHEEL_ENDING = "-win_amd64.whl" if sys.platform == "win32" else "_x86_64.whl"
 
 
 # a name of a release's file, which an update keeps as the name of its download
@@ -162,8 +165,9 @@ def _files(data: dict[str, Any], ending: str | None) -> tuple[dict[str, Any] | N
 
 def _release(data: Any, kind: str, current: str = __version__) -> dict[str, Any] | None:
     """What Start shows of GitHub's answer: the version, its page, the start of its notes, the
-    download for this kind of install ("" for pip: its command is shown instead) and, for
-    "Update to", that file of the release with the address of its checksums."""
+    download for this kind of install ("" for pip: its command is shown instead, of the
+    platform's wheel among the release's files), and, for "Update to", that file of the
+    release with the address of its checksums."""
     data = _pick(data, current)
     if data is None:
         return None
@@ -185,6 +189,14 @@ def _release(data: Any, kind: str, current: str = __version__) -> dict[str, Any]
     notes = body.strip().split("\n\n", 1)[0].replace("\n", " ").strip()[:NOTES_CHARS]
     published = data.get("published_at") if isinstance(data.get("published_at"), str) else ""
     asset, sums = _files(data, ending)
+    own = f"{RELEASE_FILES}{data['tag_name'].strip()}/"
+    wheel = ""
+    for item in (data.get("assets") or []) if kind == "python" else []:
+        name = item.get("name") if isinstance(item, dict) else None
+        url = item.get("browser_download_url") if isinstance(item, dict) else None
+        if isinstance(name, str) and isinstance(url, str) and url.startswith(own):
+            if name.endswith(WHEEL_ENDING) and FILE_NAME.fullmatch(name):
+                wheel = url
     return {
         "version": version,
         "page": page,
@@ -193,6 +205,7 @@ def _release(data: Any, kind: str, current: str = __version__) -> dict[str, Any]
         "published": published,
         "asset": asset,
         "sums": sums,
+        "wheel": wheel,
     }
 
 

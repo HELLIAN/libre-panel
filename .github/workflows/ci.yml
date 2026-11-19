@@ -610,12 +610,50 @@ jobs:
         run: |
           Copy-Item packaging/windows/portable.txt libre-panel-rust/
           7z a "dist/libre-panel-$env:VERSION-windows-x64-portable.zip" ./libre-panel-rust/*
+      - name: The wheel for pip and pipx (Windows)
+        # the Python package's wheel with the programs and their DLLs, the engine, PresentMon
+        # and PawnIO's installer in "tools" (not ffmpeg: the system's, as before) and the sensor
+        # service in "sensors", as the downloads lay them out (packaging/platform_wheel.py);
+        # installed as pipx installs it and tried with nothing in the environment to help it
+        shell: bash
+        run: |
+          pip install build
+          python -m build --wheel --outdir "$RUNNER_TEMP/pure"
+          programs="$RUNNER_TEMP/programs"
+          mkdir -p "$programs/tools"
+          cp libre-panel-rust/*.exe libre-panel-rust/*.dll "$programs/"
+          cp -r libre-panel-rust/sensors "$programs/sensors"
+          find libre-panel-rust/tools -maxdepth 1 -type f ! -iname "ffmpeg*" -exec cp {} "$programs/tools/" \;
+          cp -r libre-panel-rust/tools/licenses "$programs/tools/licenses"
+          python packaging/platform_wheel.py "$RUNNER_TEMP"/pure/*.whl --programs "$programs" \
+            --licenses libre-panel-rust/licenses --platform win_amd64 -o dist
+          ls -l dist/*.whl
+          python -m venv "$RUNNER_TEMP/installed"
+          "$RUNNER_TEMP/installed/Scripts/pip" install -q dist/libre_panel-*-win_amd64.whl
+          app="$RUNNER_TEMP/installed/Scripts/libre-panel.exe"
+          home="$RUNNER_TEMP/wheel-home"
+          env -u LP_LIBJPEG -u LP_LIBWEBP -u LP_LIBWEBPDEMUX -u LP_LIBWEBPMUX -u LP_LIBFREETYPE \
+            -u LP_LIBHARFBUZZ -u LIBRE_PANEL_DATA -u LIBRE_PANEL_ENGINE LIBRE_PANEL_HOME="$home" \
+            "$app" render --demo --theme lumen --output "$home/frame.png"
+          python -c "from PIL import Image; f = Image.open(r'$home/frame.png'); assert f.size == (1920, 480), f.size"
+          "$app" version
+          LIBRE_PANEL_HOME="$home" "$app" doctor | grep "engine here"
+          test -f "$RUNNER_TEMP/installed/libre-panel/sensors/libre-panel-sensors.exe"
+          python packaging/check_plugin_host.py --app "$app"
+          # (as pipx without symbolic links: the command copied into a folder of its own)
+          mkdir -p "$RUNNER_TEMP/copied" && cp "$app" "$RUNNER_TEMP/copied/"
+          "$RUNNER_TEMP/copied/libre-panel.exe" version | grep "^libre-panel $VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: libre-panel-rust-setup
           path: |
             dist/*-setup.exe
             dist/*-portable.zip
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-windows
+          path: dist/*.whl
           retention-days: 30
 
   appimage:
@@ -698,8 +736,8 @@ jobs:
       - name: Test the AppImage (headless and on an X11 tray)
         run: RUST=1 packaging/linux/test_appimage.sh "dist/Libre_Panel-$VERSION-rust-x86_64.AppImage"
       - name: The Linux archive
-        # the AppImage's folder as it is, started by the AppImage's own script (libre-panel.sh:
-        # it names Pillow's libraries in lib to the program); tried from where it is unpacked
+        # the AppImage's folder as it is, started by the AppImage's own script (libre-panel.sh;
+        # the program names Pillow's libraries in lib to itself); tried from where it is unpacked
         run: |
           mv dist/libre-panel-rust dist/libre-panel
           cp packaging/linux/AppRun-rust dist/libre-panel/libre-panel.sh
@@ -713,12 +751,51 @@ jobs:
           python -c "from PIL import Image; f = Image.open('$tried/frame.png'); assert f.size == (1920, 480), f.size"
           "$tried/libre-panel/libre-panel.sh" version
           python packaging/check_plugin_host.py --app "$tried/libre-panel/libre-panel.sh"
+      - name: The wheel for pip and pipx (Linux)
+        # the Python package's wheel (the plugin host's package, Libre Panel's files) with the
+        # programs, the engine in "tools" with its licences (not ffmpeg: the system's, as
+        # before) and Pillow's libraries, as the AppImage carries them: pip and pipx install the
+        # Rust app (packaging/platform_wheel.py); installed as pipx installs it, into an
+        # environment of its own, and tried with nothing in the environment to help it
+        run: |
+          pip install build
+          python -m build --wheel --outdir "$RUNNER_TEMP/pure"
+          programs="$RUNNER_TEMP/programs"
+          mkdir -p "$programs/tools"
+          cp rust/target/release/libre-panel rust/target/release/libre-panel-window \
+            rust/target/release/libre-panel-tray "$programs/"
+          find "$RUNNER_TEMP/tools" -maxdepth 1 -type f ! -name "ffmpeg*" -exec cp {} "$programs/tools/" \;
+          cp -r "$RUNNER_TEMP/tools/licenses" "$programs/tools/licenses"
+          python packaging/platform_wheel.py "$RUNNER_TEMP"/pure/*.whl --programs "$programs" \
+            --libraries dist/libre-panel/lib --licenses dist/libre-panel/licenses -o dist
+          ls -l dist/*.whl
+          python -m venv "$RUNNER_TEMP/installed"
+          "$RUNNER_TEMP/installed/bin/pip" install -q dist/libre_panel-*-manylinux_*.whl
+          app="$RUNNER_TEMP/installed/bin/libre-panel"
+          home="$RUNNER_TEMP/wheel-home"
+          env -u LP_LIBJPEG -u LP_LIBWEBP -u LP_LIBWEBPDEMUX -u LP_LIBWEBPMUX -u LP_LIBFREETYPE \
+            -u LP_LIBHARFBUZZ -u LIBRE_PANEL_DATA -u LIBRE_PANEL_ENGINE LIBRE_PANEL_HOME="$home" \
+            "$app" render --demo --theme lumen --output "$home/frame.png"
+          python -c "from PIL import Image; f = Image.open('$home/frame.png'); assert f.size == (1920, 480), f.size"
+          "$app" version
+          LIBRE_PANEL_HOME="$home" "$app" doctor | grep "engine here"
+          python packaging/check_plugin_host.py --app "$app"
+          # (as pipx links it: the app finds its files from where the link leads)
+          mkdir -p "$RUNNER_TEMP/linked" && ln -s "$app" "$RUNNER_TEMP/linked/libre-panel"
+          LIBRE_PANEL_HOME="$home" "$RUNNER_TEMP/linked/libre-panel" render --demo --theme arena \
+            --output "$home/linked.png"
+          LIBRE_PANEL_HOME="$home" "$RUNNER_TEMP/linked/libre-panel" doctor | grep "engine here"
       - uses: actions/upload-artifact@v4
         with:
           name: libre-panel-rust-appimage
           path: |
             dist/*.AppImage
             dist/*.tar.gz
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux
+          path: dist/*.whl
           retention-days: 30
 
   sensor-host:

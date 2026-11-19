@@ -29,7 +29,7 @@ function NewVersion() {
     stacked
     data-about-update
   >
-    ${update.kind === "python" ? html`<${PipCommand} version=${latest.version} />` : null}
+    ${update.kind === "python" ? html`<${PipCommand} wheel=${latest.wheel} />` : null}
     ${latest.asset ? html`<${UpdateNow} update=${update} extra=${page} />` : html`<div class="update-card-form">${page}</div>`}
   <//>`;
 }

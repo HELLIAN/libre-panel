@@ -38,7 +38,7 @@ def test_the_release_fetches_before_it_builds_and_checks_the_built_folder():
     release.yml calls ci.yml, and publishes only once all of it passed."""
     release = read(".github", "workflows", "release.yml")
     assert "uses: ./.github/workflows/ci.yml" in job(release, "app")
-    assert "needs: [python-package, app]" in job(release, "github-release")
+    assert "needs: [test, app]" in job(release, "github-release")
     ci = read(".github", "workflows", "ci.yml")
     assert "\n  workflow_call:\n" in ci[: ci.index("\njobs:")]
     rust = job(ci, "rust")
@@ -340,3 +340,223 @@ def test_an_install_gets_every_file_of_the_data_folder_where_both_apps_look(monk
     project = re.search(r'^version = "([^"]+)"', read("pyproject.toml"), re.M)[1]
     assert __version__ == project
     assert '__version__ = "' not in read("src", "libre_panel", "__init__.py")
+
+
+def _pure_wheel(folder):
+    """A wheel as ``python -m build --wheel`` makes the Python package's: its code, a file of
+    Libre Panel's in share/libre-panel, the Python command and the plugin host's."""
+    import zipfile
+
+    wheel = folder / "libre_panel-1.2.3-py3-none-any.whl"
+    info = "libre_panel-1.2.3.dist-info"
+    with zipfile.ZipFile(wheel, "w") as made:
+        made.writestr("libre_panel/__init__.py", "")
+        made.writestr("libre_panel-1.2.3.data/data/share/libre-panel/themes/a.json", "{}")
+        made.writestr(f"{info}/METADATA", "Metadata-Version: 2.4\nName: libre-panel\n"
+                      "Version: 1.2.3\n")  # fmt: skip
+        made.writestr(f"{info}/WHEEL", "Wheel-Version: 1.0\nGenerator: setuptools\n"
+                      "Root-Is-Purelib: true\nTag: py3-none-any\n")  # fmt: skip
+        points = ("[console_scripts]\nlibre-panel = libre_panel.cli:main\n"
+                  "libre-panel-plugins = libre_panel.plugin_host:main\n\n[libre_panel.sensors]\n"
+                  "demo = libre_panel.sensors.demo:DemoProvider\n")  # fmt: skip
+        made.writestr(f"{info}/entry_points.txt", points)
+        made.writestr(f"{info}/RECORD", "")
+    return wheel
+
+
+def _files(folder, names):
+    for name, data in names.items():
+        path = folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        if name.split("/")[-1] in ("libre-panel", "libre-panel-window", "libre-panel-engine"):
+            path.chmod(0o755)
+    return folder
+
+
+def _checked(wheel):
+    """The wheel's files, after checking its RECORD names each with its digest and size and
+    the .dist-info comes last."""
+    import base64
+    import csv
+    import hashlib
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(wheel) as made:
+        infos = made.infolist()
+        files = {info.filename: made.read(info) for info in infos}
+    record = next(name for name in files if name.endswith(".dist-info/RECORD"))
+    rows = {row[0]: row[1:] for row in csv.reader(io.StringIO(files[record].decode()))}
+    assert set(rows) == set(files) and rows[record] == ["", ""]
+    for name, data in files.items():
+        if name != record:
+            digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+            assert rows[name] == ["sha256=" + digest.decode(), str(len(data))], name
+    names = [info.filename for info in infos]
+    assert all(".dist-info/" in name for name in names[-4:]), names
+    modes = {info.filename: info.external_attr >> 16 & 0o777 for info in infos}
+    return files, modes
+
+
+def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
+    """packaging/platform_wheel.py: the Python package's wheel with the Rust app, for Linux
+    with the programs as the commands and Pillow's libraries beside the environment's bin, for
+    Windows with the app in a folder of its own and libre_panel/launch.py as its command; the
+    names end as the app's updates look for them among a release's files."""
+    platform_wheel = load("platform_wheel", PACKAGING / "platform_wheel.py")
+    pure = _pure_wheel(tmp_path)
+    linux = _files(tmp_path / "linux", {
+        "libre-panel": b"\x7fELF app", "libre-panel-window": b"\x7fELF window",
+        "tools/libre-panel-engine": b"\x7fELF engine", "tools/licenses/x264.txt": b"GPL",
+    })  # fmt: skip
+    lib = _files(tmp_path / "lib", {"libfreetype-1a2b.so.6": b"\x7fELF ft"})
+    licenses = _files(tmp_path / "licenses", {"THIRD-PARTY-RUST.txt": b"MIT", "x/a.txt": b"BSD"})
+    made = platform_wheel.build(pure, linux, sorted(lib.iterdir()), "manylinux_2_35_x86_64",
+                                tmp_path / "out", licenses)  # fmt: skip
+    assert made.name == "libre_panel-1.2.3-py3-none-manylinux_2_35_x86_64.whl"
+    assert made.name.endswith("_x86_64.whl")  # (updates.py's WHEEL_ENDING off Windows)
+    files, modes = _checked(made)
+    data = "libre_panel-1.2.3.data"
+    assert files[f"{data}/scripts/libre-panel"] == b"\x7fELF app"
+    assert files[f"{data}/scripts/tools/libre-panel-engine"] == b"\x7fELF engine"
+    assert files[f"{data}/data/lib/libre-panel/libfreetype-1a2b.so.6"] == b"\x7fELF ft"
+    assert files[f"{data}/data/share/libre-panel/themes/a.json"] == b"{}"
+    assert modes[f"{data}/scripts/libre-panel"] == 0o755
+    assert modes[f"{data}/scripts/tools/licenses/x264.txt"] == 0o644
+    points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
+    assert "libre_panel.cli:main" not in points and "libre_panel.launch" not in points
+    assert "libre-panel-plugins = libre_panel.plugin_host:main" in points
+    assert "demo = libre_panel.sensors.demo:DemoProvider" in points
+    info = "libre_panel-1.2.3.dist-info"
+    assert files[f"{info}/licenses/THIRD-PARTY-RUST.txt"] == b"MIT"
+    assert files[f"{info}/licenses/x/a.txt"] == b"BSD"
+    metadata = files[f"{info}/METADATA"].decode()
+    assert metadata.endswith("1.2.3\nLicense-File: THIRD-PARTY-RUST.txt\nLicense-File: x/a.txt\n")
+    wheel_meta = files["libre_panel-1.2.3.dist-info/WHEEL"].decode()
+    assert "Root-Is-Purelib: false\n" in wheel_meta
+    assert "Tag: py3-none-manylinux_2_35_x86_64\n" in wheel_meta
+    assert "py3-none-any" not in wheel_meta
+
+    windows = _files(tmp_path / "windows", {
+        "libre-panel.exe": b"MZ app", "LibrePanel.exe": b"MZ windowed", "freetype.dll": b"MZ ft",
+        "tools/libre-panel-engine.exe": b"MZ engine",
+        "sensors/libre-panel-sensors.exe": b"MZ sensors",
+    })  # fmt: skip
+    made = platform_wheel.build(pure, windows, [], "win_amd64", tmp_path / "out")
+    assert made.name.startswith("libre_panel-1.2.3-")  # (a licence's name is not the wheel's)
+    assert made.name == "libre_panel-1.2.3-py3-none-win_amd64.whl"
+    assert made.name.endswith("-win_amd64.whl")  # (WHEEL_ENDING on Windows)
+    files, modes = _checked(made)
+    assert files[f"{data}/data/libre-panel/libre-panel.exe"] == b"MZ app"
+    assert files[f"{data}/data/libre-panel/sensors/libre-panel-sensors.exe"] == b"MZ sensors"
+    assert files[f"{data}/data/libre-panel/tools/libre-panel-engine.exe"] == b"MZ engine"
+    assert not any(name.startswith(f"{data}/scripts/") for name in files)
+    assert modes[f"{data}/data/libre-panel/libre-panel.exe"] == 0o755
+    points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
+    assert points.startswith("[console_scripts]\n" + platform_wheel.LAUNCHER + "\n")
+    assert "libre_panel.cli:main" not in points
+    from libre_panel import launch
+
+    assert (launch.FOLDER, "libre-panel.exe") == ("libre-panel", windows.joinpath(
+        "libre-panel.exe").name)  # fmt: skip
+    assert platform_wheel.LAUNCHER == "libre-panel = libre_panel.launch:main"
+
+
+def test_pip_installs_the_linux_wheel_as_the_app_looks_for_its_files(tmp_path):
+    """pip puts the programs in the environment's bin (folders kept: the engine in bin/tools),
+    the libraries in lib/libre-panel beside it and Libre Panel's files in share/libre-panel,
+    where rust/app looks for each: home.rs, name_own_libraries, the engine's tools."""
+    import subprocess
+
+    pytest = __import__("pytest")
+    if subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True).returncode:
+        pytest.skip("no pip here")
+    platform_wheel = load("platform_wheel", PACKAGING / "platform_wheel.py")
+    pure = _pure_wheel(tmp_path)
+    programs = _files(tmp_path / "programs", {
+        "libre-panel": b"\x7fELF app", "tools/libre-panel-engine": b"\x7fELF engine",
+    })  # fmt: skip
+    lib = _files(tmp_path / "lib", {"libjpeg-9c8d.so.62": b"\x7fELF jpeg"})
+    made = platform_wheel.build(pure, programs, sorted(lib.iterdir()),
+                                "manylinux_2_35_x86_64", tmp_path / "out")  # fmt: skip
+    prefix = tmp_path / "prefix"
+    done = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-deps", "--no-index", "--no-compile",
+         "--disable-pip-version-check", "--ignore-requires-python", "--prefix", str(prefix),
+         str(made)],  # fmt: skip
+        capture_output=True, text=True,
+    )  # fmt: skip
+    if "is not a supported wheel on this platform" in done.stderr:
+        pytest.skip("not a Linux x86-64 with glibc 2.35 or newer")
+    assert done.returncode == 0, done.stderr
+    bin_ = prefix / ("Scripts" if sys.platform == "win32" else "bin")
+    assert (bin_ / "libre-panel").read_bytes() == b"\x7fELF app"
+    assert (bin_ / "tools" / "libre-panel-engine").read_bytes() == b"\x7fELF engine"
+    assert (prefix / "lib" / "libre-panel" / "libjpeg-9c8d.so.62").is_file()
+    assert (prefix / "share" / "libre-panel" / "themes" / "a.json").is_file()
+    assert (bin_ / "libre-panel-plugins").is_file()
+
+
+def test_the_windows_command_runs_the_app_of_its_environment(tmp_path, monkeypatch):
+    """libre_panel/launch.py: the app in ``libre-panel`` of the environment, else where the
+    package's list of files says (a user's install); run with the arguments given."""
+    from types import SimpleNamespace
+
+    from libre_panel import launch
+
+    app = tmp_path / "env" / "libre-panel" / launch.PROGRAM
+    app.parent.mkdir(parents=True)
+    app.write_bytes(b"app")
+    monkeypatch.setattr(launch.sys, "prefix", str(tmp_path / "env"))
+    assert launch.program() == app
+    # a user's install: not under the environment, found from the package's files
+    monkeypatch.setattr(launch.sys, "prefix", str(tmp_path / "elsewhere"))
+    listed = SimpleNamespace(name=launch.PROGRAM, parent=SimpleNamespace(name="libre-panel"),
+                             locate=lambda: app)  # fmt: skip
+    other = SimpleNamespace(name="x.py", parent=SimpleNamespace(name="libre_panel"),
+                            locate=lambda: tmp_path)  # fmt: skip
+    import importlib.metadata
+
+    monkeypatch.setattr(importlib.metadata, "distribution",
+                        lambda name: SimpleNamespace(files=[other, listed]))  # fmt: skip
+    assert launch.program() == app
+    monkeypatch.setattr(importlib.metadata, "distribution",
+                        lambda name: SimpleNamespace(files=[other]))  # fmt: skip
+    with __import__("pytest").raises(SystemExit, match="not here"):
+        launch.program()
+    monkeypatch.setattr(launch.sys, "prefix", str(tmp_path / "env"))
+    monkeypatch.setattr(launch.sys, "argv", ["libre-panel", "render", "--demo"])
+    ran = []
+    monkeypatch.setattr(launch.os, "execv", lambda path, args: ran.append(("exec", path, args)))
+    monkeypatch.setattr(launch.subprocess, "call", lambda args: ran.append(("call", args)) or 3)
+    result = launch.main()
+    if launch.os.name == "nt":
+        assert result == 3 and ran == [("call", [str(app), "render", "--demo"])]
+    else:
+        assert ran[0] == ("exec", app, [str(app), "render", "--demo"])
+
+
+def test_ci_builds_and_tries_both_wheels_and_the_release_carries_them():
+    """Both wheels are built in the jobs that build the downloads, installed into an
+    environment of their own and tried (a frame, the version, the engine, the plugin host);
+    the release attaches them and PyPI gets them, not the Python package's own."""
+    ci = read(".github", "workflows", "ci.yml")
+    for name, platform in (("appimage", "-o dist"), ("try", "--platform win_amd64 -o dist")):
+        steps = job(ci, name)
+        made = steps.index("python packaging/platform_wheel.py")
+        assert platform in steps[made : made + 200], name
+        tries = ("render --demo --theme lumen", '"$app" version', 'doctor | grep "engine here"',
+                 'python packaging/check_plugin_host.py --app "$app"')  # fmt: skip
+        for tried in tries:
+            assert made < steps.index(tried, made), (name, tried)
+    assert "name: wheel-linux" in job(ci, "appimage") and "name: wheel-windows" in job(ci, "try")
+    assert '! -iname "ffmpeg*"' in job(ci, "try") and '! -name "ffmpeg*"' in job(ci, "appimage")
+    release = read(".github", "workflows", "release.yml")
+    assert "python-package" not in release
+    for name in ("libre-panel-rust-setup", "libre-panel-rust-appimage", "wheel-linux",
+                 "wheel-windows"):  # fmt: skip
+        assert f"name: {name}\n" in job(release, "github-release"), name
+    pypi = job(release, "pypi")
+    assert "name: wheel-linux\n" in pypi and "name: wheel-windows\n" in pypi
+    assert "py3-none-win_amd64.whl" in job(release, "github-release")

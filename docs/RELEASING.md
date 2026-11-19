@@ -4,8 +4,8 @@ Libre Panel ships three ways; one git tag produces all of them.
 
 | Channel | For | Built by |
 |---|---|---|
-| PyPI (`pipx install libre-panel`) | Linux users, developers | `release.yml` → trusted publishing |
-| GitHub Release downloads | everyone, no Python needed | `release.yml`: Windows setup + portable zip, Linux AppImage + tarball |
+| PyPI (`pipx install libre-panel`) | Linux users, developers | `release.yml` → trusted publishing: the two wheels |
+| GitHub Release downloads | everyone, no Python needed | `release.yml`: Windows setup + portable zip, Linux AppImage + tarball, the wheels for pip and pipx (Linux, Windows) |
 | Distribution packages (winget, Flathub, AUR) | later | community / follow-up |
 
 ## One-time setup
@@ -80,6 +80,11 @@ no longer asks to share how it went) after a report that it started with both fi
 changelog names the report. A report that it did not work takes the model's question back to
 a refusal until it is understood.
 
+Once it is published: the pipx lines of the README (both languages) and of the website name
+its wheels (`pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.1.0/libre_panel-0.1.0-py3-none-<platform>.whl"`,
+`<platform>` as the release names its Linux and its Windows wheel), on `main`; with PyPI set
+up, `pipx install libre-panel` instead.
+
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the
 workflow fills that release in.
@@ -89,8 +94,11 @@ that CHANGELOG.md has its section, then runs CI (`ci.yml`) whole: every test, ev
 comparison of the Rust app with the Python app, and the Rust app's downloads built and
 tried as on every push (the Windows setup installed, run and uninstalled, the portable
 zip, the AppImage started with and without a tray, the Linux archive unpacked and drawn
-from). The downloads are the Rust app's; the Python package is built beside them for
-PyPI. Only when all of that passed, it publishes
+from) and the wheels for pip and pipx (packaging/platform_wheel.py: the Rust app as the
+downloads carry it, for Linux and for Windows), each installed into an environment of its own
+and tried. The downloads and the wheels are the Rust app's; PyPI gets the wheels, not the
+Python package's own wheel or source (pip would make the Python app of them). Only when all
+of that passed, it publishes
 the GitHub Release with all files and `SHA256SUMS`, the SHA-256 of each (the
 app's *Update to* checks its download against it), its notes taken from the
 CHANGELOG section (a hotfix's, such as 0.9.1's, followed by the sections down to

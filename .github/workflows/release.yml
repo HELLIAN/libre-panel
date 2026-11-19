@@ -42,28 +42,13 @@ jobs:
           fi
           grep -q "^## $version" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section $version"; exit 1; }
 
-  python-package:
-    timeout-minutes: 15
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: pip install build
-      - run: python -m build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-package
-          path: dist/*
-
   app:
     # Libre Panel in Rust, built and tried as CI builds and tries it on every push (ci.yml): the
     # Windows setup and portable zip (its job `try`: the setup installed for all users with every
     # box, run and uninstalled), the Linux AppImage and archive (its job `appimage`: started as
-    # autostart starts it, with and without a tray; the archive unpacked and drawn from), after
-    # every comparison with the Python app and every test
+    # autostart starts it, with and without a tray; the archive unpacked and drawn from), and the
+    # wheels pip and pipx install, one for Linux and one for Windows (installed and tried in
+    # both jobs), after every comparison with the Python app and every test
     needs: test
     # (not where a draft carries the downloads of a CI run that built and tried them: from_run)
     if: ${{ !inputs.from_run }}
@@ -71,15 +56,15 @@ jobs:
 
   github-release:
     timeout-minutes: 15
-    needs: [python-package, app]
+    needs: [test, app]
     if: >-
-      !cancelled() && needs.python-package.result == 'success' &&
+      !cancelled() && needs.test.result == 'success' &&
       (needs.app.result == 'success' || (inputs.from_run && needs.app.result == 'skipped')) &&
       (startsWith(github.ref, 'refs/tags/v') || inputs.draft != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: read  # (the downloads of the CI run a draft carries: from_run)
+      actions: read  # (the downloads, of this run or of the CI run a draft carries: from_run)
       id-token: write  # (GitHub's signature on where each file was built: the attestations)
       attestations: write
     env:
@@ -87,34 +72,31 @@ jobs:
       DRAFT: ${{ inputs.draft }}
     steps:
       - uses: actions/checkout@v5
+      # the downloads this run built and tried (its job `app`: ci.yml's jobs `try` and
+      # `appimage`), or, for a draft, those of the CI run named (from_run)
       - uses: actions/download-artifact@v4
-        with:
-          name: python-package
-          path: artifacts
-      - uses: actions/download-artifact@v4
-        if: ${{ !inputs.from_run }}
         with:
           name: libre-panel-rust-setup
           path: artifacts
-      - uses: actions/download-artifact@v4
-        if: ${{ !inputs.from_run }}
-        with:
-          name: libre-panel-rust-appimage
-          path: artifacts
-      # (a draft of the downloads a CI run built and tried: its jobs `try` and `appimage`)
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.from_run }}
-        with:
-          name: libre-panel-rust-setup
-          path: artifacts
-          run-id: ${{ inputs.from_run }}
+          run-id: ${{ inputs.from_run || github.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.from_run }}
         with:
           name: libre-panel-rust-appimage
           path: artifacts
-          run-id: ${{ inputs.from_run }}
+          run-id: ${{ inputs.from_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux
+          path: artifacts
+          run-id: ${{ inputs.from_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-windows
+          path: artifacts
+          run-id: ${{ inputs.from_run || github.run_id }}
           github-token: ${{ github.token }}
       - name: The files under the names the app's "Update to" looks for
         # (updates.py and rust/app's updates: -windows-x64-setup.exe, -windows-x64-portable.zip,
@@ -125,6 +107,9 @@ jobs:
           for end in windows-x64-setup.exe windows-x64-portable.zip linux-x64.tar.gz; do
             test -f "artifacts/libre-panel-$version-$end"
           done
+          # (and the wheels pip and pipx install, whose command the app shows: its updates)
+          test -f "artifacts/libre_panel-$version-py3-none-win_amd64.whl"
+          ls artifacts/libre_panel-"$version"-py3-none-manylinux_*_x86_64.whl
           ls -l artifacts
       - name: Release notes from CHANGELOG.md
         # the version's section; a hotfix's (0.9.1) goes on with the sections of the releases
@@ -210,9 +195,11 @@ jobs:
           fi
 
   pypi:
-    # Only once PyPI is set up (docs/RELEASING.md): repository variable PYPI_UPLOAD = true.
+    # Only once PyPI is set up (docs/RELEASING.md): repository variable PYPI_UPLOAD = true. The
+    # two wheels (the Rust app for Linux and for Windows), not the Python package's own wheel
+    # or source: pip would make the Python app of them.
     timeout-minutes: 15
-    needs: [python-package, app]
+    needs: [test, app]
     # (not a pre-release: on PyPI everyone would have it)
     if: >-
       startsWith(github.ref, 'refs/tags/v') && vars.PYPI_UPLOAD == 'true' &&
@@ -225,7 +212,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: python-package
+          name: wheel-linux
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-windows
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
 
@@ -234,7 +225,7 @@ jobs:
     # anyone signed in to GitHub may download a run's files, a release candidate's too.) After
     # the release and PyPI, whether they ran or not.
     if: always()
-    needs: [test, python-package, app, github-release, pypi]
+    needs: [test, app, github-release, pypi]
     timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:

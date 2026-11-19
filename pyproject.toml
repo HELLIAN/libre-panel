@@ -58,6 +58,8 @@ dev = ["pytest>=8", "ruff==0.16.9", "pyserial>=3.5", "pycryptodome>=3.19", "jeep
 
 [project.scripts]
 libre-panel = "libre_panel.cli:main"
+# (the plugin host the Rust app starts for Python plugins, beside its programs in an install)
+libre-panel-plugins = "libre_panel.plugin_host:main"
 
 # Third-party packages can add sensor providers or display drivers without
 # touching the core, e.g. an optional fan-analysis plugin.
