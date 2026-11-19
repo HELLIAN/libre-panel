@@ -12,14 +12,28 @@ import { Icon } from "../../ui/icons.js";
 import { ColorSwatches, resolveColor } from "./color.js";
 import { SensorButton } from "./sensors.js";
 
-export const FORMAT_HINT = "{value:.0f}{unit} · {value:.1f} · {value:bytes}/s · {value:duration} · {label}";
+// Where every format word is listed (docs/THEMES.md's "Format strings")
+const FORMAT_DOCS = "https://github.com/syntensa/libre-panel/blob/main/docs/THEMES.md#format-strings";
 const STEPS = { opacity: 0.05, glow: 0.05, stroke: 0.1, alpha: 0.05, speed: 0.25 };
 const UNIT_RANGE = new Set(["opacity", "glow", "alpha"]);
 const PX = new Set(["x", "y", "w", "h", "size", "font_size", "radius", "thickness", "line_width", "glow_radius", "shadow_offset", "shadow_blur", "outline_width", "letter_spacing", "max_width", "segment_gap", "backdrop_blur"]);
 
+/** The format field's help: Python's format syntax, what its parts say, and the whole list
+ * (each part kept on one line, a line ending at a "·", never starting with one). */
+function formatHint() {
+  const part = (code, text) => html`<span class="hint-part"><code>${code}</code> ${text}</span>`;
+  const parts = [
+    part("{value}", t("the reading")), part("{unit}", t("its unit")), part("{label}", t("its name")),
+    part("{value:.0f}", t("no decimal places")), part("{value:.1f}", t("one decimal place")),
+    part("{value:bytes}/s", t("a data rate")),
+    html`<a href=${FORMAT_DOCS} target="_blank" rel="noopener noreferrer">${t("every format")}</a>`,
+  ];
+  return html`${t("Python's format syntax:")} ${parts.map((item, at) => (at ? html`\u00a0· ${item}` : item))}`;
+}
+
 /** A short help text under a field, where the field needs one. */
 export function hintFor(widget, key, kind) {
-  if (kind === "format") return FORMAT_HINT;
+  if (kind === "format") return formatHint();
   if (key === "format" && widget?.type === "clock") return t("strftime, e.g. {examples}", { examples: "%H:%M · %H:%M:%S · %A %d %B" });
   if (key === "scale") return t("sqrt/log keep small values visible (network rates)");
   if (key === "max" && widget?.type === "graph") return t("empty: as high as the highest value it shows (a rate or a speed has no fixed top)");

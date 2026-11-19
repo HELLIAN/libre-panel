@@ -80,6 +80,10 @@
   makes sure it is the sharer's to replace.
 
 **Changed**
+- **The format field says what it takes.** Design's hint under a reading's format only showed
+  examples; it now says that this is Python's format syntax, what `{value}`, `{unit}`,
+  `{label}`, `{value:.0f}`, `{value:.1f}` and `{value:bytes}/s` give, and links to the list of
+  every format, in each of the app's languages.
 - **Smooth light stays smooth in video mode.** x264 held a change of a level or two in a smooth
   light back until it was two or three, so a slowly changing light moved in visible steps. Its
   dead zones are smaller now (6 instead of 21 and 11): decoded again, Lumen with its light is

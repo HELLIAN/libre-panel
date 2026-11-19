@@ -133,6 +133,27 @@ def test_a_block_is_added_with_a_click_and_taken_back_from_the_message(app_url):
         expect(page.locator(".toast", has_text="Removed “Clock”")).to_have_count(0)
 
 
+def test_a_format_field_says_what_it_takes_and_links_every_format(app_url, isolated_home):  # noqa: F811
+    """A reading's format (issue 54: "is this Python's format syntax?"): the field says so,
+    what its parts mean in words, and leads to the list of every format; the list opens apart,
+    the editor stays."""
+    choose_theme(isolated_home, "slate")
+    with browser_page(app_url) as page:
+        js(page, "window.libre.doc.setSelection(['cpu-load'])")
+        hint = page.locator(".inspector .field-hint", has_text="Python's format syntax")
+        expect(hint).to_have_count(1)
+        expect(hint.locator("code")).to_have_text(
+            ["{value}", "{unit}", "{label}", "{value:.0f}", "{value:.1f}", "{value:bytes}/s"]
+        )
+        expect(hint).to_contain_text("{value:.0f} no decimal places")
+        link = hint.get_by_role("link", name="every format")
+        expect(link).to_have_attribute(
+            "href",
+            "https://github.com/syntensa/libre-panel/blob/main/docs/THEMES.md#format-strings",
+        )
+        expect(link).to_have_attribute("target", "_blank")
+
+
 def test_the_themes_settings_keep_to_the_theme_and_lead_to_look(app_url, isolated_home):  # noqa: F811
     """With nothing selected the inspector showed a 48 × 48 grid of numbers to a newcomer, and
     its fine-tuning had Look's grid background a second time. The colour world

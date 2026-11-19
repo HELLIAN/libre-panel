@@ -3029,7 +3029,15 @@
     "The newest point of a curve beats with each reading.": "グラフの最新の点が、測定値ごとに脈打ちます。",
     "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "曲の再生中、ジャケットが自分の色で光り、状態の後ろで3本のバーが踊り、進行バーに沿って光が走ります。",
     "A sheen runs along a download's progress, the faster the faster it loads.": "ダウンロードの進行に沿って輝きが走ります。速く読み込むほど速く走ります。",
-    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "道の上の太陽、または月がやわらかく光り、その日がすでにたどった道に沿ってきらめきが走ります。"
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "道の上の太陽、または月がやわらかく光り、その日がすでにたどった道に沿ってきらめきが走ります。",
+    "Python's format syntax:": "Python の書式構文:",
+    "the reading": "読み取り値",
+    "its unit": "その単位",
+    "its name": "その名前",
+    "no decimal places": "小数なし",
+    "one decimal place": "小数1桁",
+    "a data rate": "データ転送速度",
+    "every format": "すべての書式"
   },
   "fields": {
     "night": "夜",

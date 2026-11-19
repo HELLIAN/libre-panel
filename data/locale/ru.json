@@ -3029,7 +3029,15 @@
     "The newest point of a curve beats with each reading.": "Самая новая точка графика бьётся с каждым показанием.",
     "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "Пока играет трек, его обложка светится своими цветами, три полоски танцуют после его состояния, а свет бежит по шкале прогресса.",
     "A sheen runs along a download's progress, the faster the faster it loads.": "По прогрессу загрузки бежит блик — тем быстрее, чем быстрее она идёт.",
-    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "Солнце на своём пути или луна мягко светится, а искра бежит по пути, который день уже прошёл."
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "Солнце на своём пути или луна мягко светится, а искра бежит по пути, который день уже прошёл.",
+    "Python's format syntax:": "Синтаксис форматирования Python:",
+    "the reading": "показание",
+    "its unit": "его единица",
+    "its name": "его название",
+    "no decimal places": "без знаков после запятой",
+    "one decimal place": "один знак после запятой",
+    "a data rate": "скорость передачи",
+    "every format": "все форматы"
   },
   "fields": {
     "night": "ночь",

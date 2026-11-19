@@ -3029,7 +3029,15 @@
     "The newest point of a curve beats with each reading.": "曲线最新的点随每次读数跳动。",
     "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "播放时，封面以自身的颜色发光，状态后面有三根条在跳动，一道光沿着进度流动。",
     "A sheen runs along a download's progress, the faster the faster it loads.": "一道光泽沿着下载进度流动，下载越快，流得越快。",
-    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "路径上的太阳或月亮柔和地发光，一道闪光沿着白天已走过的路径流过。"
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "路径上的太阳或月亮柔和地发光，一道闪光沿着白天已走过的路径流过。",
+    "Python's format syntax:": "Python 的格式语法：",
+    "the reading": "读数",
+    "its unit": "其单位",
+    "its name": "其名称",
+    "no decimal places": "不带小数",
+    "one decimal place": "一位小数",
+    "a data rate": "数据速率",
+    "every format": "所有格式"
   },
   "fields": {
     "night": "夜晚",

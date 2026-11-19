@@ -1059,6 +1059,15 @@ textarea.input {
   color: var(--danger-text);
 }
 
+/* the parts of a format as one types them (the format field's help) */
+.field-hint code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.field-hint .hint-part { white-space: nowrap; }
+
 .row {
   display: flex;
   align-items: center;

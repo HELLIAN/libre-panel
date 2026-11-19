@@ -3029,7 +3029,15 @@
     "The newest point of a curve beats with each reading.": "O ponto mais recente de uma curva pulsa a cada leitura.",
     "While a track plays, its cover glows in its own colours, three bars dance after its state and a light runs along its progress.": "Enquanto uma faixa toca, a capa brilha nas suas próprias cores, três barras dançam depois do estado e uma luz percorre o progresso.",
     "A sheen runs along a download's progress, the faster the faster it loads.": "Um brilho percorre o progresso de um download, tanto mais rápido quanto mais rápido descarrega.",
-    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "O sol no seu caminho, ou a lua, brilha suavemente, e um cintilar percorre o caminho que o dia já fez."
+    "The sun on its way, or the moon, glows softly, and a glint runs along the way the day has gone.": "O sol no seu caminho, ou a lua, brilha suavemente, e um cintilar percorre o caminho que o dia já fez.",
+    "Python's format syntax:": "Sintaxe de formatação do Python:",
+    "the reading": "a leitura",
+    "its unit": "a sua unidade",
+    "its name": "o seu nome",
+    "no decimal places": "sem casas decimais",
+    "one decimal place": "uma casa decimal",
+    "a data rate": "uma taxa de dados",
+    "every format": "todos os formatos"
   },
   "fields": {
     "night": "noite",
