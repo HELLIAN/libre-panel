@@ -59,6 +59,9 @@ def test_the_format_s_tables_and_the_panel_models_are_python_s() -> None:
     finishes: dict[str, list[str]] = {}
     for name, widget_type in finish._REGISTERED:
         finishes.setdefault(name, []).append(widget_type)
+    # (which types, not the order their modules happened to load in: both apps only ask
+    # whether a type is among a finish's, specs.rs and server.py's _finish_types alike)
+    finishes = {name: sorted(types) for name, types in sorted(finishes.items())}
 
     def fields(spec: dict[str, tuple[str, Any]]) -> dict[str, Any]:
         return {k: [kind, default] for k, (kind, default) in spec.items()}
@@ -106,6 +109,7 @@ def test_the_format_s_tables_and_the_panel_models_are_python_s() -> None:
     }
     [ours] = run([{"op": "theme_tables"}])
     rust = json.loads(ours["tables"])
+    rust["FINISH_TYPES"] = {n: sorted(t) for n, t in sorted(rust["FINISH_TYPES"].items())}
     assert set(rust) == set(python)
     for key, value in python.items():
         assert json.dumps(rust[key]) == json.dumps(value), key
