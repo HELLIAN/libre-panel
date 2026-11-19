@@ -31,7 +31,7 @@ registerView({
   order: 30,
   icon: "palette",
   component: LookView,
-  header: { lead: ThemeTitle, actions: LookActions },
+  header: { title: ThemeTitle, actions: LookActions },
 });
 
 // -- commands (Ctrl+K) ------------------------------------------------------------------------------------

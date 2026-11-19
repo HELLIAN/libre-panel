@@ -1,6 +1,7 @@
-// The header every view shares: the brand, the view's own parts (lead, center, actions), the
-// tabs (each says what it is for), the search field, always right after the tabs, and the way to
-// the settings, by name, which leads back to where the person was when pressed in Settings.
+// The header every view shares: the brand, the tabs (each says what it is for), the search
+// field, always right after the tabs, the view's own parts (center, title, actions) and the way
+// to the settings, by name, which leads back to where the person was when pressed in Settings.
+// The brand and the tabs are where they are in every view: what a view adds is on their right.
 
 import { applyToPanel, confirmDiscard, openChosenPanelTheme, panelState } from "../core/actions.js";
 import { chooseTarget, useTarget } from "../core/target.js";
@@ -18,16 +19,21 @@ import { allViews, leaveSettings, navigate, settingsReturn, showsTheme, viewHint
 const titleOf = (view) => (typeof view.title === "function" ? view.title() : view.title);
 
 // What gives way where the header has too little room for all it shows, in this order, each after
-// the one before (app.css: data-fit): the search field's hint of its keys, the tabs closer
-// together, the search field's phrase to its first word, the search field to its glass, the
-// unsaved mark to its dot, the panel chip to its name, the brand to its icon, "Panel 1 |
-// Panel 2" to the numbers, the way to the settings to its gear. The window's width alone does
-// not say when (a second panel adds its switch, German its longer words, the theme its name),
-// so each step is measured: the first with which nothing reaches beyond the header, the theme's
-// name is whole and the search field shows whole words (its phrase, its first word, or none:
-// its glass), never a word cut ("Search or…"), is kept. The name gives way only after all of
-// them.
-const GIVE_WAY = ["keys", "tabs", "phrase", "search", "unsaved", "chip", "brand", "panels", "settings"];
+// the one before (app.css: data-fit): the search field's hint of its keys, the search field's
+// phrase to its first word, the search field to its glass, the unsaved mark to its dot, the
+// panel chip to its name, the way to the settings to its gear, "Panel 1 | Panel 2" to the
+// numbers. The window's width alone does not say when (a second panel adds its switch, German its
+// longer words, the theme its name), so each step is measured: the first with which nothing
+// reaches beyond the header, the theme's name is whole and the search field shows whole words
+// (its phrase, its first word, or none: its glass), never a word cut ("Search or…"), is kept.
+// All of them on the right of the tabs, so the tabs stay where they are whatever gives way.
+const GIVE_WAY = ["keys", "phrase", "search", "unsaved", "chip", "settings", "panels"];
+// Only where all of that is not enough do the tabs come closer together, then the brand is its
+// icon; and they stay so while the window keeps its width, in every view, as one that needed
+// them showed them (else the tabs would move on the way to that view and back). The theme's
+// name gives way only after all of them.
+const LEFT_GIVES_WAY = ["tabs", "brand"];
+const left = { width: -1, steps: 0 }; // (the header's width they were taken at, and how many)
 
 /** How much of its text an element's box hides, in pixels (0 where it shows all of it). */
 function hidden(element) {
@@ -37,13 +43,21 @@ function hidden(element) {
   return range.getBoundingClientRect().width - element.getBoundingClientRect().width;
 }
 
+/** Whether the theme's name is cut for want of room: a name longer than the most it is given
+ * (app.css: .theme-name's max-width) is cut however much room there is, which no step changes. */
+function nameCut(bar) {
+  const name = bar.querySelector(".theme-name");
+  if (!name || hidden(name.querySelector("span")) <= 0.1) return false;
+  return name.getBoundingClientRect().width < parseFloat(getComputedStyle(name).maxWidth) - 0.5;
+}
+
 function fits(bar) {
   const end = bar.getBoundingClientRect().right - parseFloat(getComputedStyle(bar).paddingRight);
   const last = bar.lastElementChild;
   const words = bar.querySelector(".search-trigger.wide .search-trigger-text");
   return (
     (!last || last.getBoundingClientRect().right <= end + 0.5) &&
-    hidden(bar.querySelector(".theme-name span")) <= 0.1 &&
+    !nameCut(bar) &&
     (!words?.getClientRects().length || hidden(words) <= 0.5) // (none shown: its glass)
   );
 }
@@ -57,17 +71,23 @@ function useGiveWay(ref) {
     if (!bar) return undefined;
     let steps = 0;
     const take = (n) => {
-      bar.dataset.fit = GIVE_WAY.slice(0, n).join(" ");
+      bar.dataset.fit = [...GIVE_WAY.slice(0, n), ...LEFT_GIVES_WAY.slice(0, left.steps)].join(" ");
     };
     const fit = () => {
-      // fewer steps while all of it fits with them, then more while it does not
-      while (steps > 0) {
-        take(steps - 1);
-        if (!fits(bar)) break;
-        steps -= 1;
+      const width = bar.getBoundingClientRect().width;
+      if (width !== left.width) Object.assign(left, { width, steps: 0 });
+      for (;;) {
+        // fewer steps while all of it fits with them, then more while it does not
+        while (steps > 0) {
+          take(steps - 1);
+          if (!fits(bar)) break;
+          steps -= 1;
+        }
+        take(steps);
+        while (steps < GIVE_WAY.length && !fits(bar)) take(++steps);
+        if (left.steps === LEFT_GIVES_WAY.length || fits(bar)) return;
+        left.steps += 1; // (then as few on the right as fit with it)
       }
-      take(steps);
-      while (steps < GIVE_WAY.length && !fits(bar)) take(++steps);
     };
     fit();
     const resized = new ResizeObserver(fit);
@@ -176,12 +196,11 @@ export function Header({ view }) {
   const tabs = allViews().filter((item) => item.tab);
   const bar = useRef(null);
   useGiveWay(bar);
-  return html`<header ref=${bar} class=${`topbar${parts.lead ? " with-lead" : ""}`}>
+  return html`<header ref=${bar} class="topbar">
     <a class="brand" href="#/home" aria-label=${t("Libre Panel: start")}>
       <${Icon} name="logo" size=${22} />
       <span>Libre Panel</span>
     </a>
-    ${parts.lead ? html`<div class="topbar-sep"></div><${parts.lead} />` : null}
     ${asking
       ? null
       : html`<nav class="tabs" aria-label=${t("Area")}>
@@ -190,6 +209,7 @@ export function Header({ view }) {
               key=${item.id}
               href=${`#/${item.id}`}
               class="tab"
+              data-label=${titleOf(item)}
               title=${viewHint(item)}
               aria-current=${route.view === item.id ? "page" : undefined}
             >${titleOf(item)}</a>`,
@@ -198,6 +218,7 @@ export function Header({ view }) {
     <${PanelSwitch} />
     ${parts.center ? html`<${parts.center} />` : html`<${SearchTrigger} wide />`}
     <div class="topbar-flex"></div>
+    ${parts.title ? html`<${parts.title} />` : null}
     ${parts.actions ? html`<${parts.actions} />` : null}
     <${SettingsButton} active=${route.view === "settings"} />
   </header>`;

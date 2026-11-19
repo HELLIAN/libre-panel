@@ -139,6 +139,14 @@
   count also starts from what it recorded of today and of this month where that is more (as
   *Status → History* adds them up), so the month counts from its first day, the days before
   this version included.
+- **The tabs stay where they are in every view.** Design and Look showed the theme's name
+  between the brand and the tabs, so the tabs moved right on the way there and back on the way
+  out, and the chosen tab's bolder name nudged the ones after it. The theme's name is now on the
+  right, beside the panel chip and what acts on the theme, and a tab is as wide chosen or not.
+  What gives way in a narrow window is on the right of the tabs, and below 1210 px the brand is
+  its icon in every view; only where that is not enough (two panels and a long theme name) do
+  the tabs come closer, then in every view alike. A theme's name longer than the header
+  gives any name no longer folds the whole header at every width; its tooltip has it whole.
 - **A module whose service is off says so in Design.** Power use, Timer, AI activity and the
   Download card show what their service reports, and every service is off until it is switched
   on; Design's picture then showed sample values, while the panel showed nothing there. The

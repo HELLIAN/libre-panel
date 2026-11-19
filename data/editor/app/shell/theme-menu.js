@@ -96,7 +96,7 @@ export function ThemeTitle() {
         class="theme-name"
         aria-haspopup="dialog"
         aria-expanded=${String(open)}
-        title=${id ? (builtin ? t("{id} (built-in)", { id }) : id) : t("(unsaved)")}
+        title=${`${name || t("Untitled")} · ${id ? (builtin ? t("{id} (built-in)", { id }) : id) : t("(unsaved)")}`}
         onClick=${() => setOpen(!open)}
       >
         <span>${name || t("Untitled")}</span>

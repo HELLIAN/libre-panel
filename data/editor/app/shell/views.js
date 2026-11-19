@@ -10,7 +10,7 @@
 //     order: 30,                      // place among the tabs
 //     icon: "palette",
 //     component: LookView,            // gets {rest}: the route after the view's id
-//     header: { lead, center, actions },  // optional parts of the header (components)
+//     header: { center, title, actions },  // optional parts of the header (components)
 //   });
 
 import { t } from "../core/i18n.js";

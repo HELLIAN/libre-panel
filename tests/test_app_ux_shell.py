@@ -15,6 +15,8 @@ from test_app_browser import (  # noqa: E402, F401
     app_url,
     browser_page,
     choose_theme,
+    header_overflow,
+    hidden_text,
     js,
     no_setup_card,
     settings_config,
@@ -264,6 +266,80 @@ def test_the_header_is_the_same_in_every_view(app_url, isolated_home, language):
             assert order == ["tabs", "search", "settings"], view
         titles = page.locator(".tabs .tab").evaluate_all("tabs => tabs.map((t) => t.title)")
         assert len(titles) == 6 and all(len(title) > 12 for title in titles)
+
+
+def tabs_where(page):
+    """Where the brand and each tab are in the header, and how wide (in pixels), once the
+    header has measured what of it gives way (in the frame after a change: header.js)."""
+    js(page, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))")
+    return js(
+        page,
+        """[...document.querySelectorAll('.topbar .brand, .topbar .tab')].map((el) => {
+             const box = el.getBoundingClientRect();
+             return [Math.round(box.left * 10) / 10, Math.round(box.width * 10) / 10];
+           })""",
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_the_tabs_stay_where_they_are_in_every_view(app_url, isolated_home, language):  # noqa: F811
+    """Design and Look showed the theme's name between the brand and the tabs, so the tabs
+    moved to the right on the way there and back to the left on the way out (issue 56). The name
+    is at the right, beside what acts on the theme; the brand and the tabs are where they are in
+    every view, at the window's default size, at 1280 px and at its smallest, with the theme
+    unsaved too, and what gives way does so to the right of them first."""
+    from libre_panel import i18n
+
+    routes = a_bar(isolated_home)
+    i18n.set_language(language)
+    with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
+        views = page.locator(".tabs .tab").evaluate_all(
+            "tabs => tabs.map((tab) => tab.getAttribute('href').slice(2))"
+        )
+        assert views[:3] == ["home", "design", "look"]
+        for width, height in ((1440, 900), (1280, 800), (1100, 700)):
+            page.set_viewport_size({"width": width, "height": height})
+            where = {}
+            for view in (*views, "settings/panel", "home"):
+                page.goto(f"{app_url}#/{view}")
+                page.wait_for_selector(".view > *")
+                where[view] = tabs_where(page)
+            assert len({str(found) for found in where.values()}) == 1, (width, where)
+            # the name at the right: after the search field, beside what acts on the theme
+            page.goto(f"{app_url}#/design")
+            page.wait_for_selector(".panel-canvas .preview")
+            order = js(
+                page,
+                """[...document.querySelectorAll('.topbar > *')].map((el) => el.className)""",
+            )
+            assert order.index("theme-title") > order.index("topbar-flex"), order
+            # unsaved, the mark beside the name; the tabs stay where they are
+            js(page, "window.libre.doc.edit('n', (theme) => { theme.description = 'changed'; })")
+            expect(page.locator(".unsaved")).to_be_visible()
+            assert tabs_where(page) == where["home"], width
+            page.goto(f"{app_url}#/look")
+            page.wait_for_selector(".look-side")
+            assert tabs_where(page) == where["home"], width
+            assert hidden_text(page.locator(".theme-name span")) < 0.1, width
+            assert header_overflow(page) == [], width
+
+
+def test_a_long_theme_name_does_not_fold_the_header(app_url, isolated_home):  # noqa: F811
+    """A name longer than the most the header gives it is cut however wide the window is: the
+    header took that for want of room and folded everything it could (the search field to its
+    glass, the chip, the way to the settings, the brand to its icon) even at 1920 px."""
+    routes = a_bar(isolated_home)
+    with browser_page(app_url, "design", routes=routes, allow=PICTURE, size=(1920, 1000)) as page:
+        bar = page.locator(".topbar")
+        expect(bar).to_have_attribute("data-fit", "")
+        name = "A theme whose name is longer than the header gives any name"
+        js(page, f"window.libre.doc.edit('n', (theme) => {{ theme.name = {name!r}; }})")
+        expect(page.locator(".theme-name span")).to_have_text(name)
+        tabs_where(page)  # (measured again)
+        assert hidden_text(page.locator(".theme-name span")) > 50  # (cut: whole in its title)
+        assert page.locator(".theme-name").get_attribute("title") == f"{name} · lumen (built-in)"
+        assert set(bar.get_attribute("data-fit").split()) <= {"keys"}
+        assert header_overflow(page) == []
 
 
 def test_the_settings_button_leads_back_to_where_you_were(app_url, isolated_home):  # noqa: F811

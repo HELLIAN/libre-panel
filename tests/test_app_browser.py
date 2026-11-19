@@ -1632,12 +1632,12 @@ def test_with_two_panels_the_header_gives_way_in_steps_and_the_name_stays_whole(
     """Two panels add "Panel 1 | Panel 2" to the header: Design's header hid the theme's name
     at the window's default size (1440 px), in German almost all of it, and cut the search field
     to its glass and a letter. What gives way does, in steps, as far as it must (the hint of
-    the search field's keys, the tabs closer together, the search field to its glass, the unsaved
-    mark to its dot, the chip to its name, the brand to its icon, the panel switch to its
-    numbers): the name stays whole down to 1280 px, nothing reaches beyond the window down to
-    1100, at 1920 nothing gives way (but, in German, the hint of the search field's keys: its
-    phrase "Suchen oder Befehl …" was cut there, which counted as its words), and what gave
-    way keeps its name."""
+    the search field's keys, the search field to its glass, the unsaved mark to its dot, the chip
+    to its name, the way to the settings to its gear, the panel switch to its numbers; only then
+    the tabs closer together and the brand to its icon): the name stays whole down to 1280 px,
+    nothing reaches beyond the window down to 1100, at 1920 nothing gives way (but, in German,
+    the hint of the search field's keys: its phrase "Suchen oder Befehl …" was cut there, which
+    counted as its words), and what gave way keeps its name."""
     from libre_panel import i18n
 
     choose_theme(isolated_home)

@@ -139,7 +139,7 @@ registerView({
   order: 20,
   icon: "pencil",
   component: DesignView,
-  header: { lead: ThemeTitle, center: WideSearch, actions: DesignActions },
+  header: { center: WideSearch, title: ThemeTitle, actions: DesignActions },
 });
 
 // -- the panel turned ------------------------------------------------------------------------------
