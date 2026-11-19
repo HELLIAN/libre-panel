@@ -4089,23 +4089,71 @@ def test_the_timer_is_started_and_set_back_from_its_card(isolated_home):
         app.shutdown()
 
 
-def test_settings_weather_and_place(app_url, isolated_home, monkeypatch):
-    """A place by its name, the weather on and off, units and interval; the place is kept
-    to about a kilometre and the weather needs one."""
+@pytest.fixture
+def place_search(monkeypatch):
+    """The place search answers ``found(name)`` (the places, Open-Meteo's as geocode gives them,
+    or an error raised): the Python app's through its open_meteo.geocode, the Rust app's through
+    a server of the test's own (LP_GEOCODING_URL), which answers as Open-Meteo does. It gives
+    the names that were asked for."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs, urlsplit
+
     from libre_panel.weather import open_meteo
 
-    asked = []
+    asked, answers = [], {}
 
     def geocode(name, count=5, language="en"):
         asked.append(name)
-        return [
-            {"name": "Springfield", "region": "Region", "country": "Country",
-             "latitude": 1.234567, "longitude": 2.345678},
-            {"name": "Springfield", "region": "", "country": "Elsewhere",
-             "latitude": -3.5, "longitude": 4.75},
-        ]  # fmt: skip
+        return answers["found"](name)
 
     monkeypatch.setattr(open_meteo, "geocode", geocode)
+
+    class Search(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            name = parse_qs(urlsplit(self.path).query).get("name", [""])[0]
+            asked.append(name)
+            try:
+                found = answers["found"](name)
+            except Exception:  # (the search did not answer: a server that fails)
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = json.dumps({"results": [
+                {"name": p["name"], "admin1": p["region"], "country": p["country"],
+                 "latitude": p["latitude"], "longitude": p["longitude"]} for p in found
+            ]}).encode("utf-8")  # fmt: skip
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Search)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("LP_GEOCODING_URL", f"http://127.0.0.1:{server.server_address[1]}/search")
+
+    def answer(found):
+        answers["found"] = found
+        return asked
+
+    yield answer
+    server.shutdown()
+    server.server_close()
+
+
+def test_settings_weather_and_place(place_search, app_url, isolated_home):
+    """A place by its name, the weather on and off, units and interval; the place is kept
+    to about a kilometre and the weather needs one."""
+    asked = place_search(lambda name: [
+        {"name": "Springfield", "region": "Region", "country": "Country",
+         "latitude": 1.234567, "longitude": 2.345678},
+        {"name": "Springfield", "region": "", "country": "Elsewhere",
+         "latitude": -3.5, "longitude": 4.75},
+    ])  # fmt: skip
     with browser_page(app_url, "settings/weather") as page:
         toggle = page.get_by_role("switch", name="Weather")
         assert toggle.is_disabled()  # no place yet
@@ -4200,18 +4248,19 @@ def test_the_weather_from_openweathermap_with_a_key_of_one_s_own(app_url, isolat
         playwright.expect(toggle).to_be_disabled()
 
 
-def test_settings_weather_search_fails_politely(app_url, monkeypatch):
+def test_settings_weather_search_fails_politely(place_search, app_url):
     from libre_panel.weather import open_meteo
 
-    def offline(name, count=5, language="en"):
+    def offline(name):
         raise open_meteo.WeatherError("timed out")
 
-    monkeypatch.setattr(open_meteo, "geocode", offline)
+    place_search(offline)
     with browser_page(app_url, "settings/weather", allow=("/api/location",)) as page:
         page.get_by_label("Name of a place").fill("Nowhere")
         page.get_by_role("button", name="Search", exact=True).click()
         page.wait_for_selector(".note.error")
-        assert "timed out" in page.locator(".note.error").inner_text()
+        said = "Could not reach the place search" if RUST else "timed out"
+        assert said in page.locator(".note.error").inner_text()
         assert page.get_by_role(
             "button", name="Search", exact=True
         ).is_enabled()  # it can be tried again
@@ -4324,11 +4373,38 @@ def test_settings_the_highest_rights_only_when_asked_and_by_an_administrator(iso
         app.shutdown()
 
 
-def test_settings_about(app_url, isolated_home, monkeypatch):
-    from libre_panel import __version__, tray
+@pytest.fixture
+def opened_paths(monkeypatch, tmp_path):
+    """What the app opened in the system's file manager, in order (``opened_paths()``): the
+    Python app's through tray.open_path, the Rust app's through an xdg-open of the test's own,
+    first on the PATH it starts with, which writes down what it is given."""
+    from pathlib import Path
+
+    from libre_panel import tray
 
     opened = []
     monkeypatch.setattr(tray, "open_path", opened.append)
+    record = tmp_path / "opened.txt"
+    if RUST:
+        folder = tmp_path / "programs"
+        folder.mkdir()
+        (folder / "xdg-open").write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$LP_TEST_OPENED"\n')
+        (folder / "xdg-open").chmod(0o755)
+        monkeypatch.setenv("LP_TEST_OPENED", str(record))
+        monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    def seen():
+        if not RUST:
+            return list(opened)
+        lines = record.read_text(encoding="utf-8").splitlines() if record.is_file() else []
+        return [Path(line) for line in lines]
+
+    return seen
+
+
+def test_settings_about(opened_paths, app_url, isolated_home):
+    from libre_panel import __version__
+
     with browser_page(app_url, "settings/about") as page:
         assert f"Libre Panel {__version__}" in page.locator("#main").inner_text()
         assert "GPL-3.0-or-later" in page.locator("#main").inner_text()
@@ -4348,8 +4424,8 @@ def test_settings_about(app_url, isolated_home, monkeypatch):
         assert str(isolated_home) in page.locator("[data-folder='config']").inner_text()
         page.locator("[data-folder='themes'] button").click()
         page.locator("[data-folder='logs'] button").click()
-        waits_for(page, lambda: len(opened) == 2)
-        assert opened == [isolated_home / "themes", isolated_home / "logs"]
+        waits_for(page, lambda: len(opened_paths()) == 2)
+        assert opened_paths() == [isolated_home / "themes", isolated_home / "logs"]
         # the notices of the software it is built on: shown in the app, from NOTICE.md
         assert page.locator(".notices").count() == 0
         page.locator(".settings-disclosure", has_text="Notices and credits").click()

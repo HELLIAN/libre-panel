@@ -12,9 +12,11 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import expect  # noqa: E402
 from test_app_browser import (  # noqa: E402, F401
     PICTURE,
+    RUST,
     app_url,
     browser_page,
     choose_theme,
+    opened_paths,
     settings_config,
     waits_for,
 )
@@ -112,26 +114,28 @@ def test_a_day_and_a_week_of_readings_with_the_games(app_url, isolated_home):  #
 
 
 def test_a_last_round_is_kept_as_a_picture_and_its_folder_opens(
+    opened_paths,  # noqa: F811
     app_url,  # noqa: F811
     isolated_home,
     tmp_path,
     monkeypatch,
 ):
-    from libre_panel import tray
     from libre_panel.config import set_config_value
     from libre_panel.services import downloads
 
     choose_theme(isolated_home, "lumen")
     set_config_value("services.enabled", ["memory"])
     kept(isolated_home, days=1)
-    pictures, opened = tmp_path / "Pictures", []
+    pictures = tmp_path / "Pictures"
     monkeypatch.setattr(downloads, "pictures_folder", lambda: pictures)
-    monkeypatch.setattr(tray, "open_path", opened.append)
+    if RUST:  # (the Rust app's Pictures folder: the home's, where it has one)
+        pictures.mkdir()
+        monkeypatch.setenv("HOME", str(tmp_path))
     with browser_page(app_url, "live/history", allow=PICTURE) as page:
         rounds = page.locator(".history-round-list li")
         expect(rounds).to_have_count(1)
         rounds.first.get_by_role("button", name="Keep as a picture").click()
         expect(page.locator(".toast")).to_contain_text("The round report is kept as a picture in")
-        waits_for(page, lambda: opened == [pictures / "Libre Panel"])
+        waits_for(page, lambda: opened_paths() == [pictures / "Libre Panel"])
     (picture,) = (pictures / "Libre Panel").iterdir()
     assert picture.name.startswith("Cyber Racer ") and picture.suffix == ".png"
