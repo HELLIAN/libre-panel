@@ -73,6 +73,11 @@
   offered (Windows' own, else English), the app now speaks it too; a language chosen in the
   app is kept, and an update leaves it as it is. `libre-panel config language de` sets it from
   a terminal (without a language: which it is and what the app speaks).
+- **A new version of a community theme takes the old one's place.** The *Share a theme* form
+  has a *Replaces* field: the name of a listed theme, as the list shows it. Its pull request
+  then puts the new version in that theme's folder and entry, where it was in the list, instead
+  of adding it beside it, and says which theme it replaces, so that the one who looks at it
+  makes sure it is the sharer's to replace.
 
 **Changed**
 - **Smooth light stays smooth in video mode.** x264 held a change of a level or two in a smooth

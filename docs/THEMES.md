@@ -1069,6 +1069,8 @@ To share yours with everyone: *Share with everyone…* (the globe on its card, o
 themes) asks what it is called, who made it and what it shows, saves it as a `.zip` and opens
 GitHub's *Share a theme* form, filled in, for the file to be dragged in. A workflow checks it
 in a job that may write nothing, draws its picture with the demo readings and opens the pull
-request; someone looks at it before it is merged. By hand: export it, add the zip and a
+request; someone looks at it before it is merged. A new version of one that is listed already:
+share it the same way and write the listed theme's name under *Replaces*; it then takes that
+one's place in the list instead of being added beside it. By hand: export it, add the zip and a
 picture under `community/themes/` in a pull request, with an entry in `index.json`. How, and
 the format of the list, are in [community/themes/README.md](../community/themes/README.md).

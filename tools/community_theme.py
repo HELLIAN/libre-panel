@@ -12,8 +12,10 @@ jobs, so that what comes from the issue is looked into only where nothing can be
   in a folder; or, where something is wrong, the reason in words.
 - ``add`` (the job that may write): takes that folder, checks the entry as the app reads the
   list (editor/community.py), the zip against its SHA-256 and the picture by its first bytes,
-  and puts them beside the list, ``community/themes/<id>/``, with the entry in index.json. The
-  workflow opens a pull request with them; a person looks at it before it is merged.
+  and puts them beside the list, ``community/themes/<id>/``, with the entry in index.json; a
+  new version of a listed theme (the form's *Replaces*) takes that one's place, its folder and
+  its entry. The workflow opens a pull request with them; a person looks at it before it is
+  merged.
 
 Text from the issue is data: it reaches no shell, and the entry keeps it within the list's
 lengths.
@@ -26,6 +28,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import sys
 import tempfile
 import urllib.request
@@ -35,6 +38,7 @@ from urllib.parse import urlsplit
 
 FORM_FIELDS = {  # the issue form's labels: the text under each "### <label>"
     "Name": "name",
+    "Replaces": "replaces",
     "Made by": "author",
     "What it shows": "description",
     "The theme": "theme",
@@ -49,7 +53,7 @@ ATTACHMENT = re.compile(
 HOSTS = ("github.com", "objects.githubusercontent.com")
 S3 = re.compile(r"^github-production-[a-z0-9-]+\.s3\.amazonaws\.com$")
 LIST = Path("community/themes")
-TEXTS = {"name": 80, "author": 80, "description": 400}
+TEXTS = {"name": 80, "replaces": 80, "author": 80, "description": 400}
 BRANCH = "community/theme-"  # and the issue's number: the pull request's branch (the workflow's)
 TIMEOUT_S = 30
 
@@ -209,6 +213,9 @@ def check(body: str, login: str, out: Path, get=download) -> dict[str, Any]:
     sha256 = hashlib.sha256(data).hexdigest()
     entry = {"name": name, "author": author, "description": description,
              "sizes": [f"{width}x{height}"], "sha256": sha256}  # fmt: skip
+    replaces = _text(answers, "replaces", "")[0]
+    if replaces:  # (which listed theme it is: the job that adds it looks)
+        entry["replaces"] = replaces
     out.mkdir(parents=True, exist_ok=True)
     (out / "theme.zip").write_bytes(data)
     (out / "preview.png").write_bytes(picture)
@@ -244,10 +251,34 @@ def theme_id(name: str, number: int, taken: set[str]) -> str:
     return chosen
 
 
+def _same_name(a: str, b: str) -> bool:
+    return " ".join(a.casefold().split()) == " ".join(b.casefold().split())
+
+
+def replaced(index: dict[str, Any], name: str) -> tuple[int, str]:
+    """The listed theme a new version takes the place of: its place in the list and its id,
+    by its name as the list shows it (or its id)."""
+    found = [(at, Path(str(entry.get("zip", ""))).stem)
+             for at, entry in enumerate(index.get("themes", []))
+             if _same_name(str(entry.get("name", "")), name)
+             or Path(str(entry.get("zip", ""))).stem == name.strip()]  # fmt: skip
+    if not found:
+        raise Refused(
+            f"No theme called “{name}” is among the community themes. Write its name under "
+            "*Replaces* as *Start → Themes → Community themes* shows it, or leave the field empty "
+            "for a new theme."
+        )
+    if len(found) > 1:
+        raise Refused(f"More than one community theme is called “{name}”: write its id instead.")
+    return found[0]
+
+
 def add(checked: Path, number: int, root: Path) -> dict[str, Any]:
-    """The checked theme beside the list, with its entry in index.json: the entry as written.
-    What ``check`` left is read as data again: the entry as the app reads the list, the zip by
-    its SHA-256, the picture by its first bytes."""
+    """The checked theme beside the list, with its entry in index.json: the entry as written;
+    a new version of a listed theme in that one's place (its folder, its entry, where it was in
+    the list), with what it replaces under ``replaced``. What ``check`` left is read as data
+    again: the entry as the app reads the list, the zip by its SHA-256, the picture by its first
+    bytes."""
     from libre_panel.editor.community import INDEX_FORMAT, MAX_PREVIEW, parse_index
     from libre_panel.theme.share import MAX_ZIP
 
@@ -257,29 +288,62 @@ def add(checked: Path, number: int, root: Path) -> dict[str, Any]:
         raise Refused("The checked zip is not the one its entry names.")
     if len(picture) > MAX_PREVIEW or not picture.startswith(b"\x89PNG\r\n\x1a\n"):
         raise Refused("The checked picture is no PNG of the size the list takes.")
-    chosen = theme_id(str(raw.get("name", "")), number, _taken(root))
+    index_path = root / LIST / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    replaces = " ".join(str(raw.get("replaces") or "").split())
+    if replaces:
+        at, chosen = replaced(index, replaces)
+        was = index["themes"][at]
+    else:
+        at, chosen, was = None, theme_id(str(raw.get("name", "")), number, _taken(root)), None
     entry = {key: raw.get(key) for key in ("name", "author", "description", "sizes")}
     entry.update(preview=f"{chosen}/preview.png", zip=f"{chosen}/{chosen}.zip",
                  sha256=raw.get("sha256"))  # fmt: skip
     if not parse_index(json.dumps({"format": INDEX_FORMAT, "themes": [entry]}).encode()):
         raise Refused("The entry is not one the app can read.")
     folder = root / LIST / chosen
+    if was is not None:  # (what the version before had there goes: the folder is this one's)
+        shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     (folder / f"{chosen}.zip").write_bytes(data)
     (folder / "preview.png").write_bytes(picture)
-    index_path = root / LIST / "index.json"
-    index = json.loads(index_path.read_text(encoding="utf-8"))
-    index["themes"].append(entry)
+    if at is None:
+        index["themes"].append(entry)
+    else:
+        index["themes"][at] = entry
     index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {**entry, "id": chosen}
+    if was is None:
+        return {**entry, "id": chosen}
+    before = {key: was.get(key) for key in ("name", "author", "sizes")}
+    return {**entry, "id": chosen, "replaced": before}
+
+
+def _sizes(sizes: list[str]) -> str:
+    return ", ".join(size.replace("x", " × ") for size in sizes)
 
 
 def pull_request_text(entry: dict[str, Any], number: int) -> str:
-    """What the pull request says: the entry, from where it came, what to look at."""
-    sizes = ", ".join(size.replace("x", " × ") for size in entry["sizes"])
+    """What the pull request says: the entry, from where it came, what to look at; for a new
+    version, which listed theme it takes the place of and what to make sure of first."""
+    sizes = _sizes(entry["sizes"])
+    was = entry.get("replaced")
+    if was is None:
+        head = [f"A community theme shared in #{number}: **{entry['name']}** by {entry['author']}, "
+                f"made for {sizes}."]  # fmt: skip
+    else:
+        head = [
+            f"A new version of the community theme **{was['name']}** by {was['author']} (made for "
+            f"{_sizes(was['sizes'])}), shared in #{number}: **{entry['name']}** by "
+            f"{entry['author']}, made for {sizes}.",
+            "",
+            f"It takes that one's place: its folder (`community/themes/{entry['id']}/`) and its "
+            "entry in index.json, where it was in the list; the app installs this version from "
+            "then on. **Before merging, make sure it is theirs to replace:** that the one who "
+            f"opened #{number} is the one who shared the version before (`git log -- "
+            f"community/themes/{entry['id']}`), or that its maker agrees.",
+        ]  # fmt: skip
     return "\n".join([
-        f"A community theme shared in #{number}: **{entry['name']}** by {entry['author']}, "
-        f"made for {sizes}.",
+        *head,
         "",
         f"> {entry['description']}" if entry["description"] else "> (no description)",
         "",
@@ -327,7 +391,8 @@ def main(argv: list[str] | None = None) -> int:
             (args.out / "refused.md").write_text(f"{exc}\n", encoding="utf-8")
             print(f"refused: {exc}")
             return 0  # (the next job says it on the issue)
-        print(f"checked: {checked['name']} for {', '.join(checked['sizes'])}")
+        replacing = f", in the place of {checked['replaces']}" if checked.get("replaces") else ""
+        print(f"checked: {checked['name']} for {', '.join(checked['sizes'])}{replacing}")
         return 0
     refused = args.checked / "refused.md"
     try:
@@ -340,7 +405,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     args.pull_request.write_text(pull_request_text(entry, args.number) + "\n", encoding="utf-8")
-    print(entry["id"])
+    # (what the commit and the pull request are called)
+    print(entry["id"] + (" (new version)" if "replaced" in entry else ""))
     return 0
 
 

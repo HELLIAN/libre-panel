@@ -45,11 +45,12 @@ def theme_zip(name="Glow", width=480, height=320) -> bytes:
 
 
 def issue(name="Glow", author="", description="Soft light around the time.", theme=None,
-          consent=True) -> str:  # fmt: skip
+          consent=True, replaces="") -> str:  # fmt: skip
     """An issue as GitHub writes the form's answers."""
     theme = f"[glow.zip]({URL})" if theme is None else theme
     return "\n".join([
         "### Name", "", name or "_No response_", "",
+        "### Replaces", "", replaces or "_No response_", "",
         "### Made by", "", author or "_No response_", "",
         "### What it shows", "", description or "_No response_", "",
         "### The theme", "", theme, "",
@@ -181,6 +182,56 @@ def test_a_checked_theme_goes_beside_the_list_under_a_name_of_its_own(tool, tmp_
     (checked / "theme.zip").write_bytes(theme_zip("Other"))
     with pytest.raises(tool.Refused, match="not the one"):
         tool.add(checked, 15, root)
+
+
+def test_a_new_version_of_a_listed_theme_takes_its_place(tool, tmp_path):
+    """*Replaces* names a listed theme (as the list shows its name, or by its id): the new
+    version goes into that one's folder and its entry, where it was in the list, and the pull
+    request says which one it replaces and to make sure it is theirs to replace. A name the list
+    does not have keeps it out, said in words; without *Replaces* it is a theme of its own."""
+    root = a_list(tmp_path / "repo")
+    for n, name in enumerate(("Glow", "Dusk")):
+        tool.check(issue(name=name), "maker", tmp_path / name,
+                   get=lambda url, limit, name=name: theme_zip(name))  # fmt: skip
+        tool.add(tmp_path / name, 20 + n, root)
+    (root / "community/themes/glow/notes.txt").write_text("of the version before", "utf-8")
+    newer = tmp_path / "newer"
+    checked = tool.check(issue(name="Glow 2", replaces="  glow  "), "maker", newer,
+                         get=lambda url, limit: theme_zip("Glow 2", 1920, 480))  # fmt: skip
+    assert checked["replaces"] == "glow"
+    entry = tool.add(newer, 22, root)
+    assert entry["id"] == "glow" and entry["zip"] == "glow/glow.zip"
+    assert entry["replaced"] == {"name": "Glow", "author": "In the theme", "sizes": ["480x320"]}
+    listed = parse_index((root / "community/themes/index.json").read_bytes())
+    assert [(e["id"], e["name"]) for e in listed] == [("glow", "Glow 2"), ("dusk", "Dusk")]
+    assert listed[0]["sha256"] == hashlib.sha256((newer / "theme.zip").read_bytes()).hexdigest()
+    folder = root / "community/themes/glow"
+    assert sorted(p.name for p in folder.iterdir()) == ["glow.zip", "preview.png"]
+    assert (folder / "glow.zip").read_bytes() == (newer / "theme.zip").read_bytes()
+    text = tool.pull_request_text(entry, 22)
+    assert text.startswith("A new version of the community theme **Glow** by In the theme")
+    assert "1920 × 480" in text and "480 × 320" in text and "Closes #22" in text
+    assert "make sure it is theirs to replace" in text
+    assert "git log -- community/themes/glow" in text
+    # by the name the list shows (any case and spaces), and the command line names it so
+    tool.check(issue(name="Dusk", replaces="DUSK"), "maker", tmp_path / "dusk2",
+               get=lambda url, limit: theme_zip("Dusk"))  # fmt: skip
+    out = tmp_path / "out"
+    out.mkdir()
+    pr, refusal = out / "pr.md", out / "refusal.md"
+    code = tool.main(["add", "--checked", str(tmp_path / "dusk2"), "--number", "23", "--root",
+                      str(root), "--pull-request", str(pr), "--refusal", str(refusal)])  # fmt: skip
+    assert code == 0 and not refusal.exists()
+    assert pr.read_text("utf-8").startswith("A new version of the community theme **Dusk**")
+    assert len(parse_index((root / "community/themes/index.json").read_bytes())) == 2
+    # a name the list does not have: kept out, and nothing changed
+    before = (root / "community/themes/index.json").read_bytes()
+    tool.check(issue(name="Noon", replaces="Midday"), "maker", tmp_path / "noon",
+               get=lambda url, limit: theme_zip("Noon"))  # fmt: skip
+    with pytest.raises(tool.Refused, match="No theme called “Midday”"):
+        tool.add(tmp_path / "noon", 24, root)
+    assert (root / "community/themes/index.json").read_bytes() == before
+    assert not (root / "community/themes/noon").exists()
 
 
 def test_the_form_and_the_workflow_fit_the_tool(tool):
