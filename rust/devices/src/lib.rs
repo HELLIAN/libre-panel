@@ -28,6 +28,7 @@ pub mod scene;
 pub mod serial;
 pub mod serial_panel;
 mod table;
+mod testbus;
 pub mod thermalright;
 pub mod thermaltake;
 pub mod turing_rev_c;

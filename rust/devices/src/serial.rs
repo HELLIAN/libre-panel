@@ -100,7 +100,7 @@ impl Link for SerialPort {
 
 /// The serial ports the system has (list_ports.comports()), in its order.
 pub fn ports() -> Vec<PortInfo> {
-    imp::ports()
+    crate::testbus::ports().unwrap_or_else(imp::ports)
 }
 
 const READ_WAIT: std::time::Duration = std::time::Duration::from_secs(1);

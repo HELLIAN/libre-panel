@@ -259,6 +259,9 @@ impl Found {
 /// find: the devices on the bus with one of these ids, each with its product id, in the order
 /// of `products`.
 pub fn find(vendor: u16, products: &[u16]) -> Result<Vec<Found>> {
+    if crate::testbus::ids().is_some() {
+        return Ok(Vec::new()); // (the tests' bus has none to open: present says what it holds)
+    }
     let devices: Vec<nusb::DeviceInfo> = nusb::list_devices()
         .wait()
         .map_err(|e| DeviceError(format!("the USB devices cannot be listed: {e}")))?
@@ -280,6 +283,12 @@ pub fn find(vendor: u16, products: &[u16]) -> Result<Vec<Found>> {
 /// present: the product id of the first such device on the bus (none is opened); None for
 /// none.
 pub fn present(vendor: u16, products: &[u16]) -> Option<u16> {
+    if let Some(ids) = crate::testbus::ids() {
+        return products
+            .iter()
+            .copied()
+            .find(|product| ids.contains(&(vendor, *product)));
+    }
     find(vendor, products)
         .ok()?
         .first()

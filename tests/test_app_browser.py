@@ -26,6 +26,9 @@ from libre_panel.theme.model import version_base  # noqa: E402
 expect.set_options(timeout=15_000)
 
 
+RUST = os.environ.get("LP_UI_SERVER") == "rust"  # (the Rust app's server: app_url)
+
+
 class AppUrl(str):
     """The address of an app's server and its access token, which the browser is given apart
     from the address (in its fragment) as the window gives it; tests add routes to the address."""
@@ -43,8 +46,11 @@ def no_setup_card(monkeypatch):
 
 @pytest.fixture
 def app_url(request):
-    if os.environ.get("LP_UI_SERVER") == "rust":  # (experiment: the Rust app's server)
+    if RUST:
         home = request.getfixturevalue("isolated_home")
+        # the USB bus and serial ports as the test makes them up (panel_on_the_bus), read by
+        # the program each time it asks
+        request.getfixturevalue("monkeypatch").setenv("LP_TEST_BUS", str(home.parent / "bus"))
         for told in ("github",):  # (what tells the app's program where to go, before it starts)
             if told in request.fixturenames:
                 request.getfixturevalue(told)
@@ -68,41 +74,62 @@ def app_url(request):
     srv.editor_state.close()
 
 
-def _rust_app_url():
-    from test_rust_app import DATA, _libraries, _program
+class _RustApp(AppUrl):
+    """The Rust app's server for a test, started the first time its token is asked for (as
+    the browser opens it): with the environment the test made by then, as the Python app's
+    server sees what a test changed in its process before it asks."""
 
-    # the app's program as conftest.py keeps the Python app: away from this computer's sensors,
-    # its setup, the community's list and its language, until a test brings its own
-    env = {**os.environ, "LIBRE_PANEL_DATA": str(DATA), **_libraries(),
-           "LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}  # fmt: skip
-    env.setdefault("LP_COMMUNITY_INDEX", "http://127.0.0.1:9/community/themes/index.json")
-    env.setdefault("LP_SETUP_SYSTEM", "other")
-    env.setdefault("LP_LINUX_ROOT", "/no/such/root")
-    ours = subprocess.Popen(
-        [str(_program()), "editor", "--port", "0"],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        encoding="utf-8",
-    )
+    process = None
+
+    @property
+    def token(self):
+        if self.process is None:
+            from test_rust_app import DATA, _libraries, _program
+
+            # the program kept as conftest.py keeps the Python app: away from this computer's
+            # sensors, its setup, the community's list and its language, until a test brings
+            # its own
+            english = {"LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}
+            env = {**os.environ, "LIBRE_PANEL_DATA": str(DATA), **_libraries(), **english}
+            env.setdefault("LP_COMMUNITY_INDEX", "http://127.0.0.1:9/community/themes/index.json")
+            env.setdefault("LP_SETUP_SYSTEM", "other")
+            env.setdefault("LP_LINUX_ROOT", "/no/such/root")
+            env.setdefault("LP_TEST_RIGHTS", "user")  # (conftest.py's not_elevated)
+            port = self.split(":")[2].split("/")[0]
+            command = [str(_program()), "editor", "--port", port]
+            self.process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE, encoding="utf-8")  # fmt: skip
+            said = self.process.stdout.readline()
+            self._token = said.split("#token=")[1].split()[0]
+        return self._token
+
+    def stop(self):
+        if self.process is None:
+            return
+        if os.name == "nt":
+            self.process.terminate()
+        else:
+            self.process.send_signal(signal.SIGINT)
+        self.process.communicate(timeout=30)
+
+
+def _rust_app_url():
+    import socket
+
+    with socket.socket() as probe:  # (a port nothing has: the server takes it once it starts)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    url = _RustApp(f"http://127.0.0.1:{port}/")
     try:
-        said = ours.stdout.readline()
-        address = said.split(" running at ")[1].split()[0]
-        url = AppUrl(address.split("#")[0])
-        url.token = address.split("#token=")[1]
         yield url
     finally:
-        if os.name == "nt":
-            ours.terminate()
-        else:
-            ours.send_signal(signal.SIGINT)
-        ours.communicate(timeout=30)
+        url.stop()
 
 
 def server_language(url, language):
     """The app's language as the person sets it in Settings: the Rust app's server is told so
     through its settings; the Python app's speaks the language of its process."""
-    if os.environ.get("LP_UI_SERVER") == "rust":
+    if RUST:
         import urllib.request
 
         body = json.dumps({"language": language}).encode("utf-8")
@@ -3731,9 +3758,10 @@ def test_settings_panel(app_url, isolated_home, monkeypatch):
         detail = page.locator(".panel-found-detail").inner_text()
         assert "USB · 1920 × 480" in detail and "Connected" in detail
         status = page.locator("#main .settings-row-status").first
-        assert status.inner_text() == (
-            "Off for now. Missing: the name of the standby clip, the video program ffmpeg."
-        )
+        # (the Rust app's engine makes the video itself: it needs no ffmpeg for it)
+        lacking = "" if RUST else ", the video program ffmpeg"
+        missing = f"Missing: the name of the standby clip{lacking}."
+        assert status.inner_text() == f"Off for now. {missing}"
         # the clip's name is never made up: the placeholder is no value, and nothing is
         # written until the person types it
         clip = page.get_by_label("Name of the standby clip")

@@ -2,7 +2,9 @@
 what they write to it and what they refuse, with and without the background app."""
 
 import json
+import os
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -568,6 +570,9 @@ def panel_on_the_bus(monkeypatch, model_id=None, serial=None, gadget=None, zc360
         found = get_model(serial)
         port = serial_link.FoundPort("COM7", found, None, (found,))
     monkeypatch.setattr(serial_link, "find_port", lambda model=None, port_name="": port)
+    if bus := os.environ.get("LP_TEST_BUS"):  # (the Rust app's: tests/test_app_browser.py)
+        lines = [f"COM7={serial}"] if serial else [model_id] if model_id else []
+        Path(bus).write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
 
 
 def test_no_panel_found_says_so_and_has_nothing_to_tell_about_video(server, monkeypatch):

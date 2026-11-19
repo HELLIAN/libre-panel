@@ -17,7 +17,14 @@
 use std::path::{Path, PathBuf};
 
 /// Whether this program runs with administrator rights (Windows) or as root (elsewhere).
+/// LP_TEST_RIGHTS is the tests' own: "user" as an ordinary user whoever runs them (a CI
+/// runner on Windows is an administrator, a container is root), "admin" with the highest.
 pub fn elevated() -> bool {
+    match std::env::var("LP_TEST_RIGHTS").as_deref() {
+        Ok("user") => return false,
+        Ok("admin") => return true,
+        _ => {}
+    }
     #[cfg(windows)]
     {
         // SAFETY: a call without arguments.
