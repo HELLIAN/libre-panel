@@ -498,12 +498,21 @@ def test_installed_with_pip_the_card_gives_the_command(app_url, isolated_home): 
 
     choose_theme(isolated_home, "lumen")
     set_config_value("check_updates", True)
-    routes = {"**/api/update*": update_route({**NEW, "download": ""}, kind="python")}
+    wheel = ("https://github.com/syntensa/libre-panel/releases/download/v9.1.0/"
+             "libre_panel-9.1.0-py3-none-manylinux_2_35_x86_64.whl")  # fmt: skip
+    pip = {**NEW, "download": "", "wheel": wheel}
+    routes = {"**/api/update*": update_route(pip, kind="python")}
     with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
         card = page.locator("[data-update='new']")
-        expect(card.locator("code")).to_contain_text("libre-panel@v9.1.0")
+        expect(card.locator("code")).to_have_text(f'pipx install --force "libre-panel @ {wheel}"')
         expect(card.get_by_role("link", name="Download")).to_have_count(0)
         expect(card.get_by_role("link", name="What is new")).to_be_visible()
+    # a release without a wheel for this platform: no command, the page and "Later"
+    routes = {"**/api/update*": update_route({**pip, "wheel": ""}, kind="python")}
+    with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
+        card = page.locator("[data-update='new']")
+        expect(card.get_by_role("link", name="What is new")).to_be_visible()
+        expect(card.locator("code")).to_have_count(0)
 
 
 def test_start_shows_the_panel_the_header_chose_and_the_header_counts_every_panel(
