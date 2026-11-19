@@ -637,7 +637,9 @@ jobs:
             "$app" render --demo --theme lumen --output "$home/frame.png"
           python -c "from PIL import Image; f = Image.open(r'$home/frame.png'); assert f.size == (1920, 480), f.size"
           "$app" version
-          LIBRE_PANEL_HOME="$home" "$app" doctor | grep "engine here"
+          # (doctor's own verdict is no matter here: without a panel it says a check failed)
+          LIBRE_PANEL_HOME="$home" "$app" doctor > "$home/doctor.txt" || true
+          grep "engine here" "$home/doctor.txt"
           test -f "$RUNNER_TEMP/installed/libre-panel/sensors/libre-panel-sensors.exe"
           python packaging/check_plugin_host.py --app "$app"
           # (as pipx without symbolic links: the command copied into a folder of its own)
@@ -778,13 +780,16 @@ jobs:
             "$app" render --demo --theme lumen --output "$home/frame.png"
           python -c "from PIL import Image; f = Image.open('$home/frame.png'); assert f.size == (1920, 480), f.size"
           "$app" version
-          LIBRE_PANEL_HOME="$home" "$app" doctor | grep "engine here"
+          # (doctor's own verdict is no matter here: without a panel it says a check failed)
+          LIBRE_PANEL_HOME="$home" "$app" doctor > "$home/doctor.txt" || true
+          grep "engine here" "$home/doctor.txt"
           python packaging/check_plugin_host.py --app "$app"
           # (as pipx links it: the app finds its files from where the link leads)
           mkdir -p "$RUNNER_TEMP/linked" && ln -s "$app" "$RUNNER_TEMP/linked/libre-panel"
           LIBRE_PANEL_HOME="$home" "$RUNNER_TEMP/linked/libre-panel" render --demo --theme arena \
             --output "$home/linked.png"
-          LIBRE_PANEL_HOME="$home" "$RUNNER_TEMP/linked/libre-panel" doctor | grep "engine here"
+          LIBRE_PANEL_HOME="$home" "$RUNNER_TEMP/linked/libre-panel" doctor > "$home/linked.txt" || true
+          grep "engine here" "$home/linked.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: libre-panel-rust-appimage

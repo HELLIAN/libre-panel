@@ -99,9 +99,10 @@
   takes the app's, and its folder is 12.5 MB smaller (103.3 instead of 115.7 MB on Linux). In
   the repository these files are in `data`, which both apps read, and an install from it puts
   them in `share/libre-panel`; the version is set in `pyproject.toml` alone.
-- **pip and pipx install the Rust app.** A release now carries two wheels, one for Linux and one
-  for Windows, with the app as its downloads carry it: its programs, the engine, Libre Panel's
-  files, on Linux the libraries it draws with, on Windows the sensor service. The Python
+- **pip and pipx install the Rust app.** A release now carries two wheels, one for Linux
+  (27.8 MB) and one for Windows (36.5 MB), with the app as its downloads carry it: its programs,
+  the engine, Libre Panel's files, on Linux the libraries it draws with, on Windows the sensor
+  service. The Python
   package in them is only the plugin host's. pipx installs them as any wheel (`pipx install
   "libre-panel @ <the wheel's link>"`), and the app's update card shows that command with the
   new version's wheel. Until now pip and pipx installed the Python app.

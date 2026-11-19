@@ -554,7 +554,7 @@ def test_ci_builds_and_tries_both_wheels_and_the_release_carries_them():
         steps = job(ci, name)
         made = steps.index("python packaging/platform_wheel.py")
         assert platform in steps[made : made + 200], name
-        tries = ("render --demo --theme lumen", '"$app" version', 'doctor | grep "engine here"',
+        tries = ("render --demo --theme lumen", '"$app" version', 'grep "engine here"',
                  'python packaging/check_plugin_host.py --app "$app"')  # fmt: skip
         for tried in tries:
             assert made < steps.index(tried, made), (name, tried)
