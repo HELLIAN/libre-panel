@@ -99,6 +99,14 @@
   takes the app's, and its folder is 12.5 MB smaller (103.3 instead of 115.7 MB on Linux). In
   the repository these files are in `data`, which both apps read, and an install from it puts
   them in `share/libre-panel`; the version is set in `pyproject.toml` alone.
+- **The plugin host loads a third of what it did.** The Rust app runs no Python itself; where
+  plugins are installed, it starts a process of their own for them, the plugin host. That host
+  loaded the Python app's renderer to draw a plugin's widget types and screen; it now draws
+  them with what they need alone, and the app gives their pieces a widget's opacity, shadow
+  and glow as it gives its own widgets (and keeps the result while the plugin draws the same
+  piece). Over the plugin tests the host loaded 18 of Libre Panel's modules (6,536 lines)
+  instead of 55 (30,277), and took 23–34 MB at its peak instead of 44–54 MB; the pixels are
+  the same as before.
 - **pip and pipx install the Rust app.** A release now carries two wheels, one for Linux
   (27.8 MB) and one for Windows (36.5 MB), with the app as its downloads carry it: its programs,
   the engine, Libre Panel's files, on Linux the libraries it draws with, on Windows the sensor

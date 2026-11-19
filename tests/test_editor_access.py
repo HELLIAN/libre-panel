@@ -540,11 +540,9 @@ def test_root_and_an_administrator_are_elevated(monkeypatch):
     monkeypatch.delattr(rights.os, "geteuid", raising=False)  # no such thing there
     assert real_elevated() is False
 
-    from libre_panel import autostart
-
     monkeypatch.setattr(rights.sys, "platform", "win32")
     for answer in (True, False):
-        monkeypatch.setattr(autostart, "is_admin", lambda answer=answer: answer)
+        monkeypatch.setattr(rights, "is_admin", lambda answer=answer: answer)
         assert real_elevated() is answer
 
 

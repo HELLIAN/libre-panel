@@ -245,14 +245,14 @@ class Host:
         """What Settings lists of the plugins (editor/settings.py's _catalog): each service with
         where it came from, why it does not load and the options it declares; each sensor
         source with where it came from."""
-        from libre_panel.editor.settings import _declared
+        from libre_panel.plugins.host import declared_options
 
         services = []
         for name, found in self.registry.parts.get("services", {}).items():
             cls = self.registry.get("services", name)
             services.append({"name": name, "source": found.source,
                              "error": found.error if cls is None else "",
-                             "options": _declared(cls)})  # fmt: skip
+                             "options": declared_options(cls)})  # fmt: skip
         found_sensors = sorted(self.registry.parts.get("sensors", {}).items())
         sensors = [{"name": name, "source": found.source} for name, found in found_sensors]
         return {"services": services, "sensors": sensors}
@@ -391,31 +391,32 @@ class Host:
         return editor_specs(self.registry)
 
     def draw_open(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
-        """A renderer for a theme of the Rust app's (its size, palette, font, model, folder and
+        """A drawing for a theme of the Rust app's (its size, palette, font, model, folder and
         screen as the app has it, dressed): the plugins' widget types and the screen are drawn
-        with it, as the Python app's renderer draws them."""
-        from libre_panel.theme.model import DEFAULT_FONT, Theme
+        with it (plugins/drawing.py)."""
+        from libre_panel.fonts import DEFAULT_FONT
+        from libre_panel.plugins.drawing import PluginTheme
 
         told = message["theme"]
-        theme = Theme(name=told.get("name", ""), width=int(told["width"]),
-                      height=int(told["height"]), widgets=[],
-                      model=told.get("model") or "custom", palette=dict(told.get("palette") or {}),
-                      font=told.get("font") or DEFAULT_FONT, screen=told.get("screen"),
-                      root=Path(told["root"]) if told.get("root") else None)  # fmt: skip
+        theme = PluginTheme(name=told.get("name", ""), width=int(told["width"]),
+                            height=int(told["height"]), model=told.get("model") or "custom",
+                            palette=dict(told.get("palette") or {}),
+                            font=told.get("font") or DEFAULT_FONT, screen=told.get("screen"),
+                            root=Path(told["root"]) if told.get("root") else None)  # fmt: skip
         renderer = _host_renderer(self)(theme, animate=bool(message.get("animate")),
-                                        preview=bool(message.get("preview")))  # fmt: skip
+                                       preview=bool(message.get("preview")))  # fmt: skip
         ident = next(self._drawing_ids)
         self.drawings[ident] = _Drawing(renderer)
         return {"drawing": ident, "screen": renderer.screen is not None,
                 "warnings": _warnings(renderer)}  # fmt: skip
 
     def draw_widget(self, message: dict[str, Any], blob: bytes) -> tuple[dict, bytes]:
-        """A plugin widget type's piece of ``widget`` (renderer._draw_plugin, its effects
-        applied); ``same`` where it is the piece it gave last for that widget."""
+        """A plugin widget type's piece of ``widget`` as it drew it (the app gives it the
+        widget's effects); ``same`` where it is the piece it gave last for that widget."""
         drawing = self.drawings[message["drawing"]]
         renderer, snapshot, now = drawing.begin(message, blob)
         widget = message["widget"]
-        piece = renderer._draw_plugin(widget, snapshot, now)
+        piece = renderer.widget_piece(widget, snapshot, now)
         told: dict[str, Any] = {"moving": renderer.moving, "warnings": _warnings(renderer)}
         if piece is None:
             drawing.last.pop(widget["id"], None)
@@ -426,10 +427,10 @@ class Host:
         return _piece(piece, told)
 
     def draw_screen(self, message: dict[str, Any], blob: bytes) -> tuple[dict, bytes]:
-        """The screen's picture of this frame (renderer._screen_image), RGB or RGBA."""
+        """The screen's picture of this frame, RGB or RGBA."""
         drawing = self.drawings[message["drawing"]]
         renderer, snapshot, now = drawing.begin(message, blob)
-        image = renderer._screen_image(snapshot, now) if renderer.screen is not None else None
+        image = renderer.screen_image(snapshot, now) if renderer.screen is not None else None
         told: dict[str, Any] = {"moving": renderer.moving, "warnings": _warnings(renderer)}
         if image is None:
             return {**told, "image": None}, b""
@@ -607,13 +608,13 @@ _HOST_RENDERERS: dict[int, type] = {}
 
 
 def _host_renderer(host: Host) -> type:
-    """The renderer the host draws plugins with: Python's, but the frame shown and the toast
+    """What the host draws plugins with (plugins/drawing.py): the frame shown and the toast
     on show (context.shown, context.toast) are asked of the app when a plugin reads them,
     once a request."""
     made = _HOST_RENDERERS.get(id(host))
     if made is not None:
         return made
-    from libre_panel.render.renderer import Renderer
+    from libre_panel.plugins.drawing import PluginRenderer
 
     def asked(renderer: Any, what: str, make: Any) -> Any:
         kept = renderer.__dict__.setdefault("_asked", {})
@@ -622,7 +623,7 @@ def _host_renderer(host: Host) -> type:
             kept[what] = (host.asked, make(value, blob))
         return kept[what][1]
 
-    class HostRenderer(Renderer):
+    class HostRenderer(PluginRenderer):
         @property
         def shown(self) -> Any:
             return asked(self, "shown", _frame_of)
@@ -645,8 +646,9 @@ def _host_renderer(host: Host) -> type:
 
 
 class _Drawing:
-    """A renderer the Rust app draws plugins with, what it gave last, and the pictures of the
-    readings it was sent (by key: their fingerprint and picture)."""
+    """What the Rust app draws plugins with for a theme (plugins/drawing.py's PluginRenderer),
+    what it gave last, and the pictures of the readings it was sent (by key: their fingerprint
+    and picture)."""
 
     def __init__(self, renderer: Any) -> None:
         self.renderer = renderer
@@ -873,24 +875,10 @@ def _warnings(renderer: Any) -> list[str]:
     return said
 
 
-def _piece(piece: Any, told: dict[str, Any]) -> tuple[dict[str, Any], bytes]:
-    """A piece as its place and layers (RGBA, then the backdrop's L mask and the light's RGBA
-    where it has them), their pixels one after another."""
-    layer = piece.layer if piece.layer.mode == "RGBA" else piece.layer.convert("RGBA")
-    data = bytearray(layer.tobytes())
-    made: dict[str, Any] = {"x": piece.x, "y": piece.y, "size": list(layer.size),
-                            "box": list(piece.box) if piece.box is not None else None,
-                            "add": piece.add}  # fmt: skip
-    if piece.backdrop is not None:
-        mask = piece.backdrop.convert("L")
-        made["backdrop"] = {"size": list(mask.size), "radius": piece.backdrop_radius}
-        data += mask.tobytes()
-    if piece.light is not None:
-        light = piece.light.layer.convert("RGBA")
-        made["light"] = {"x": piece.light.x, "y": piece.light.y, "size": list(light.size),
-                         "add": piece.light.add}  # fmt: skip
-        data += light.tobytes()
-    return {**told, "piece": made}, bytes(data)
+def _piece(piece: tuple[Any, int, int], told: dict[str, Any]) -> tuple[dict[str, Any], bytes]:
+    """A widget type's piece (its RGBA layer and place) as its place and size, its pixels."""
+    layer, x, y = piece
+    return {**told, "piece": {"x": x, "y": y, "size": list(layer.size)}}, layer.tobytes()
 
 
 ANSWER_S = 30  # (as long as the app waits for an answer)
@@ -1050,13 +1038,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _warm() -> None:
-    """The renderer's modules imported while the app asks for the catalog: their first import
-    (Pillow, the fonts, the widgets) takes long where a virus scanner reads every file, and the
-    app's first drawing should not wait for it."""
+    """What drawing imports, imported while the app asks for the catalog: its first import
+    (Pillow, the fonts) takes long where a virus scanner reads every file, and the app's first
+    drawing should not wait for it."""
     try:
-        import libre_panel.render.overlays  # noqa: F401
-        import libre_panel.render.renderer  # noqa: F401
-        import libre_panel.render.transitions  # noqa: F401
+        import libre_panel.plugins.drawing  # noqa: F401
+        import libre_panel.plugins.render  # noqa: F401
     except Exception:  # noqa: BLE001 - what fails here fails again where it is used, and is said
         logging.getLogger(__name__).debug("warming up failed", exc_info=True)
 

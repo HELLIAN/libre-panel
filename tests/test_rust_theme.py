@@ -18,7 +18,7 @@ from typing import Any
 
 from rust_check import run
 
-from libre_panel import config, design, fonts, icons
+from libre_panel import cards, config, design, fonts, icons
 from libre_panel.devices import models as devices
 from libre_panel.render import finish, lit
 from libre_panel.render.overlays import BUILT_IN_STYLES
@@ -83,7 +83,7 @@ def test_the_format_s_tables_and_the_panel_models_are_python_s() -> None:
         "GONE_LOOK": sorted(model.GONE_LOOK),
         "CARDS": list(modules.CARDS),
         "BACKDROPS": list(modules.BACKDROPS),
-        "MODULE_KINDS": list(modules.MODULE_KINDS),
+        "MODULE_KINDS": list(cards.MODULE_KINDS),
         "MODULE_SOURCES": list(modules.MODULE_SOURCES),
         "MODULE_FALLBACKS": list(modules.MODULE_FALLBACKS),
         "SYMBOL_PACKS": list(config.SYMBOL_PACKS),

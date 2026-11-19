@@ -102,9 +102,9 @@ class PageContext:
         cannot be told from the person's, and what it asks for is done with those rights: a page
         then leaves what names a program, a library or a file to config.toml, as the app's own
         settings do (``editor/settings.py``), and does not start or write what a request names."""
-        from libre_panel.editor import access
+        from libre_panel import rights
 
-        return access.elevated()
+        return rights.elevated()
 
     @property
     def config_path(self) -> Path:

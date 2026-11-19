@@ -48,7 +48,7 @@ pub const MOST_PIXELS: i64 = 1 << 28;
 pub const COVER_COLOR: &str = "@cover";
 /// A need on one of the theme's switches: "switch.frames".
 const SWITCH: &str = "switch.";
-/// The modules that show one card of several (theme/modules.py's SLOT_KINDS).
+/// The modules that show one card of several (libre_panel/cards.py's SLOT_KINDS).
 const SLOT_KINDS: [&str; 2] = ["cards", "netcard"];
 
 /// How a renderer draws: as the editor's preview or a picture (not the panel), with what moves
@@ -129,6 +129,10 @@ pub(crate) enum Drawn {
 
 /// The widgets a renderer draws, kept behind Rcs.
 pub type Widgets = Rc<Vec<Rc<Dict>>>;
+
+/// A plugin widget's piece as its host drew it, the widget, and the piece with the widget's
+/// effects.
+type PluginPiece = (Rc<Piece>, Rc<Dict>, Rc<Piece>);
 
 /// A box as getbbox gives it: left, top, right, bottom.
 pub type Bbox = (f64, f64, f64, f64);
@@ -274,8 +278,11 @@ pub struct Renderer {
     /// what draws the plugins' widget types and screen (the app's plugin host); None: a frame
     /// that holds one is not made here
     pub plugins: Option<Rc<dyn crate::plugin::Plugins>>,
+    /// the plugin widgets' pieces with their effects, by widget id (_cached's): kept while the
+    /// host gives the same piece for the same widget
+    plugin_pieces: HashMap<String, PluginPiece>,
     /// the frame the panel showed last and the toast on show with its age (the loop sets them,
-    /// for the plugins: Python's renderer.shown and renderer.toast)
+    /// for the plugins: their drawing's shown and toast, plugins/drawing.py)
     pub shown: Option<Rc<Image>>,
     pub toast: Option<(Rc<crate::overlays::Toast>, f64)>,
     /// the screen's last picture and its piece (_screen_last): the same picture is not
@@ -474,6 +481,7 @@ impl Renderer {
             tint: None,
             sample: (0.0, 1.0),
             plugins: None,
+            plugin_pieces: HashMap::new(),
             shown: None,
             screen_last: None,
             grid: None,
@@ -2103,7 +2111,7 @@ impl Renderer {
                             .warnings
                             .into_iter()
                             .for_each(|said| self.warn(said));
-                        drawing.made.map_or(Drawn::Nothing, Drawn::Piece)
+                        self.plugin_piece(w, drawing.made)
                     }
                     Err(e) => Drawn::Failed(Failed(e)),
                 };
@@ -2117,6 +2125,31 @@ impl Renderer {
                 Err(e) => Drawn::Failed(e),
             },
             Ok(piece) => Drawn::Piece(piece),
+            Err(e) => Drawn::Failed(e),
+        }
+    }
+
+    /// A plugin widget's piece with the widget's effects (its opacity, shadow and glow, as
+    /// _cached gives a widget's piece): made again only where the host drew anew or the widget
+    /// changed, so that an unchanged piece stays the same piece (not composed again).
+    fn plugin_piece(&mut self, w: &Rc<Dict>, made: Option<Rc<Piece>>) -> Drawn {
+        let id = widget::text(w, "id").to_string();
+        let Some(raw) = made else {
+            self.plugin_pieces.remove(&id);
+            return Drawn::Nothing;
+        };
+        if let Some((was, widget_was, done)) = self.plugin_pieces.get(&id) {
+            if Rc::ptr_eq(was, &raw) && (Rc::ptr_eq(widget_was, w) || **widget_was == **w) {
+                return Drawn::Piece(Rc::clone(done));
+            }
+        }
+        match self.effects(w, (*raw).clone()) {
+            Ok(done) => {
+                let done = Rc::new(done);
+                self.plugin_pieces
+                    .insert(id, (raw, Rc::clone(w), Rc::clone(&done)));
+                Drawn::Piece(done)
+            }
             Err(e) => Drawn::Failed(e),
         }
     }
@@ -2881,5 +2914,69 @@ impl Renderer {
         }
         self.behind[k] = Some(Vec::new());
         Ok(Rc::clone(self.frames[k].as_ref().expect("laid above")))
+    }
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use super::*;
+
+    fn renderer() -> Renderer {
+        let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/fonts");
+        let env = Env { fonts_dir };
+        let data = lp_py::json::loads(
+            r#"{"format": "libre-panel-theme/1", "name": "t",
+                "display": {"width": 64, "height": 32}, "widgets": []}"#,
+        )
+        .expect("a theme's data");
+        let theme = lp_theme::parse_theme(&data, None, &env).expect("a theme");
+        Renderer::new(theme, &env, Options::default()).expect("a renderer")
+    }
+
+    fn widget(text: &str) -> Rc<Dict> {
+        match lp_py::json::loads(text).expect("a widget") {
+            Value::Dict(dict) => Rc::new(dict),
+            other => panic!("no widget: {other:?}"),
+        }
+    }
+
+    fn drawn(made: Drawn) -> Rc<Piece> {
+        match made {
+            Drawn::Piece(piece) => piece,
+            _ => panic!("no piece"),
+        }
+    }
+
+    #[test]
+    fn a_plugin_s_piece_gets_its_widget_s_effects_once_while_it_stays_the_same() {
+        let mut r = renderer();
+        let raw = Rc::new(Piece::new(
+            Image::new(Mode::RGBA, 8, 6, &[255, 255, 255, 255]),
+            10,
+            4,
+        ));
+        let glowing = widget(r#"{"type": "t.box", "id": "p", "x": 10, "y": 4, "glow": 0.5}"#);
+        let first = drawn(r.plugin_piece(&glowing, Some(Rc::clone(&raw))));
+        // the glow round it, as _effects gives it (glow_radius 10: 20 pixels on every side)
+        assert_eq!(first.size(), (48, 46));
+        assert_eq!((first.x, first.y), (-10, -16));
+        assert_eq!(first.hit, Some([10, 4, 8, 6]));
+        // the same piece for the same widget (another Rc of it, the same fields): the same piece
+        // with its effects, not made again
+        let same = widget(r#"{"type": "t.box", "id": "p", "x": 10, "y": 4, "glow": 0.5}"#);
+        let again = drawn(r.plugin_piece(&same, Some(Rc::clone(&raw))));
+        assert!(Rc::ptr_eq(&first, &again));
+        // a new piece, or the widget changed: made again
+        let redrawn = Rc::new((*raw).clone());
+        assert!(!Rc::ptr_eq(
+            &first,
+            &drawn(r.plugin_piece(&glowing, Some(redrawn)))
+        ));
+        let plain = widget(r#"{"type": "t.box", "id": "p", "x": 10, "y": 4}"#);
+        let flat = drawn(r.plugin_piece(&plain, Some(Rc::clone(&raw))));
+        assert_eq!((flat.size(), flat.x, flat.y), ((8, 6), 10, 4));
+        // nothing drawn: nothing kept
+        assert!(matches!(r.plugin_piece(&plain, None), Drawn::Nothing));
+        assert!(r.plugin_pieces.is_empty());
     }
 }

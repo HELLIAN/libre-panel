@@ -14,7 +14,7 @@ import { Field, IconButton, NumberField, Segmented, Select, Toggle } from "../..
 const DEFAULT_CARDS = ["playback", "ai", "forecast", "date"];
 export const TURN_MINUTES = 5; // a card's turn when its line names none (the slot's turn)
 
-/** The card a line names: "forecast for 5m" → "forecast" (theme.modules card_line). */
+/** The card a line names: "forecast for 5m" → "forecast" (cards.py card_line). */
 export const cardOfLine = (line) => String(line).split("#")[0].split(" if ")[0].split(" for ")[0].trim();
 
 /** The minutes of a line's own turn ("forecast for 5m" → 5, "for 90s" → 1.5), else null. */
@@ -35,7 +35,7 @@ export function lineWith(line, minutes) {
   return [`${card} for ${time}`, ...rule].join(" if ");
 }
 
-/** How a slot shows its cards (theme.modules CARD_ORDERS). */
+/** How a slot shows its cards (cards.py CARD_ORDERS). */
 export const ORDERS = () => [
   { value: "first", label: t("first with something to show") },
   { value: "turns", label: t("in turn") },

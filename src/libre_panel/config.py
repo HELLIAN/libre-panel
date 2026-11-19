@@ -49,7 +49,7 @@ DEFAULT_SYMBOLS = "vivid"
 # The cards a card slot that leaves them to the person holds (Lumen's, in each of its versions:
 # config.toml ``cards``, theme.modules with_cards), in the order they are asked: the first
 # that has something to show is on show, or with ``card_order = "turns"`` each in turn for its
-# time ("forecast for 5m"; theme.modules CARD_ORDERS, CARD_TRANSITIONS)
+# time ("forecast for 5m"; cards.py CARD_ORDERS, CARD_TRANSITIONS)
 DEFAULT_CARDS = ("playback", "ai", "forecast", "date")
 
 _DEFAULT_CONFIG_TEMPLATE = """\
@@ -445,6 +445,29 @@ LOG_FILENAME = "libre-panel.log"
 def log_file() -> Path:
     """The log of the tray app (its "Open log"); the editor's pages read it too."""
     return config_dir() / "logs" / LOG_FILENAME
+
+
+# What config.toml's [video] may choose (devices/h264.py does as they say):
+X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium")
+# "auto": high where it was measured to show (h264's HIGH_PROFILE_MODELS), baseline elsewhere;
+# main and high ask more of the panel's decoder, and compress better.
+PROFILES = ("auto", "baseline", "main", "high")
+# "auto": Libre Panel's engine (NATIVE) where the download carries it (auto_engine), for the
+# frames Libre Panel draws; else the graphics card's encoder where it was measured to show and
+# ffmpeg can start it (h264's AUTO_ENCODERS, in that order), else x264 on the processor.
+# NVIDIA's and Intel's are an experiment.
+ENCODERS = ("auto", "libx264", "native", "h264_nvenc", "h264_amf", "h264_qsv")
+# The encoder inside the engine (video.encoder "native"): "auto" the graphics card's own where it
+# is AMD's or NVIDIA's (engine/src/encoder.rs's proven) and opens, else x264; "x264"
+# on the processor; "card" the graphics card's whichever it is, through Windows' Media
+# Foundation (engine/src/mf.rs), x264 where that cannot start. The cards' are Windows' only.
+ENGINE_ENCODERS = ("auto", "x264", "card")
+# Who turns the frames into YUV (video.pixels): "auto" the graphics card where the colour check
+# found it converting as the processor does on this PC (card_choice.py), else ffmpeg on the
+# processor, the frames four bytes a pixel as Pillow keeps them (rgb0); "card" the card (h264's
+# CARD_ENCODERS; the others as the processor); "rgb" the processor, fed three bytes a pixel
+# (rgb24), the way of before. Inside, the processor's way of "auto" is "processor".
+PIXELS = ("auto", "rgb", "card")
 
 
 @dataclass
@@ -1044,7 +1067,7 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
     if "cards" in data:
         cfg.cards = card_choice(data["cards"], "cards")
     if "card_order" in data or "card_transition" in data:
-        from libre_panel.theme.modules import CARD_ORDERS, CARD_TRANSITIONS
+        from libre_panel.cards import CARD_ORDERS, CARD_TRANSITIONS
 
         for key, allowed in (("card_order", CARD_ORDERS), ("card_transition", CARD_TRANSITIONS)):
             if key in data:
@@ -1358,8 +1381,6 @@ _MAXRATE = re.compile(r"^(auto|[0-9]+(\.[0-9]+)?[kKM]?)$")
 
 
 def _parse_video(v: dict[str, Any]) -> VideoConfig:
-    from libre_panel.devices.h264 import ENCODERS, ENGINE_ENCODERS, PIXELS, PROFILES, X264_PRESETS
-
     video = VideoConfig()
     video.mode = _expect(v.get("mode", video.mode), str, "video.mode")
     if video.mode not in ("auto", "off", "on"):
@@ -1460,9 +1481,9 @@ _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 def card_choice(value: Any, where: str) -> list[str]:
     """The cards of the card slots, as config.toml's ``cards`` has them: a list of the cards'
-    names (theme.modules CARD_NAMES), each once, one at least, each with the time of its turn
-    if it has one of its own (``"forecast for 5m"``, theme.modules card_line)."""
-    from libre_panel.theme.modules import TURN_S, card_line
+    names (cards.py CARD_NAMES), each once, one at least, each with the time of its turn if it
+    has one of its own (``"forecast for 5m"``, cards.py card_line)."""
+    from libre_panel.cards import TURN_S, card_line
 
     lines = _expect(value, list, where)
     cards: list[str] = []

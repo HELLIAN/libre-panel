@@ -42,11 +42,19 @@ _WINDOWS_FOLDERS = (
 )
 
 
+def is_admin() -> bool:
+    """Whether this process runs with administrator rights (Windows)."""
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
 def elevated() -> bool:
     """Whether this program runs with administrator rights (Windows) or as root (elsewhere)."""
     if sys.platform == "win32":
-        from libre_panel.autostart import is_admin
-
         return is_admin()
     geteuid = getattr(os, "geteuid", None)
     return geteuid is not None and geteuid() == 0

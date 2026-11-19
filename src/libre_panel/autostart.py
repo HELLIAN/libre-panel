@@ -35,6 +35,7 @@ from xml.sax.saxutils import escape
 
 from libre_panel.datadir import DATA
 from libre_panel.i18n import t
+from libre_panel.rights import is_admin
 
 APP_NAME = "Libre Panel"
 DESKTOP_FILE = "libre-panel.desktop"
@@ -190,16 +191,6 @@ class WindowsTasks:
         result = self._run("/Delete", "/TN", name, "/F")
         if result.returncode:
             raise AutostartError((result.stderr or result.stdout).strip())
-
-
-def is_admin() -> bool:
-    """Whether this process runs with administrator rights (Windows)."""
-    try:
-        import ctypes
-
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except (AttributeError, OSError):
-        return False
 
 
 def task_xml(command: list[str], user: str) -> str:

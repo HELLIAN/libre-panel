@@ -38,7 +38,11 @@ below), so that the work can be picked up where it stands.
 - **Python plugins run in a program of their own**, the plugin host (stage R10): Python with
   Libre Panel's package, in the downloads beside the app, started only where plugin folders are
   installed. Every kind of part works as in the Python app; the app and the host speak
-  through a pipe.
+  through a pipe. The host loads of the package only the plugin API and what that stands on
+  (tests/test_plugin_host.py names those modules): it draws with a small drawing of its own
+  (plugins/drawing.py), not Python's renderer, and the app gives a widget type's piece its
+  widget's effects. Over test_rust_plugins.py it loads 18 of the package's modules (6,536
+  lines) where it loaded 55 (30,277).
 - **pip and pipx install the Rust app**: a release carries a wheel for Linux and one for Windows
   (packaging/platform_wheel.py) with the app as its downloads carry it: the programs, the
   engine and its licences in `tools`, Libre Panel's files in `share/libre-panel`, on Linux
@@ -2607,11 +2611,14 @@ word of the app's language in one of its fonts, so a host that does not find the
 - [x] services: started, stopped and restarted as ServiceManager does it, with the events of
       the app's host (samples with their snapshot, the mode); what they publish, their states,
       pictures, themes and modes asked for, and their toasts with the app's answer
-- [x] widget types and screens: drawn by Python's renderer for the theme as the app has it
-      (its palette, fonts, size, readings and their pictures, the frame's rate and progress),
-      the piece with its effects handed back and kept while it stays the same; themes checked
-      against the fields the plugins declare (lp-theme's plugins). The same pixels as the
-      Python app's frame
+- [x] widget types and screens: drawn in the host for the theme as the app has it (its
+      palette, fonts, size, readings and their pictures, the frame's rate and progress) by
+      plugins/drawing.py, which gives a plugin's context what Python's renderer gave it, without
+      that renderer; a widget type's piece handed back as it drew it and kept while it stays the
+      same, the widget's effects (opacity, shadow, glow) the app's renderer's, as on its own
+      widgets (Renderer::effects), made again only when the piece or the widget changed; themes
+      checked against the fields the plugins declare (lp-theme's plugins). The same pixels as
+      the Python app's frame
 - [x] transitions and toast styles: played in the host with the new theme's context (the old
       frame sent once, each new one after it; the toast with the one it replaced), with how a
       switch goes while one plays and how long a toast holds and lives

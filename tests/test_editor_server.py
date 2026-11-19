@@ -9,13 +9,13 @@ import pytest
 from editor_token import token_of
 from fake_hardware import PC, TIDY
 
+from libre_panel.cards import MODULE_KINDS
 from libre_panel.config import load_config
 from libre_panel.devices.panel_files import STANDBY_CLIP
 from libre_panel.editor import access
 from libre_panel.editor.server import make_server
 from libre_panel.sensors import hardware
 from libre_panel.theme.model import find_theme, load_theme
-from libre_panel.theme.modules import MODULE_KINDS
 
 
 @pytest.fixture

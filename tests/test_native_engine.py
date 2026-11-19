@@ -14,6 +14,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageStat
 from test_video import decode, needs_ffmpeg, panel, settle, video_config  # noqa: F401
 from test_yuv import moving_square, stream
 
+from libre_panel.config import ENCODERS, ENGINE_ENCODERS
 from libre_panel.devices import h264
 from libre_panel.devices.turzx_video import TurzxVideoDisplay
 from libre_panel.devices.yuv import YuvFrame
@@ -50,7 +51,7 @@ def test_the_engine_encodes_drawn_frames_as_x264_through_ffmpeg_would():
     settings = h264.EncoderSettings(fps=50, encoder=h264.NATIVE, full=True)
     full = h264.engine_command("engine", (1920, 480), 270, settings)
     assert full[-1] == "--full" and "--kbit 2000" in " ".join(full)
-    assert "native" in h264.ENCODERS
+    assert "native" in ENCODERS
     settings = h264.EncoderSettings(fps=50, encoder=h264.NATIVE, engine_encoder="card")
     card = h264.engine_command("engine", (1920, 480), 270, settings)
     assert card[card.index("--encoder") + 1] == "card"
@@ -62,7 +63,7 @@ def test_the_engine_s_encoder_is_the_card_s_where_proven_on_windows_and_x264_els
     others); elsewhere x264 as before, without the option (the engine's own default). "x264"
     never passes it."""
     settings = h264.EncoderSettings(fps=50, encoder=h264.NATIVE)
-    assert settings.engine_encoder == "auto" and h264.ENGINE_ENCODERS[0] == "auto"
+    assert settings.engine_encoder == "auto" and ENGINE_ENCODERS[0] == "auto"
     windows = h264.engine_options((1920, 480), 270, settings, platform="win32")
     assert windows[windows.index("--encoder") + 1] == "auto"
     assert "--encoder" not in h264.engine_options((1920, 480), 270, settings, platform="linux")

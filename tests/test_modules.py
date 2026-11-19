@@ -2,6 +2,7 @@
 
 import pytest
 
+from libre_panel.cards import MODULE_KINDS
 from libre_panel.render.renderer import Renderer
 from libre_panel.sensors.base import Reading
 from libre_panel.sensors.demo import demo_snapshot
@@ -9,7 +10,6 @@ from libre_panel.theme.model import ThemeError, parse_theme
 from libre_panel.theme.modules import (
     LOOKS,
     MIN_CELL,
-    MODULE_KINDS,
     ROLES,
     expand,
     look_theme_parts,

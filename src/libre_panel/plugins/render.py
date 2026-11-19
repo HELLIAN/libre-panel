@@ -108,7 +108,7 @@ class RenderContext:
     @property
     def supersample(self) -> int:
         """Draw this much larger, then :meth:`downsample`: smooth edges."""
-        from libre_panel.render.renderer import SUPERSAMPLE
+        from libre_panel.plugins.drawing import SUPERSAMPLE
 
         return SUPERSAMPLE
 

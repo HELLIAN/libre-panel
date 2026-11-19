@@ -21,6 +21,7 @@ from typing import Any
 
 from PIL import ImageColor
 
+from libre_panel.cards import MODULE_KINDS
 from libre_panel.config import FAN_LOOKS, FAN_PAINTS, SYMBOL_PACKS, user_themes_dir
 from libre_panel.datadir import DATA
 from libre_panel.devices.models import find_model, orientation_of
@@ -32,7 +33,6 @@ from libre_panel.theme.modules import (
     GRID_CELLS,
     GRID_DEFAULTS,
     MODULE_FALLBACKS,
-    MODULE_KINDS,
     MODULE_SOURCES,
     STYLE_DEFAULTS,
 )
@@ -463,7 +463,7 @@ WIDGET_SPECS: dict[str, dict[str, tuple[str, Any]]] = {
         "slide": ("number", 0),
         # a card slot: which card is on show, the first with something to show or each in
         # turn for ``turn`` minutes (a line's own time first: "forecast for 5m"), and how it
-        # goes from one card to the next (theme.modules CARD_ORDERS, CARD_TRANSITIONS)
+        # goes from one card to the next (cards.py CARD_ORDERS, CARD_TRANSITIONS)
         "order": ("enum:first|turns", "first"),
         "turn": ("number", 5.0),
         "transition": ("enum:light|fade|slide|rise|wipe|cut|random", "light"),
@@ -770,20 +770,6 @@ def _coerce(kind: str, value: Any, where: str, palette: dict[str, str] | None = 
     if not isinstance(value, str):
         raise ThemeError(f"{where}: expected a string")
     return value
-
-
-_BASE_KINDS = {
-    "int", "number", "bool", "color", "icon", "rules",
-    "string", "text", "sensor", "format", "font", "asset",
-}  # fmt: skip
-
-
-def valid_kind(kind: Any) -> bool:
-    """A field kind the loader and the editor know (plugins declare their fields with these)."""
-    if not isinstance(kind, str):
-        return False
-    base = kind.rstrip("?")
-    return base in _BASE_KINDS or (base.startswith("enum:") and len(base) > 5)
 
 
 def _plugin(kind: str, name: str) -> Any:

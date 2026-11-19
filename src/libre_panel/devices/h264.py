@@ -58,34 +58,15 @@ from typing import Any
 import psutil
 
 from libre_panel import bundled, rights, winsession
+from libre_panel.config import ENCODERS
 from libre_panel.devices import video_state
 from libre_panel.devices.base import Counters, DeviceError
 from libre_panel.i18n import t
 
 log = logging.getLogger(__name__)
 
-X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium")
-# "auto": high where it was measured to show (HIGH_PROFILE_MODELS), baseline elsewhere; main
-# and high ask more of the panel's decoder, and compress better.
-PROFILES = ("auto", "baseline", "main", "high")
-# "auto": Libre Panel's engine (NATIVE) where the download carries it (auto_engine), for the
-# frames Libre Panel draws; else the graphics card's encoder where it was measured to show and
-# ffmpeg can start it (AUTO_ENCODERS, in that order), else x264 on the processor. NVIDIA's and
-# Intel's are an experiment.
-ENCODERS = ("auto", "libx264", "native", "h264_nvenc", "h264_amf", "h264_qsv")
-# The encoder inside the engine (video.encoder "native"): "auto" the graphics card's own where it
-# is AMD's or NVIDIA's (engine/src/encoder.rs's proven) and opens, else x264; "x264"
-# on the processor; "card" the graphics card's whichever it is, through Windows' Media
-# Foundation (engine/src/mf.rs), x264 where that cannot start. The cards' are Windows' only.
-ENGINE_ENCODERS = ("auto", "x264", "card")
 HIGH_PROFILE_MODELS = frozenset({"turing-9.2-usb", "turing-12.3-usb"})
 AUTO_ENCODERS = ("h264_amf",)
-# Who turns the frames into YUV (config.toml video.pixels): "auto" the graphics card where the
-# colour check found it converting as the processor does on this PC (card_choice.py), else ffmpeg
-# on the processor, the frames four bytes a pixel as Pillow keeps them (rgb0); "card" the card
-# (CARD_ENCODERS; the others as the processor); "rgb" the processor, fed three bytes a pixel
-# (rgb24), the way of before. Inside, the processor's way of "auto" is "processor".
-PIXELS = ("auto", "rgb", "card")
 # The encoders whose graphics card can convert the frames (four bytes a pixel) itself, so that
 # ffmpeg converts nothing on the processor (card_chain says how).
 CARD_ENCODERS = frozenset({"h264_amf", "h264_nvenc", "h264_qsv"})
@@ -178,8 +159,8 @@ class EncoderSettings:
     keyframe_s: float = 10.0
     maxrate: str = "auto"  # "auto": REFERENCE_RATE scaled by the pixels and the frame rate
     threads: int = 1  # frame threads add a frame of latency each
-    profile: str = "high"  # PROFILES, resolved (never "auto" here: resolve_profile)
-    encoder: str = "libx264"  # ENCODERS, resolved (never "auto" here: resolve_encoder)
+    profile: str = "high"  # config.PROFILES, resolved (never "auto" here: resolve_profile)
+    encoder: str = "libx264"  # config.ENCODERS, resolved (never "auto" here: resolve_encoder)
     # the frames as they go into ffmpeg (resolve_feed): "rgb24", or "rgb0" (four bytes a pixel);
     # or YUV made in Libre Panel, turned already (YUV: devices/yuv.py)
     pixels: str = "rgb24"
@@ -187,7 +168,7 @@ class EncoderSettings:
     card: bool = False
     # full-range YUV (0-255), for a panel whose decoder shows every stream so (video_range)
     full: bool = False
-    # the engine's own encoder (ENGINE_ENCODERS), for encoder NATIVE
+    # the engine's own encoder (config.ENGINE_ENCODERS), for encoder NATIVE
     engine_encoder: str = "auto"
 
 

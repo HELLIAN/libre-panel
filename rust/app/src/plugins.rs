@@ -22,8 +22,8 @@ pub const PLUGIN_FILENAME: &str = "plugin.toml";
 pub const BUILT_IN: &str = "built in";
 /// how long a request may take before the host is taken for hung
 const ANSWER_S: u64 = 30;
-/// what opens a drawing, a transition, a toast's style or a page may wait for the first import
-/// of Python's renderer in the host (long where a virus scanner reads every file)
+/// what opens a drawing, a transition, a toast's style or a page may wait for the host's first
+/// imports, the plugin's and Pillow's (long where a virus scanner reads every file)
 const OPENING_S: u64 = 120;
 
 /// What the app does with the plugin host, on the standard error, where
@@ -1191,7 +1191,7 @@ fn rgb_or_rgba(frame: &lp_pixels::Image) -> Option<Vec<u8>> {
 }
 
 /// What the installed plugins draw for a renderer (lp_render::Plugins): their widget types and
-/// the theme's screen, drawn by the plugin host with Python's renderer for the theme as this app
+/// the theme's screen, drawn by the plugin host (plugins/drawing.py) for the theme as this app
 /// has it, their pieces handed back.
 pub struct PluginDrawing {
     host: Arc<PluginHost>,

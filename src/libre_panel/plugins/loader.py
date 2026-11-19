@@ -73,6 +73,23 @@ BUILT_IN_PARTS: dict[str, dict[str, str]] = {
 }
 
 
+# The kinds of field a plugin's widget type, screen or toast style declares (theme/model.py's,
+# whose editor forms show them): these, each with "?" for one that may be empty, and
+# "enum:a|b|c".
+FIELD_KINDS = frozenset({
+    "int", "number", "bool", "color", "icon", "rules",
+    "string", "text", "sensor", "format", "font", "asset",
+})  # fmt: skip
+
+
+def valid_kind(kind: Any) -> bool:
+    """A field kind the loader and the editor know (plugins declare their fields with these)."""
+    if not isinstance(kind, str):
+        return False
+    base = kind.rstrip("?")
+    return base in FIELD_KINDS or (base.startswith("enum:") and len(base) > 5)
+
+
 class PluginError(ValueError):
     pass
 
@@ -171,8 +188,6 @@ def _load(found: Found) -> Any:
         )
     fields = {"widgets": "spec", "screens": "options", "toasts": "options"}.get(found.kind)
     if fields:
-        from libre_panel.theme.model import valid_kind
-
         for key, declared in getattr(obj, fields).items():
             if not (isinstance(declared, tuple) and len(declared) == 2 and valid_kind(declared[0])):
                 raise PluginError(f"{found.target}.{fields}[{key!r}]: unknown field kind")

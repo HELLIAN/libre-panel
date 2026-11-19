@@ -44,6 +44,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw
 
+from libre_panel.cards import TURN_S
 from libre_panel.render import cover, light
 from libre_panel.render.renderer import Piece, need_holds
 from libre_panel.theme import modules as M
@@ -176,7 +177,7 @@ class Slot:
         self.rules = [card.rule for card in cards]
         self.order = module.get("order") if module.get("order") in M.CARD_ORDERS else "first"
         turn = _number(module.get("turn"), 5.0) * 60
-        turn = min(max(turn, M.TURN_S[0]), M.TURN_S[1])
+        turn = min(max(turn, TURN_S[0]), TURN_S[1])
         self.turns = [card.seconds or turn for card in cards]  # seconds each card is on show
         transition = module.get("transition")
         self.transition = transition if transition in M.CARD_TRANSITIONS else "light"

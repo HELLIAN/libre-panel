@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from rust_check import pillow_libfreetype, run
 
-from libre_panel import design, fonts, i18n
+from libre_panel import cards, design, fonts, i18n
 from libre_panel.devices import models as devices
 from libre_panel.theme import model, modules
 
@@ -254,10 +254,10 @@ def test_what_the_editor_asks_of_the_modules_as_python_answers() -> None:
             }
     finally:
         i18n.set_language("en")
-    assert ours["lines"] == [_card(modules.card_line(x)) for x in CARD_LINES + TIMES]
+    assert ours["lines"] == [_card(cards.card_line(x)) for x in CARD_LINES + TIMES]
     assert ours["slot_cards"] == [[_card(c) for c in modules.slot_cards(m)] for m in slots]
-    assert ours["times"] == [_bits(modules.card_time(x)) for x in TIMES + CARD_LINES]
-    assert ours["time_texts"] == [modules.time_text(x) for x in seconds]
+    assert ours["times"] == [_bits(cards.card_time(x)) for x in TIMES + CARD_LINES]
+    assert ours["time_texts"] == [cards.time_text(x) for x in seconds]
 
 
 def _app(case: dict[str, Any]) -> dict[str, Any]:

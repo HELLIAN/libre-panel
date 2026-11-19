@@ -10,13 +10,14 @@ import numpy as np
 import pytest
 
 from libre_panel import app as app_module
+from libre_panel.cards import CARD_NAMES, MODULE_KINDS
 from libre_panel.config import Config, SensorsConfig, card_choice
 from libre_panel.render import earth
 from libre_panel.render import renderer as R
 from libre_panel.sensors.demo import demo_snapshot
 from libre_panel.sensors.sky import sky_readings
 from libre_panel.theme.model import find_theme, load_theme, parse_theme
-from libre_panel.theme.modules import CARD_NAMES, MODULE_KINDS, build_module
+from libre_panel.theme.modules import build_module
 
 BERLIN = (52.52, 13.40)
 SOLSTICE_NOON = datetime(2026, 6, 21, 12, 0, tzinfo=UTC).timestamp()  # (noon at Greenwich)

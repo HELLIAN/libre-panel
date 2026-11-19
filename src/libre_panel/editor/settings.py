@@ -21,13 +21,18 @@ from typing import Any
 from urllib.parse import urlencode
 
 from libre_panel import __version__, i18n
+from libre_panel.cards import CARD_ORDERS, CARD_TRANSITIONS
 from libre_panel.config import (
     ALARM_THEME,
+    ENCODERS,
+    ENGINE_ENCODERS,
     GONE,
     JPEG_LAYOUTS,
     JPEG_QUALITY,
     MORE_PANELS,
     MOTIONS,
+    PIXELS,
+    PROFILES,
     RANDOM_TRANSITION,
     SHINE_KINDS,
     STILLS,
@@ -35,6 +40,7 @@ from libre_panel.config import (
     TRANSITION_OCCASIONS,
     TRANSITION_SPEEDS,
     VIDEO_RANGES,
+    X264_PRESETS,
     Config,
     ConfigError,
     DeviceConfig,
@@ -50,10 +56,9 @@ from libre_panel.config import (
 )
 from libre_panel.datadir import DATA
 from libre_panel.devices import h264
-from libre_panel.devices.h264 import ENCODERS, ENGINE_ENCODERS, PIXELS, PROFILES, X264_PRESETS
 from libre_panel.editor import access
 from libre_panel.i18n import t
-from libre_panel.theme.modules import CARD_ORDERS, CARD_TRANSITIONS
+from libre_panel.plugins.host import declared_options, plain
 
 log = logging.getLogger(__name__)
 
@@ -268,19 +273,6 @@ def _without_gone(options: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _plain(value: Any) -> Any:
-    """``value`` as JSON can say it: a date in config.toml becomes its text, nan nothing."""
-    if isinstance(value, dict):
-        return {str(key): _plain(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_plain(item) for item in value]
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if value is None or isinstance(value, str | int | bool):
-        return value
-    return str(value)
-
-
 # -- the facts about the panel and the system ----------------------------------------------------
 
 
@@ -307,19 +299,6 @@ def _model_info(model: Any, port: str | None = None, sure: bool = True) -> dict[
         # which?" as panels are
         "screens": _screens(model),
     }
-
-
-def _declared(cls: Any) -> list[dict[str, Any]]:
-    """The options a service class declares, as ``{key, type, default}``; one that is not
-    ``(type, default)`` is left out, so a plugin's slip does not take the settings down."""
-    declared = getattr(cls, "options", None)
-    if not isinstance(declared, dict):
-        return []
-    return [
-        {"key": str(key), "type": spec[0], "default": _plain(spec[1])}
-        for key, spec in declared.items()
-        if isinstance(spec, tuple | list) and len(spec) == 2 and isinstance(spec[0], str)
-    ]
 
 
 def cli_command(arguments: str) -> str:
@@ -504,7 +483,7 @@ class Settings:
                 },
                 "services": {
                     "enabled": list(config.services.enabled),
-                    "options": _plain(_without_gone(config.services.options)),
+                    "options": plain(_without_gone(config.services.options)),
                 },
                 "language": config.language,
                 "check_updates": config.check_updates,
@@ -576,7 +555,7 @@ class Settings:
                     "source": found[name].source,
                     "builtin": found[name].source == BUILT_IN,
                     "error": found[name].error if cls is None else "",
-                    "options": _declared(cls),
+                    "options": declared_options(cls),
                 }
             )
         return {
@@ -720,7 +699,7 @@ class Settings:
         cls = registry().get("services", service)
         if cls is None:
             raise SettingsError(f"{service} is not an installed service", 404)
-        spec = next((o for o in _declared(cls) if o["key"] == option), None)
+        spec = next((o for o in declared_options(cls) if o["key"] == option), None)
         if spec is None:
             raise SettingsError(f"{service} has no option {option!r}")
         if spec["type"] == "string":  # (a file or a folder is a text)

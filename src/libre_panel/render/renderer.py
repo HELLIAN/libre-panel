@@ -33,6 +33,7 @@ from typing import Any
 from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from libre_panel import clock, i18n, timezones
+from libre_panel.cards import SLOT_KINDS
 from libre_panel.config import DEFAULT_SYMBOLS, SYMBOL_PACKS
 from libre_panel.fonts import DEFAULT_FONT, builtin_font_path
 from libre_panel.fonts.fallback import cursive, truetype
@@ -49,8 +50,8 @@ from libre_panel.render.motion import number as motion_number
 from libre_panel.render.shine import Shine
 from libre_panel.sensors.base import TRACE_LAG_S, Snapshot, want
 from libre_panel.theme.model import COVER_COLOR, SWITCH, Theme, ThemeError, resolve_asset
-from libre_panel.theme.modules import SLOT_KINDS, slot_cards
 from libre_panel.theme.modules import expand as expand_modules
+from libre_panel.theme.modules import slot_cards
 
 log = logging.getLogger(__name__)
 

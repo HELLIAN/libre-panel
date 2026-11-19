@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from libre_panel.cards import card_time, time_text
 from libre_panel.render import cover, light, slot
 from libre_panel.render.renderer import Piece, Renderer
 from libre_panel.sensors.base import Reading
@@ -106,7 +107,7 @@ def test_a_card_may_name_the_time_of_its_turn():
     times = {"5m": 300, "90s": 90, "1h": 3600, "2.5 min": 150, "10": 600, "30 sec": 30}
     for text, seconds in times.items():
         assert M.card_line(f"date for {text}").seconds == seconds, text
-        assert M.card_time(M.time_text(seconds)) == seconds
+        assert card_time(time_text(seconds)) == seconds
     for wrong in ("soon", "2s", "25h", "-5m", "inf", "5 days"):
         assert M.card_line(f"date for {wrong}") == M.SlotCard("date"), wrong
     assert M.card_line("nonsense for 5m") is None

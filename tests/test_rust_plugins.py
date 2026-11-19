@@ -23,8 +23,8 @@ from test_rust_app import DATA, _libraries, _program, _run
 from libre_panel import cli
 
 # How long the first drawing, transition, toast style or page of a fresh plugin host may take:
-# on a Windows runner its first import of Python's renderer took over 30 seconds (the app waits
-# up to 120, plugins.rs OPENING_S), elsewhere a second or two.
+# on a Windows runner its first imports took over 30 seconds while it still loaded Python's
+# renderer (the app waits up to 120, plugins.rs OPENING_S), elsewhere a second or two.
 HOST_S = 300 if sys.platform == "win32" else 60
 HOST = {"LIBRE_PANEL_PLUGIN_HOST": sys.executable,
         "LIBRE_PANEL_PLUGIN_HOST_ARGS": "-m libre_panel.plugin_host",

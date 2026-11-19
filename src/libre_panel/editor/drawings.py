@@ -22,6 +22,7 @@ from typing import Any
 from PIL import Image, ImageOps
 
 from libre_panel import i18n
+from libre_panel.cards import MODULE_KINDS
 from libre_panel.config import DEFAULT_CARDS, FAN_PAINTS, SYMBOL_PACKS
 from libre_panel.editor.presets import presets_for_editor
 from libre_panel.render import fan, fan_looks, lists
@@ -38,7 +39,7 @@ from libre_panel.theme.model import (
     with_card_opacity,
     with_light_colours,
 )
-from libre_panel.theme.modules import MODULE_KINDS, look_theme_parts, make_grid, with_cards
+from libre_panel.theme.modules import look_theme_parts, make_grid, with_cards
 
 log = logging.getLogger(__name__)
 

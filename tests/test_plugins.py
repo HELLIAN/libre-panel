@@ -1475,12 +1475,12 @@ def test_the_editor_in_the_background_app_uses_the_panels_readings(monkeypatch):
 
 def test_a_page_can_tell_that_libre_panel_runs_with_the_highest_rights(monkeypatch):
     """A page leaves what names a program or a file to config.toml then (docs/PLUGINS.md)."""
-    from libre_panel.editor import access
+    from libre_panel import rights
     from libre_panel.plugins import PageContext
 
     context = PageContext(None)
     assert context.elevated is False  # (the tests run with the rights of any user)
-    monkeypatch.setattr(access, "elevated", lambda: True)
+    monkeypatch.setattr(rights, "elevated", lambda: True)
     assert context.elevated is True
 
 

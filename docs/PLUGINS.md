@@ -21,8 +21,9 @@ whether it loads.
 In the Rust app (see [RUST.md](RUST.md)), plugins run in a program of their own, the
 plugin host (`plugin-host/libre-panel-plugins` beside the app, Python with Libre Panel's
 package), which the app starts only where plugin folders are installed. Every kind of part
-above works there as in the Python app, with the same API; what a plugin draws is drawn by
-Python's renderer in the host and handed to the app as pixels.
+above works there as in the Python app, with the same API; what a plugin draws is drawn in
+the host and handed to the app as pixels, and the app gives a widget type's picture the
+widget's opacity, shadow and glow as it gives its own widgets theirs.
 
 ## Installing
 
