@@ -1256,6 +1256,7 @@ def test_config_language_sets_the_apps_language_and_with_if_auto_keeps_one_chose
     new install) only where the app follows the system's language; with no code, which it is.
     A code it does not know, two codes or a config.toml it cannot read: an error, nothing
     written."""
+    from libre_panel import i18n
     from libre_panel.config import default_config_toml
 
     file = tmp_path / "config.toml"
@@ -1271,8 +1272,13 @@ def test_config_language_sets_the_apps_language_and_with_if_auto_keeps_one_chose
     done = _run(tmp_path, "config", "language", "en", "--if-auto")
     assert (done.returncode, done.stdout, language()) == (0, "language: de (kept)\n", "de")
     assert _run(tmp_path, "config", "language", "auto").returncode == 0 and language() == "auto"
-    told = _run(tmp_path, "config", "language", LANG="fr_FR.UTF-8", LC_ALL="", LANGUAGE="")
-    assert told.stdout == "language: auto (the app speaks fr)\n", told.stderr
+    system = {"LANG": "fr_FR.UTF-8", "LC_ALL": "", "LANGUAGE": ""}
+    told = _run(tmp_path, "config", "language", **system)
+    speaks = "fr"
+    if sys.platform == "win32":  # (Windows' own language comes before the environment's)
+        own = i18n._windows_language()
+        speaks = own[:2].lower() if own[:2].lower() in i18n.LANGUAGES else "en" if own else "fr"
+    assert told.stdout == f"language: auto (the app speaks {speaks})\n", told.stderr
     assert _run(tmp_path, "config", "language", "ja", "--if-auto").returncode == 0
     assert language() == "ja"
     for wrong in (["klingon"], ["de", "en"]):
