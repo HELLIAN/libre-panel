@@ -1248,6 +1248,45 @@ def test_config_init_writes_the_default_config_as_cli_py_does(tmp_path: Path) ->
     assert told[0] == str(file) and told[1].startswith("theme: ")
 
 
+def test_config_language_sets_the_apps_language_and_with_if_auto_keeps_one_chosen(
+    tmp_path: Path,
+) -> None:
+    """`config language CODE` writes config.toml's language as Settings → Language does (a new
+    config.toml with the defaults where there is none); `--if-auto` (the Windows setup's, on a
+    new install) only where the app follows the system's language; with no code, which it is.
+    A code it does not know, two codes or a config.toml it cannot read: an error, nothing
+    written."""
+    from libre_panel.config import default_config_toml
+
+    file = tmp_path / "config.toml"
+
+    def language() -> str:
+        return re.findall(r'^language = "(\w+)"$', file.read_text("utf-8"), re.M)[-1]
+
+    done = _run(tmp_path, "config", "language", "de", "--if-auto")
+    assert (done.returncode, done.stdout) == (0, "language: de\n"), done.stderr
+    assert file.read_text("utf-8") == default_config_toml().replace(
+        'language = "auto"', 'language = "de"'
+    )
+    done = _run(tmp_path, "config", "language", "en", "--if-auto")
+    assert (done.returncode, done.stdout, language()) == (0, "language: de (kept)\n", "de")
+    assert _run(tmp_path, "config", "language", "auto").returncode == 0 and language() == "auto"
+    told = _run(tmp_path, "config", "language", LANG="fr_FR.UTF-8", LC_ALL="", LANGUAGE="")
+    assert told.stdout == "language: auto (the app speaks fr)\n", told.stderr
+    assert _run(tmp_path, "config", "language", "ja", "--if-auto").returncode == 0
+    assert language() == "ja"
+    for wrong in (["klingon"], ["de", "en"]):
+        done = _run(tmp_path, "config", "language", *wrong)
+        assert done.returncode == 1 and done.stderr.startswith("libre-panel: config language: ")
+    assert language() == "ja"
+    file.write_text("language = \n", "utf-8")
+    assert _run(tmp_path, "config", "language", "de", "--if-auto").returncode == 1
+    assert file.read_text("utf-8") == "language = \n"
+    other = tmp_path / "other.toml"
+    assert _run(tmp_path, "config", "language", "pl", "--config", str(other)).returncode == 0
+    assert 'language = "pl"' in other.read_text("utf-8")
+
+
 def test_the_command_line_helps_and_refuses_as_cli_py_does(tmp_path: Path) -> None:
     """`--help` after a command prints the help (it was "unknown option --help", and `themes
     --help` listed the themes); a command that is none ends with 2, as argparse's errors do;

@@ -67,6 +67,12 @@
   Sensors*, Windows) reads the fans and temperatures it reports, as `fan.dell.<name>` and
   `temp.dell.<name>` ("Processor Fan" is `fan.dell.processor_fan`), so the fan widgets, fan
   lists and any other widget show them. Asked of a Dell owner; not yet tried on a Dell PC here.
+- **The Windows setup's language is the app's.** The language chosen in the setup only applied
+  to the setup; the app followed Windows' language until one was picked in *Settings → Start
+  and system → Language*. On a new install where the language chosen is not the one the setup
+  offered (Windows' own, else English), the app now speaks it too; a language chosen in the
+  app is kept, and an update leaves it as it is. `libre-panel config language de` sets it from
+  a terminal (without a language: which it is and what the app speaks).
 
 **Changed**
 - **Smooth light stays smooth in video mode.** x264 held a change of a level or two in a smooth

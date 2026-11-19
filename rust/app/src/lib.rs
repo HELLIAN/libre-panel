@@ -117,9 +117,11 @@ Libre Panel
                                 as administrator: what the sensors need (Windows), and on
                                 Linux the panel's access, the fan chip's driver and, with
                                 --rapl, the processor's power (--linux, --dry-run, --json)
-  libre-panel config [path | init [--force]]
+  libre-panel config [path | init [--force] | language [CODE] [--if-auto]]
                                 where config.toml is, and whether it is right (path: where
-                                it belongs; init: a new one with the defaults)
+                                it belongs; init: a new one with the defaults; language: the
+                                app's language, auto or en, de, ...; --if-auto: only where
+                                it follows the system's)
   libre-panel quit [--timeout S]  quit the running app (and wait until it is gone)
   libre-panel notify TEXT [--title T] [--seconds S] [--icon NAME] [--level info|warning|error]
                                 a notice on the panel of the running app
@@ -419,9 +421,14 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             // (_cmd_config's actions: `path`, where it belongs, and `init [--force]`, a new
             // one with the defaults; with neither, where it is and what it says)
             let (action, args) = match args.split_first() {
-                Some((first, rest)) if first == "path" || first == "init" => (first.as_str(), rest),
+                Some((first, rest)) if ["path", "init", "language"].contains(&first.as_str()) => {
+                    (first.as_str(), rest)
+                }
                 _ => ("", args),
             };
+            if action == "language" {
+                return config_language(args);
+            }
             if action == "path" {
                 println!(
                     "{}",
@@ -1375,6 +1382,65 @@ fn location_command(args: &[String]) -> Result<i32, String> {
     }
     println!("\nWeather data by Open-Meteo.com (CC BY 4.0)");
     Ok(0)
+}
+
+/// `config language [CODE] [--if-auto]`: the language config.toml gives the app (what
+/// Settings → Language sets: "auto", the system's, or a code of lp_i18n::LANGUAGES), or with
+/// no code which it is and what the app speaks. `--if-auto`: only where the app follows the
+/// system's language (no config.toml yet, or "auto"), so that a language chosen in the app is
+/// kept: the Windows installer gives a new install the language chosen in it that way.
+fn config_language(args: &[String]) -> Result<(), String> {
+    let mut code = None;
+    let mut if_auto = false;
+    let mut rest = Vec::new();
+    let mut given = args.iter();
+    while let Some(arg) = given.next() {
+        match arg.as_str() {
+            "--if-auto" => if_auto = true,
+            "--config" => rest.extend([arg.clone(), given.next().cloned().unwrap_or_default()]),
+            other if other.starts_with('-') => rest.push(arg.clone()),
+            _ if code.is_none() => code = Some(arg.clone()),
+            other => return Err(format!("config language: one language, not also {other:?}")),
+        }
+    }
+    let asked = asked(&rest)?;
+    let file = match asked.config {
+        Some(file) => file,
+        None => Home::find()?.config_file(),
+    };
+    let Some(code) = code else {
+        // (the setting as the app reads it: a file that cannot be read is the system's)
+        let setting = lp_config::load_config(&file, lp_config::platform())
+            .map_or_else(|_| "auto".to_string(), |config| config.language);
+        let speaks = lp_i18n::resolve(Some(&setting), lp_i18n::system_language_here);
+        println!("language: {setting} (the app speaks {speaks})");
+        return Ok(());
+    };
+    let known = code == "auto" || lp_i18n::LANGUAGES.iter().any(|(c, _)| *c == code);
+    if !known {
+        let codes: Vec<&str> = lp_i18n::LANGUAGES.iter().map(|(c, _)| *c).collect();
+        return Err(format!(
+            "config language: auto or one of {}, not {code:?}",
+            codes.join(", ")
+        ));
+    }
+    if if_auto && file.exists() {
+        // (a config.toml that cannot be read is left as it is: its own error says why)
+        let config = lp_config::load_config(&file, lp_config::platform()).map_err(|e| e.msg)?;
+        if config.language != "auto" {
+            println!("language: {} (kept)", config.language);
+            return Ok(());
+        }
+    }
+    lp_config::edit::set_config_value(
+        "language",
+        lp_py::toml::Toml::Str(code.clone()),
+        &file,
+        lp_config::platform(),
+    )
+    .map_err(|why| why.msg)?;
+    println!("language: {code}");
+    Ok(())
 }
 
 /// `autostart enable|disable|status [--elevated]` (cli.py's _cmd_autostart).

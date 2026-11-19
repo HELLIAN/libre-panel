@@ -6,6 +6,7 @@ Without it Libre Panel runs on defaults. Create a commented one with:
 ```bash
 libre-panel config init
 libre-panel config path     # where it is
+libre-panel config language de   # the app's language ("auto": the system's)
 ```
 
 | System | Location |
@@ -1970,7 +1971,11 @@ Portuguese (Brazil), Russian, Japanese and Simplified Chinese: `"en"`, `"de"`,
 `"fr"`, `"es"`, `"it"`, `"pl"`, `"pt"`, `"ru"`, `"ja"`, `"zh"`.
 `language = "auto"`
 follows the system language, and English where Libre Panel does not speak it;
-*Settings → Start and system → Language* (and Ctrl+K) writes this setting. It
+*Settings → Start and system → Language* (and Ctrl+K) writes this setting, and so does
+`libre-panel config language de` (with no language: which it is and what the app speaks;
+`--if-auto`: only where it is `"auto"` or there is no `config.toml` yet). On a new install the
+Windows setup gives the app the language chosen in it where that is not the one it offered
+(Windows' own, else English); an update leaves the setting as it is. It
 covers the app, the tray menu, messages about the panel, and the panel itself:
 weekday and month names (in German with "27.", in Spanish and Portuguese with
 "27 de", in Polish and Russian in the genitive, "27 września" and "27 сентября", in Chinese

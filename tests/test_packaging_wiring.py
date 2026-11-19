@@ -142,7 +142,32 @@ def test_the_setup_starts_the_app_as_the_user_who_ran_it():
     script = read("packaging", "windows", "libre-panel.iss")
     run = script.split("\n[Run]\n", 1)[1].split("\n[", 1)[0]
     lines = [line for line in run.splitlines() if line.startswith("Filename:")]
-    assert len(lines) == 2 and all("runasoriginaluser" in line for line in lines)
+    assert len(lines) == 3 and all("runasoriginaluser" in line for line in lines)
+
+
+def test_the_language_chosen_in_the_setup_is_the_apps_on_a_new_install():
+    """The setup's language becomes the app's (config.toml's `language`, as Settings → Language
+    sets it) on a new install where it was chosen, not taken as the setup offered it (the one
+    Windows speaks, else English: the app speaks Windows' anyway); the app keeps a language
+    chosen in it (`config language --if-auto`), and an update leaves it as it is. The setup's
+    languages are the app's codes, and whether Libre Panel was installed before is asked
+    before the setup registers itself, under the AppId's key."""
+    script = read("packaging", "windows", "libre-panel.iss")
+    run = script.split("\n[Run]\n", 1)[1].split("\n[", 1)[0]
+    (line,) = [line for line in run.splitlines() if "config language" in line]
+    assert 'Parameters: "config language {language} --if-auto"' in line
+    assert "Check: LanguageChosen" in line and "runasoriginaluser" in line
+    languages = re.findall(r'^Name: "(\w+)"; MessagesFile:', script, re.M)
+    assert languages == ["en", "de"]  # (the first is the one offered where Windows' is neither)
+    app_id = re.search(r"^AppId=\{(\{[0-9A-F-]+\})$", script, re.M)
+    assert app_id
+    first = script.split("<event('InitializeSetup')>", 1)[1].split("\nend;", 1)[0]
+    assert f"\\Uninstall\\{app_id[1]}_is1'" in first
+    assert all(f"RegKeyExists({root}, Key)" in first for root in ("HKLM64", "HKLM32", "HKCU"))
+    chosen = script.split("function LanguageChosen: Boolean;", 1)[1].split("\nend;", 1)[0]
+    assert "(GetUILanguage and $3FF) = $07" in chosen and "Offered := 'de'" in chosen
+    assert "Offered := 'en'" in chosen
+    assert "Result := NewInstall and (ActiveLanguage <> Offered);" in chosen
 
 
 def test_ci_runs_every_test_that_needs_a_browser_where_there_is_one():
@@ -209,7 +234,7 @@ def test_presentmon_is_a_box_of_the_setup_that_says_first_what_will_not_work_wit
     )
     tester = read("packaging", "windows", "test_installer.py")
     assert 'TASKS = "autostart,presentmon,' in tester
-    assert 'install(setup, TASKS.replace("presentmon,", ""))' in tester
+    assert 'install(setup, TASKS.replace("presentmon,", ""), chosen)' in tester
 
 
 def test_the_windows_programs_say_who_made_them_and_start_with_a_loader_of_their_own():
