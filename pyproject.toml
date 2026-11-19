@@ -91,8 +91,7 @@ Issues = "https://github.com/syntensa/libre-panel/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-libre_panel = ["themes/**/*", "editor/static/*", "editor/app/**/*", "pages/web/*", "fonts/*.ttf", "fonts/*.txt", "fonts/*.md", "assets/**/*", "locale/*.json"]
+# (Libre Panel's files, the data folder, go into share/libre-panel: setup.py)
 
 [tool.ruff]
 line-length = 100

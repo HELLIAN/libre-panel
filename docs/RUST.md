@@ -2205,7 +2205,7 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       running panel stands in them; steps written in their largest whole unit, or refused
       in the same words.
       Start's card of what is new (`/api/news`, news.json beside config.toml). The program
-      says Libre Panel's version, read from `src/libre_panel/__init__.py` as it is built
+      says Libre Panel's version, read from `pyproject.toml` as it is built
       (`rust/py/build.rs`, `lp_py::VERSION`).
       Whether a newer version is out (`/api/update`, `rust/app/src/updates.rs`): GitHub asked
       at most once a day where check_updates is on, the release picked as updates.py picks
@@ -2585,6 +2585,10 @@ where `<settings>/plugins/*/plugin.toml` exists, one for the process (rust/app's
 The app and the host speak through the host's standard input and output: each message a
 length and JSON, with raw pixels after it where it says so; the host's log lines go into the
 app's log. Libre Panel's own parts stay the app's (the host leaves the built-in ones out).
+Libre Panel's files (fonts, translations, themes) are the app's too: the host carries no
+copy of them and takes the download's `share/libre-panel` beside its folder, as the app
+does (src/libre_panel/datadir.py); packaging/check_plugin_host.py has a plugin letter a
+word of the app's language in one of its fonts, so a host that does not find them fails.
 
 - [x] what is installed: `libre-panel plugins` as cli.py lists it, the themes plugins bring
       among the app's, and Settings' catalog with the plugins' services and sensor sources

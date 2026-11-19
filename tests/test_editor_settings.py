@@ -10,6 +10,7 @@ from test_editor_server import request
 
 from libre_panel.autostart import Autostart
 from libre_panel.config import config_dir, default_providers, load_config
+from libre_panel.datadir import DATA
 from libre_panel.editor import access
 from libre_panel.editor.server import make_server
 
@@ -1122,7 +1123,7 @@ def test_the_notice_in_the_package_is_the_notice_of_the_project():
 
     root = Path(__file__).resolve().parent.parent / "NOTICE.md"
     assert settings.notice_text() == root.read_text(encoding="utf-8")
-    packaged = Path(settings.__file__).resolve().parents[1] / "assets" / "NOTICE.md"
+    packaged = DATA / "assets" / "NOTICE.md"
     assert packaged.read_text(encoding="utf-8") == root.read_text(encoding="utf-8")
 
 

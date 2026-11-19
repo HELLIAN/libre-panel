@@ -20,7 +20,7 @@ from libre_panel.devices.base import DeviceError, leave_place, take_place
 from libre_panel.services import waveshare as service
 
 MAGIC = b"AA551234 FIXEDCMDHEAD "
-RULES = Path(__file__).parents[1] / "src/libre_panel/assets/60-libre-panel.rules"
+RULES = Path(__file__).parents[1] / "data/assets/60-libre-panel.rules"
 
 
 def qstring(text):
@@ -486,7 +486,7 @@ def test_the_service_is_built_in_and_its_options_are_worded_in_the_app():
     from libre_panel.plugins.loader import BUILT_IN_PARTS
 
     assert BUILT_IN_PARTS["services"]["waveshare"] == "libre_panel.services.waveshare:Waveshare"
-    app = Path(__file__).parents[1] / "src/libre_panel/editor/app/views/settings/services.js"
+    app = Path(__file__).parents[1] / "data/editor/app/views/settings/services.js"
     words = app.read_text(encoding="utf-8")
     for option in service.Waveshare.options:
         assert f'"waveshare.{option}"' in words

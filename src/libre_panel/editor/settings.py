@@ -48,6 +48,7 @@ from libre_panel.config import (
     place_at,
     user_themes_dir,
 )
+from libre_panel.datadir import DATA
 from libre_panel.devices import h264
 from libre_panel.devices.h264 import ENCODERS, ENGINE_ENCODERS, PIXELS, PROFILES, X264_PRESETS
 from libre_panel.editor import access
@@ -397,9 +398,9 @@ def theme_reads(theme_id: str) -> frozenset[str]:
 
 
 def notice_text() -> str:
-    """NOTICE.md: the copy in the package (installed, bundled), else the project's own."""
-    here = Path(__file__).resolve()
-    for path in (here.parents[1] / "assets" / "NOTICE.md", here.parents[3] / "NOTICE.md"):
+    """NOTICE.md: the copy among Libre Panel's files (installed, bundled), else the project's
+    own."""
+    for path in (DATA / "assets" / "NOTICE.md", DATA.parent / "NOTICE.md"):
         try:
             return path.read_text(encoding="utf-8")[:MAX_NOTICE]
         except OSError:

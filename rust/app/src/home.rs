@@ -19,8 +19,8 @@ fn holds_data(folder: &Path) -> bool {
 
 impl Home {
     /// The app's files: the folder LIBRE_PANEL_DATA names; else `share/libre-panel` beside
-    /// the program or beside its `bin`; else, for a program built in its source tree,
-    /// `src/libre_panel` of that tree.
+    /// the program or beside its `bin`; else, for a program built in its source tree, the
+    /// `data` folder of that tree.
     pub fn find() -> Result<Home, String> {
         let settings = lp_config::dirs::config_dir();
         if let Some(named) = std::env::var_os("LIBRE_PANEL_DATA").filter(|v| !v.is_empty()) {
@@ -41,11 +41,7 @@ impl Home {
         if let Some(above) = beside.parent() {
             tried.push(above.join("share").join("libre-panel"));
         }
-        tried.extend(
-            beside
-                .ancestors()
-                .map(|folder| folder.join("src").join("libre_panel")),
-        );
+        tried.extend(beside.ancestors().map(|folder| folder.join("data")));
         match tried.into_iter().find(|folder| holds_data(folder)) {
             Some(data) => Ok(Home { data, settings }),
             None => Err(format!(

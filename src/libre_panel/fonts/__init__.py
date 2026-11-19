@@ -5,7 +5,9 @@ from __future__ import annotations
 from functools import cache
 from pathlib import Path
 
-FONT_DIR = Path(__file__).resolve().parent
+from libre_panel.datadir import DATA
+
+FONT_DIR = DATA / "fonts"
 BUILTIN_PREFIX = "builtin:"
 DEFAULT_FONT = "builtin:Barlow-Medium"
 

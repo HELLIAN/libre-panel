@@ -237,9 +237,7 @@ def test_json_is_read_and_written_as_python_s() -> None:
     texts += [_broken(rng, text) for text in texts[:3000]]
     texts += ["", " ", "﻿[]", "1" * 4300, "-" + "1" * 4301, '{"a":1,}', "[1,]", "01"]
     # every theme that comes with the app, as it is on disk
-    themes = sorted(
-        (Path(__file__).resolve().parent.parent / "src/libre_panel/themes").glob("*/theme.json")
-    )
+    themes = sorted((Path(__file__).resolve().parent.parent / "data/themes").glob("*/theme.json"))
     texts += [path.read_text(encoding="utf-8") for path in themes]
     [ours] = run([{"op": "json", "texts": texts}])
     halves = 0

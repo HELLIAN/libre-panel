@@ -474,13 +474,8 @@ jobs:
           cp rust/app/try-windows.txt libre-panel-rust/README.txt
           cp "$libs/freetype/Release/freetype.dll" "$libs/jpeg/Release/jpeg62.dll" libre-panel-rust/
           cp "$libs"/webp/Release/*.dll libre-panel-rust/
-          # (the app's pages, the old editor's files and those of the built-in pages too)
-          for part in themes fonts locale assets editor/app editor/static pages/web; do
-            mkdir -p "libre-panel-rust/share/libre-panel/$(dirname "$part")"
-            cp -r "src/libre_panel/$part" "libre-panel-rust/share/libre-panel/$part"
-          done
-          find libre-panel-rust/share -name __pycache__ -prune -exec rm -rf {} +
-          find libre-panel-rust/share -name "*.py" -delete
+          # (Libre Panel's files: themes, fonts, translations, pictures, the app's pages)
+          cp -r data/. libre-panel-rust/share/libre-panel/
           cp LICENSE libre-panel-rust/licenses/LICENSE-libre-panel.txt
           # (ffmpeg, PresentMon and PawnIO's installer, as the downloads carry them: pinned and
           # checked by fetch_tools.py above, with their licences and SOURCES.txt)
@@ -513,7 +508,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = (Select-String -Path src/libre_panel/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           foreach ($exe in "libre-panel.exe", "LibrePanel.exe", "libre-panel-window.exe", "libre-panel-tray.exe") {
             $info = (Get-Item "libre-panel-rust/$exe").VersionInfo
             if ($info.CompanyName -ne "Libre Panel contributors" -or $info.ProductVersion -ne $version) {
@@ -593,7 +588,7 @@ jobs:
       - name: Its setup
         shell: pwsh
         run: |
-          $version = (Select-String -Path src/libre_panel/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           $numeric = python -c "import re, sys; v = sys.argv[1]; n = re.findall(r'\d+', v)[:4 if re.fullmatch(r'[\d.]+', v) else 3]; print('.'.join((n + ['0'] * 4)[:4]))" $version
           "VERSION=$version" >> $env:GITHUB_ENV
           Copy-Item LICENSE, README.md, NOTICE.md libre-panel-rust/
@@ -671,12 +666,7 @@ jobs:
           mkdir -p "$app/share/libre-panel" "$app/licenses" "$app/lib"
           cp rust/target/release/libre-panel rust/target/release/libre-panel-window \
             rust/target/release/libre-panel-tray "$app/"
-          for part in themes fonts locale assets editor/app editor/static pages/web; do
-            mkdir -p "$app/share/libre-panel/$(dirname "$part")"
-            cp -r "src/libre_panel/$part" "$app/share/libre-panel/$part"
-          done
-          find "$app/share" -name __pycache__ -prune -exec rm -rf {} +
-          find "$app/share" -name "*.py" -delete
+          cp -r data/. "$app/share/libre-panel/"
           cp -r "$RUNNER_TEMP/tools" "$app/tools"
           chmod +x "$app/plugin-host/libre-panel-plugins"
           # (Pillow's own FreeType, HarfBuzz, libjpeg and libwebp with what they need, as its
@@ -828,6 +818,8 @@ jobs:
         run: |
           exe=dist/plugin-host/libre-panel-plugins
           [ "$RUNNER_OS" = Windows ] && exe="$exe.exe"
+          # (Libre Panel's files beside its folder, as the downloads have them)
+          mkdir -p dist/share && cp -r data dist/share/libre-panel
           # (from elsewhere, so that the checkout's sources are not what it imports)
           cd "$RUNNER_TEMP" && python "$GITHUB_WORKSPACE/packaging/check_plugin_host.py" "$GITHUB_WORKSPACE/$exe"
       - uses: actions/upload-artifact@v4

@@ -110,13 +110,13 @@ def fake_repository(root: Path, recipes: dict[str, set[str]], media: bool = True
         (root / "docs" / folder).mkdir(parents=True)
         for name in names:
             (root / "docs" / folder / name).write_bytes(b"x")
-    fonts = root / "src" / "libre_panel" / "fonts"
+    fonts = root / "data" / "fonts"
     fonts.mkdir(parents=True)
-    for font in (ROOT / "src" / "libre_panel" / "fonts").glob("*.ttf"):
+    for font in (ROOT / "data" / "fonts").glob("*.ttf"):
         (fonts / font.name).write_bytes(b"x")
     (fonts / "OFL-Barlow.txt").write_text("licence", encoding="utf-8")
-    (root / "src" / "libre_panel" / "assets").mkdir()
-    (root / "src" / "libre_panel" / "assets" / "libre-panel.png").write_bytes(b"x")
+    (root / "data" / "assets").mkdir()
+    (root / "data" / "assets" / "libre-panel.png").write_bytes(b"x")
 
 
 def test_the_website_is_put_together_with_every_file_it_names(pages, recipes, tmp_path):

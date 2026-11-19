@@ -1,6 +1,6 @@
 """App clips for tools/readme_media.py: the app in a browser, with a cursor drawn on it.
 
-The app (src/libre_panel/editor/app/, served by the editor's server) runs in headless
+The app (data/editor/app/, served by the editor's server) runs in headless
 Chromium under Playwright, in a settings folder of its own (named LibrePanel, one theme in it,
 English) and with the preview's clock and values standing still. A clip is a script of what a
 person does: the mouse glides, keys are pressed (and shown on the screen), and a picture is

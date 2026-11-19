@@ -246,7 +246,7 @@ def test_pngs_of_every_kind_open_as_pillow_opens_them():
 
 def test_the_app_s_own_pngs_open_as_pillow_opens_them():
     pairs = []
-    for path in sorted((ROOT / "src").rglob("*.png")):
+    for path in sorted((ROOT / "data").rglob("*.png")):
         pairs.append(case_of(path.read_bytes(), "RGBA", str(path.relative_to(ROOT))))
     assert len(pairs) > 100
     check(pairs)
@@ -815,7 +815,7 @@ def test_mpo_frames_are_read_as_the_app_reads_them():
 def test_the_app_s_earth_maps_are_read_as_earth_py_reads_them():
     """render/earth.py's _read: each map drafted to the globe's width (JPEG's fast scales),
     then converted (day and night to RGB, the clouds to L)."""
-    maps = ROOT / "src" / "libre_panel" / "assets" / "earth"
+    maps = ROOT / "data" / "assets" / "earth"
     pairs = []
     for name, mode in (("day.jpg", "RGB"), ("night.jpg", "RGB"), ("clouds.jpg", "L")):
         data = (maps / name).read_bytes()

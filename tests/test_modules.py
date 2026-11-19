@@ -697,7 +697,7 @@ def _moon_of(name):
     from libre_panel.theme.model import load_theme
     from libre_panel.theme.modules import MOON_PHASES
 
-    folder = Path(__file__).parent.parent / "src" / "libre_panel" / "themes" / name
+    folder = Path(__file__).parent.parent / "data" / "themes" / name
     renderer = Renderer(load_theme(folder), preview=True)
     moon = next(w for w in renderer.widgets if w.get("sensor") == "moon.name")
     prefix = moon["id"][: -len("name")]

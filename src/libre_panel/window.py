@@ -48,6 +48,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from libre_panel.config import config_dir
+from libre_panel.datadir import DATA
 from libre_panel.editor import access
 from libre_panel.i18n import t
 from libre_panel.instance import AlreadyRunning, InstanceLock
@@ -689,7 +690,7 @@ def _icon(platform: str | None = None) -> str | None:
     once), and without one it takes the icon of the program itself."""
     if (platform or sys.platform) == "win32":
         return None
-    path = Path(__file__).resolve().parent / "editor" / "static" / "icon.png"
+    path = DATA / "editor" / "static" / "icon.png"
     return str(path) if path.is_file() else None
 
 

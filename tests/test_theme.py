@@ -166,7 +166,7 @@ def test_invalid_theme_names():
 
 
 def test_builtin_theme_files_are_plain_json():
-    root = Path(__file__).resolve().parents[1] / "src" / "libre_panel" / "themes"
+    root = Path(__file__).resolve().parents[1] / "data" / "themes"
     for file in root.glob("*/theme.json"):
         json.loads(file.read_text(encoding="utf-8"))
 

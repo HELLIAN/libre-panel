@@ -19,7 +19,7 @@ def test_the_bars_stand_clear_of_the_ring():
 def test_the_svg_of_the_app_and_the_website_is_the_mark_as_drawn_in_code():
     svg = branding.mark_svg()
     assert "<path" in svg and svg.count("<rect") == 3
-    icons = (ROOT / "src/libre_panel/editor/app/ui/icons.js").read_text(encoding="utf-8")
+    icons = (ROOT / "data/editor/app/ui/icons.js").read_text(encoding="utf-8")
     assert f"logo: '{svg}'," in icons
     for page in ("site/index.html", "site/de/index.html"):
         text = (ROOT / page).read_text(encoding="utf-8")
@@ -29,8 +29,8 @@ def test_the_svg_of_the_app_and_the_website_is_the_mark_as_drawn_in_code():
 @pytest.mark.parametrize(
     "path, size",
     [
-        ("src/libre_panel/assets/libre-panel.png", 256),
-        ("src/libre_panel/editor/static/icon.png", 64),
+        ("data/assets/libre-panel.png", 256),
+        ("data/editor/static/icon.png", 64),
         ("packaging/icons/libre-panel-512.png", 512),
     ],
 )

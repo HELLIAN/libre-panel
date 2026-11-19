@@ -5,19 +5,24 @@
 // (the common controls of version 6, for dialogs with buttons of their own words; per-monitor
 // DPI; Windows 10 and 11; no elevation asked). Nothing elsewhere.
 
-/// The release's version (src/libre_panel/__init__.py's __version__) and its four numbers
+/// The release's version (pyproject.toml's, of its [project] table) and its four numbers
 /// as the release's are made: a hotfix's (0.6.8.1) as it is, 0.8.1rc2 with a 0.
 fn release_version(root: &std::path::Path) -> (String, [u32; 4]) {
-    let source = root.join("src/libre_panel/__init__.py");
+    let source = root.join("pyproject.toml");
     println!("cargo:rerun-if-changed={}", source.display());
     let text = std::fs::read_to_string(&source).unwrap_or_default();
+    let mut table = "";
     let version = text
         .lines()
         .find_map(|line| {
-            let value = line.strip_prefix("__version__")?.trim_start().strip_prefix('=')?;
-            let value = value.trim();
-            let quote = value.chars().next().filter(|c| *c == '"' || *c == '\'')?;
-            Some(value[1..].split(quote).next()?.to_string())
+            let line = line.trim();
+            if line.starts_with('[') {
+                table = line;
+                return None;
+            }
+            let value = line.strip_prefix("version")?.trim_start().strip_prefix('=')?;
+            let value = value.trim().strip_prefix('"')?.split('"').next()?;
+            (table == "[project]").then(|| value.to_string())
         })
         .unwrap_or_else(|| "0.0.0".to_string());
     let plain = version.chars().all(|c| c.is_ascii_digit() || c == '.');

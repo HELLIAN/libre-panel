@@ -12,10 +12,11 @@ import json
 import re
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "libre_panel"
-STATIC = SRC / "editor" / "static"  # what the console's and plugins' pages share (kit.js)
-PAGES = SRC / "pages" / "web"  # the scripts of the built-in pages
-APP = SRC / "editor" / "app"  # the app's modules; not its vendored libraries
+ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / "src" / "libre_panel"
+STATIC = ROOT / "data" / "editor" / "static"  # what the console's and plugins' pages share
+PAGES = ROOT / "data" / "pages" / "web"  # the scripts of the built-in pages
+APP = ROOT / "data" / "editor" / "app"  # the app's modules; not its vendored libraries
 
 _JS_CALL = re.compile(r"""\bt\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')""")
 _JS_TEMPLATE_CALL = re.compile(r"\bt\(\s*`")
@@ -81,7 +82,7 @@ def theme_messages() -> set[str]:
     """The words of the built-in themes that are shown in the panel's language ("translate"),
     and what Look calls their switches."""
     found = set()
-    for path in (SRC / "themes").glob("*/theme.json"):
+    for path in (ROOT / "data" / "themes").glob("*/theme.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
         for widget in data.get("widgets", []):
             if widget.get("type") == "text" and widget.get("translate"):
@@ -123,7 +124,7 @@ if __name__ == "__main__":  # list what the German catalog lacks
     import sys
 
     sys.path.insert(0, str(SRC.parent))
-    catalog = json.loads((SRC / "locale" / "de.json").read_text(encoding="utf-8"))
+    catalog = json.loads((ROOT / "data" / "locale" / "de.json").read_text(encoding="utf-8"))
     for text in sorted(all_messages() - set(catalog.get("messages", {}))):
         print("messages:", json.dumps(text, ensure_ascii=False))
     for table, keys in tables().items():

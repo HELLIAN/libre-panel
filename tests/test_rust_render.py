@@ -1984,7 +1984,7 @@ def test_a_calendar_s_dot_as_python_rounds_its_side(tmp_path: Path) -> None:
     assert _compare_frames(tmp_path, 0xD07, 12, month, october) > 8
 
 
-THEMES = Path(__file__).parent.parent / "src" / "libre_panel" / "themes"
+THEMES = Path(__file__).parent.parent / "data" / "themes"
 
 
 def _soft_light(folder: Path) -> bool:

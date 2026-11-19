@@ -308,3 +308,35 @@ def test_the_programs_are_built_without_docstrings_and_their_help_does_not_need_
 
     parser = cli.build_parser()
     assert parser.description == cli.DESCRIPTION and "Libre Panel" in parser.description
+
+
+def test_an_install_gets_every_file_of_the_data_folder_where_both_apps_look(monkeypatch):
+    """Libre Panel's files (the data folder) go whole into an install's share/libre-panel
+    (setup.py), where src/libre_panel/datadir.py and rust/app/src/home.rs look for them; the
+    downloads copy the folder there too (ci.yml), and the version is pyproject.toml's alone."""
+    from types import SimpleNamespace
+
+    from libre_panel import __version__, datadir
+
+    asked = {}
+    monkeypatch.setitem(sys.modules, "setuptools", SimpleNamespace(setup=asked.update))
+    monkeypatch.chdir(ROOT)
+    load("libre_panel_setup", ROOT / "setup.py")
+    installed = {Path(target, Path(source).name).as_posix()
+                 for target, sources in asked["data_files"] for source in sources}  # fmt: skip
+    data = ROOT / "data"
+    files = {path.relative_to(data).as_posix() for path in data.rglob("*") if path.is_file()}
+    assert installed == {f"share/libre-panel/{name}" for name in files}
+    assert {"themes/lumen/theme.json", "fonts/Barlow-Medium.ttf", "locale/de.json",
+            "editor/app/index.html", "pages/web/index.html"} <= files  # fmt: skip
+    assert datadir.DATA == data and datadir.holds_data(data)
+    assert datadir.SHARE.as_posix() == "share/libre-panel"
+    assert '.join("share").join("libre-panel")' in read("rust", "app", "src", "home.rs")
+    assert read(".github", "workflows", "ci.yml").count("cp -r data/. ") == 2
+    package = ROOT / "src" / "libre_panel"
+    kept = [path for path in package.rglob("*") if path.is_file() and path.suffix != ".py"
+            and "__pycache__" not in path.parts]  # fmt: skip
+    assert not kept  # (the package is its code alone)
+    project = re.search(r'^version = "([^"]+)"', read("pyproject.toml"), re.M)[1]
+    assert __version__ == project
+    assert '__version__ = "' not in read("src", "libre_panel", "__init__.py")

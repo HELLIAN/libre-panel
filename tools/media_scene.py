@@ -453,7 +453,7 @@ def _headline(width: int, language: str, scale: float) -> Image.Image:
     height = round(400 * u)
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    mark = Image.open(ROOT / "src/libre_panel/assets/libre-panel.png").convert("RGBA")
+    mark = Image.open(ROOT / "data/assets/libre-panel.png").convert("RGBA")
     mark = mark.resize((round(64 * u), round(64 * u)), Image.LANCZOS)
     name_font = images.font("Barlow-SemiBold", round(44 * u))
     name_w = d.textlength("Libre Panel", font=name_font)

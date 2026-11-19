@@ -50,6 +50,7 @@ from libre_panel.config import (
     theme_chosen,
     user_themes_dir,
 )
+from libre_panel.datadir import DATA
 from libre_panel.devices.base import DeviceError
 from libre_panel.devices.models import MODELS, PROTOCOLS
 from libre_panel.editor import access, drawings, history
@@ -110,8 +111,8 @@ from libre_panel.theme.share import MAX_ZIP, ShareError, export_theme, import_th
 log = logging.getLogger(__name__)
 
 # What the console's pages and plugins' pages share (kit.js, editor.css, stats.js), and the icon.
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-APP_DIR = Path(__file__).resolve().parent / "app"  # the app: shell, views, vendored libraries
+STATIC_DIR = DATA / "editor" / "static"
+APP_DIR = DATA / "editor" / "app"  # the app: shell, views, vendored libraries
 MAX_JSON = 2 * 1024 * 1024
 MAX_ASSET = 10 * 1024 * 1024
 MAX_VIDEO = 64 * 1024 * 1024  # a video for an image widget (render/moving.py)

@@ -12,6 +12,7 @@ from typing import Any
 
 from libre_panel import __version__
 from libre_panel.config import ConfigError, config_dir, load_config, log_file, write_default_config
+from libre_panel.datadir import DATA
 from libre_panel.devices.base import DeviceError
 from libre_panel.i18n import t
 
@@ -288,7 +289,7 @@ def _cmd_quit(args: argparse.Namespace) -> int:
 
 
 def _cmd_udev_rules(args: argparse.Namespace) -> int:
-    rules = Path(__file__).resolve().parent / "assets" / "60-libre-panel.rules"
+    rules = DATA / "assets" / "60-libre-panel.rules"
     sys.stdout.write(rules.read_text(encoding="utf-8"))
     return 0
 

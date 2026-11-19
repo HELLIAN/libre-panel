@@ -1,4 +1,4 @@
-"""Make the earth's maps in src/libre_panel/assets/earth from NASA's pictures.
+"""Make the earth's maps in data/assets/earth from NASA's pictures.
 
     python tools/earth_maps.py [--sources FOLDER]
 
@@ -31,7 +31,7 @@ import numpy as np
 from PIL import Image
 
 SIZE = (2048, 1024)
-OUT = Path(__file__).resolve().parent.parent / "src" / "libre_panel" / "assets" / "earth"
+OUT = Path(__file__).resolve().parent.parent / "data" / "assets" / "earth"
 BASE = "https://eoimages.gsfc.nasa.gov/images/imagerecords/"
 SOURCES = {
     "day": (

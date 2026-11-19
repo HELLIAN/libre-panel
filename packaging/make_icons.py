@@ -9,8 +9,8 @@ ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 
 def main() -> None:
-    logo(256).save(ROOT / "src/libre_panel/assets/libre-panel.png", optimize=True)
-    logo(64).save(ROOT / "src/libre_panel/editor/static/icon.png", optimize=True)
+    logo(256).save(ROOT / "data/assets/libre-panel.png", optimize=True)
+    logo(64).save(ROOT / "data/editor/static/icon.png", optimize=True)
     icons = ROOT / "packaging/icons"
     icons.mkdir(exist_ok=True)
     logo(512).save(icons / "libre-panel-512.png", optimize=True)

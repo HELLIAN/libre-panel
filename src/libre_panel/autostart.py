@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Protocol
 from xml.sax.saxutils import escape
 
+from libre_panel.datadir import DATA
 from libre_panel.i18n import t
 
 APP_NAME = "Libre Panel"
@@ -44,7 +45,7 @@ WINDOWED_EXE = "LibrePanel.exe"
 # sys.platform of the systems with XDG desktops (a BSD's has its version after it: "freebsd14").
 XDG_PLATFORMS = ("linux", "freebsd", "openbsd", "netbsd", "dragonfly")
 
-ICON_PATH = Path(__file__).resolve().parent / "assets" / "libre-panel.png"
+ICON_PATH = DATA / "assets" / "libre-panel.png"
 
 
 def launch_command(config_path: Path | None = None) -> list[str]:

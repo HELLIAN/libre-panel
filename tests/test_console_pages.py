@@ -75,13 +75,14 @@ def test_the_pages_are_built_in_and_served_without_any_plugin(editor):
 
 
 def test_the_pages_use_only_files_the_editor_serves():
-    """Everything the shell loads is in the folder next to the pages' code (and listed in
-    pyproject.toml's package data, so a pip install has it)."""
+    """Everything the shell loads is in the pages' folder among Libre Panel's files (which an
+    install gets whole: test_packaging_wiring)."""
     import re
-    import tomllib
-    from pathlib import Path
+
+    from libre_panel.datadir import DATA
 
     folder = Control.folder()
+    assert folder == DATA / "pages" / "web"
     names = {path.name for path in folder.iterdir()}
     assert {
         "index.html",
@@ -94,9 +95,6 @@ def test_the_pages_use_only_files_the_editor_serves():
     for page in folder.glob("*.js"):
         for imported in re.findall(r'from "\./([a-z.]+)"', page.read_text(encoding="utf-8")):
             assert imported in names
-    project = Path(__file__).resolve().parent.parent / "pyproject.toml"
-    data = tomllib.loads(project.read_text(encoding="utf-8"))["tool"]["setuptools"]["package-data"]
-    assert "pages/web/*" in data["libre_panel"] and "editor/static/*" in data["libre_panel"]
 
 
 def test_an_editor_page_can_answer_with_a_file(plugin_folder, editor):

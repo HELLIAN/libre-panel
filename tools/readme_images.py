@@ -1015,10 +1015,10 @@ def tiles(out: Path, media: Path) -> None:
 
 
 def app_icon(name: str) -> str:
-    """The drawing of one of the app's icons (src/libre_panel/editor/app/ui/icons.js): the
+    """The drawing of one of the app's icons (data/editor/app/ui/icons.js): the
     inside of its 24 x 24 SVG, stroked in the text colour (its strings, and its dots, as the
     app's ``DOT(x, y)`` draws them, in the order they come)."""
-    source = (ROOT / "src/libre_panel/editor/app/ui/icons.js").read_text(encoding="utf-8")
+    source = (ROOT / "data/editor/app/ui/icons.js").read_text(encoding="utf-8")
     key = re.search(rf"^  \"?{re.escape(name)}\"?:", source, re.M)
     if key is None:
         raise KeyError(f"the app has no icon {name!r}")

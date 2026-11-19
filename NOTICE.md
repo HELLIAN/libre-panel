@@ -12,7 +12,7 @@ Libre Panel's implementation is its own code, released under the same license.
 **SPUR II** — the private project that verified the V1.x USB protocol on a 9.2"
 panel, found the zero-length-packet fix, the RGBA requirement, the 480×1920
 resolution and the video-mode init, and whose report after a game is the
-`round-report` theme. Its light layers (`src/libre_panel/assets/light3d/`: fan
+`round-report` theme. Its light layers (`data/assets/light3d/`: fan
 rotors, rendered once in Blender, without colour) are its author's work, given to
 Libre Panel under GPL-3.0-or-later.
 
@@ -105,12 +105,12 @@ server. <https://github.com/LibreHardwareMonitor/LibreHardwareMonitor>.
 
 **Barlow** (Jeremy Tribby), **JetBrains Mono** (JetBrains) and **Liberation
 Sans** (Red Hat, Google) — bundled fonts under the SIL Open Font License 1.1,
-see `src/libre_panel/fonts/`. The app shows its own text in them too.
+see `data/fonts/`. The app shows its own text in them too.
 
 **Preact** (MIT, Copyright (c) 2015-present Jason Miller) and **htm** (Apache-2.0,
 Copyright 2018 Google Inc.) — the app's front-end is built with them. The files
 are those npm publishes, unchanged but for one import in Preact's hooks; their
-versions, addresses and SHA-256 are in `src/libre_panel/editor/app/vendor/SOURCES.txt`,
+versions, addresses and SHA-256 are in `data/editor/app/vendor/SOURCES.txt`,
 their licence texts beside them.
 
 **librehardwaremonitor-api** (Sab44, MIT) — the real LibreHardwareMonitor
@@ -119,7 +119,7 @@ output in `tests/data/` comes from its test fixtures.
 **Open-Meteo** — weather data from <https://open-meteo.com>, CC BY 4.0.
 
 **NASA's Blue Marble and Black Marble** — the maps of the earth's globe
-(`src/libre_panel/assets/earth/`, made by `tools/earth_maps.py`): the land and the sea by
+(`data/assets/earth/`, made by `tools/earth_maps.py`): the land and the sea by
 day from Blue Marble Next Generation (August 2004, NASA Earth Observatory, Reto Stöckli), the
 earth at night from Black Marble 2016 (NASA Earth Observatory images by Joshua Stevens, using
 Suomi NPP VIIRS data from Miguel Román, NASA's Goddard Space Flight Center), the clouds and

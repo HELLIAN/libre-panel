@@ -22,6 +22,7 @@ from typing import Any
 from PIL import ImageColor
 
 from libre_panel.config import FAN_LOOKS, FAN_PAINTS, SYMBOL_PACKS, user_themes_dir
+from libre_panel.datadir import DATA
 from libre_panel.devices.models import find_model, orientation_of
 from libre_panel.fonts import BUILTIN_PREFIX, DEFAULT_FONT, builtin_font_path, builtin_fonts
 from libre_panel.icons import ICON_NAMES
@@ -658,7 +659,7 @@ def builtin_themes_dir() -> Path:
     """The themes that come with Libre Panel. Found once: where they lie does not change while
     it runs, and resolving the path on disk, which the main loop's theme lookup asked for with
     every frame, took a tenth of its time (more on Windows)."""
-    return Path(__file__).resolve().parent.parent / "themes"
+    return DATA / "themes"
 
 
 def valid_theme_name(name: str) -> bool:

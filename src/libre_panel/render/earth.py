@@ -26,12 +26,13 @@ from __future__ import annotations
 import math
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
-MAPS = Path(__file__).resolve().parent.parent / "assets" / "earth"
+from libre_panel.datadir import DATA
+
+MAPS = DATA / "assets" / "earth"
 SHARE = 0.86  # the disc's share of the picture: the rest is the air's glow
 SS = 2  # a standing globe is made at twice its size and reduced
 AIR = (107, 173, 255)  # the air's colour, unless the widget gives its own

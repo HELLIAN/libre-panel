@@ -103,7 +103,7 @@ def run(
     env = {
         **os.environ,
         "LIBRE_PANEL_HOME": home,
-        "LIBRE_PANEL_DATA": os.path.join(ROOT, "src", "libre_panel"),
+        "LIBRE_PANEL_DATA": os.path.join(ROOT, "data"),
         "LP_PROFILE": "1",
         **more,
         **extra,

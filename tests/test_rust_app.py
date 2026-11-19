@@ -31,9 +31,8 @@ from rust_check import (
     python_tzdata,
 )
 
-import libre_panel
+from libre_panel.datadir import DATA
 
-DATA = Path(libre_panel.__file__).resolve().parent
 BUILTIN_THEMES_DIR = DATA / "themes"
 
 

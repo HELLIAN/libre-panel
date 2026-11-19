@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from libre_panel.design import FAMILIES  # noqa: E402
 
-THEMES = ROOT / "src" / "libre_panel" / "themes"
+THEMES = ROOT / "data" / "themes"
 
 # each v2 screen: its light's look, the picture whose colours it takes ("" none), and the
 # widgets of the first it leaves out (the light takes their place)

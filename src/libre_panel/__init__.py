@@ -1,7 +1,9 @@
 """Libre Panel: free software for USB system-monitor displays."""
 
 import os
+import re
 import time
+from pathlib import Path
 
 # numpy's products of small matrices (a glow's blur, render.dither) in the thread that asks for
 # them: OpenBLAS would spread each over every core, and while a game keeps them busy its threads
@@ -11,7 +13,27 @@ for _name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_name, "1")
 del _name
 
-__version__ = "0.9.5rc2"
+
+def _version() -> str:
+    """Libre Panel's version, which pyproject.toml alone sets (docs/RELEASING.md): read there in
+    the source tree, else from what the install wrote of it."""
+    project = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    try:
+        found = re.search(r'^name = "libre-panel"\n(?:.*\n)*?version = "([^"]+)"',
+                          project.read_text(encoding="utf-8"), re.M)  # fmt: skip
+    except OSError:
+        found = None
+    if found:
+        return found[1]
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("libre-panel")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
+__version__ = _version()
 
 
 def clock() -> float:

@@ -27,7 +27,7 @@ Libre Panel ships three ways; one git tag produces all of them.
 ## Cutting a release
 
 ```bash
-# 1. set the version in pyproject.toml and src/libre_panel/__init__.py
+# 1. set the version in pyproject.toml (the one place it is set)
 # 2. CHANGELOG.md: a section "## 0.1.0 — <date>"
 # 3. the pictures and clips of this release (see below), looked at one by one
 python tools/readme_images.py && python tools/readme_media.py && python tools/check_pages.py
@@ -235,7 +235,7 @@ To move to other versions:
 1. Read the licences again: an ffmpeg that is built `--enable-gpl --enable-version3` and not
    `--enable-nonfree`, PresentMon's `LICENSE.txt` and `THIRD_PARTY.txt` of the new tag, the
    licence of PawnIO's driver and what its release page says about the installer. Update
-   NOTICE.md (and its copy in `src/libre_panel/assets`) and the texts in
+   NOTICE.md (and its copy in `data/assets`) and the texts in
    `packaging/tools-licenses`. Do not ship what is unclear or does not go with the GPL.
 2. Change the addresses, versions and source addresses in the table of `fetch_tools.py`, run
    `python packaging/fetch_tools.py --print-pins` and copy the SHA-256 it prints (a release of

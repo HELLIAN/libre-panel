@@ -18,8 +18,8 @@ cp -a "${SOURCE:-$root/dist/libre-panel}" "$appdir/usr/lib/libre-panel"
 install -m 755 "${APPRUN:-$here/AppRun}" "$appdir/AppRun"
 install -m 644 "$here/libre-panel.desktop" "$appdir/libre-panel.desktop"
 install -m 644 "$here/libre-panel.desktop" "$appdir/usr/share/applications/libre-panel.desktop"
-install -m 644 "$root/src/libre_panel/assets/libre-panel.png" "$appdir/libre-panel.png"
-install -m 644 "$root/src/libre_panel/assets/libre-panel.png" \
+install -m 644 "$root/data/assets/libre-panel.png" "$appdir/libre-panel.png"
+install -m 644 "$root/data/assets/libre-panel.png" \
                "$appdir/usr/share/icons/hicolor/256x256/apps/libre-panel.png"
 ln -sf libre-panel.png "$appdir/.DirIcon"
 

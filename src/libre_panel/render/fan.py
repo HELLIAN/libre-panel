@@ -22,17 +22,17 @@ import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from libre_panel.datadir import DATA
 from libre_panel.render import fan_looks
 from libre_panel.render.kept import MB, Kept
 from libre_panel.render.scene import Made
 
-ASSETS = Path(__file__).resolve().parent.parent / "assets" / "light3d" / "fan"
+ASSETS = DATA / "assets" / "light3d" / "fan"
 
 BLADES = 9  # the Blender rotor's; each look has its own (fan_looks.Look.blades)
 POSITIONS = 48  # rotor images over one blade's pitch

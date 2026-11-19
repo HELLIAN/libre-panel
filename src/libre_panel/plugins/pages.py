@@ -20,6 +20,7 @@ from typing import Any
 from PIL import Image
 
 from libre_panel.config import CONFIG_FILENAME, config_dir, log_file
+from libre_panel.datadir import DATA
 from libre_panel.plugins.host import NO_PANEL, Delivery, ServiceHost
 
 log = logging.getLogger(__name__)
@@ -254,6 +255,8 @@ class EditorPage:
 
     @classmethod
     def folder(cls) -> Path | None:
+        if cls.__module__.partition(".")[0] == "libre_panel":  # (built-in: Libre Panel's files)
+            return DATA / "pages" / cls.static
         module = sys.modules.get(cls.__module__)
         if module is None or not getattr(module, "__file__", None):
             return None

@@ -187,7 +187,7 @@ mod tests {
         let places = lp_theme::versions::Places {
             user: root.join("no-such-folder"),
             plugins: Vec::new(),
-            builtin: root.join("src/libre_panel/themes"),
+            builtin: root.join("data/themes"),
         };
         for (shown, partner) in [
             ("lumen-1920x720", "arena"),

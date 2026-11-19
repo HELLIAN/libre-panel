@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from libre_panel.design import ALIASES, STYLE_DEFAULTS, family_of  # noqa: E402
 
-THEMES = ROOT / "src" / "libre_panel" / "themes"
+THEMES = ROOT / "data" / "themes"
 
 
 def _same(a: Any, b: Any) -> bool:

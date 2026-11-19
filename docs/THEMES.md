@@ -10,7 +10,7 @@ my-theme/
     Inter-Regular.ttf
 ```
 
-Built-in themes live in `src/libre_panel/themes/`; your own go into the user
+Built-in themes live in `data/themes/`; your own go into the user
 themes folder (`libre-panel config path` shows the config folder, themes are in
 its `themes/` subfolder), and so do the themes you import or install from the
 community ([Sharing a theme](#sharing-a-theme)). A user theme with the same name as a

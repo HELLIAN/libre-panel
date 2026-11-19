@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from libre_panel.datadir import DATA
 from libre_panel.i18n import t
 
 log = logging.getLogger(__name__)
@@ -140,9 +141,7 @@ def supported() -> bool:
 
 def udev_rules_text() -> str:
     """The rule for the panels, the file ``libre-panel udev-rules`` prints."""
-    return (Path(__file__).resolve().parent / "assets" / "60-libre-panel.rules").read_text(
-        encoding="utf-8"
-    )
+    return (DATA / "assets" / "60-libre-panel.rules").read_text(encoding="utf-8")
 
 
 def rapl_rules_text(chmod: str = "/usr/bin/chmod") -> str:

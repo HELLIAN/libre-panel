@@ -94,6 +94,11 @@
   part of a frame was laid again, what lay under it kept the pictures under it alive after
   they had changed, which only the region's own bytes were counted for: that goes with the
   frame now, in both apps (Orbit 87 instead of 91 MB, and 93 instead of 180 MB with the light).
+- **The downloads carry Libre Panel's files once.** The plugin host (the program the app starts
+  for Python plugins) had its own copy of the themes, fonts, translations and pictures; it now
+  takes the app's, and its folder is 12.5 MB smaller (103.3 instead of 115.7 MB on Linux). In
+  the repository these files are in `data`, which both apps read, and an install from it puts
+  them in `share/libre-panel`; the version is set in `pyproject.toml` alone.
 
 **Fixed**
 - **A module whose service is off says so in Design.** Power use, Timer, AI activity and the
