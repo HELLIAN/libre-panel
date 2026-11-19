@@ -191,14 +191,14 @@ def test_ci_runs_every_test_that_needs_a_browser_where_there_is_one():
 def test_a_release_candidate_is_never_for_everyone():
     """A pre-release is a draft that only those who may write to the repository see, by hand as
     by tag; a run keeps none of its files (on a public repository anyone signed in to GitHub
-    could download them), after the release and PyPI, whether they ran or not."""
+    could download them), after the release, whether it ran or not."""
     workflow = read(".github", "workflows", "release.yml")
     publish = workflow[workflow.index("- name: Publish the release with all files") :]
     assert 'if [ "$pre" = true ]; then flags+=(--draft); fi' in publish  # a pushed tag
     assert 'artifacts/* --repo "$GITHUB_REPOSITORY" --draft' in publish  # Run workflow
     assert 'echo "::error::$TAG is published already"' in publish  # never one made public
     forget = workflow[workflow.index("  forget-the-files:") :]
-    assert "if: always()" in forget and "github-release, pypi]" in forget
+    assert "if: always()" in forget and "needs: [test, app, github-release]" in forget
     assert 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"' in forget
 
 
@@ -271,7 +271,7 @@ def test_the_windows_programs_say_who_made_them_and_start_with_a_loader_of_their
         "sensorhost", "LibrePanel.Sensors.csproj"
     )
     workflow = read(".github", "workflows", "release.yml")
-    release = workflow[workflow.index("  github-release:") : workflow.index("  pypi:")]
+    release = workflow[workflow.index("  github-release:") : workflow.index("  forget-the-files:")]
     assert "id-token: write" in release and "attestations: write" in release
     attest = release.index("uses: actions/attest@v4")
     assert release.index("- name: SHA-256 sums") < attest < release.index("- name: Publish the")
@@ -573,7 +573,7 @@ def test_the_windows_command_runs_the_app_of_its_environment(tmp_path, monkeypat
 def test_ci_builds_and_tries_both_wheels_and_the_release_carries_them():
     """Both wheels are built in the jobs that build the downloads, installed into an
     environment of their own and tried (a frame, the version, the engine, the plugin host);
-    the release attaches them and PyPI gets them, not the Python package's own."""
+    the release attaches them, not the Python package's own, and nothing goes to PyPI."""
     ci = read(".github", "workflows", "ci.yml")
     for name, platform in (("appimage", "-o dist"), ("try", "--platform win_amd64 -o dist")):
         steps = job(ci, name)
@@ -590,6 +590,5 @@ def test_ci_builds_and_tries_both_wheels_and_the_release_carries_them():
     for name in ("libre-panel-rust-setup", "libre-panel-rust-appimage", "wheel-linux",
                  "wheel-windows"):  # fmt: skip
         assert f"name: {name}\n" in job(release, "github-release"), name
-    pypi = job(release, "pypi")
-    assert "name: wheel-linux\n" in pypi and "name: wheel-windows\n" in pypi
+    assert "pypi" not in release.lower()
     assert "py3-none-win_amd64.whl" in job(release, "github-release")

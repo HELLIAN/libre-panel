@@ -1,23 +1,16 @@
 # Releasing
 
-Libre Panel ships three ways; one git tag produces all of them.
+Libre Panel ships as the downloads of a GitHub Release; one git tag produces all of them. It
+is not on PyPI: pip and pipx install the release's wheel by its link.
 
 | Channel | For | Built by |
 |---|---|---|
-| PyPI (`pipx install libre-panel`) | Linux users, developers | `release.yml` → trusted publishing: the two wheels |
 | GitHub Release downloads | everyone, no Python needed | `release.yml`: Windows setup + portable zip, Linux AppImage + tarball, the wheels for pip and pipx (Linux, Windows) |
 | Distribution packages (winget, Flathub, AUR) | later | community / follow-up |
 
 ## One-time setup
 
-1. **PyPI:** create the project on pypi.org and add a *trusted publisher* for
-   this repository, workflow `release.yml`, environment `pypi`. No API token
-   is stored in GitHub.
-2. **GitHub:** create the environment `pypi` (Settings → Environments), ideally
-   with a required reviewer so every upload is approved, and the repository
-   variable `PYPI_UPLOAD` = `true` (Settings → Secrets and variables →
-   Actions → Variables). Without it, releases skip PyPI.
-3. **Code signing (Windows, recommended):** unsigned `.exe` files trigger
+1. **Code signing (Windows, recommended):** unsigned `.exe` files trigger
    SmartScreen warnings, and Defender's machine learning takes them for malware
    more readily (0.7.10's setup was taken for `Trojan:Win32/Bearfoos.A!ml`).
    Free signing for open source is available through
@@ -82,8 +75,7 @@ a refusal until it is understood.
 
 Once it is published: the pipx lines of the README (both languages) and of the website name
 its wheels (`pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.1.0/libre_panel-0.1.0-py3-none-<platform>.whl"`,
-`<platform>` as the release names its Linux and its Windows wheel), on `main`; with PyPI set
-up, `pipx install libre-panel` instead.
+`<platform>` as the release names its Linux and its Windows wheel), on `main`.
 
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the
@@ -96,9 +88,8 @@ tried as on every push (the Windows setup installed, run and uninstalled, the po
 zip, the AppImage started with and without a tray, the Linux archive unpacked and drawn
 from) and the wheels for pip and pipx (packaging/platform_wheel.py: the Rust app as the
 downloads carry it, for Linux and for Windows), each installed into an environment of its own
-and tried. The downloads and the wheels are the Rust app's; PyPI gets the wheels, not the
-Python package's own wheel or source (pip would make the Python app of them). Only when all
-of that passed, it publishes
+and tried. The downloads and the wheels are the Rust app's, not the Python package's own wheel or
+source (pip would make the Python app of them). Only when all of that passed, it publishes
 the GitHub Release with all files and `SHA256SUMS`, the SHA-256 of each (the
 app's *Update to* checks its download against it), its notes taken from the
 CHANGELOG section (a hotfix's, such as 0.9.1's, followed by the sections down to
@@ -106,7 +97,7 @@ the release it fixes, each under its heading, so that who updates from an older
 version reads all that is new; the app's update card shows the first paragraph),
 and GitHub's signed attestation for each file that this
 workflow built it from this commit (`gh attestation verify FILE --repo
-syntensa/libre-panel`). Then the PyPI upload, after approval, if it is set up.
+syntensa/libre-panel`).
 The Windows programs carry a version resource (who made them, which version), an
 icon and a manifest (rust/winres.rs; CI reads them back): an antivirus program's
 guess is less likely to take them for malware. (The sections below on PyInstaller
@@ -120,8 +111,7 @@ Microsoft looks at them, and Defender learns them before people download them.
 
 A version like `0.7.0rc1` (with a section `## 0.7.0rc1` in CHANGELOG.md) is a
 pre-release to try before everyone has it: it becomes a **draft**, which only
-those who may write to the repository see, with all its files, and PyPI is left
-out. Without git: *Actions → Release → Run workflow* on `main`, with the version
+those who may write to the repository see, with all its files. Without git: *Actions → Release → Run workflow* on `main`, with the version
 (`0.7.0rc1`) in *Version for a draft release*; a pushed tag `v0.7.0rc1` does the
 same. Not *Draft a new release → Publish release* on github.com: that publishes
 it for everyone. *Publish release* on the draft's page makes it a public

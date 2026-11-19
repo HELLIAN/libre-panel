@@ -194,38 +194,12 @@ jobs:
               --verify-tag --title "$title" --notes-file notes.md "${flags[@]}"
           fi
 
-  pypi:
-    # Only once PyPI is set up (docs/RELEASING.md): repository variable PYPI_UPLOAD = true. The
-    # two wheels (the Rust app for Linux and for Windows), not the Python package's own wheel
-    # or source: pip would make the Python app of them.
-    timeout-minutes: 15
-    needs: [test, app]
-    # (not a pre-release: on PyPI everyone would have it)
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') && vars.PYPI_UPLOAD == 'true' &&
-      !contains(github.ref_name, 'a') && !contains(github.ref_name, 'b') &&
-      !contains(github.ref_name, 'rc') && !contains(github.ref_name, 'dev')
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write  # trusted publishing, no stored token
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: wheel-linux
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: wheel-windows
-          path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
   forget-the-files:
     # The files are only ever in a release: a run keeps none of them. (On a public repository
     # anyone signed in to GitHub may download a run's files, a release candidate's too.) After
-    # the release and PyPI, whether they ran or not.
+    # the release, whether it ran or not.
     if: always()
-    needs: [test, app, github-release, pypi]
+    needs: [test, app, github-release]
     timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:

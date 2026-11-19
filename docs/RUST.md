@@ -2656,7 +2656,7 @@ word of the app's language in one of its fonts, so a host that does not find the
       (`workflow_call`) and publishes what its jobs `try` and `appimage` built and tried: the
       Windows setup and portable zip, the AppImage, and the Linux archive (the AppImage's
       folder, started by its own script as libre-panel.sh, unpacked and drawn from in CI);
-      the Python package beside them for PyPI
+      the wheels for pip and pipx beside them (not on PyPI)
 - [ ] signing the Windows programs (SignPath)
 
 ### R12 the switch
