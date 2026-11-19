@@ -3330,6 +3330,126 @@ fn run(case: &Value) -> Result<Value, String> {
                 .collect();
             json!({ "things": found.into_iter().collect::<serde_json::Map<_, _>>(), "again": again })
         }
+        "apart" => {
+            // morph.take_apart and morph.lay: a frame of the case's pieces (each "image" at "x",
+            // "y", "add", a "light" {"image", "x", "y"}) on "ground", "opaque", with the
+            // "frame" they made or none, the things "taken" ([key, places, [x0, y0, x1, y1]]
+            // each) taken out of it; then each part laid on the frame without them at each of
+            // "lays" ([mx, my, room w, room h, alpha] each): the frame without them, each
+            // part (its bounds, body and light) and each picture laid, by the key's order
+            use lp_render::morph::{lay, take_apart, Found, Parting};
+            use lp_render::piece::Piece;
+            let n = |v: &Value| v.as_i64().unwrap_or(0);
+            let f = |v: &Value| v.as_f64().unwrap_or(0.0);
+            let digest = case["digest"].as_bool() == Some(true);
+            let mut pieces = Vec::new();
+            for p in case["pieces"].as_array().into_iter().flatten() {
+                let mut piece = Piece::new(image_of(&p["image"])?, n(&p["x"]), n(&p["y"]));
+                piece.add = p["add"].as_bool() == Some(true);
+                if p["light"].is_object() {
+                    let l = &p["light"];
+                    let glow = Piece::new(image_of(&l["image"])?, n(&l["x"]), n(&l["y"]));
+                    piece.light = Some(Box::new(glow));
+                }
+                let wid = p["wid"].as_str().unwrap_or("").to_string();
+                pieces.push((wid, std::rc::Rc::new(piece)));
+            }
+            let frame = match case["frame"].is_object() {
+                true => Some(image_of(&case["frame"])?),
+                false => None,
+            };
+            let parting = Parting {
+                ground: image_of(&case["ground"])?,
+                pieces,
+                shows: std::collections::HashMap::new(),
+                opaque: case["opaque"].as_bool() == Some(true),
+                frame,
+            };
+            let mut taken: Vec<(String, Found)> = Vec::new();
+            for t in case["taken"].as_array().into_iter().flatten() {
+                let places = (t[1].as_array().into_iter().flatten())
+                    .filter_map(|v| v.as_u64().map(|i| i as usize))
+                    .collect();
+                let b = &t[2];
+                let bounds = (n(&b[0]), n(&b[1]), n(&b[2]), n(&b[3]));
+                taken.push((t[0].as_str().unwrap_or("").to_string(), (places, bounds)));
+            }
+            let (without, parts) = take_apart(&parting, &taken).map_err(|e| e.0)?;
+            let mut keys: Vec<&String> = parts.keys().collect();
+            keys.sort();
+            let mut told = serde_json::Map::new();
+            let mut laid = Vec::new();
+            for key in keys {
+                let part = &parts[key];
+                let b = part.bounds;
+                told.insert(
+                    key.clone(),
+                    json!({
+                        "bounds": [b.0, b.1, b.2, b.3],
+                        "body": image_answer(&part.body, digest),
+                        "light": part.light.as_ref().map(|l| image_answer(l, digest)),
+                    }),
+                );
+                let (w, h) = parting.size();
+                let (bw, bh) = part.body.size();
+                // (and with "own" at half its alpha in its own size, in the middle)
+                let own = (case["own"].as_bool() == Some(true))
+                    .then(|| json!([w as f64 / 2.0, h as f64 / 2.0, bw as f64, bh as f64, 0.5]));
+                let lays = case["lays"].as_array().into_iter().flatten();
+                for l in lays.chain(own.iter()) {
+                    let mut out = without.clone();
+                    lay(
+                        &mut out,
+                        part,
+                        (f(&l[0]), f(&l[1])),
+                        (f(&l[2]), f(&l[3])),
+                        f(&l[4]),
+                    )
+                    .map_err(|e| e.0)?;
+                    laid.push(image_answer(&out, digest));
+                }
+            }
+            json!({ "without": image_answer(&without, digest), "parts": told, "laid": laid })
+        }
+        "paired" => {
+            // morph.paired over the panels "seen" (each "panel", its "own" place in
+            // millimetres, its frames' "size" and the things its "old" and its "new" screen
+            // show, {key: [places, [x0, y0, x1, y1]]}): what flies from which panel to which
+            use lp_render::morph::{paired, Found, Seen};
+            let n = |v: &Value| v.as_i64().unwrap_or(0);
+            let f = |v: &Value| v.as_f64().unwrap_or(0.0);
+            let found = |v: &Value| -> std::collections::HashMap<String, Found> {
+                (v.as_object().into_iter().flatten())
+                    .map(|(key, t)| {
+                        let places = (t[0].as_array().into_iter().flatten())
+                            .filter_map(|p| p.as_u64().map(|i| i as usize))
+                            .collect();
+                        let b = &t[1];
+                        (
+                            key.clone(),
+                            (places, (n(&b[0]), n(&b[1]), n(&b[2]), n(&b[3]))),
+                        )
+                    })
+                    .collect()
+            };
+            let mut seen = std::collections::BTreeMap::new();
+            for s in case["seen"].as_array().into_iter().flatten() {
+                let own = &s["own"];
+                let size = (n(&s["size"][0]) as usize, n(&s["size"][1]) as usize);
+                let one = Seen {
+                    own: (f(&own[0]), f(&own[1]), f(&own[2]), f(&own[3])),
+                    size,
+                    old: found(&s["old"]),
+                    new: found(&s["new"]),
+                };
+                seen.insert(n(&s["panel"]), std::sync::Arc::new(one));
+            }
+            let flights: Vec<Value> = paired(&seen)
+                .into_iter()
+                .map(|(key, from, to)| json!([key, from, to]))
+                .collect();
+            json!({ "flights": flights })
+        }
         "transition" => {
             // overlays.transition((name, params), RenderContext(renderer)) of a theme's
             // renderer, made anew for each of the case's switches, and the frames it draws: each

@@ -582,13 +582,16 @@ def _morphing(old: str, new: str, size: tuple[int, int], seed: int, demo: bool =
     """The morph from a built-in theme to another as their renderers drew them, with the demo's
     readings or with none (the time, the rings, the numbers and the cover both show fly, their
     lights with them; the rest fades): at the turns of its timeline; and on frames of another
-    size, where it has nothing to take apart and fades."""
+    size, where it has nothing to take apart and fades, from the start and once on its way
+    (what it took apart is of the other size)."""
 
     def scenario() -> tuple[Any, ...]:
         times = (0.0, 0.03, 0.06, 0.2, 0.35, 0.42, 0.5, 0.58, 0.65, 0.8, 0.9, 0.95, 0.999, 1.0)
         steps = [[_frame(size, "RGB", seed), _frame(size, "RGB", seed + 1), _bits(t)]
                  for t in times]  # fmt: skip
         other = (size[0] // 2, size[1] // 3)
+        steps.insert(7, [_frame(other, "RGB", seed + 3), _frame(other, "RGB", seed + 4),
+                         _bits(0.54)])  # fmt: skip
         apart = [[_frame(other, "RGB", seed), _frame(other, "RGB", seed + 2), _bits(t)]
                  for t in (0.3, 0.7)]  # fmt: skip
         switches = [{"name": "morph", "raw": {}, "steps": steps},
@@ -607,8 +610,9 @@ def _morphing_across(me: int, seed: int, top: float = 0.0, alone: bool = False) 
     """The morph over two panels side by side, a gap between them: music comes, Lumen's cover
     on the left panel flies to the companion's on the right one, the time and the track's
     numbers fly on the left; this panel the left or the right, the other playing in step
-    (``alone``: the other never comes; this one waits for it till the things begin to fly);
-    ``top``: where both stand from the top, in millimetres."""
+    (``alone``: the other never comes; this one waits for it till the things begin to fly,
+    its old screen fading meanwhile); ``top``: where both stand from the top, in
+    millimetres."""
     themes = [("lumen-pair-1920x720", "encore-pair-1920x720"),
               ("lumen-companion-1920x720", "encore-companion-1920x720")]  # fmt: skip
     rects = [[0.0, top, 292.5, 109.7], [300.5, top, 292.5, 109.7]]  # (12.3" panels, 8 mm apart)
@@ -616,7 +620,7 @@ def _morphing_across(me: int, seed: int, top: float = 0.0, alone: bool = False) 
 
     def scenario() -> tuple[Any, ...]:
         size = (1920, 720)
-        times = (0.0, 0.06, 0.2, 0.35, 0.45, 0.5, 0.55, 0.65, 0.8, 0.95, 1.0)
+        times = (0.0, 0.03, 0.06, 0.2, 0.35, 0.45, 0.5, 0.55, 0.65, 0.8, 0.95, 1.0)
         steps = [[_frame(size, "RGB", seed), _frame(size, "RGB", seed + 1), _bits(t)]
                  for t in times]  # fmt: skip
         canvas = {"own": rects[me], "whole": whole, "panel": me, "panels": 2,

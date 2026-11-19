@@ -1400,13 +1400,17 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       two panels; the morph from Lumen to Arena and back and from Encore to Lumen at 1920x720,
       from Lumen to Arena as a pair and at 480x480 and from Arena to Lumen upright, with the
       demo's readings, pictures and moment, and from Lumen to Arena with none, at the turns of
-      its timeline and on frames of another size (where it fades); Lumen's screen shown with ▶
-      into Arena's; and over two 12.3" panels side by side, a gap between them, this one either
-      of them, once standing lower, once with the other never coming: 2901 frames to the bit,
-      1370 of them over the panels, 794 of the cascade, the comet and the portal and 124 of the
-      morph; the morph's other 37, with the demo's readings, within 2 levels (455 pixels in all,
-      in the glow of rings and bars, which the renderer draws within a level); and random's
-      draws of 132 seeds. The counter-checks put 110 faults into transitions.rs and 10 into
+      its timeline and on frames of another size (where it fades: from the start, and once on
+      its way after it took the screens apart); Lumen's screen shown with ▶ into Arena's; and
+      over two 12.3" panels side by side, a gap between them, this one either of them, once
+      standing lower, once with the other never coming (its old screen fading while it waits):
+      2988 frames to the bit, 1378 of them over the panels, 780 of the cascade, the comet and
+      the portal and 225 of the morph; the morph's other 56 within 2 levels (719 pixels in all);
+      and random's draws of 132 seeds. The morph's own judgements are compared alone besides
+      (tests/test_rust_morph.py): what each widget shows for every kind, which pieces are one
+      thing and where the frame is laid again for 609 frames of blank pieces, each thing taken
+      apart and laid at five alphas and in its own size for 150 frames of random pixels, and
+      what flies from panel to panel for 400 arrangements of two to four panels. The counter-checks put 110 faults into transitions.rs and 10 into
       random.rs: the tests catch 107 and 8 (squares, the early light of an entrance's edges, the
       music's track joined to its text, the room a narrow panel leaves and the line almost at
       its brightest once their scenarios were added; the old and new frames of the tests had
@@ -1432,7 +1436,24 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       that grows through the portal lies in the frame without being held to it (the point it
       grows about is on the panel); and the ring's slack of a pixel either side of each row's
       reach, and its < at the reach, differ from none and from <= only for a pixel within a
-      rounding of the reach, none in the tests
+      rounding of the reach, none in the tests. The morph's counter-checks put 86 faults into
+      morph.rs, the morph in transitions.rs, the renderer's parting and the windowed resize:
+      the frames of the transitions' comparison caught 56 of them, the morph's own judgements
+      compared alone (tests/test_rust_morph.py: what each widget shows, which pieces are one
+      thing and where the frame is laid again) 15 more, and 8 more once the morph's parts were
+      compared with frames of random pixels (each thing taken apart with its lights added
+      apart, the frame kept outside where it is laid again, each part laid at half and a
+      quarter of its alpha, cut at the panel's edges and resized within the window there), the
+      board's pairing over three and four panels, a frame of another size on the morph's way
+      and a panel waiting for the others with its old screen fading. The other seven change
+      nothing: the pieces that do not meet a region laid again lie wholly outside it; a part
+      laid at no alpha is faded to nothing; a thing whose room lies off this panel lies off it
+      laid too (its box within its room, rounded inward); the parting's ground drawn anew and
+      its frame composed anew from that ground and its pieces are the pixels kept (the
+      renderer's frame is that composition); every widget has an id once its theme is read
+      (theme/model.py names one), so the "None" of a widget without one is never asked; and the
+      arc goes down instead of up only for a thing whose top lies exactly at the arc's height,
+      a length in millimetres turned into pixels, none in the tests
 - [x] the alarm's edge on every panel (render/alarm.py): red round the picture for 3 s from
       the moment the notices service's alarm turns on, pulsing (strong at once, softer and
       strong again once a second) or still on a calm panel, in the theme's crit colour or the

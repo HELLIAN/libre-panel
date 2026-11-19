@@ -6,6 +6,8 @@ may not happen to meet."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import random
 import struct
 from typing import Any
@@ -162,3 +164,141 @@ def test_what_each_widget_shows_as_python_says_it() -> None:
     want = [morph.shown_as(w) for w in widgets]
     [got] = run([{"op": "shown", "widgets": [_typed(w) for w in widgets]}])
     assert got["shown"] == want
+
+
+def _noise(rng: random.Random, mode: str, size: tuple[int, int]) -> Image.Image:
+    """A picture of random pixels (every level of alpha among them)."""
+    return Image.frombytes(mode, size, rng.randbytes(size[0] * size[1] * len(mode)))
+
+
+def _image(im: Image.Image) -> dict[str, Any]:
+    return {"mode": im.mode, "size": list(im.size),
+            "data": base64.b64encode(im.tobytes()).decode("ascii")}  # fmt: skip
+
+
+def _answer(im: Image.Image) -> dict[str, Any]:
+    """A picture as lp-check answers it with "digest"."""
+    return {"mode": im.mode, "size": list(im.size),
+            "sha256": hashlib.sha256(im.tobytes()).hexdigest()}  # fmt: skip
+
+
+def _apart_case(rng: random.Random) -> tuple[dict[str, Any], morph.Parting, dict[str, Any]]:
+    """A frame of pieces of random pixels, lights among them and lights of their own, on its
+    ground with the frame they made (any picture: what lies outside the pieces taken stays
+    the frame's) or none; some of them taken as things, each laid at whole, half, a quarter,
+    nothing and any alpha, as large as its own box and as large as any room."""
+    w, h = rng.choice([(320, 170), (200, 120), (160, 160)])
+    opaque = rng.random() < 0.8
+    mode = "RGB" if opaque else "RGBA"
+    ground = _noise(rng, mode, (w, h))
+    frame = _noise(rng, mode, (w, h)) if rng.random() < 0.6 else None
+    pieces, made = [], []
+    for i in range(rng.randint(2, 8)):
+        pw, ph = rng.randint(1, w // 2), rng.randint(1, h // 2)
+        x, y = rng.randint(-20, w + 10), rng.randint(-20, h + 10)
+        layer = _noise(rng, "RGBA", (pw, ph))
+        piece = Piece(layer, x, y, add=rng.random() < 0.15)
+        told: dict[str, Any] = {"wid": f"w{i}", "image": _image(layer), "x": x, "y": y,
+                                "add": piece.add}  # fmt: skip
+        if rng.random() < 0.25:
+            glow = _noise(rng, "RGBA", (pw + 8, ph + 8))
+            piece.light = Piece(glow, x - 4, y - 4)
+            told["light"] = {"image": _image(glow), "x": x - 4, "y": y - 4}
+        pieces.append(told)
+        made.append((f"w{i}", piece))
+    order = list(range(len(pieces)))
+    rng.shuffle(order)
+    taken: dict[str, tuple[list[int], tuple[int, int, int, int]]] = {}
+    for k in range(rng.randint(1, min(3, len(order)))):
+        places = sorted(order[k::3]) or [order[k]]
+        boxes = [(made[i][1].x, made[i][1].y, made[i][1].x + made[i][1].layer.width,
+                  made[i][1].y + made[i][1].layer.height) for i in places]  # fmt: skip
+        box = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+               max(b[2] for b in boxes), max(b[3] for b in boxes))  # fmt: skip
+        taken[f"thing{k}"] = (places, box)
+    lays = []
+    for alpha in (1.0, 0.5, 0.25, 0.0, rng.random()):
+        lays.append([rng.uniform(-10, w + 10), rng.uniform(-10, h + 10),
+                     rng.uniform(4, w), rng.uniform(4, h), alpha])  # fmt: skip
+    case = {"op": "apart", "digest": True, "ground": _image(ground), "opaque": opaque,
+            "pieces": pieces, "taken": [[k, p, list(b)] for k, (p, b) in taken.items()],
+            "lays": lays, "own": True}  # fmt: skip
+    if frame is not None:
+        case["frame"] = _image(frame)
+    parting = morph.Parting(ground, made, {}, opaque, frame)
+    return case, parting, taken
+
+
+def test_what_flies_is_taken_apart_and_laid_as_python_does_it() -> None:
+    """morph.take_apart (the frame without what flies, laid again where it lay; each thing
+    alone, its lights added apart from its body) and morph.lay (a part laid as large as fits
+    its room, faded to its alpha: the levels rounded half to even) for frames of random
+    pixels, as Python makes them, to the bit."""
+    rng = random.Random(0x7A17)
+    cases, wants = [], []
+    for _ in range(150):
+        case, parting, taken = _apart_case(rng)
+        without, parts = morph.take_apart(parting, taken)
+        told, laid = {}, []
+        for key in sorted(parts):
+            part = parts[key]
+            light = _answer(part.light) if part.light is not None else None
+            told[key] = {"bounds": list(part.box), "body": _answer(part.body), "light": light}
+            own = [parting.size[0] / 2, parting.size[1] / 2, *map(float, part.body.size), 0.5]
+            for mx, my, rw, rh, alpha in [*case["lays"], own]:  # (and in its own size)
+                out = without.copy()
+                morph.lay(out, part, (mx, my), (rw, rh), alpha)
+                laid.append(_answer(out))
+        cases.append(case)
+        wants.append({"without": _answer(without), "parts": told, "laid": laid})
+    got = run(cases)
+    apart = [n for n, (a, b) in enumerate(zip(got, wants, strict=True)) if a != b]
+    assert not apart, (len(apart), apart[:5])
+    # (lights of their own and lights added apart, frames kept, faded halves)
+    assert sum(1 for w in wants for p in w["parts"].values() if p["light"]) > 60
+    assert sum(1 for c in cases if "frame" in c) > 60
+
+
+def _seen_case(rng: random.Random) -> list[dict[str, Any]]:
+    """Two to four panels side by side and below, each showing some of a few things on its old
+    screen and its new one: on the same panel, on one panel and another, on several."""
+    keys = ["time", "ring:cpu.load", "picture:media.cover", "number:gpu.temp"]
+    seen = []
+    for panel in range(rng.randint(2, 4)):
+        size = rng.choice([(1920, 720), (1920, 480), (480, 480)])
+        own = [panel * 300.5 + rng.uniform(-5, 5), rng.choice([0.0, 120.0]),
+               rng.uniform(100, 300), rng.uniform(40, 120)]  # fmt: skip
+        told: dict[str, Any] = {"panel": panel, "own": own, "size": list(size)}
+        for screen in ("old", "new"):
+            things = {}
+            for key in keys:
+                if rng.random() < 0.45:
+                    x0, y0 = rng.randrange(size[0] - 10), rng.randrange(size[1] - 10)
+                    box = [x0, y0, rng.randint(x0 + 1, size[0]), rng.randint(y0 + 1, size[1])]
+                    things[key] = [[rng.randrange(9)], box]
+            told[screen] = things
+        seen.append(told)
+    return seen
+
+
+def test_what_flies_from_panel_to_panel_as_python_pairs_it() -> None:
+    """morph.paired over the panels: a thing on its own panel where both its screens show it,
+    else from the one panel left that showed it to the one left that shows it (none where more
+    are left on either side), the largest first, as Python pairs them for two to four
+    panels."""
+    rng = random.Random(0x7A18)
+    cases = [_seen_case(rng) for _ in range(400)]
+    wants = []
+    for case in cases:
+        seen = {s["panel"]: morph.Seen(tuple(s["own"]), tuple(s["size"]),
+                                       {k: (p, tuple(b)) for k, (p, b) in s["old"].items()},
+                                       {k: (p, tuple(b)) for k, (p, b) in s["new"].items()})
+                for s in case}  # fmt: skip
+        wants.append({"flights": [list(f) for f in morph.paired(seen)]})
+    got = run([{"op": "paired", "seen": case} for case in cases])
+    apart = [n for n, (a, b) in enumerate(zip(got, wants, strict=True)) if a != b]
+    assert not apart, (len(apart), apart[:5], got[apart[0]], wants[apart[0]])
+    # (things that stay on their panel, that cross, and that are left where more are left)
+    flights = [f for w in wants for f in w["flights"]]
+    assert sum(1 for _k, a, b in flights if a == b) > 100
+    assert sum(1 for _k, a, b in flights if a != b) > 50
