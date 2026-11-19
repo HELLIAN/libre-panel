@@ -4,6 +4,7 @@ fetch comes before the build, the checks run on the built folder, on what the se
 and on the AppImage's files, and every place agrees on what the folder is called."""
 
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
@@ -409,6 +410,7 @@ def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
     linux = _files(tmp_path / "linux", {
         "libre-panel": b"\x7fELF app", "libre-panel-window": b"\x7fELF window",
         "tools/libre-panel-engine": b"\x7fELF engine", "tools/licenses/x264.txt": b"GPL",
+        "tools/run.sh": b"#!/bin/sh\n",
     })  # fmt: skip
     lib = _files(tmp_path / "lib", {"libfreetype-1a2b.so.6": b"\x7fELF ft"})
     licenses = _files(tmp_path / "licenses", {"THIRD-PARTY-RUST.txt": b"MIT", "x/a.txt": b"BSD"})
@@ -422,7 +424,8 @@ def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
     assert files[f"{data}/scripts/tools/libre-panel-engine"] == b"\x7fELF engine"
     assert files[f"{data}/data/lib/libre-panel/libfreetype-1a2b.so.6"] == b"\x7fELF ft"
     assert files[f"{data}/data/share/libre-panel/themes/a.json"] == b"{}"
-    assert modes[f"{data}/scripts/libre-panel"] == 0o755
+    # (programs by what they start with, wherever the wheel is made: a licence is none)
+    assert modes[f"{data}/scripts/libre-panel"] == modes[f"{data}/scripts/tools/run.sh"] == 0o755
     assert modes[f"{data}/scripts/tools/licenses/x264.txt"] == 0o644
     points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
     assert "libre_panel.cli:main" not in points and "libre_panel.launch" not in points
@@ -453,6 +456,7 @@ def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
     assert files[f"{data}/data/libre-panel/tools/libre-panel-engine.exe"] == b"MZ engine"
     assert not any(name.startswith(f"{data}/scripts/") for name in files)
     assert modes[f"{data}/data/libre-panel/libre-panel.exe"] == 0o755
+    assert modes[f"{data}/data/libre-panel/freetype.dll"] == 0o644
     points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
     assert points.startswith("[console_scripts]\n" + platform_wheel.LAUNCHER + "\n")
     assert "libre_panel.cli:main" not in points
@@ -466,7 +470,9 @@ def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
 def test_pip_installs_the_linux_wheel_as_the_app_looks_for_its_files(tmp_path):
     """pip puts the programs in the environment's bin (folders kept: the engine in bin/tools),
     the libraries in lib/libre-panel beside it and Libre Panel's files in share/libre-panel,
-    where rust/app looks for each: home.rs, name_own_libraries, the engine's tools."""
+    where rust/app looks for each: home.rs, name_own_libraries, the engine's tools. (Into a
+    folder of its own, and --ignore-installed: an install into a prefix would otherwise
+    take a Libre Panel installed where the tests run out of it.)"""
     import subprocess
 
     pytest = __import__("pytest")
@@ -483,19 +489,21 @@ def test_pip_installs_the_linux_wheel_as_the_app_looks_for_its_files(tmp_path):
     prefix = tmp_path / "prefix"
     done = subprocess.run(
         [sys.executable, "-m", "pip", "install", "--no-deps", "--no-index", "--no-compile",
-         "--disable-pip-version-check", "--ignore-requires-python", "--prefix", str(prefix),
-         str(made)],  # fmt: skip
+         "--disable-pip-version-check", "--ignore-requires-python", "--ignore-installed",
+         "--prefix", str(prefix), str(made)],  # fmt: skip
         capture_output=True, text=True,
     )  # fmt: skip
     if "is not a supported wheel on this platform" in done.stderr:
         pytest.skip("not a Linux x86-64 with glibc 2.35 or newer")
     assert done.returncode == 0, done.stderr
-    bin_ = prefix / ("Scripts" if sys.platform == "win32" else "bin")
+    bin_ = prefix / "bin"
     assert (bin_ / "libre-panel").read_bytes() == b"\x7fELF app"
+    assert os.access(bin_ / "libre-panel", os.X_OK)
     assert (bin_ / "tools" / "libre-panel-engine").read_bytes() == b"\x7fELF engine"
     assert (prefix / "lib" / "libre-panel" / "libjpeg-9c8d.so.62").is_file()
     assert (prefix / "share" / "libre-panel" / "themes" / "a.json").is_file()
     assert (bin_ / "libre-panel-plugins").is_file()
+    assert len(list(prefix.glob("lib/python*/site-packages/libre_panel/__init__.py"))) == 1
 
 
 def test_the_windows_command_runs_the_app_of_its_environment(tmp_path, monkeypatch):

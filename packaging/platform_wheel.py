@@ -30,7 +30,6 @@ import base64
 import csv
 import hashlib
 import io
-import os
 import re
 import stat
 import subprocess
@@ -40,6 +39,9 @@ from pathlib import Path
 
 PYTHON_COMMAND = "libre-panel = libre_panel.cli:main"
 LAUNCHER = "libre-panel = libre_panel.launch:main"
+# what a program starts with, which is installed as one (by its content: wherever the wheel is
+# made, a licence is no program)
+PROGRAM_STARTS = (b"\x7fELF", b"#!")
 
 
 def _digest(data: bytes) -> str:
@@ -90,7 +92,7 @@ def build(wheel: Path, programs: Path, libraries: list[Path], platform: str, out
         place = "data/libre-panel" if windows else "scripts"
         path = f"{data_dir}/{place}/{program.relative_to(programs).as_posix()}"
         entries[path] = program.read_bytes()
-        if os.access(program, os.X_OK) or program.suffix == ".exe":
+        if program.suffix == ".exe" or entries[path].startswith(PROGRAM_STARTS):
             executable.add(path)
     for library in libraries:
         entries[f"{data_dir}/data/lib/libre-panel/{library.name}"] = library.read_bytes()
