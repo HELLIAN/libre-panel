@@ -22,6 +22,7 @@ from test_app_browser import (  # noqa: E402, F401
     clip_ready,
     game_option,
     game_theme,
+    server_language,
     settings_config,
     shown_themes,
     unlock_route,
@@ -338,7 +339,6 @@ def test_the_panels_card_shows_the_theme_while_the_panel_shows_nothing(
 def test_every_card_of_the_gallery_names_its_actions(app_url, isolated_home):  # noqa: F811
     """A click on a card puts it on the panel (its name says so); "Edit" and "Export…" are always
     there, with their names, and cover nothing of the card's text in either language."""
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url, "home/themes", allow=PICTURE) as page:
@@ -353,7 +353,7 @@ def test_every_card_of_the_gallery_names_its_actions(app_url, isolated_home):  #
         expect(almanac.get_by_role("button", name="Export “Almanac”…")).to_be_visible()
         assert page.locator(".theme-card-edit").count() == len(shown_themes(page))
         assert page.locator(".theme-card-export").count() == len(shown_themes(page))
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "home/themes", allow=PICTURE) as page:
         page.wait_for_selector(".theme-card")
         for card in page.locator(".theme-card").all():
@@ -703,10 +703,9 @@ def test_a_text_does_not_end_in_a_word_alone(app_url, isolated_home):  # noqa: F
     Klick" and "Wenn du sie änderst, auf jedem / Screen": a last line of one word, in one text
     of six across the app's views and languages. The lines break so that it has company, where
     the browser knows how; what is typed into a field stays where it was typed."""
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "lumen")
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "home", allow=PICTURE) as page:
         if not page.evaluate("CSS.supports('text-wrap', 'pretty')"):
             pytest.skip("this browser does not know text-wrap: pretty")

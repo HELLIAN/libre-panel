@@ -1219,7 +1219,7 @@ impl Settings<'_> {
     /// panel's permission, the mainboard's sensor driver and the processor's power. Both have
     /// `platform`, `available`, `command` and `job`.
     pub fn unlock(&self) -> Answer<Value> {
-        if cfg!(target_os = "linux") {
+        if crate::linux_setup::supported() {
             let facts = crate::linux_setup::gather(&crate::linux_setup::root());
             return Ok(Value::Dict(crate::linux_setup::status(&facts, true)));
         }
@@ -1261,7 +1261,7 @@ impl Settings<'_> {
     /// once; the run goes on in the background.
     pub fn set_unlock(&self, payload: &Value) -> Answer<Value> {
         let payload = payload.as_dict();
-        if cfg!(target_os = "linux") {
+        if crate::linux_setup::supported() {
             return self.unlock_linux(payload);
         }
         let action = payload

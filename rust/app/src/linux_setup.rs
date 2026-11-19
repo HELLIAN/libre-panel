@@ -1619,6 +1619,14 @@ pub fn status(facts: &Facts, with_job: bool) -> Dict {
     told
 }
 
+/// supported: whether this system has the setup (linux_setup.supported): Linux does.
+/// LP_SETUP_SYSTEM=other is the tests' own: a system without it, as the browser tests make
+/// every computer but those they bring.
+pub fn supported() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var_os("LP_SETUP_SYSTEM").is_none_or(|system| system != "other")
+}
+
 /// Where the computer's files are: `/`, or the folder the tests make one in (LP_SETUP_ROOT,
 /// as linux_setup.gather's `root`).
 pub fn root() -> PathBuf {

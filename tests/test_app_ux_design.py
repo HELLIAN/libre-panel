@@ -14,6 +14,7 @@ from test_app_browser import (  # noqa: F401
     choose_theme,
     js,
     no_setup_card,
+    server_language,
     settings_config,
     waits_for,
     widget,
@@ -465,7 +466,6 @@ def test_design_keeps_its_words_whole_in_a_small_window(app_url, isolated_home):
     itself). The way to the fine-tuning cut its list short with an ellipsis, in every language.
     The way to Look left its chevron alone on a second line where the words just filled the
     first. And the Russian "Изображения" stood out of its button in the rail."""
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url, size=(1100, 700)) as page:
@@ -478,7 +478,7 @@ def test_design_keeps_its_words_whole_in_a_small_window(app_url, isolated_home):
         expect(end).to_have_text("Look")
         assert end.locator("svg").count() == 1  # the chevron goes where the last word goes
         assert end.evaluate("(el) => getComputedStyle(el).whiteSpace") == "nowrap"
-    i18n.set_language("ru")
+    server_language(app_url, "ru")
     with browser_page(app_url, size=(1100, 700)) as page:
         beyond = js(
             page,

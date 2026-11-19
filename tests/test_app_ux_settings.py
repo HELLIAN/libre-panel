@@ -18,6 +18,7 @@ from test_app_browser import (  # noqa: E402, F401
     browser_page,
     choose_theme,
     no_setup_card,
+    server_language,
     settings_config,
     unlock_route,
     waits_for,
@@ -340,10 +341,9 @@ def test_the_short_form_lists_what_needs_attention_with_its_clicks(
 
 
 def test_the_overview_speaks_german(app_url, isolated_home):  # noqa: F811
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "nimbus")
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "settings", allow=PICTURE) as page:
         expect(page.locator("#settings-title")).to_have_text("Übersicht")
         page.wait_for_selector("[data-health='background']")
@@ -681,11 +681,9 @@ def test_game_mode_and_more_leads_with_game_mode_and_the_place_comes_first(app_u
 def test_the_sections_speak_german(app_url, monkeypatch):  # noqa: F811
     from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
 
-    from libre_panel import i18n
-
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "settings/panel") as page:
         card = page.locator("#panel-video")
         expect(card.locator(".settings-row-title").first).to_have_text("Flüssige Bewegung")

@@ -19,6 +19,7 @@ from test_app_browser import (  # noqa: E402, F401
     hidden_text,
     js,
     no_setup_card,
+    server_language,
     settings_config,
     waits_for,
 )
@@ -227,10 +228,9 @@ def test_help_has_the_links_and_the_keys(app_url, isolated_home):  # noqa: F811
 
 
 def test_help_speaks_german(app_url, isolated_home):  # noqa: F811
-    from libre_panel import i18n
 
     routes = a_bar(isolated_home)
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
         page.keyboard.press("?")
         dialog = page.locator(".dialog")
@@ -521,10 +521,9 @@ def test_a_low_window_keeps_the_popover_below_and_the_help_from_its_top(app_url,
     """At 1280 × 800 the panel chip's popover, taller than the room below the chip, covered the
     chip and the header; it stays below and scrolls. The help, taller than the window there,
     opened scrolled to its end (its Close button has the focus): it shows its top."""
-    from libre_panel import i18n
 
     routes = a_bar(isolated_home)
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "design", routes=routes, allow=PICTURE, size=(1280, 800)) as page:
         chip = page.locator(".panel-chip")
         chip.click()

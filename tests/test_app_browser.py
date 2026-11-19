@@ -3,7 +3,10 @@ Chromium are missing. CI runs it with the other browser tests (the desktop job).
 
 import contextlib
 import json
+import os
 import re
+import signal
+import subprocess
 import threading
 
 import pytest
@@ -39,7 +42,21 @@ def no_setup_card(monkeypatch):
 
 
 @pytest.fixture
-def app_url():
+def app_url(request):
+    if os.environ.get("LP_UI_SERVER") == "rust":  # (experiment: the Rust app's server)
+        home = request.getfixturevalue("isolated_home")
+        for told in ("github",):  # (what tells the app's program where to go, before it starts)
+            if told in request.fixturenames:
+                request.getfixturevalue(told)
+        language = getattr(request.node, "callspec", None)
+        language = language.params.get("language") if language else None
+        if language and language != "en":  # (the app's language as it starts, from its settings)
+            home.mkdir(parents=True, exist_ok=True)
+            config = home / "config.toml"
+            text = config.read_text(encoding="utf-8") if config.is_file() else ""
+            config.write_text(f'language = "{language}"\n' + text, encoding="utf-8")
+        yield from _rust_app_url()
+        return
     srv = make_server(port=0)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
@@ -49,6 +66,54 @@ def app_url():
     srv.shutdown()
     srv.server_close()
     srv.editor_state.close()
+
+
+def _rust_app_url():
+    from test_rust_app import DATA, _libraries, _program
+
+    # the app's program as conftest.py keeps the Python app: away from this computer's sensors,
+    # its setup, the community's list and its language, until a test brings its own
+    env = {**os.environ, "LIBRE_PANEL_DATA": str(DATA), **_libraries(),
+           "LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}  # fmt: skip
+    env.setdefault("LP_COMMUNITY_INDEX", "http://127.0.0.1:9/community/themes/index.json")
+    env.setdefault("LP_SETUP_SYSTEM", "other")
+    env.setdefault("LP_LINUX_ROOT", "/no/such/root")
+    ours = subprocess.Popen(
+        [str(_program()), "editor", "--port", "0"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        said = ours.stdout.readline()
+        address = said.split(" running at ")[1].split()[0]
+        url = AppUrl(address.split("#")[0])
+        url.token = address.split("#token=")[1]
+        yield url
+    finally:
+        if os.name == "nt":
+            ours.terminate()
+        else:
+            ours.send_signal(signal.SIGINT)
+        ours.communicate(timeout=30)
+
+
+def server_language(url, language):
+    """The app's language as the person sets it in Settings: the Rust app's server is told so
+    through its settings; the Python app's speaks the language of its process."""
+    if os.environ.get("LP_UI_SERVER") == "rust":
+        import urllib.request
+
+        body = json.dumps({"language": language}).encode("utf-8")
+        headers = {"Content-Type": "application/json", "X-Libre-Panel": url.token}
+        asked = urllib.request.Request(f"{url}api/language", data=body, headers=headers)
+        with urllib.request.urlopen(asked, timeout=30) as answer:
+            answer.read()
+    else:
+        from libre_panel import i18n
+
+        i18n.set_language(language)
 
 
 def expected_404(message, allow=()):
@@ -1344,10 +1409,9 @@ def test_a_picture_that_arrives_after_start_was_left_is_not_kept(background):
 
 
 def test_the_new_views_speak_german(app_url, isolated_home):
-    from libre_panel import i18n
 
     choose_theme(isolated_home)
-    i18n.set_language("de")
+    server_language(app_url, "de")
     sets = {"**/api/themes": with_collections()}
     with browser_page(app_url, "home", routes=sets, allow=PICTURE) as page:
         page.wait_for_selector(".start-more")
@@ -4788,10 +4852,9 @@ def test_settings_say_nothing_where_there_is_nothing_to_set_up(app_url, linux_pc
 
 
 def test_the_setup_speaks_german(app_url, isolated_home, linux_pc):
-    from libre_panel import i18n
 
     linux_pc()
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "settings/sensors") as page:
         card = page.locator("#sensor-setup")
         expect(card.locator("h2")).to_have_text("Sensoren und Panel-Zugriff einrichten")
