@@ -825,6 +825,13 @@
   max-width: 420px;
 }
 
+/* OpenWeatherMap's key, saved: that it is, and what can be done with it (never the key) */
+.key-saved {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .places {
   display: flex;
   flex-direction: column;

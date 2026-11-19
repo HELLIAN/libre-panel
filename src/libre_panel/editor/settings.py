@@ -194,6 +194,14 @@ def _text(name: str, value: Any, limit: int, required: bool = False) -> str:
     return value
 
 
+def _api_key(name: str, value: Any) -> str:
+    """An API key: letters, digits and signs, no spaces (pasted with spaces round it: without)."""
+    key = _text(name, value, 128, required=True)
+    if not all("!" <= c <= "~" for c in key):
+        raise SettingsError(f"{name}: letters, digits and signs only, no spaces")
+    return key
+
+
 _RATE = re.compile(r"^(auto|[0-9]+(\.[0-9]+)?[kKM]?)$")  # as config.toml takes video.maxrate
 
 
@@ -475,6 +483,9 @@ class Settings:
                 "refresh_ms": config.refresh_ms,
                 "weather": {
                     "enabled": weather.enabled,
+                    "provider": weather.provider,
+                    # (whether there is a key, not the key: the page has no need of it)
+                    "api_key_set": bool(weather.api_key.strip()),
                     "latitude": weather.latitude,
                     "longitude": weather.longitude,
                     "place": weather.place,
@@ -1568,6 +1579,8 @@ RULES: dict[str, Any] = {
     "sensors.json.update_s": lambda n, v, c: _whole(n, v, 2, 3600),
     "weather.enabled": lambda n, v, c: _flag(n, v),
     "weather.units": lambda n, v, c: _choice(n, v, ("metric", "imperial")),
+    "weather.provider": lambda n, v, c: _choice(n, v, ("open-meteo", "openweathermap")),
+    "weather.api_key": lambda n, v, c: _api_key(n, v),
     "weather.update_minutes": lambda n, v, c: _whole(n, v, 5, 1440),
     "weather.latitude": lambda n, v, c: _number(n, v, -90, 90),
     "weather.longitude": lambda n, v, c: _number(n, v, -180, 180),
@@ -1575,7 +1588,7 @@ RULES: dict[str, Any] = {
 }
 # What can be taken out of config.toml, so that its default holds.
 UNSETTABLE = {
-    "refresh_ms", "weather.latitude", "weather.longitude", "weather.place",
+    "refresh_ms", "weather.api_key", "weather.latitude", "weather.longitude", "weather.place",
     "hotkeys.pause", "hotkeys.brightness_up", "hotkeys.brightness_down", "hotkeys.open",
     "hotkeys.next_scene", "hotkeys.timer", "hotkeys.timer_reset", "hotkeys.mic_mute",
     "device.at", "across",

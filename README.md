@@ -488,8 +488,10 @@ every start.
 <br>
 
 - **The weather** is off until you set a place. Then only its coordinates go to
-  [Open-Meteo](https://open-meteo.com), every 15 minutes. A place you look up by name goes
-  to Open-Meteo's place search when you press *Search*, and is kept to about a kilometre.
+  [Open-Meteo](https://open-meteo.com), every 15 minutes, or, if you choose it with a key of
+  your own, the coordinates and the key to [OpenWeatherMap](https://openweathermap.org). A
+  place you look up by name goes to Open-Meteo's place search when you press *Search*, and is
+  kept to about a kilometre.
 - **New versions**: *Start* asks once whether to look. Say yes, and once a day Libre Panel
   asks GitHub for its latest release; the request carries the version you have, nothing about
   you or your panel. *Settings → Start and system* switches it off again.

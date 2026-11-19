@@ -26,6 +26,7 @@ pub mod mqtt;
 pub mod netlink;
 pub mod nut;
 pub mod nvml;
+pub mod openweathermap;
 pub mod presentmon;
 pub mod protocol;
 pub mod provider;

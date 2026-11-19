@@ -274,7 +274,9 @@ pub struct HardwareConfig {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeatherConfig {
     pub enabled: bool,
+    /// "open-meteo" or "openweathermap" (with the user's `api_key`)
     pub provider: String,
+    pub api_key: String,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub place: String,
@@ -287,6 +289,7 @@ impl Default for WeatherConfig {
         WeatherConfig {
             enabled: false,
             provider: "open-meteo".into(),
+            api_key: String::new(),
             latitude: None,
             longitude: None,
             place: String::new(),
@@ -1631,6 +1634,7 @@ pub fn parse_config(data: &Table, path: Option<&Path>, platform: &str) -> Result
     let w = table_of(data, "weather", &empty)?;
     cfg.weather.enabled = flag(w, "enabled", false, "weather.enabled")?;
     cfg.weather.provider = text(w, "provider", "open-meteo", "weather.provider")?;
+    cfg.weather.api_key = text(w, "api_key", "", "weather.api_key")?;
     if let Some(value) = w.get("latitude") {
         cfg.weather.latitude = Some(number_of(value, "weather.latitude")?);
     }

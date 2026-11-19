@@ -115,8 +115,9 @@ const HOTKEYS: [&str; 8] = [
     "mic_mute",
 ];
 /// What can be taken out of config.toml, so that its default holds (the shortcuts too).
-const UNSETTABLE: [&str; 6] = [
+const UNSETTABLE: [&str; 7] = [
     "refresh_ms",
+    "weather.api_key",
     "weather.latitude",
     "weather.longitude",
     "weather.place",
@@ -273,6 +274,17 @@ fn plain_text(name: &str, value: &Value, limit: usize, required: bool) -> Answer
 
 fn a_text(name: &str, value: &Value, limit: usize) -> Answer<Value> {
     plain_text(name, value, limit, false).map(Value::Str)
+}
+
+/// An API key: letters, digits and signs, no spaces (pasted with spaces round it: without).
+fn api_key(name: &str, value: &Value) -> Answer<Value> {
+    let key = plain_text(name, value, 128, true)?;
+    if !key.chars().all(|c| c.is_ascii_graphic()) {
+        return Err(bad(format!(
+            "{name}: letters, digits and signs only, no spaces"
+        )));
+    }
+    Ok(Value::Str(key))
 }
 
 /// As config.toml takes video.maxrate: "auto", or digits (with a fraction) and k, K or M.
@@ -713,6 +725,12 @@ impl Settings<'_> {
                 "weather",
                 dict([
                     ("enabled", Value::Bool(weather.enabled)),
+                    ("provider", text(&weather.provider)),
+                    // (whether there is a key, not the key: the page has no need of it)
+                    (
+                        "api_key_set",
+                        Value::Bool(!weather.api_key.trim().is_empty()),
+                    ),
                     ("latitude", float_of(weather.latitude)),
                     ("longitude", float_of(weather.longitude)),
                     ("place", text(&weather.place)),
@@ -2489,6 +2507,8 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
         }),
         "sensors.json.update_s" => whole(name, value, 2, 3600),
         "weather.units" => choice(name, value, &["metric", "imperial"]),
+        "weather.provider" => choice(name, value, &["open-meteo", "openweathermap"]),
+        "weather.api_key" => api_key(name, value),
         "weather.update_minutes" => whole(name, value, 5, 1440),
         "weather.latitude" => number(name, value, -90.0, 90.0),
         "weather.longitude" => number(name, value, -180.0, 180.0),

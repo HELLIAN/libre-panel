@@ -152,6 +152,7 @@ fn weather(w: &WeatherConfig) -> Value {
     object(vec![
         ("enabled", flag(w.enabled)),
         ("provider", text(&w.provider)),
+        ("api_key", text(&w.api_key)),
         ("latitude", maybe(&w.latitude, |at| float(*at))),
         ("longitude", maybe(&w.longitude, |at| float(*at))),
         ("place", text(&w.place)),

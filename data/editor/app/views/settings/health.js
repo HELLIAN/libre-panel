@@ -366,30 +366,49 @@ export function healthOf(facts) {
 
   // -- the weather
   const weather = config?.weather;
+  const owm = weather?.provider === "openweathermap"; // (with the person's own key)
   if (weather && !weather.enabled && info?.weather_theme) {
     const name = themeName(info.weather_theme);
     const placed = weather.latitude !== null && weather.longitude !== null;
+    const keyless = owm && !weather.api_key_set;
+    const off = () =>
+      owm
+        ? weather.place
+          ? t("The weather is off. Turned on, only your key and the coordinates of {place} go to OpenWeatherMap.", { place: weather.place })
+          : t("The weather is off. Turned on, only your key and the coordinates of your place go to OpenWeatherMap.")
+        : weather.place
+          ? t("The weather is off. Turned on, only the coordinates of {place} go to Open-Meteo.", { place: weather.place })
+          : t("The weather is off. Turned on, only the coordinates of your place go to Open-Meteo.");
     add({
       id: "weather",
       tone: "info",
       title: t("{theme} can show the weather", { theme: name }),
-      text: placed
-        ? weather.place
-          ? t("The weather is off. Turned on, only the coordinates of {place} go to Open-Meteo.", { place: weather.place })
-          : t("The weather is off. Turned on, only the coordinates of your place go to Open-Meteo.")
-        : t("It has no place yet, so it shows no weather. Choose your town: only its coordinates go to Open-Meteo."),
-      action: placed
-        ? { label: t("Turn on the weather"), run: () => saveSettings({ "weather.enabled": true }) }
-        : go(t("Choose a place"), "settings", "weather"),
+      text: !placed
+        ? owm
+          ? t("It has no place yet, so it shows no weather. Choose your town: only its coordinates and your key go to OpenWeatherMap.")
+          : t("It has no place yet, so it shows no weather. Choose your town: only its coordinates go to Open-Meteo.")
+        : keyless
+          ? t("It needs your OpenWeatherMap API key to show the weather.")
+          : off(),
+      action: !placed
+        ? go(t("Choose a place"), "settings", "weather")
+        : keyless
+          ? go(t("Give the key"), "settings", "weather")
+          : { label: t("Turn on the weather"), run: () => saveSettings({ "weather.enabled": true }) },
     });
   }
-  const meteo = sourceStates?.background ? sourceStates.sources.find((source) => source.name === "open-meteo") : null;
-  if (weather?.enabled && meteo && !meteo.readings && (panel.stats?.uptime_s ?? 0) >= 120) {
+  const source = sourceStates?.background
+    ? sourceStates.sources.find((each) => each.name === "open-meteo" || each.name === "openweathermap")
+    : null;
+  if (weather?.enabled && source && !source.readings && (panel.stats?.uptime_s ?? 0) >= 120) {
     add({
       id: "weather",
       tone: "warn",
       title: t("No weather has arrived"),
-      text: t("Libre Panel could not reach Open-Meteo. It tries again every two minutes; is this computer online?"),
+      text:
+        source.name === "openweathermap"
+          ? t("Libre Panel could not get the weather from OpenWeatherMap. Is the key right? A new key can take a few hours before it works; Libre Panel tries again every two minutes.")
+          : t("Libre Panel could not reach Open-Meteo. It tries again every two minutes; is this computer online?"),
       action: go(t("Show the log"), "live", "diagnose"),
     });
   }

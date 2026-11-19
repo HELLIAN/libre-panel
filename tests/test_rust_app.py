@@ -1939,6 +1939,129 @@ def test_the_weather_comes_from_the_forecast_of_the_place(tmp_path: Path) -> Non
         server.server_close()
 
 
+def test_the_weather_comes_from_openweathermap_with_the_key(tmp_path: Path) -> None:
+    """`provider = "openweathermap"` with a key: OpenWeatherMap (here a server of the test's
+    own) is asked for the place with it. A key without One Call 3.0 gets the free plan's present
+    weather and 3-hour forecast, read into the same readings as Open-Meteo's (km/h from m/s, the
+    WMO code of its condition, the hours between its steps, the days it holds whole); a key with
+    it gets One Call's, its rain of the next hour by the minute too. A key it does not take is
+    said, and so is a provider with no key; the key is in nothing the program writes."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    key = "0123456789abcdef0123456789abcdef"
+    now = int(time.time())
+    step = 3 * 3600
+    first = (now // step + 1) * step  # the forecast's steps, as the free plan's fall
+    day = now - now % 86400
+    current = {"main": {"temp": 18.46, "feels_like": 17.2, "humidity": 70},
+               "wind": {"speed": 3.5}, "weather": [{"id": 501, "icon": "10d"}],
+               "timezone": 0, "dt": now}  # fmt: skip
+    forecast = {"city": {"timezone": 0, "sunrise": day + 6 * 3600, "sunset": day + 18 * 3600},
+                "list": [{"dt": first + n * step, "main": {"temp": 10 + n % 8},
+                          "weather": [{"id": 800 if n % 2 else 601}], "pop": n % 5 / 10,
+                          "sys": {"pod": "d"}} for n in range(40)]}  # fmt: skip
+    hour = now - now % 3600
+    onecall = {"timezone_offset": 0,
+               "current": {"temp": 5.04, "feels_like": 2, "humidity": 90, "wind_speed": 10,
+                           "weather": [{"id": 300, "icon": "09n"}]},
+               "minutely": [{"dt": now - now % 60 + 60 * m, "precipitation": 0 if m < 20 else 3}
+                            for m in range(60)],
+               "hourly": [{"dt": hour + 3600 * h, "temp": h, "pop": 0.5,
+                           "weather": [{"id": 802, "icon": "02d"}], "rain": {"1h": 1}}
+                          for h in range(48)],
+               "daily": [{"dt": day + 12 * 3600 + 86400 * d, "temp": {"min": d, "max": 10 + d},
+                          "pop": 0.2, "weather": [{"id": 804}]} for d in range(8)]}  # fmt: skip
+    asked: list[str] = []
+    answers: dict[str, tuple[int, Any]] = {}
+
+    class OpenWeatherMap(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            asked.append(self.path)
+            status, data = answers.get(self.path.split("?")[0], (404, {}))
+            body = json.dumps(data).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    def readings(done: subprocess.CompletedProcess[str]) -> dict[str, str]:
+        return {line[:40].strip(): line[41:].strip()
+                for line in done.stdout.splitlines() if line.startswith("weather.")}  # fmt: skip
+
+    refused = {"cod": 401, "message": "Invalid API key."}
+    server = ThreadingHTTPServer(("127.0.0.1", 0), OpenWeatherMap)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        config = ('language = "en"\n[sensors]\nproviders = ["nope"]\n[weather]\nenabled = true\n'
+                  'latitude = 35.68\nlongitude = 139.76\n'
+                  'provider = "openweathermap"\n')  # fmt: skip
+        (tmp_path / "config.toml").write_text(config + f'api_key = "{key}"\n', encoding="utf-8")
+        base = f"http://127.0.0.1:{server.server_address[1]}/data"
+        env = {"LP_OPENWEATHERMAP_URL": base, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}
+
+        # the free plan: One Call refused, the present weather and the forecast in 3-hour steps
+        answers.update({"/data/3.0/onecall": (401, refused), "/data/2.5/weather": (200, current),
+                        "/data/2.5/forecast": (200, forecast)})  # fmt: skip
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert [path.split("?")[0] for path in asked] == [
+            "/data/3.0/onecall", "/data/2.5/weather", "/data/2.5/forecast"]  # fmt: skip
+        assert all("lat=35.68&lon=139.76&units=metric" in path and f"appid={key}" in path
+                   for path in asked)  # fmt: skip
+        ours = readings(done)
+        temperature, wind = ours["weather.temperature"], ours["weather.wind_speed"]
+        assert temperature.startswith("18.5") and "°C" in temperature
+        assert wind.startswith("12.6") and "km/h" in wind
+        assert ours["weather.code"].startswith("63")
+        assert ours["weather.description"].startswith("Rain")
+        assert ours["weather.is_day"].startswith("1")
+        assert {"weather.hour.1.temperature", "weather.hour.1.time", "weather.day.0.high",
+                "weather.day.1.high", "weather.day.3.low",
+                "weather.day.1.name"} <= set(ours)  # fmt: skip
+        assert not any(name.startswith("weather.rain.") for name in ours)  # (not in 3-hour steps)
+        assert "free plan" in done.stderr
+        assert key not in done.stdout + done.stderr
+
+        # One Call 3.0: its answer, the rain of the next hour by the minute
+        asked.clear()
+        answers["/data/3.0/onecall"] = (200, onecall)
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert [path.split("?")[0] for path in asked] == ["/data/3.0/onecall"]
+        ours = readings(done)
+        assert ours["weather.temperature"].startswith("5.0")
+        assert ours["weather.wind_speed"].startswith("36.0")
+        assert ours["weather.description"].startswith("Light drizzle")
+        assert ours["weather.is_day"].startswith("0")
+        assert ours["weather.rain.text"].startswith(("Rain in", "Rain for"))
+        assert {"weather.hour.24.temperature", "weather.day.6.high"} <= set(ours)
+        assert key not in done.stdout + done.stderr
+
+        # a key it does not take
+        asked.clear()
+        answers.update({"/data/3.0/onecall": (401, refused), "/data/2.5/weather": (401, refused)})
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert "weather." not in done.stdout
+        assert "does not take the API key (HTTP 401" in done.stderr
+        assert key not in done.stdout + done.stderr
+
+        # no key: nothing asked, and said why
+        asked.clear()
+        (tmp_path / "config.toml").write_text(config, encoding="utf-8")
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert asked == [] and "weather." not in done.stdout
+        assert "OpenWeatherMap needs your API key" in done.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_home_assistant_and_json_sources_are_asked_and_read(tmp_path: Path) -> None:
     """`homeassistant` and `json` among the sources: Home Assistant's states are asked for
     with the token, each JSON source at its address (with its headers) or in its file; the

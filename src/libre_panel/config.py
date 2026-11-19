@@ -238,6 +238,9 @@ url = "http://127.0.0.1:8085/data.json"
 # Weather is off by default. Turn it on and set your own location.
 enabled = false
 provider = "open-meteo"
+# or "openweathermap", with your own key from openweathermap.org (the app sets both:
+# Settings, Weather and place)
+# api_key = ""
 # Find coordinates with:  libre-panel location "Your City"  (or in the app: Settings)
 # latitude = 0.0
 # longitude = 0.0
@@ -624,7 +627,8 @@ class HardwareConfig:
 @dataclass
 class WeatherConfig:
     enabled: bool = False
-    provider: str = "open-meteo"
+    provider: str = "open-meteo"  # or "openweathermap", with api_key (the Rust app's)
+    api_key: str = ""
     latitude: float | None = None
     longitude: float | None = None
     place: str = ""  # what the app calls the place; the coordinates are what counts
@@ -1140,6 +1144,7 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
     w = _expect(data.get("weather", {}), dict, "weather")
     cfg.weather.enabled = _expect(w.get("enabled", False), bool, "weather.enabled")
     cfg.weather.provider = _expect(w.get("provider", "open-meteo"), str, "weather.provider")
+    cfg.weather.api_key = _expect(w.get("api_key", ""), str, "weather.api_key")
     for key in ("latitude", "longitude"):
         if key in w:
             setattr(cfg.weather, key, float(_expect(w[key], (int, float), f"weather.{key}")))

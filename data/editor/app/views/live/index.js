@@ -41,6 +41,7 @@ const SOURCE_ABOUT = () => ({
   media: t("what is playing"),
   sky: t("where they stand"),
   "open-meteo": "Open-Meteo",
+  openweathermap: "OpenWeatherMap",
   calendar: t("your appointments"),
   presentmon: t("frame rates of games"),
   mangohud: t("frame rates of games, from MangoHud's log"),
@@ -55,6 +56,7 @@ const SOURCE_ABOUT = () => ({
 // the sources Settings does not list (they start by themselves, or come with a service)
 const SOURCE_NAMES = () => ({
   "open-meteo": t("Weather"),
+  openweathermap: t("Weather"),
   services: t("Game mode and more"),
   hardware: t("Hardware names"),
   mangohud: "MangoHud",

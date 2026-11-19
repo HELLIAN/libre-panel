@@ -4061,6 +4061,53 @@ def test_settings_weather_and_place(app_url, isolated_home, monkeypatch):
         playwright.expect(toggle).to_be_disabled()
 
 
+def test_the_weather_from_openweathermap_with_a_key_of_one_s_own(app_url, isolated_home):
+    """OpenWeatherMap as the weather's source: the switch waits for the key, the key goes in
+    a field that hides it and is never shown again (the page is told only that there is one),
+    it can be replaced and taken out, and taking it out switches the weather off, after a
+    question. The credit names OpenWeather, and Open-Meteo for the place search."""
+    key = "0123456789abcdef0123456789abcdef"
+    isolated_home.mkdir(parents=True, exist_ok=True)
+    (isolated_home / "config.toml").write_text(
+        'theme = "lumen"\n[weather]\nlatitude = 1.23\nlongitude = 2.35\nplace = "Springfield"\n',
+        encoding="utf-8",
+    )
+    with browser_page(app_url, "settings/weather") as page:
+        toggle = page.get_by_role("switch", name="Weather")
+        playwright.expect(toggle).to_be_enabled()
+        assert page.get_by_label("Your OpenWeatherMap API key").count() == 0  # (Open-Meteo)
+        radio(page, "Source", "OpenWeatherMap").click()
+        waits_for(page, lambda: settings_config().weather.provider == "openweathermap")
+        playwright.expect(toggle).to_be_disabled()  # no key yet
+        main = page.locator("#main")
+        playwright.expect(main).to_contain_text("Give your OpenWeatherMap API key below first.")
+        field = page.get_by_label("Your OpenWeatherMap API key")
+        assert field.get_attribute("type") == "password"
+        save = page.locator("#weather form button[type=submit]")
+        playwright.expect(save).to_be_disabled()
+        field.fill(f" {key} ")
+        field.press("Enter")
+        waits_for(page, lambda: settings_config().weather.api_key == key)
+        playwright.expect(page.locator(".key-saved")).to_contain_text("A key is saved.")
+        assert key not in page.content()
+        playwright.expect(page.locator(".settings-credit")).to_contain_text("OpenWeather (ODbL)")
+        playwright.expect(page.locator(".settings-credit")).to_contain_text("Open-Meteo.com")
+        toggle.click()
+        waits_for(page, lambda: settings_config().weather.enabled)
+        playwright.expect(main).to_contain_text("Only your key and the coordinates of your place")
+        # another key in its place
+        page.locator(".key-saved .link-btn", has_text="Replace").click()
+        page.get_by_label("Your OpenWeatherMap API key").fill("another-key")
+        page.locator("#weather form button[type=submit]").click()
+        waits_for(page, lambda: settings_config().weather.api_key == "another-key")
+        # taken out: the weather goes off with it, after a question
+        page.locator(".key-saved .link-btn", has_text="Remove").click()
+        page.locator(".dialog .btn-danger").click()
+        waits_for(page, lambda: not settings_config().weather.api_key)
+        assert not settings_config().weather.enabled
+        playwright.expect(toggle).to_be_disabled()
+
+
 def test_settings_weather_search_fails_politely(app_url, monkeypatch):
     from libre_panel.weather import open_meteo
 

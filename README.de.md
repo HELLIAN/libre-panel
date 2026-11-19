@@ -505,7 +505,9 @@ Anfragen mit einem geheimen Token, der bei jedem Start neu ist.
 <br>
 
 - **Das Wetter** ist aus, bis du einen Ort setzt. Dann gehen nur seine Koordinaten an
-  [Open-Meteo](https://open-meteo.com), alle 15 Minuten. Einen Ort, den du per Name suchst,
+  [Open-Meteo](https://open-meteo.com), alle 15 Minuten, oder, wenn du es mit eigenem
+  Schlüssel wählst, die Koordinaten und der Schlüssel an
+  [OpenWeatherMap](https://openweathermap.org). Einen Ort, den du per Name suchst,
   bekommt die Ortssuche von Open-Meteo erst, wenn du auf *Suchen* drückst; gespeichert wird
   er auf etwa einen Kilometer genau.
 - **Neue Versionen**: *Start* fragt einmal, ob nachgesehen werden soll. Sagst du ja, fragt

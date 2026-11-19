@@ -356,24 +356,25 @@ impl Source for Media {
     }
 }
 
-/// The weather of the user's place, from Open-Meteo (weather/open_meteo.py).
-struct Weather(lp_sensors::weather::WeatherSource);
+/// The weather of the user's place, from Open-Meteo (weather/open_meteo.py) or from
+/// OpenWeatherMap with the user's key: its name ("open-meteo", "openweathermap") and itself.
+struct Weather(&'static str, lp_sensors::weather::WeatherSource);
 
 impl Source for Weather {
     fn name(&self) -> &'static str {
-        "open-meteo"
+        self.0
     }
 
     fn read(&mut self, out: &mut Readings) {
-        out.extend(self.0.read());
+        out.extend(self.1.read());
     }
 
     fn notes(&mut self) -> Vec<String> {
-        self.0.notes()
+        self.1.notes()
     }
 
     fn wait_ready(&mut self, seconds: f64) {
-        self.0.wait_ready(seconds);
+        self.1.wait_ready(seconds);
     }
 }
 
@@ -1187,17 +1188,46 @@ impl Hub {
                 config.weather.latitude,
                 config.weather.longitude,
             ) {
-                // (the tests' own: a forecast served by the test)
-                let base = std::env::var("LP_WEATHER_URL")
-                    .unwrap_or_else(|_| lp_sensors::weather::FORECAST_URL.to_string());
-                sources.push(Box::new(Weather(lp_sensors::weather::WeatherSource::new(
-                    &base,
-                    latitude,
-                    longitude,
-                    config.weather.units == "imperial",
-                    u64::try_from(&config.weather.update_minutes).unwrap_or(5),
-                    &AGENT,
-                ))));
+                let weather = &config.weather;
+                let imperial = weather.units == "imperial";
+                let minutes = u64::try_from(&weather.update_minutes).unwrap_or(5);
+                let key = weather.api_key.trim();
+                match weather.provider.as_str() {
+                    "openweathermap" if key.is_empty() => notes.push(
+                        "weather not started: OpenWeatherMap needs your API key (Settings → \
+                         Weather and place)"
+                            .to_string(),
+                    ),
+                    "openweathermap" => {
+                        // (the tests' own: answers served by the test)
+                        let base = std::env::var("LP_OPENWEATHERMAP_URL")
+                            .unwrap_or_else(|_| lp_sensors::openweathermap::BASE_URL.to_string());
+                        sources.push(Box::new(Weather(
+                            "openweathermap",
+                            lp_sensors::weather::WeatherSource::openweathermap(
+                                &base, key, latitude, longitude, imperial, minutes, &AGENT,
+                            ),
+                        )));
+                    }
+                    other => {
+                        if other != "open-meteo" {
+                            notes.push(format!(
+                                "weather.provider {}: not known, so the weather comes from \
+                                 Open-Meteo (\"open-meteo\" or \"openweathermap\")",
+                                lp_py::repr(other)
+                            ));
+                        }
+                        // (the tests' own: a forecast served by the test)
+                        let base = std::env::var("LP_WEATHER_URL")
+                            .unwrap_or_else(|_| lp_sensors::weather::FORECAST_URL.to_string());
+                        sources.push(Box::new(Weather(
+                            "open-meteo",
+                            lp_sensors::weather::WeatherSource::new(
+                                &base, latitude, longitude, imperial, minutes, &AGENT,
+                            ),
+                        )));
+                    }
+                }
             }
             if !sensors.providers.iter().any(|name| name == "sky") {
                 // the sun for the weather's place (if set), the moon everywhere

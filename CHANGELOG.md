@@ -3,6 +3,14 @@
 ## Unreleased
 
 **New**
+- **The weather from OpenWeatherMap.** *Settings → Weather and place → Source*: Open-Meteo as
+  before, or OpenWeatherMap with an API key of your own (a free one is enough). Its weather comes
+  as the same readings as Open-Meteo's, in the same units and with the same symbols and words,
+  so every theme shows it alike. Any key gets the present weather and the forecast in 3-hour
+  steps (the hours between drawn from them, the days it holds whole, no rain of the next two
+  hours); a key with One Call 3.0 gets the hours, seven days and that rain as Open-Meteo gives
+  them, which Libre Panel tries first. The key stays in config.toml: the app's page is told only
+  that there is one, and no log line has it.
 - **One move over all the panels.** With more than one panel, a slide, the wipe and the line
   of light now go over all of them as over one screen where they all change at once: a scene
   put on or off, a game, music or the PC at rest coming or going, and **▶** in *Settings →

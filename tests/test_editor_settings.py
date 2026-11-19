@@ -1,6 +1,7 @@
 """The routes of the app's Settings (editor/settings.py): what they read from config.toml,
 what they write to it and what they refuse, with and without the background app."""
 
+import json
 import threading
 from types import SimpleNamespace
 
@@ -457,6 +458,29 @@ def test_a_services_options_follow_the_spec_of_the_service(server):
     assert status == 200 and "poll_s" not in data["config"]["services"]["options"]["game"]
 
 
+def test_openweathermap_s_key_is_kept_and_never_handed_out(server):
+    """The key goes into config.toml as given (without spaces round it); the app is told only
+    whether there is one, in what a write answers and in what it reads. A key with a space in
+    it, an empty one or another service is refused; null takes the key out."""
+    key = "0123456789abcdef0123456789abcdef"
+    status, data = write(server, **{"weather.provider": "openweathermap",
+                                    "weather.api_key": f"  {key} "})  # fmt: skip
+    assert status == 200 and key not in json.dumps(data)
+    assert data["config"]["weather"]["provider"] == "openweathermap"
+    assert data["config"]["weather"]["api_key_set"] is True
+    assert load_config().weather.api_key == key
+    status, read = request(server, "GET", "/api/settings")
+    assert status == 200 and key not in json.dumps(read)
+    assert read["config"]["weather"]["api_key_set"] is True
+    for wrong in ("two words", "", 5, "x" * 129):
+        assert write(server, **{"weather.api_key": wrong})[0] == 400, wrong
+    assert write(server, **{"weather.provider": "elsewhere"})[0] == 400
+    assert load_config().weather.api_key == key
+    status, data = write(server, **{"weather.api_key": None, "weather.provider": "open-meteo"})
+    assert status == 200 and data["config"]["weather"]["api_key_set"] is False
+    assert "\napi_key" not in config_text() and load_config().weather.provider == "open-meteo"
+
+
 def test_the_weather_needs_a_place_and_the_place_is_both_coordinates_or_none(server):
     status, data = write(server, **{"weather.enabled": True})
     assert status == 400 and "place" in data["error"]
@@ -465,6 +489,8 @@ def test_the_weather_needs_a_place_and_the_place_is_both_coordinates_or_none(ser
     status, data = write(server, **place, **{"weather.enabled": True, "weather.units": "imperial"})
     assert status == 200 and data["config"]["weather"] == {
         "enabled": True,
+        "provider": "open-meteo",
+        "api_key_set": False,
         "latitude": 1.55,
         "longitude": 2.25,
         "place": "Somewhere",
@@ -1292,7 +1318,7 @@ def test_the_settings_that_name_a_program_or_a_file_are_the_ones_locked():
         "sensors.librehardwaremonitor.mode", "sensors.librehardwaremonitor.url",
         "sensors.json.update_s",
         "weather.enabled", "weather.units", "weather.update_minutes", "weather.latitude",
-        "weather.longitude", "weather.place",
+        "weather.longitude", "weather.place", "weather.provider", "weather.api_key",
         "transitions.default", "transitions.speed", "transitions.canvas", "transitions.random",
         "transitions.game",
         "transitions.media", "transitions.idle", "transitions.sequence", "transitions.autopilot",

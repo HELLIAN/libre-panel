@@ -192,7 +192,8 @@ url = "http://127.0.0.1:8085/data.json"   # the web server (mode "webserver", an
 
 [weather]
 enabled = false                # off unless you turn it on
-provider = "open-meteo"
+provider = "open-meteo"        # or "openweathermap", with your own api_key
+# api_key = ""                 # (openweathermap only; the app sets it, see Weather below)
 # latitude = 0.0               # your location; find it with:
 # longitude = 0.0              #   libre-panel location "Your City" (or in the app)
 # place = ""                   # what the app calls it; the coordinates are what counts
@@ -2404,12 +2405,45 @@ The log of the setup and `libre-panel sensors` say what was tried.
 ## Weather
 
 Weather is off by default and nothing is sent anywhere until you enable it.
-When enabled, only your coordinates go to Open-Meteo every `update_minutes`.
+When enabled, only your coordinates go to the weather service every `update_minutes`:
+Open-Meteo (`provider = "open-meteo"`, the default, no key needed) or OpenWeatherMap
+(`provider = "openweathermap"`, with an API key of your own, which goes along).
 In the app, *Settings → Weather and place* finds the place by its name: the name
 you type goes to Open-Meteo's place search, only when you press *Search*, and the
 place is kept (and sent) to about a kilometre. The sun and the moon use the place
 too, also while the weather is off.
-The answer includes the rain in 15-minute steps, for the `weather.rain.*`
+Open-Meteo's answer includes the rain in 15-minute steps, for the `weather.rain.*`
 readings of the [theme guide](THEMES.md#sensor-keys).
 Weather data by [Open-Meteo.com](https://open-meteo.com), CC BY 4.0, free for
 non-commercial use.
+
+### OpenWeatherMap
+
+Get a free key at [openweathermap.org](https://home.openweathermap.org/api_keys), then choose
+*OpenWeatherMap* in *Settings → Weather and place* and give the key there, or write both into
+config.toml:
+
+```toml
+[weather]
+provider = "openweathermap"
+api_key = "your key"
+```
+
+The key stays in config.toml: the app's page is told only that there is one, and no log line
+has it. It goes to OpenWeatherMap alone. A new key can take a few hours before OpenWeatherMap
+takes it; until then *Status → Diagnose* says that it does not.
+
+The readings are those Open-Meteo gives, in the same units (km/h, the WMO weather codes and
+their words), so a theme shows them alike. What a key gets:
+
+- **Any key** (the free plan): the present weather and the forecast of the next five days in
+  3-hour steps. The hours between the steps are drawn from the steps either side (the
+  temperature on the line between them, the rest from the nearer one); a day is shown where the
+  forecast holds all of it, today with what was seen of it since Libre Panel started; there is
+  no rain of the next two hours (`weather.rain.*`). Two calls each `update_minutes`.
+- **A key with One Call 3.0** (OpenWeather's *One Call by Call*, a number of calls a day free):
+  the hours, seven days and the rain of the next hour by the minute (and the hours' rain after
+  it), as Open-Meteo gives them. One call each `update_minutes`.
+
+Libre Panel tries One Call first and, where the key does not have it, says so once in its log and
+uses the free plan's answers. Weather data by [OpenWeather](https://openweathermap.org) (ODbL).
