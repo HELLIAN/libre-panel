@@ -1,13 +1,17 @@
 import faulthandler
 import itertools
 import os
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
 import pytest
+import without_app
 
-from libre_panel import i18n
+without_app.take_away()  # (LP_WITHOUT_APP: as the tests run once the Python app is gone)
+
+from libre_panel import i18n  # noqa: E402
 
 
 def pytest_runtest_logreport(report):
@@ -45,8 +49,9 @@ def _golden(request, tmp_path_factory):
     if not golden._places:
         root = Path(__file__).resolve().parent.parent
         golden.places(tmp=tmp_path_factory.getbasetemp(), data=root / "data", repo=root)
-    golden.begin(Path(str(request.node.fspath)).stem, request.node.name)
-    if request.node.get_closest_marker("kept") and not golden.RECORDING:
+    kept = request.node.get_closest_marker("kept") is not None
+    golden.begin(Path(str(request.node.fspath)).stem, request.node.name, kept)
+    if kept and not golden.RECORDING:
         assert golden.has_kept(), "nothing was kept for this test (LP_GOLDEN=record keeps it)"
     yield
     unasked = golden.unasked()
@@ -103,6 +108,9 @@ def editor_tokens(monkeypatch):
     """The token of every editor server a test starts is kept by its port (editor_token.py),
     for the clients of the tests to send: a server answers nothing without it. And the requests
     that server is still answering when the test ends are answered before the next one starts."""
+    if without_app.ON:  # (the Python app's, gone there)
+        yield
+        return
     import threading
 
     import editor_token
@@ -145,10 +153,12 @@ def not_elevated(monkeypatch):
     unless a test says Libre Panel runs with the highest rights, and plugin folders and programs
     are used wherever they lie (rights.py)."""
     from libre_panel import rights
-    from libre_panel.editor import access
 
-    monkeypatch.setattr(access, "elevated", lambda: False)
     monkeypatch.setattr(rights, "elevated", lambda: False)
+    if not without_app.ON:
+        from libre_panel.editor import access
+
+        monkeypatch.setattr(access, "elevated", lambda: False)
 
 
 @pytest.fixture(autouse=True)
@@ -168,6 +178,8 @@ def no_machine_names(monkeypatch):
     """What the computer running the tests is made of stays out of them (it differs from
     machine to machine, and the names are its owner's): nothing is found, until a test
     brings a computer of its own."""
+    if without_app.ON:  # (the Python app's, gone there)
+        return
     from libre_panel.sensors import hardware
 
     monkeypatch.setattr(hardware, "_found", None)  # what was asked before is not an answer
@@ -178,6 +190,8 @@ def no_machine_names(monkeypatch):
 def no_community_list(monkeypatch):
     """The community's list of themes is never asked of GitHub: its address is one of this
     computer where nothing answers, until a test serves a list of its own."""
+    if without_app.ON:  # (the Python app's, gone there)
+        return
     from libre_panel.editor import community
 
     monkeypatch.setattr(community, "INDEX_URL", "http://127.0.0.1:9/community/themes/index.json")
@@ -188,6 +202,8 @@ def no_usb_panel(monkeypatch):
     """A panel plugged into the machine running the tests stays out of them: a config that
     names no theme looks for one on the USB bus to pick the panel's own. Nothing is on the
     bus, until a test says so."""
+    if without_app.ON:  # (the Python app's, gone there)
+        return
     from libre_panel.devices import turzx_usb
 
     monkeypatch.setattr(turzx_usb.UsbTransport, "present", staticmethod(lambda pid: False))
@@ -198,6 +214,8 @@ def no_linux_setup(monkeypatch):
     """The one-click setup of Linux never touches the machine running the tests: it is not
     asked about the board or the rights, and no test asks for an administrator's password.
     A test brings a computer (``linux_setup.Facts``) and a stand-in for the rights."""
+    if without_app.ON:  # (the Python app's, gone there)
+        return
     from libre_panel import linux_rights, linux_setup
 
     def forbidden(argv):
@@ -219,6 +237,8 @@ def no_linux_setup(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_machine_sensors(monkeypatch):
     """The Linux sensor source reads the folder a test lays out, not this machine's /sys."""
+    if without_app.ON:  # (the Python app's, gone there)
+        return
     from libre_panel.sensors import linux
 
     monkeypatch.setattr(linux, "ROOT", Path("/no/such/root"))
@@ -244,6 +264,8 @@ class NoTasks:
 def no_scheduled_tasks(monkeypatch):
     """The machine's own Task Scheduler stays out of the tests (it may hold the
     elevated "Libre Panel" task)."""
+    if without_app.ON:  # (the Python app's, gone there)
+        return
     from libre_panel import autostart
 
     monkeypatch.setattr(autostart, "WindowsTasks", NoTasks)
@@ -253,6 +275,8 @@ def no_scheduled_tasks(monkeypatch):
 def no_sensor_service(monkeypatch):
     """The sensor service of the machine running the tests (a Windows PC with Libre Panel
     installed) stays out of them: it is not installed, until a test says so."""
+    if without_app.ON:  # (the Python app's, gone there)
+        return
     from libre_panel.sensors import lhm_service
 
     monkeypatch.setattr(lhm_service, "registration", lambda name=None: None)
@@ -265,6 +289,18 @@ def english(monkeypatch):
     i18n.set_language("en")
     yield
     i18n.set_language("en")
+
+
+@pytest.fixture
+def bus(monkeypatch):
+    """A session bus of the test's own (wayland_bus.py has stand-ins of services on it)."""
+    daemon = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address"],
+                              stdout=subprocess.PIPE, text=True)  # fmt: skip
+    address = daemon.stdout.readline().strip()
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+    yield address
+    daemon.kill()
+    daemon.wait()
 
 
 _plugin_names = itertools.count()

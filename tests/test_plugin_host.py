@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import without_app
 from PIL import Image
+from without_app import KEPT
 
 import libre_panel
 from libre_panel.plugins import WidgetType, drawing
@@ -26,18 +28,7 @@ START = ("libre_panel.plugin_host", "libre_panel.plugins", "libre_panel.plugins.
 # What it can load of Libre Panel by any import (at the top of a module or in a function): the
 # plugin API and what that stands on, config.toml's Config among it (a sensor source follows
 # it). The rest is the Python app's, which the Rust app replaces (docs/RUST.md); a module new
-# here is one more to keep for plugins.
-KEPT = frozenset({
-    "libre_panel", "libre_panel.accent", "libre_panel.bundled", "libre_panel.cards",
-    "libre_panel.config", "libre_panel.datadir", "libre_panel.devices",
-    "libre_panel.devices.base",  # (only by the package's own names: the models load no driver)
-    "libre_panel.devices.models", "libre_panel.fonts", "libre_panel.fonts.fallback",
-    "libre_panel.hotkeys", "libre_panel.i18n", "libre_panel.plugin_host", "libre_panel.plugins",
-    "libre_panel.plugins.drawing", "libre_panel.plugins.host", "libre_panel.plugins.loader",
-    "libre_panel.plugins.pages", "libre_panel.plugins.render", "libre_panel.presence",
-    "libre_panel.render", "libre_panel.render.cover", "libre_panel.rights", "libre_panel.sensors",
-    "libre_panel.sensors.base", "libre_panel.sensors.sky", "libre_panel.sequence",
-})  # fmt: skip
+# here is one more to keep for plugins (without_app.KEPT).
 
 
 def _path(module: str) -> Path:
@@ -72,25 +63,43 @@ def test_the_plugin_host_can_load_only_the_plugin_api_and_what_it_stands_on():
     assert not KEPT - reached, f"no longer reached, so not kept: {sorted(KEPT - reached)}"
 
 
+# What plugins/drawing.py answers for a theme's file (the path in the theme's folder, or why it is
+# refused), as the Python app's theme/model.py answers it while the Python app is there.
+THEME_FILES: dict[str, Any] = {
+    "fonts/x.ttf": "fonts/x.ttf",
+    "theme.json": "theme.json",
+    "": ("refused", "empty asset path"),
+    "/etc/passwd": ("refused", "asset path must be relative to the theme folder: '/etc/passwd'"),
+    "C:\\x.ttf": ("refused", "asset path must be relative to the theme folder: 'C:\\\\x.ttf'"),
+    "\\x": ("refused", "asset path must be relative to the theme folder: '\\\\x'"),
+    "../x.ttf": ("refused", "asset path leaves the theme folder: '../x.ttf'"),
+    "a/../../x.ttf": ("refused", "asset path leaves the theme folder: 'a/../../x.ttf'"),
+    "a/./b.ttf": "a/b.ttf",
+}
+
+
+def _theme_file(find: Any, root: Path, rel: str, refused: type[Exception]) -> Any:
+    try:
+        return Path(find(root, rel)).relative_to(root).as_posix()
+    except refused as exc:
+        return ("refused", str(exc))
+
+
 def test_the_drawing_s_numbers_and_files_are_the_python_renderer_s():
-    """What plugins/drawing.py keeps of its own, as long as the Python app has it too."""
+    """What plugins/drawing.py keeps of its own: the Python renderer's numbers and its way with
+    a theme's files, and the Python app's own while it is there."""
+    root = SRC.parent / "data" / "themes" / "lumen"
+    assert (drawing.SUPERSAMPLE, drawing.COVER_COLOR) == (3, "@cover")
+    for rel, answer in THEME_FILES.items():
+        assert _theme_file(drawing.theme_file, root, rel, ValueError) == answer, rel
+    if without_app.ON:
+        return
     from libre_panel.render.renderer import SUPERSAMPLE
     from libre_panel.theme.model import COVER_COLOR, ThemeError, resolve_asset
 
-    assert drawing.SUPERSAMPLE == SUPERSAMPLE
-    assert drawing.COVER_COLOR == COVER_COLOR
-    root = SRC.parent / "data" / "themes" / "lumen"
-    for rel in ["fonts/x.ttf", "theme.json", "", "/etc/passwd", "C:\\x.ttf", "\\x", "../x.ttf",
-                "a/../../x.ttf", "a/./b.ttf"]:  # fmt: skip
-        try:
-            theirs: Any = resolve_asset(root, rel)
-        except ThemeError as exc:
-            theirs = ("refused", str(exc))
-        try:
-            ours: Any = drawing.theme_file(root, rel)
-        except ValueError as exc:
-            ours = ("refused", str(exc))
-        assert ours == theirs, rel
+    assert (SUPERSAMPLE, COVER_COLOR) == (3, "@cover")
+    for rel, answer in THEME_FILES.items():
+        assert _theme_file(resolve_asset, root, rel, ThemeError) == answer, rel
 
 
 class Box(WidgetType):

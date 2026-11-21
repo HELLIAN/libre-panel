@@ -77,6 +77,50 @@ def app_url(request):
     srv.editor_state.close()
 
 
+def _rust_env():
+    """The Rust app's environment in a test: kept as conftest.py keeps the Python app, away
+    from this computer's sensors, its setup, its autostart, the community's list and its
+    language, until a test brings its own (what a test set by then is in it)."""
+    from test_rust_app import DATA, _libraries
+
+    english = {"LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}
+    env = {**os.environ, "LIBRE_PANEL_DATA": str(DATA), **_libraries(), **english}
+    env.setdefault("LP_COMMUNITY_INDEX", "http://127.0.0.1:9/community/themes/index.json")
+    env.setdefault("LP_SETUP_SYSTEM", "other")
+    env.setdefault("LP_LINUX_ROOT", "/no/such/root")
+    env.setdefault("LP_TEST_RIGHTS", "user")  # (conftest.py's not_elevated)
+    env.setdefault("XDG_CONFIG_HOME", str(Path(env["LIBRE_PANEL_HOME"]) / "xdg"))
+    # the plugins installed in a test run in this Python's plugin host
+    env.setdefault("LIBRE_PANEL_PLUGIN_HOST", sys.executable)
+    env.setdefault("LIBRE_PANEL_PLUGIN_HOST_ARGS", "-m libre_panel.plugin_host")
+    return env
+
+
+def _started(command):
+    """The Rust app started with ``command`` and the line it says first; what it says from
+    then on is read as it says it (a pipe nobody reads stops the program once it is full) and
+    kept for a test that fails."""
+    from test_rust_app import _program
+
+    process = subprocess.Popen([str(_program()), *command], env=_rust_env(),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               encoding="utf-8")  # fmt: skip
+    said = [process.stdout.readline()]
+    for stream in (process.stdout, process.stderr):
+        threading.Thread(target=said.extend, args=(stream,), daemon=True).start()
+    return process, said
+
+
+def _stopped(process):
+    if process is None:
+        return
+    if os.name == "nt":
+        process.terminate()
+    else:
+        process.send_signal(signal.SIGINT)
+    process.wait(30)  # (what it says is read already)
+
+
 class _RustApp(AppUrl):
     """The Rust app's server for a test, started the first time its token is asked for (as
     the browser opens it): with the environment the test made by then, as the Python app's
@@ -87,41 +131,48 @@ class _RustApp(AppUrl):
     @property
     def token(self):
         if self.process is None:
-            from test_rust_app import DATA, _libraries, _program
-
-            # the program kept as conftest.py keeps the Python app: away from this computer's
-            # sensors, its setup, the community's list and its language, until a test brings
-            # its own
-            english = {"LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}
-            env = {**os.environ, "LIBRE_PANEL_DATA": str(DATA), **_libraries(), **english}
-            env.setdefault("LP_COMMUNITY_INDEX", "http://127.0.0.1:9/community/themes/index.json")
-            env.setdefault("LP_SETUP_SYSTEM", "other")
-            env.setdefault("LP_LINUX_ROOT", "/no/such/root")
-            env.setdefault("LP_TEST_RIGHTS", "user")  # (conftest.py's not_elevated)
-            # the plugins installed in a test run in this Python's plugin host
-            env.setdefault("LIBRE_PANEL_PLUGIN_HOST", sys.executable)
-            env.setdefault("LIBRE_PANEL_PLUGIN_HOST_ARGS", "-m libre_panel.plugin_host")
             port = self.split(":")[2].split("/")[0]
-            command = [str(_program()), "editor", "--port", port]
-            self.process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
-                                            stderr=subprocess.PIPE, encoding="utf-8")  # fmt: skip
-            said = self.process.stdout.readline()
-            self._token = said.split("#token=")[1].split()[0]
-            # what it says from then on is read as it says it (a pipe nobody reads stops the
-            # program once it is full) and kept for a test that fails
-            self.said = [said]
-            for stream in (self.process.stdout, self.process.stderr):
-                threading.Thread(target=self.said.extend, args=(stream,), daemon=True).start()
+            self.process, self.said = _started(["editor", "--port", port])
+            self._token = self.said[0].split("#token=")[1].split()[0]
         return self._token
 
     def stop(self):
-        if self.process is None:
-            return
-        if os.name == "nt":
-            self.process.terminate()
-        else:
-            self.process.send_signal(signal.SIGINT)
-        self.process.wait(30)  # (what it says is read already)
+        _stopped(self.process)
+
+
+class _RustBackground:
+    """The Rust app in the background for a test (``libre-panel start``), asked what the tests
+    ask the Python app's BackgroundApp: its panel's state, through its server."""
+
+    def __init__(self):
+        self.process, self.said = _started(["start", "--port", "0", "--no-browser"])
+        address = self.said[0].split(" running at ")[1].split()[0]
+        self.url = AppUrl(address.split("#")[0])
+        self.url.token = address.split("#token=")[1]
+        self.panel = self
+
+    def _app(self, action=None, value=None):
+        import urllib.request
+
+        body = None if action is None else json.dumps({"action": action, "value": value})
+        asked = urllib.request.Request(
+            f"{self.url}api/app", data=body and body.encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Libre-Panel": self.url.token},
+        )  # fmt: skip
+        with urllib.request.urlopen(asked, timeout=30) as answer:
+            return json.loads(answer.read())
+
+    def state(self):
+        """The panel's state, as BackgroundApp.panel.state() gives it."""
+        return self._app()["panel"]
+
+    @property
+    def paused(self):
+        return self.state()["state"] == "paused"
+
+    def quit(self):
+        if self.process.poll() is None:
+            _stopped(self.process)
 
 
 def _rust_app_url():
@@ -234,6 +285,11 @@ def background(isolated_home):
     from libre_panel.service import BackgroundApp
 
     write_config(isolated_home)
+    if RUST:
+        app = _RustBackground()
+        yield app, app.url
+        app.quit()
+        return
     app = BackgroundApp(port=0, autostart=Autostart("win32", registry=FakeRegistry()))
     url = app.start()
     yield app, url
@@ -742,11 +798,9 @@ def test_the_trays_line_opens_start_at_the_question(app_url, isolated_home, monk
 def test_the_question_about_the_standby_clip_is_asked_in_german_too(
     app_url, isolated_home, monkeypatch
 ):
-    from libre_panel import i18n
-
     clip_ready(monkeypatch)
     choose_theme(isolated_home)
-    i18n.set_language("de")  # (the app's language is the server's: the fixture sets it back)
+    server_language(app_url, "de")
     with browser_page(app_url, "home", allow=PICTURE) as page:
         page.wait_for_selector(".start.launcher .clip-card")
         card = page.locator(".clip-card")
@@ -1542,6 +1596,7 @@ def test_the_token_comes_in_the_address_and_leaves_it(app_url):
 
 def test_a_page_opened_without_the_token_says_what_to_do(app_url):
     """A bookmark of the address of an earlier run: the page is given, nothing else is."""
+    assert app_url.token  # (the app runs; the page is opened without it)
     with browser_page(str(app_url), "home", allow=("/api/i18n",)) as page:
         message = page.locator(".view-message.error").inner_text()
         assert "could not start" in message and "Access token missing or wrong" in message
@@ -1550,6 +1605,7 @@ def test_a_page_opened_without_the_token_says_what_to_do(app_url):
 
 
 def test_a_page_given_the_wrong_token_says_so_too(app_url):
+    assert app_url.token  # (the app runs; the page is opened with another)
     wrong = AppUrl(str(app_url))
     wrong.token = "w" * 43
     with browser_page(wrong, "home", allow=("/api/i18n",)) as page:
@@ -1572,7 +1628,8 @@ def test_the_picture_of_a_plugins_page_is_asked_for_with_the_token(background):
 
     app, url = background
     assert wait_for(lambda: app.panel.state()["state"] == "showing")
-    assert wait_for(lambda: app.plugin_host.shown is not None)  # a picture to show
+    if not RUST:  # (the Rust app's page waits for its picture as it is)
+        assert wait_for(lambda: app.plugin_host.shown is not None)  # a picture to show
     with browser_page(url, "plugin/control") as page:
         picture = page.frame_locator("iframe.plugin-frame").locator("#live")
         picture.wait_for(state="visible")  # the page shows it when it has come
@@ -1655,10 +1712,8 @@ def test_the_header_fits_a_small_window_in_either_language(background, language)
     """At 1280 px, and at the window's smallest 1100, every part of the header is in the window
     with unsaved changes, a theme name of some length and the running panel's chip: the search
     field, the name and the chip's text give way, the gear and "To the panel" stay."""
-    from libre_panel import i18n
-
     app, url = background
-    i18n.set_language(language)
+    server_language(url, language)
     with browser_page(url, "design", size=(1280, 800), allow=PICTURE) as page:
         js(page, "window.libre.doc.edit('n', (theme) => { theme.name = 'A theme with a name'; })")
         for size in ((1280, 800), (1100, 700)):
@@ -1680,10 +1735,8 @@ def test_the_search_field_gives_way_before_the_name_of_the_theme(background, lan
     """Where the header is a few pixels too narrow the theme's name used to give some of them
     up, which turned "Libre Default" into "Libre Defa…" (and "Meins" into "Me…") at 1280 and
     1366 px with unsaved changes. The search field gives way, and the name stays whole."""
-    from libre_panel import i18n
-
     app, url = background
-    i18n.set_language(language)
+    server_language(url, language)
     with browser_page(url, "design", size=(1280, 800), allow=PICTURE) as page:
         js(page, "window.libre.doc.edit('n', (theme) => { theme.description = 'changed'; })")
         name = page.locator(".theme-name span")
@@ -1703,10 +1756,8 @@ def test_the_search_field_says_whole_words_or_none(background, language):
     sixty pixels of words as enough). It says its phrase where that fits (without the hint of
     its keys, and with the tabs closer together, where it must), else its first word, else
     nothing: its glass."""
-    from libre_panel import i18n
-
     app, url = background
-    i18n.set_language(language)
+    server_language(url, language)
     phrase, word = SEARCH_SAYS[language]
     with browser_page(url, "design", size=(1920, 1000), allow=PICTURE) as page:
         bar = page.locator(".topbar")

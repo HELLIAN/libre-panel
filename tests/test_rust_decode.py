@@ -1085,36 +1085,6 @@ def test_a_gif_whose_l_is_p_underneath_is_made_small_as_pillow_makes_it():
 # -- pictures Pillow fails at, as the renderer reads them -------------------------------------
 
 
-def _ways(path: Path) -> dict[str, list[Any]]:
-    """What becomes of the file at `path` along the renderer's three ways of reading a picture:
-    _read_picture (open, exif_transpose, RGBA: its size), moving.read_animation (the frames it
-    keeps, None for a still) and _moving (n_frames). Each its result, or the class of what
-    Python raises, whether it is an OSError (what the renderer goes on from), and its text
-    (with the file's name as <PATH>)."""
-    from libre_panel.render import moving
-
-    def outcome(read: Any) -> list[Any]:
-        try:
-            return ["ok", read()]
-        except Exception as exc:  # noqa: BLE001 (every class Python raises is compared)
-            text = str(exc).replace(repr(str(path)), "<PATH>")
-            return [type(exc).__name__, isinstance(exc, OSError), text]
-
-    def still() -> list[int]:
-        with Image.open(path) as src:
-            return list(ImageOps.exif_transpose(src).convert("RGBA").size)
-
-    def animation() -> int | None:
-        found = moving.read_animation(path, lambda im: im)
-        return None if found is None else len(found.frames)
-
-    def frames() -> int:
-        with Image.open(path) as found:
-            return getattr(found, "n_frames", 1)
-
-    return {"read": outcome(still), "animation": outcome(animation), "moves": outcome(frames)}
-
-
 def _broken(rng: random.Random, data: bytes, low: int) -> bytes:
     """Cut short, a few bytes changed or a few put in, from `low` on."""
     out = bytearray(data)
@@ -1256,33 +1226,28 @@ def _pictures_to_break(rng: random.Random, n: int) -> list[tuple[str, str, bytes
 
 @needs_libjpeg
 @needs_libwebp
-def test_pictures_pillow_fails_at_fail_as_they_fail_in_python(tmp_path: Path) -> None:
+@pytest.mark.kept  # (what the Python app's renderer read of them: tests/golden)
+def test_pictures_pillow_fails_at_fail_as_they_fail_in_python() -> None:
     """Pictures cut short, with bytes changed or put in, EXIF Pillow cannot read, text where
     it wants bytes, sizes beyond its limit or of nothing, MP indexes of odd kinds: along each
     of the renderer's ways of reading a picture, what Pillow reads, or what it raises: its
     class (the renderer goes on without the picture from an OSError, without the animation
-    from a ValueError too; anything else fails the widget, with its text) and its text. Of a
-    file of none of its kinds (Pillow knows forty more) Rust cannot say: it leaves those to
-    Python."""
+    from a ValueError too; anything else fails the widget, with its text) and its text, as the
+    Python app's renderer had them. Of a file of none of its kinds (Pillow knows forty more)
+    Rust cannot say: it leaves those to Python."""
     rng = random.Random(0xB20C)
-    cases, want, kinds = [], [], []
-    for n, (kind, suffix, data) in enumerate(_pictures_to_break(rng, 990)):
-        path = tmp_path / f"picture{n}{suffix}"
-        path.write_bytes(data)
-        want.append(_ways(path))
+    cases, kinds = [], []
+    for kind, _suffix, data in _pictures_to_break(rng, 990):
         cases.append({"op": "ways", "data": base64.b64encode(data).decode(), "name": "<PATH>"})
         kinds.append(kind)
     raised: dict[str, int] = {}
-    for n, (kind, got, theirs) in enumerate(zip(kinds, run(cases), want, strict=True)):
-        for way, expected in theirs.items():
-            have = got[way]
+    for n, (kind, got) in enumerate(zip(kinds, run(cases), strict=True)):
+        for way, have in got.items():
             if have.get("raised") == "unported":
-                assert kind == "no picture" and expected[0] == "UnidentifiedImageError", (n, way)
+                assert kind == "no picture", (n, way)
                 continue
-            found = ["ok", have["ok"]] if "ok" in have else [have["raised"], have["os"],
-                                                             have["msg"]]  # fmt: skip
-            assert found == expected, (n, kind, way)
-            raised[expected[0]] = raised.get(expected[0], 0) + 1
+            name = "ok" if "ok" in have else have["raised"]
+            raised[name] = raised.get(name, 0) + 1
     for name, least in [("ok", 1000), ("OSError", 300), ("UnidentifiedImageError", 200),
                         ("SyntaxError", 40), ("ValueError", 5), ("TypeError", 14),
                         ("IndexError", 5), ("error", 12),
@@ -1475,7 +1440,8 @@ def _rare_failures(rng: random.Random) -> list[tuple[str, str, bytes]]:
 
 
 @needs_libjpeg
-def test_failures_the_random_breaks_seldom_reach_fail_as_in_python(tmp_path: Path) -> None:
+@pytest.mark.kept  # (what the Python app's renderer read of them: tests/golden)
+def test_failures_the_random_breaks_seldom_reach_fail_as_in_python() -> None:
     # (a gAMA, cHRM, sRGB or pHYs too short, before the data (Image.open's ValueError) and
     # after it (load_end's, raised before what the decoder found); an APNG cut in its acTL,
     # in a later fcTL or fdAT (no animation: a ValueError); a GIF whose second frame grows the
@@ -1484,21 +1450,12 @@ def test_failures_the_random_breaks_seldom_reach_fail_as_in_python(tmp_path: Pat
     # indexes of every kind Pillow reads: of BYTEs, in both byte orders and the headers it
     # takes, BigTIFF's, a NumberOfImages of each type, entries cut short, of other formats)
     rng = random.Random(0xB20E)
-    cases, want, labels = [], [], []
-    for n, (label, suffix, data) in enumerate(_rare_failures(rng)):
-        path = tmp_path / f"rare{n}{suffix}"
-        path.write_bytes(data)
-        want.append(_ways(path))
-        cases.append({"op": "ways", "data": base64.b64encode(data).decode(), "name": "<PATH>"})
-        labels.append(label)
+    cases = [{"op": "ways", "data": base64.b64encode(data).decode(), "name": "<PATH>"}
+             for _label, _suffix, data in _rare_failures(rng)]  # fmt: skip
     seen: set[str] = set()
-    for label, got, theirs in zip(labels, run(cases), want, strict=True):
-        for way, expected in theirs.items():
-            have = got[way]
-            found = ["ok", have["ok"]] if "ok" in have else [have["raised"], have["os"],
-                                                             have["msg"]]  # fmt: skip
-            assert found == expected, (label, way)
-            seen.add(f"{expected[0]} {expected[-1]}" if expected[0] != "ok" else "ok")
+    for got in run(cases):
+        for have in got.values():
+            seen.add("ok" if "ok" in have else f"{have['raised']} {have['msg']}")
     for wanted in ["ValueError Truncated gAMA chunk", "ValueError image has no palette",
                    "ValueError APNG contains truncated fcTL chunk",
                    "ValueError APNG contains truncated acTL chunk",

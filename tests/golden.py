@@ -1,14 +1,16 @@
 """The answers the comparisons got from lp-check while the Python app still checked them, kept
 (docs/RUST.md, R12 the switch): each answer, once it was the same as the Python app's, as a
 digest in tests/golden/<system>/<test file>.json, by test, call and case. A comparison that no
-longer has the Python app to ask checks lp-check's answers against them (``rust_check.run``
-does, for every test that kept some).
+longer has the Python app to ask (marked ``kept``) checks lp-check's answers against them
+(``rust_check.run`` does); the others go on asking what they compare with (Pillow, Python's
+own library, the modules the plugin host keeps), and their answers may depend on the computer
+(its zones, the time a file was written) as kept ones may not.
 
-``LP_GOLDEN=record`` keeps the answers of the tests that run (the Python app's comparisons
-passing, or else what the Rust app answers now, for a change meant to be seen): a test's
-kept answers are written anew as a whole, the other tests' stay. ``LP_GOLDEN_OUT`` names a
-folder where the answers of the tests that passed are written as well, while they are checked
-as always (CI keeps them as a file of its run, golden-<system>).
+``LP_GOLDEN=record`` keeps the answers of the marked tests that run (the Python app's
+comparisons passing, or else what the Rust app answers now, for a change meant to be seen): a
+test's kept answers are written anew as a whole, the other tests' stay. ``LP_GOLDEN_OUT``
+names a folder where the answers of every test that passed are written as well (CI keeps them
+as a file of its run, golden-<system>: what a test would keep, before it is marked).
 
 What depends on where a test ran is taken out first: its temporary folder, the app's files,
 the repository (each a word in angle brackets, with the path's separators as "/")."""
@@ -30,7 +32,7 @@ RECORDING = os.environ.get("LP_GOLDEN") == "record"
 OUT = os.environ.get("LP_GOLDEN_OUT") or None
 
 _places: list[tuple[str, str]] = []  # (a path as it is written, its word), longest first
-_test: dict[str, Any] = {"file": None, "name": None, "calls": 0, "made": None}
+_test: dict[str, Any] = {"file": None, "name": None, "kept": False, "calls": 0, "made": None}
 _files: dict[str, dict[str, Any]] = {}  # the kept answers by test file, as read or recorded
 _out: dict[str, dict[str, Any]] = {}  # the answers written to OUT by test file
 
@@ -95,9 +97,11 @@ def _kept(file: str) -> dict[str, Any]:
     return _files[file]
 
 
-def begin(file: str, name: str) -> None:
-    """A test begins (its file's name without .py, its name with its parameters)."""
-    _test.update(file=file, name=name, calls=0, made=[] if RECORDING or OUT else None)
+def begin(file: str, name: str, kept: bool) -> None:
+    """A test begins (its file's name without .py, its name with its parameters; whether it is
+    checked against what was kept)."""
+    made = [] if (RECORDING and kept) or OUT else None
+    _test.update(file=file, name=name, kept=kept, calls=0, made=made)
 
 
 def has_kept() -> bool:
@@ -107,7 +111,9 @@ def has_kept() -> bool:
 
 def unasked() -> int:
     """How many of the calls kept for the test that runs it has not made (none: all were)."""
-    kept = _kept(_test["file"]).get(_test["name"]) if _test["file"] and not RECORDING else None
+    if not _test["kept"] or RECORDING:
+        return 0
+    kept = _kept(_test["file"]).get(_test["name"])
     return 0 if kept is None else max(0, len(kept) - _test["calls"])
 
 
@@ -119,14 +125,14 @@ def _write(folder: Path, tests: dict[str, Any], file: str) -> None:
 
 def end(passed: bool) -> None:
     """A test ended: what it recorded is kept where it passed, and written."""
-    file, name, made = _test["file"], _test["name"], _test["made"]
-    _test.update(file=None, name=None, calls=0, made=None)
+    file, name, kept, made = _test["file"], _test["name"], _test["kept"], _test["made"]
+    _test.update(file=None, name=None, kept=False, calls=0, made=None)
     if file is None or not passed or made is None:
         return
     if OUT and made:
         _out.setdefault(file, {})[name] = made
         _write(Path(OUT) / FOLDER.name, _out[file], file)
-    if not RECORDING:
+    if not RECORDING or not kept:
         return
     tests = _kept(file)
     if not made and name not in tests:
@@ -146,7 +152,7 @@ def answered(answers: list[Any]) -> None:
     _test["calls"] += 1
     if _test["made"] is not None:
         _test["made"].append(digests)
-    if RECORDING:
+    if RECORDING or not _test["kept"]:
         return
     kept = _kept(_test["file"]).get(_test["name"])
     if kept is None:
@@ -156,3 +162,60 @@ def answered(answers: list[Any]) -> None:
               if ours != theirs]  # fmt: skip
     assert len(digests) == len(kept[call]), (call, len(digests), len(kept[call]))
     assert not differ, f"call {call}: cases {differ[:20]} answer otherwise than they did"
+
+
+def _marked(path: Path) -> set[str] | bool:
+    """The tests of a test file that are marked ``kept``; True where the whole file is."""
+    import ast
+
+    def kept(node: ast.AST) -> bool:
+        return any(isinstance(n, ast.Attribute) and n.attr == "kept" for n in ast.walk(node))
+
+    found: set[str] = set()
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
+        ):
+            if kept(node.value):
+                return True
+        if isinstance(node, ast.FunctionDef) and any(kept(d) for d in node.decorator_list):
+            found.add(node.name)
+    return found
+
+
+def take(folder: Path) -> list[str]:
+    """What the tests marked ``kept`` answered, taken from ``folder`` (a run's golden-<system>
+    files, unpacked: <system>/<test file>.json) into tests/golden: theirs anew, every other
+    test's let go. Only answers a run checked against the Python app belong there, so they come
+    from its files (CI keeps them), never from a record of what the Rust app answers now."""
+    said = []
+    tests = FOLDER.parent.parent
+    for system in ("linux", "win32"):
+        mine = FOLDER.parent / system
+        for path in sorted(tests.glob("test_*.py")):
+            marked = _marked(path)
+            if not marked:
+                continue
+            given = folder / system / f"{path.stem}.json"
+            new = json.loads(given.read_text(encoding="utf-8")) if given.is_file() else {}
+            old_file = mine / f"{path.stem}.json"
+            old = json.loads(old_file.read_text(encoding="utf-8")) if old_file.is_file() else {}
+
+            def wanted(name: str) -> bool:
+                return marked is True or name.split("[")[0] in marked  # noqa: B023
+
+            kept = {name: made for name, made in old.items() if wanted(name)}
+            kept.update({name: made for name, made in new.items() if wanted(name)})
+            if kept:
+                _write(mine, kept, path.stem)
+                said.append(f"{system}/{path.stem}: {len(kept)} tests")
+            elif old_file.is_file():
+                old_file.unlink()
+    return said
+
+
+if __name__ == "__main__":
+    # python tests/golden.py take <folder>
+    if len(sys.argv) != 3 or sys.argv[1] != "take":
+        sys.exit("usage: golden.py take <folder of a run's golden-<system> files>")
+    print("\n".join(take(Path(sys.argv[2]))))

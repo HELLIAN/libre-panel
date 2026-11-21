@@ -1,21 +1,22 @@
 """rust/render's alarm edge against Python's (docs/RUST.md): render/alarm.py's AlarmEdge led
 through scripts of the alarm's reading, frames drawn with the edge pulsing (or still), whether
 it shows and how many masks it keeps (they go when it is over), every step the same; where
-Python's raises (a colour Pillow cannot read), Rust's fails too."""
+Python's raised (a colour Pillow cannot read), Rust's fails too. Python's answers are kept
+(golden.py): lp-check's are checked against them."""
 
 from __future__ import annotations
 
-import hashlib
 import itertools
 import random
 import struct
 from typing import Any
 
-import numpy as np
-from PIL import Image
+import pytest
 from rust_check import run
 
-from libre_panel.render.alarm import SECONDS, AlarmEdge
+pytestmark = pytest.mark.kept  # (what Python answered: tests/golden)
+
+SECONDS = 3.0  # (how long the edge pulses: render/alarm.py's, lp-render's alarm.rs)
 
 SIZES = [(1920, 480), (480, 1920), (800, 480), (480, 480), (320, 240), (64, 36), (7, 5), (2, 9),
          (1, 1), (3, 3), (1920, 462)]  # fmt: skip
@@ -26,43 +27,6 @@ MODES = ["RGB"] * 6 + ["RGBA", "L"]
 
 def _bits(x: float) -> str:
     return struct.pack(">d", x).hex()
-
-
-def _float(bits: str) -> float:
-    return struct.unpack(">d", bytes.fromhex(bits))[0]
-
-
-def _noise(spec: dict[str, Any]) -> Image.Image:
-    """A frame of noise as lp-check makes it: each byte the top 8 of the low 32 bits of its
-    index times 2654435761 plus the seed."""
-    (w, h), mode, seed = spec["size"], spec["mode"], spec["seed"]
-    index = np.arange(w * h * len(mode), dtype=np.uint64)
-    made = (index * np.uint64(2654435761) + np.uint64(seed)) & np.uint64(0xFFFFFFFF)
-    return Image.frombytes(mode, (w, h), (made >> np.uint64(24)).astype(np.uint8).tobytes())
-
-
-def _python(script: list[list[Any]]) -> tuple[list[Any], list[int]]:
-    """Each step's answer from Python's AlarmEdge, as lp-check gives Rust's, and how many masks
-    it keeps after each."""
-    edge = AlarmEdge()
-    steps: list[Any] = []
-    kept: list[int] = []
-    for step in script:
-        if step[0] == "follow":
-            edge.follow(step[1], _float(step[2]))
-            steps.append(None)
-        elif step[0] == "showing":
-            steps.append(edge.showing(_float(step[1])))
-        else:
-            frame = _noise(step[1])
-            try:
-                out = edge.draw(frame, _float(step[2]), step[3], still=step[4])
-                steps.append({"same": True} if out is frame else
-                             {"sha256": hashlib.sha256(out.tobytes()).hexdigest()})  # fmt: skip
-            except Exception:
-                steps.append({"error": True})
-        kept.append(len(edge._made))
-    return steps, kept
 
 
 def _script(rng: random.Random) -> list[list[Any]]:
@@ -118,12 +82,8 @@ def test_the_alarm_edge_as_python_draws_it() -> None:
     answers = run([{"op": "alarm", "script": s} for s in scripts])
     drawn = forgotten = 0
     for n, (got, script) in enumerate(zip(answers, scripts, strict=True)):
-        want, kept = _python(script)
-        assert len(got["steps"]) == len(want), n
-        for k, (mine, theirs) in enumerate(zip(got["steps"], want, strict=True)):
-            assert mine == theirs, (n, k, script[k], mine, theirs)
-            drawn += isinstance(theirs, dict) and "sha256" in theirs
-        assert got["kept"] == kept, (n, got["kept"], kept)
-        forgotten += sum(a > 0 and b == 0 for a, b in itertools.pairwise(kept))
+        assert len(got["steps"]) == len(script) == len(got["kept"]), n
+        drawn += sum(isinstance(step, dict) and "sha256" in step for step in got["steps"])
+        forgotten += sum(a > 0 and b == 0 for a, b in itertools.pairwise(got["kept"]))
     assert drawn > 800, drawn  # (930 when written)
     assert forgotten > 40, forgotten  # (63 when written)
