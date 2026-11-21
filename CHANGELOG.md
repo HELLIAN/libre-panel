@@ -180,13 +180,18 @@
   unsupported argument": a setting for the display chip went out through whichever of its two
   USB interfaces came first, and Windows takes one only through the interface it is for. Each
   now goes through its own, and one for an interface that is not claimed is refused with a
-  reason. *Status → Diagnose* now also opens a panel chosen by hand that is neither a TURZX nor
-  a Hongtai one, and says why it cannot be opened.
+  reason.
+- **Diagnose tests every kind of panel the app shows on** (issue #60). The Rust app's panel
+  test opened only TURZX USB panels and the Hongtai family: a Turing 3.5" on a serial port, a
+  DS339 or a BeadaPanel came out as "panel: none found" while it showed the theme. It now finds
+  and opens the panel as the app does, the model config.toml names or any panel there is, and
+  where one is there and does not open, it says why.
 - **The MAJESTY 9.16" is named as itself** (issue #54). It is in the catalogue now: the header
   named it "Turing 9.2"" (the first panel's state gave no model, so the theme's size chose
   one), *Settings → Panel* said "No panel found" while it showed the theme, and plugging it in
   made a message about a USB device. The header names the first panel by its model, as it names
-  those beside it, and *Settings → Panel* counts a panel as found while the app shows on it.
+  those beside it, and *Settings → Panel* counts a panel as found while the app shows on it:
+  a panel on a serial port that the app has open was "No panel found" too (issue #60).
 - **What the MAJESTY and the Hongtai screens send by themselves is read and said in the log.**
   The driver asked them nothing while it sent pictures and never read what came back; it now
   reads it as it comes (so it never fills the port), counts their frames, writes each new kind

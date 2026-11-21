@@ -474,55 +474,59 @@ impl<'a> Doctor<'a> {
         true
     }
 
-    /// The panel config.toml's `[device]` names where it is another maker's (the JONSBO DS339,
-    /// a BeadaPanel, ...), through its own driver; else a serial panel of the Hongtai family.
-    /// None where config.toml names no panel.
-    fn panel_device(&self) -> Option<(lp_config::DeviceConfig, bool)> {
-        let device = self.options.device.clone()?;
-        let named = lp_devices::models::find_model(&device.model)
-            .is_some_and(|model| !["usb-turing", "serial-hongtai"].contains(&model.protocol));
-        // ("turzx" opens the model named, and says why where it cannot)
-        let driver = if named { "turzx" } else { "hongtai" };
-        Some((
-            lp_config::DeviceConfig {
-                driver: driver.into(),
-                ..device
-            },
-            named,
-        ))
+    /// The panel of config.toml's `[device]` as the app finds one (doctor.py's open_serial):
+    /// the model named, else any panel there is (another maker's USB screen, a panel on a serial
+    /// port of whichever family); and whether config.toml names it.
+    fn panel_device(&self) -> (lp_config::DeviceConfig, bool) {
+        let device = self.options.device.clone().unwrap_or_default();
+        let named = lp_devices::models::find_model(&device.model).is_some();
+        // ("turzx": the model named, else every kind of panel in turn, as "auto" looks)
+        let device = lp_config::DeviceConfig {
+            driver: "turzx".into(),
+            ..device
+        };
+        (device, named)
     }
 
-    /// The panel of config.toml's `[device]` (panel_device), opened.
+    /// The panel of config.toml's `[device]` (panel_device), opened: named as doctor.py names
+    /// it, a serial panel's step or a USB panel's.
     fn find_serial(&mut self) -> bool {
-        let Some((device, named)) = self.panel_device() else {
-            self.no_panel();
-            return false;
-        };
+        let (device, named) = self.panel_device();
         let now = lp_render::video::monotonic();
-        match crate::display::Display::open(
+        let opened = crate::display::Display::open(
             &device,
             &self.options.settings,
             self.options.brightness,
             false,
             now,
-        ) {
+        );
+        let serial = |model: Option<&PanelModel>| {
+            model.is_none_or(|model| model.protocol.starts_with("serial"))
+        };
+        match opened {
             Ok(display) if display.on_panel() => {
-                self.report.model = display.model();
-                let label = display
-                    .model()
-                    .map_or_else(|| display.describe(), PanelModel::label);
+                let model = display.model();
+                self.report.model = model;
+                let label = model.map_or_else(|| display.describe(), PanelModel::label);
                 self.panel = Some(Opened::Serial(Box::new(display)));
-                let step = if named {
-                    "find and open the panel of config.toml"
-                } else {
-                    "find and open a USB serial panel (virtual COM port)"
+                let step = match serial(model) {
+                    true => "find and open a USB serial panel (virtual COM port)",
+                    false => "find and open a USB panel",
                 };
                 self.step(step, "ok", &label);
                 true
             }
-            Err(why) if named => {
-                self.report.model = lp_devices::models::find_model(&device.model);
-                self.step("find and open the panel of config.toml", "fail", &why);
+            // (a panel config.toml names, or one on a port by its USB ids, that does not open:
+            // why; nothing there at all: what was looked for)
+            Err(why) if named || self.panel_port(&device) => {
+                let model = lp_devices::models::find_model(&device.model);
+                self.report.model = model;
+                let step = match serial(model) {
+                    true => "open a USB serial panel (virtual COM port)",
+                    false => "find and open a USB panel",
+                };
+                self.step(step, "fail", &why);
+                self.report_serial_ports();
                 false
             }
             _ => {
@@ -530,6 +534,14 @@ impl<'a> Doctor<'a> {
                 false
             }
         }
+    }
+
+    /// Whether a port has a serial panel's USB ids (looked for as the app looks).
+    fn panel_port(&self, device: &lp_config::DeviceConfig) -> bool {
+        matches!(
+            lp_devices::ports::find_port(None, &device.port),
+            Ok(Some(_))
+        )
     }
 
     fn no_panel(&mut self) {
@@ -779,13 +791,7 @@ impl<'a> Doctor<'a> {
             }
             Some(Opened::Serial(mut display)) => {
                 display.close();
-                let (device, _) = self.panel_device().unwrap_or_else(|| {
-                    let device = lp_config::DeviceConfig {
-                        driver: "hongtai".into(),
-                        ..Default::default()
-                    };
-                    (device, false)
-                });
+                let (device, _) = self.panel_device();
                 let now = lp_render::video::monotonic();
                 let display = crate::display::Display::open(
                     &device,
