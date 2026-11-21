@@ -22,6 +22,7 @@ BARS = [
     "jonsbo-zc360-screen",  # 640x180: 3.6 times
     "jonsbo-ds916",
     "hongtai-1920x462",
+    "majesty-9.16",
     "lianli-universal-8.8",
     "lianli-universal-9.2",
     "thermalright-trofeo-9.16",
