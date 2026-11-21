@@ -1205,7 +1205,7 @@ def _python(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def test_it_lists_what_it_knows_as_cli_py_lists_it(tmp_path: Path) -> None:
     """`themes` (each with where it comes from and where it is), `models` (the sizes, how far
     the driver is, the protocol) and `config path` as cli.py prints them: the program listed
-    names alone. The MAJESTY 9.16" is the program's own (it came with its drivers)."""
+    names alone. The MAJESTY 9.16" is in the catalog of both (issue #54)."""
     themes = _run(tmp_path, "themes").stdout.splitlines()
     assert [line.split()[0] for line in themes] == sorted(
         p.name for p in BUILTIN_THEMES_DIR.iterdir() if (p / "theme.json").is_file()
@@ -1223,10 +1223,9 @@ def test_it_lists_what_it_knows_as_cli_py_lists_it(tmp_path: Path) -> None:
     assert where.name == "config.toml" and where.parent.samefile(tmp_path)
     models = _run(tmp_path, "models").stdout.splitlines()
     assert models[0].split() == ["model", "panel", "landscape", "portrait", "driver", "protocol"]
-    own = [line for line in models if line.startswith("majesty-9.16 ")]
-    assert len(own) == 1 and "1920x462" in own[0]
-    theirs = _python(tmp_path, "models").stdout.splitlines()
-    assert [line for line in models if line not in own] == theirs
+    majesty = [line for line in models if line.startswith("majesty-9.16 ")]
+    assert len(majesty) == 1 and "1920x462" in majesty[0]
+    assert models == _python(tmp_path, "models").stdout.splitlines()
 
 
 def test_config_init_writes_the_default_config_as_cli_py_does(tmp_path: Path) -> None:

@@ -374,8 +374,7 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
                 "{:<18} {:<42} {:>10} {:>10}  {:<12} protocol",
                 "model", "panel", "landscape", "portrait", "driver"
             );
-            let majesty = std::iter::once(&lp_devices::hongtai::MAJESTY);
-            for model in lp_devices::models::MODELS.iter().chain(majesty) {
+            for model in lp_devices::models::MODELS {
                 let (lw, lh) = model.size("landscape");
                 let (pw, ph) = model.size("portrait");
                 let label = model.label();

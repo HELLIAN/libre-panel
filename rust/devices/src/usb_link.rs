@@ -6,7 +6,7 @@
 //! Linux, WinUSB on Windows, without libusb, as the engine has the TURZX panels); in the tests
 //! a screen they script.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::time::Duration;
 
@@ -353,7 +353,7 @@ pub struct NusbIo {
     product: String,
     device: Option<nusb::Device>,
     interfaces: Vec<InterfaceInfo>,
-    claimed: HashMap<u8, nusb::Interface>,
+    claimed: BTreeMap<u8, nusb::Interface>,
     endpoints: HashMap<u8, Endpoint>,
     place: String,
     /// its bus as the system numbers it (Linux's busnum) and its address on it
@@ -397,7 +397,7 @@ impl NusbIo {
             product,
             device: Some(device),
             interfaces,
-            claimed: HashMap::new(),
+            claimed: BTreeMap::new(),
             endpoints: HashMap::new(),
             place,
             bus,
@@ -444,9 +444,46 @@ impl NusbIo {
     }
 
     /// Where a control transfer goes: a claimed interface (Windows has no other way), else
-    /// the device.
-    fn control_interface(&self) -> Option<&nusb::Interface> {
-        self.claimed.values().next()
+    /// the device; see control_number.
+    fn control_interface(
+        &self,
+        request_type: u8,
+        index: u16,
+    ) -> UsbResult<Option<&nusb::Interface>> {
+        let claimed: Vec<u8> = self.claimed.keys().copied().collect();
+        match control_number(request_type, index, &claimed, |address| {
+            self.interface_of(address).map(|(number, _)| number)
+        }) {
+            Ok(number) => Ok(number.and_then(|number| self.claimed.get(&number))),
+            // (elsewhere the device takes it whichever interface it is for)
+            Err(_) if !cfg!(windows) => Ok(None),
+            Err(why) => Err(why),
+        }
+    }
+}
+
+/// control_number: the claimed interface a control transfer goes through. WinUSB takes one to
+/// an interface (or an endpoint) only through that interface's own handle, and nusb refuses
+/// it on another as an invalid argument: the DS339's HID reports to interface 0 failed so
+/// when the video interface (3) was the one taken (issue 59, as often as not: the interfaces
+/// were kept in no order). Any other goes through the lowest claimed; None where none is.
+pub fn control_number(
+    request_type: u8,
+    index: u16,
+    claimed: &[u8],
+    owner: impl Fn(u8) -> Option<u8>,
+) -> UsbResult<Option<u8>> {
+    let wanted = match request_type & 0x1F {
+        1 => Some(index as u8),
+        2 => owner(index as u8),
+        _ => None,
+    };
+    match wanted {
+        Some(number) if claimed.contains(&number) => Ok(Some(number)),
+        Some(number) => Err(UsbError::Other(format!(
+            "interface {number} not claimed for a control transfer"
+        ))),
+        None => Ok(claimed.iter().min().copied()),
     }
 }
 
@@ -548,7 +585,7 @@ impl UsbIo for NusbIo {
             data,
         };
         let timeout = Duration::from_millis(timeout_ms);
-        if let Some(interface) = self.control_interface() {
+        if let Some(interface) = self.control_interface(request_type, index)? {
             return interface
                 .control_out(transfer, timeout)
                 .wait()
@@ -585,7 +622,7 @@ impl UsbIo for NusbIo {
             length,
         };
         let timeout = Duration::from_millis(timeout_ms);
-        if let Some(interface) = self.control_interface() {
+        if let Some(interface) = self.control_interface(request_type, index)? {
             return interface
                 .control_in(transfer, timeout)
                 .wait()
@@ -688,5 +725,36 @@ impl Screen {
             return screen.picture(last);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A control transfer to an interface goes through that interface, one to an endpoint
+    /// through the interface it belongs to, any other through the lowest claimed, whatever
+    /// order they were claimed in (issue 59: the DS339's reports to 0 went through 3).
+    #[test]
+    fn a_control_transfer_goes_through_the_interface_it_is_for() {
+        let owner = |address: u8| (address == 0x04).then_some(3);
+        for claimed in [[0u8, 3], [3, 0]] {
+            assert_eq!(control_number(0x21, 0, &claimed, owner).ok(), Some(Some(0)));
+            assert_eq!(control_number(0xA1, 0, &claimed, owner).ok(), Some(Some(0)));
+            assert_eq!(control_number(0x21, 3, &claimed, owner).ok(), Some(Some(3)));
+            assert_eq!(
+                control_number(0x02, 0x04, &claimed, owner).ok(),
+                Some(Some(3))
+            );
+            assert_eq!(control_number(0x40, 0, &claimed, owner).ok(), Some(Some(0)));
+            assert_eq!(control_number(0x80, 0, &claimed, owner).ok(), Some(Some(0)));
+        }
+        assert!(control_number(0x21, 1, &[0, 3], owner).is_err());
+        // (an endpoint of no interface: WinUSB asks no interface of it)
+        assert_eq!(
+            control_number(0x02, 0x81, &[0, 3], owner).ok(),
+            Some(Some(0))
+        );
+        assert_eq!(control_number(0x40, 0, &[], owner).ok(), Some(None));
     }
 }

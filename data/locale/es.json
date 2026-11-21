@@ -3058,7 +3058,9 @@
     "It has no place yet, so it shows no weather. Choose your town: only its coordinates and your key go to OpenWeatherMap.": "Aún no tiene lugar, así que no muestra el tiempo. Elige tu ciudad: solo sus coordenadas y tu clave van a OpenWeatherMap.",
     "It needs your OpenWeatherMap API key to show the weather.": "Necesita tu clave de API de OpenWeatherMap para mostrar el tiempo.",
     "Give the key": "Introducir la clave",
-    "Libre Panel could not get the weather from OpenWeatherMap. Is the key right? A new key can take a few hours before it works; Libre Panel tries again every two minutes.": "Libre Panel no pudo obtener el tiempo de OpenWeatherMap. ¿Es correcta la clave? Una clave nueva puede tardar unas horas en funcionar; Libre Panel lo reintenta cada dos minutos."
+    "Libre Panel could not get the weather from OpenWeatherMap. Is the key right? A new key can take a few hours before it works; Libre Panel tries again every two minutes.": "Libre Panel no pudo obtener el tiempo de OpenWeatherMap. ¿Es correcta la clave? Una clave nueva puede tardar unas horas en funcionar; Libre Panel lo reintenta cada dos minutos.",
+    "the Hongtai strip on firmware of its own (also sold as TZMRIT 9.16\")": "la pantalla alargada de Hongtai con firmware propio (también se vende como TZMRIT 9.16\")",
+    "It takes whole JPEG pictures over a USB serial port: a few a second, no smooth motion, and a busy picture loses detail. Its brightness goes into the picture: dimming darkens it, its backlight stays at 95. When Libre Panel quits, the panel shows its own animation again.": "Recibe imágenes JPEG completas por un puerto serie USB: unas pocas por segundo, sin movimiento fluido, y una imagen recargada pierde detalle. Su brillo va en la imagen: atenuarlo la oscurece, la retroiluminación se queda en 95. Al cerrar Libre Panel, el panel vuelve a mostrar su propia animación."
   },
   "fields": {
     "night": "noche",

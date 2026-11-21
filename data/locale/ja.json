@@ -3058,7 +3058,9 @@
     "It has no place yet, so it shows no weather. Choose your town: only its coordinates and your key go to OpenWeatherMap.": "場所がまだ設定されていないため、天気は表示されません。お住まいの市区町村を選んでください。座標とAPIキーだけがOpenWeatherMapに送られます。",
     "It needs your OpenWeatherMap API key to show the weather.": "天気を表示するにはOpenWeatherMapのAPIキーが必要です。",
     "Give the key": "APIキーを入力",
-    "Libre Panel could not get the weather from OpenWeatherMap. Is the key right? A new key can take a few hours before it works; Libre Panel tries again every two minutes.": "Libre PanelはOpenWeatherMapから天気を取得できませんでした。APIキーは正しいですか？新しいキーは使えるようになるまで数時間かかることがあります。2分ごとに再試行します。"
+    "Libre Panel could not get the weather from OpenWeatherMap. Is the key right? A new key can take a few hours before it works; Libre Panel tries again every two minutes.": "Libre PanelはOpenWeatherMapから天気を取得できませんでした。APIキーは正しいですか？新しいキーは使えるようになるまで数時間かかることがあります。2分ごとに再試行します。",
+    "the Hongtai strip on firmware of its own (also sold as TZMRIT 9.16\")": "独自ファームウェアの Hongtai 製バー型ディスプレイ（TZMRIT 9.16\" としても販売）",
+    "It takes whole JPEG pictures over a USB serial port: a few a second, no smooth motion, and a busy picture loses detail. Its brightness goes into the picture: dimming darkens it, its backlight stays at 95. When Libre Panel quits, the panel shows its own animation again.": "USB シリアルポート経由で JPEG 画像を 1 枚ずつ受け取ります。1 秒に数枚で、滑らかな動きはなく、細かい画像はディテールが失われます。明るさは画像に反映されます。暗くすると画像が暗くなり、バックライトは 95 のままです。Libre Panel を終了すると、パネルは再び独自のアニメーションを表示します。"
   },
   "fields": {
     "night": "夜",

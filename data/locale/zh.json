@@ -3058,7 +3058,9 @@
     "It has no place yet, so it shows no weather. Choose your town: only its coordinates and your key go to OpenWeatherMap.": "尚未设置地点，因此不显示天气。请选择你的城市：只有其坐标和你的密钥会发送到 OpenWeatherMap。",
     "It needs your OpenWeatherMap API key to show the weather.": "需要你的 OpenWeatherMap API 密钥才能显示天气。",
     "Give the key": "填写密钥",
-    "Libre Panel could not get the weather from OpenWeatherMap. Is the key right? A new key can take a few hours before it works; Libre Panel tries again every two minutes.": "Libre Panel 无法从 OpenWeatherMap 获取天气。密钥正确吗？新密钥可能需要几个小时才能生效；Libre Panel 每两分钟重试一次。"
+    "Libre Panel could not get the weather from OpenWeatherMap. Is the key right? A new key can take a few hours before it works; Libre Panel tries again every two minutes.": "Libre Panel 无法从 OpenWeatherMap 获取天气。密钥正确吗？新密钥可能需要几个小时才能生效；Libre Panel 每两分钟重试一次。",
+    "the Hongtai strip on firmware of its own (also sold as TZMRIT 9.16\")": "采用自有固件的 Hongtai 条形屏（也以 TZMRIT 9.16\" 的名称销售）",
+    "It takes whole JPEG pictures over a USB serial port: a few a second, no smooth motion, and a busy picture loses detail. Its brightness goes into the picture: dimming darkens it, its backlight stays at 95. When Libre Panel quits, the panel shows its own animation again.": "通过 USB 串口接收完整的 JPEG 图片：每秒几张，没有流畅的动画，内容繁杂的图片会损失细节。亮度体现在图片中：调暗会让图片变暗，背光保持在 95。退出 Libre Panel 后，面板会重新显示其自带动画。"
   },
   "fields": {
     "night": "夜晚",

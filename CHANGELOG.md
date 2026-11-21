@@ -176,6 +176,24 @@
   Chosen by hand, the DS339 (and the VMAX 4.6") now counts as there while its USB ids are on the
   bus, nothing of it opened; and any panel counts as connected while the app's frames go to it,
   whatever the search finds.
+- **The JONSBO DS339 starts on Windows again** (issue #59). It stopped at once with "invalid or
+  unsupported argument": a setting for the display chip went out through whichever of its two
+  USB interfaces came first, and Windows takes one only through the interface it is for. Each
+  now goes through its own, and one for an interface that is not claimed is refused with a
+  reason. *Status → Diagnose* now also opens a panel chosen by hand that is neither a TURZX nor
+  a Hongtai one, and says why it cannot be opened.
+- **The MAJESTY 9.16" is named as itself** (issue #54). It is in the catalogue now: the header
+  named it "Turing 9.2"" (the first panel's state gave no model, so the theme's size chose
+  one), *Settings → Panel* said "No panel found" while it showed the theme, and plugging it in
+  made a message about a USB device. The header names the first panel by its model, as it names
+  those beside it, and *Settings → Panel* counts a panel as found while the app shows on it.
+- **What the MAJESTY and the Hongtai screens send by themselves is read and said in the log.**
+  The driver asked them nothing while it sent pictures and never read what came back; it now
+  reads it as it comes (so it never fills the port), counts their frames, writes each new kind
+  to the log once with its first bytes, and when the panel is let go, how many of each came.
+- **The app's state answers while a reading takes long.** The window asks for it every two
+  seconds; it waited for the sensors while they were read, and said "Libre Panel does not
+  answer" while one hung. It no longer waits.
 
 ## 0.9.5rc2 — 2026-11-17
 

@@ -1071,7 +1071,14 @@ impl Settings<'_> {
         if let Some(configured) = configured.filter(|&model| on_the_bus(model)) {
             found = Some(Found::of(configured));
         }
-        let model = configured.or(found.as_ref().map(|found| found.model));
+        // (else the one the app shows on: a panel whose port it has open is found by no search)
+        let showing = self.controls.as_ref().and_then(|app| {
+            let state = app.panel.state();
+            let on = state.get("on_panel") == Some(&Value::Bool(true));
+            let id = state.get("model").and_then(Value::as_str).filter(|_| on)?;
+            lp_devices::models::find_model(id)
+        });
+        let model = (configured.or(found.as_ref().map(|found| found.model))).or(showing);
         let video = &config.device.video;
         let usb = model.is_none_or(|model| model.protocol == "usb-turing");
         let gaps = gaps_of(&video.mode, &video.local_clip, model, usb);

@@ -856,6 +856,8 @@ def test_a_theme_that_is_gone_leaves_the_panel_lit_and_is_said_as_app_py_says_it
         shown=own,
     )
     assert (first["state"], first["theme"], first["default_theme"]) == ("showing", own, own)
+    # (the panel's model, as for the panels beside it: the header names the panel by it)
+    assert first["model"] == "turing-5"
     assert (first["missing_theme"], first["notice"]) == ("gone", notice), first
     assert list(first)[:6] == ["state", "testing", "detail", "hint", "missing_theme", "notice"]
     whys = []

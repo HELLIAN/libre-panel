@@ -206,12 +206,8 @@ fn hongtai_port(device: &DeviceConfig) -> Option<(String, Kind, Option<&'static 
         let Some(kind) = Kind::of_usb(ids) else {
             continue;
         };
-        // (the MAJESTY is no model of the catalog yet: it is known by its USB ids)
-        let model = find_model(&device.model).or_else(|| match kind {
-            Kind::Majesty => Some(&lp_devices::hongtai::MAJESTY),
-            Kind::Family => models_for_usb(ids.0, ids.1, port.serial_number.as_deref())
-                .into_iter()
-                .next(),
+        let model = find_model(&device.model).or_else(|| {
+            (models_for_usb(ids.0, ids.1, port.serial_number.as_deref()).into_iter()).next()
         });
         return Some((port.device, kind, model));
     }
@@ -873,8 +869,10 @@ impl Display {
     /// What the panel's driver noted for the log since it was last asked.
     pub fn notes(&mut self) -> Vec<String> {
         let mut notes = std::mem::take(&mut self.notes);
-        if let Panel::Turzx(panel) = &mut self.panel {
-            notes.extend(panel.notes());
+        match &mut self.panel {
+            Panel::Turzx(panel) => notes.extend(panel.notes()),
+            Panel::Hongtai { display, .. } => notes.extend(display.notes()),
+            _ => {}
         }
         notes
     }
