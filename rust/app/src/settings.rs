@@ -1110,7 +1110,8 @@ impl Settings<'_> {
                 ("on_panel", Value::Bool(of("on_panel") == Value::Bool(true))),
             ]);
         }
-        let maybe = match found.is_none() && configured.is_none() {
+        // (not while the app shows on a panel: its port is the one "which is it?" would ask of)
+        let maybe = match found.is_none() && configured.is_none() && showing.is_none() {
             true => maybe_panels(),
             false => Vec::new(),
         };

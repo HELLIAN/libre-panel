@@ -191,7 +191,8 @@
   one), *Settings → Panel* said "No panel found" while it showed the theme, and plugging it in
   made a message about a USB device. The header names the first panel by its model, as it names
   those beside it, and *Settings → Panel* counts a panel as found while the app shows on it:
-  a panel on a serial port that the app has open was "No panel found" too (issue #60).
+  a panel on a serial port that the app has open was "No panel found" too (issue #60), and
+  the page no longer asks which panel that port is while the app shows on it.
 - **What the MAJESTY and the Hongtai screens send by themselves is read and said in the log.**
   The driver asked them nothing while it sent pictures and never read what came back; it now
   reads it as it comes (so it never fills the port), counts their frames, writes each new kind
