@@ -2661,3 +2661,24 @@ word of the app's language in one of its fonts, so a host that does not find the
 
 ### R12 the switch
 - [ ] fixtures recorded from the Python app; the Rust app on main; the Python app goes
+  - [x] the crates' comparisons against kept answers (tests/golden.py): each answer of
+        lp-check, once it was the Python app's, kept as a digest in
+        tests/golden/<system>/<test file>.json; what a comparison's cases took from the
+        Python app (a table of its, a width it measured, the demo's readings) kept in
+        tests/golden/given, another for Windows where it is another there. CI runs them
+        without asking the Python app, on Linux and Windows. A comparison whose answer
+        depends on the computer is marked: ``live`` (never held to kept answers: the frames
+        of videos ffmpeg makes), ``c_library`` (held where they were kept, on CI: pictures
+        worked out with the C library's float functions)
+  - [x] the running app and its plugins: what the Python app made of what a test gives the
+        program, kept the same way; the weather and the calendars held against the crates'
+        own readings
+  - [ ] the server (tests/test_rust_server.py): what editor/server.py answered each request
+        of a test and wrote into its settings folder, kept as a tape (tests/server_tape.py)
+        and played where the Python server was asked; CI still asks the Python app beside
+        it and writes the tape down (tests/harvest.py), until it is kept
+  - [x] what the app tells of "now" takes its moment from one place (rust/app/src/clock.rs),
+        which the tests name with ``LP_NOW``: an answer is then the same whenever it is
+        asked for. What runs by the clock (the panel's frames, a clip, a wait) stays on it
+  - [ ] the browser tests on the Rust app's server; the Python app's own tests, tools and
+        packaging go with it

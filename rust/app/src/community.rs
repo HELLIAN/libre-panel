@@ -516,7 +516,7 @@ fn look(data: &[u8], model_id: &str, places: &Places, env: &Env) -> Result<Vec<u
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     let mut snapshot = lp_services::demo::demo_snapshot(
-        crate::share::now(),
+        crate::clock::now(),
         lp_services::demo::HISTORY_SAMPLES,
         zone,
     )

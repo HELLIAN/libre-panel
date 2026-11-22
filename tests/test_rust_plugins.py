@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -16,11 +17,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+import golden
 import pytest
-from test_plugins import SENSOR, SENSOR_PARTS, theme_data
+from plugin_parts import SENSOR, SENSOR_PARTS, theme_data
 from test_rust_app import DATA, _libraries, _program, _run
-
-from libre_panel import cli
 
 # How long the first drawing, transition, toast style or page of a fresh plugin host may take:
 # on a Windows runner its first imports took over 30 seconds while it still loaded Python's
@@ -29,6 +29,20 @@ HOST_S = 300 if sys.platform == "win32" else 60
 HOST = {"LIBRE_PANEL_PLUGIN_HOST": sys.executable,
         "LIBRE_PANEL_PLUGIN_HOST_ARGS": "-m libre_panel.plugin_host",
         "LIBRE_PANEL_PLUGIN_TRACE": "1"}  # fmt: skip
+
+
+def _plain(text: str, home: Path) -> str:
+    """`text` without what is a run's own: the settings folder as <home>, and the plugins'
+    packages (conftest.py's plugin_folder numbers them as they come) by the order in which the
+    text names them."""
+    for spelled in (str(home), str(home).replace("\\", "/"), json.dumps(str(home))[1:-1]):
+        text = text.replace(spelled, "<home>")
+    named: dict[str, str] = {}
+
+    def numbered(found: re.Match[str]) -> str:
+        return named.setdefault(found.group(0), f"lp_test_plugin_{chr(ord('a') + len(named))}")
+
+    return re.sub(r"lp_test_plugin_\d+", numbered, text)
 
 
 def _drain(stream: Any) -> tuple[threading.Thread, list[str]]:
@@ -86,16 +100,17 @@ def isolated_home(tmp_path, monkeypatch):
     yield home
 
 
-def test_the_plugins_are_listed_as_cli_py_lists_them(plugin_folder, isolated_home, capsys):
+def test_the_plugins_are_listed_as_cli_py_lists_them(plugin_folder, isolated_home):
     data = theme_data()
     data["name"] = "Demo dash"
     files = {"themes/__init__.py": "", "themes/demo-dash/theme.json": json.dumps(data)}
     plugin_folder(SENSOR, SENSOR_PARTS, files=files)
     plugin_folder("x = 1\n", {"libre_panel.services": {"broken": "Missing"}})
-    assert cli.main(["plugins"]) == 1
-    want = capsys.readouterr().out
+    # (what the Python app's `plugins` said of them, and how it ended)
+    want = golden.told("listing")
     done = _run(isolated_home, "plugins", **HOST)
-    assert (done.returncode, done.stdout) == (1, want), done.stderr
+    assert [done.returncode, _plain(done.stdout, isolated_home)] == want, done.stderr
+    assert want[0] == 1
     # the theme a plugin brings is one of the app's
     themes = _run(isolated_home, "themes", **HOST)
     assert "demo-dash" in themes.stdout.split()
@@ -105,12 +120,12 @@ def test_the_plugins_are_listed_as_cli_py_lists_them(plugin_folder, isolated_hom
     assert drawn.returncode == 0 and "theme demo-dash" in drawn.stderr, drawn.stderr
 
 
-def test_without_plugins_no_host_is_started(isolated_home, capsys):
-    assert cli.main(["plugins"]) == 0
-    want = capsys.readouterr().out
+def test_without_plugins_no_host_is_started(isolated_home):
+    want = golden.told("listing")  # (what the Python app's `plugins` said without any)
     # (a host that cannot start would be said)
     done = _run(isolated_home, "plugins", LIBRE_PANEL_PLUGIN_HOST="/nonexistent")
-    assert (done.returncode, done.stdout) == (0, want), done.stderr
+    assert [done.returncode, _plain(done.stdout, isolated_home)] == want, done.stderr
+    assert want[0] == 0
 
 
 def test_plugins_without_a_host_are_said(plugin_folder, isolated_home):
@@ -217,16 +232,15 @@ def test_settings_list_the_plugins_as_settings_py_lists_them(plugin_folder, isol
     """Settings' catalog: the plugins' services (where each came from, why it does not load,
     the options it declares) among Libre Panel's own in their order, and their sensor sources
     after the built-in ones; an option of a plugin's service checked as it declares it."""
-    from test_rust_server import _asked
-
-    from libre_panel.editor.settings import Restart, Settings
+    from test_rust_app import _asked
 
     services = {"demo": "Demo", "aaa": "Missing"}
     plugin_folder(SERVICE, {"libre_panel.sensors": {"demo.fans": "Fans"},
                             "libre_panel.services": services})  # fmt: skip
     config = isolated_home / "config.toml"
     config.write_text("[sensors]\nproviders = []\n", encoding="utf-8")
-    want = Settings(config, None, Restart())._catalog()
+    # (the catalog the Python app's settings.py made of them: its services and its sources)
+    want = golden.told("catalog")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(isolated_home), "LIBRE_PANEL_DATA": str(DATA),
            **_libraries(), **HOST}  # fmt: skip
     pipe = subprocess.PIPE
@@ -247,7 +261,7 @@ def test_settings_list_the_plugins_as_settings_py_lists_them(plugin_folder, isol
             return status, json.loads(answer)
 
         _, told = ask("GET", "/api/settings")
-        got = told["catalog"]
+        got = json.loads(_plain(json.dumps(told["catalog"]), isolated_home))
         assert got["services"] == want["services"]
         assert got["providers"] == want["providers"]
         status, _ = ask("POST", "/api/settings", json.dumps({"set": {"services.demo.color": 5}}))
@@ -263,8 +277,10 @@ def test_settings_list_the_plugins_as_settings_py_lists_them(plugin_folder, isol
 def test_a_plugins_screen_and_widget_type_are_drawn_as_the_python_app_draws_them(
     plugin_folder, isolated_home, tmp_path
 ):
-    from PIL import Image, ImageChops
-    from test_plugins import DRAWING, DRAWING_PARTS
+    import hashlib
+
+    from PIL import Image
+    from plugin_parts import DRAWING, DRAWING_PARTS
 
     plugin_folder(DRAWING, parts=DRAWING_PARTS)
     data = theme_data({"name": "tint", "options": {"color": "#102030"}}, [
@@ -277,15 +293,16 @@ def test_a_plugins_screen_and_widget_type_are_drawn_as_the_python_app_draws_them
     folder = isolated_home / "themes" / "plugged"
     folder.mkdir(parents=True)
     (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-    want, got = tmp_path / "python.png", tmp_path / "rust.png"
-    # (disk.load: a demo reading that holds still)
-    assert cli.main(["preview", "plugged", "--output", str(want)]) == 0
+    got = tmp_path / "rust.png"
+    # (disk.load: a demo reading that holds still. The picture the Python app's `preview`
+    # drew of the theme, by its pixels' digest)
+    want = golden.told("preview")
     done = _run(isolated_home, "preview", "plugged", "--output", str(got), **HOST)
     assert done.returncode == 0, done.stderr
-    with Image.open(want) as python, Image.open(got) as rust:
-        assert rust.size == python.size == (200, 100)
+    with Image.open(got) as rust:
+        assert rust.size == (200, 100)
         assert rust.getpixel((190, 90)) == (16, 32, 48)  # the screen under everything
-        assert ImageChops.difference(rust.convert("RGB"), python.convert("RGB")).getbbox() is None
+        assert hashlib.sha256(rust.convert("RGB").tobytes()).hexdigest() == want
     # a screen no plugin has: no frame made in Python's place without it
     data["screen"] = {"name": "nowhere", "options": {}}
     (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
@@ -300,22 +317,15 @@ def test_the_editor_is_told_the_plugins_parts_as_drawings_py_tells_them(
     """/api/specs with plugins installed: their widget types with their fields and names, the
     building blocks they bring, their screens and toast styles, as drawings.py's plugin_specs
     tells them in the app's language, after Libre Panel's own."""
-    from test_plugins import DRAWING, DRAWING_PARTS
-    from test_rust_server import _asked
-
-    from libre_panel import i18n
-    from libre_panel.editor.drawings import plugin_specs
+    from plugin_parts import DRAWING, DRAWING_PARTS
+    from test_rust_app import _asked
 
     plugin_folder(DRAWING, parts=DRAWING_PARTS)
     plugin_folder(SWITCHING, {"libre_panel.toasts": {"demo.green": "Green"}})
     config = isolated_home / "config.toml"
     config.write_text('language = "de"\n[sensors]\nproviders = []\n', encoding="utf-8")
-    was = i18n.language()
-    i18n.set_language("de")
-    try:
-        want = plugin_specs()
-    finally:
-        i18n.set_language(was)
+    # (what the Python app's drawings.py told of the plugins' parts, in German)
+    want = golden.told("specs")
     assert want["screens"]["tint"]["label"] == "Tönung" and "demo.bar" in want["widgets"]
     assert want["presets"] and list(want["toasts"])[0] == "band" and len(want["toasts"]) > 1
     env = {**os.environ, "LIBRE_PANEL_HOME": str(isolated_home), "LIBRE_PANEL_DATA": str(DATA),
@@ -333,7 +343,7 @@ def test_the_editor_is_told_the_plugins_parts_as_drawings_py_tells_them(
                    f"X-Libre-Panel: {token}\r\n\r\n")  # fmt: skip
         status, _, answer = _asked(port, request.encode(), wait=HOST_S)
         assert status == "HTTP/1.0 200 OK", (status, answer[:300])
-        told = json.loads(answer)
+        told = json.loads(_plain(answer.decode("utf-8"), isolated_home))
         for key in ("widget_labels", "screens", "toasts"):
             assert told[key] == want[key], key
             assert list(told[key]) == list(want[key]), key
@@ -448,8 +458,8 @@ def test_a_plugins_editor_page_is_served_as_server_py_serves_it(plugin_folder, i
     """A plugin's page among the app's own (its title in the app's language, its icon), its
     files from its folder and nothing beside them, and its API answered in the plugin host:
     a query, a body, a status of its own and its failure."""
-    from test_plugins import PAGE, PAGE_FILES, PAGE_PARTS
-    from test_rust_server import _asked
+    from plugin_parts import PAGE, PAGE_FILES, PAGE_PARTS
+    from test_rust_app import _asked
 
     plugin_folder(PAGE, PAGE_PARTS, files=PAGE_FILES)
     (isolated_home / "config.toml").write_text(
@@ -587,7 +597,7 @@ def test_plugins_see_the_frame_shown_and_the_toast_and_pages_the_running_app(
     notes = isolated_home / "plugins" / package / package / "seen.json"
     env = {**os.environ, "LIBRE_PANEL_HOME": str(isolated_home), "LIBRE_PANEL_DATA": str(DATA),
            **_libraries(), **HOST}  # fmt: skip
-    from test_rust_server import _asked
+    from test_rust_app import _asked
 
     with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,

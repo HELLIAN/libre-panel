@@ -90,11 +90,7 @@ fn png(frame: &lp_pixels::Image) -> Answer<Vec<u8>> {
 
 /// The demo's readings at `t` (now where None), with its pictures.
 fn demo(t: Option<f64>, fonts: &Path) -> Answer<Snapshot> {
-    let t = t.unwrap_or_else(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64())
-    });
+    let t = t.unwrap_or_else(crate::clock::now);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     let mut snapshot =
@@ -286,9 +282,7 @@ pub fn probes(look: &str) -> IndexMap<&'static str, (String, Toast)> {
 }
 
 fn moment_now() -> (lp_py::datetime::DateTime, bool) {
-    let since = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    let since = crate::clock::now();
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     lp_py::zones::fromtimestamp(zone, since)

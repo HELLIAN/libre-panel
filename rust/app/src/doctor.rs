@@ -91,7 +91,7 @@ impl Report {
 
     /// The report as text, for an issue.
     pub fn text(&self) -> String {
-        let [year, month, day, hour, minute, _] = crate::share::local_time(crate::share::now());
+        let [year, month, day, hour, minute, _] = crate::share::local_time(crate::clock::now());
         let (system, release, machine) = crate::settings::platform();
         let panel = match self.model {
             Some(model) => format!("{} — {}", model.id, model.label()),

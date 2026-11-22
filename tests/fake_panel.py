@@ -17,10 +17,29 @@ import io
 import struct
 import time
 from collections.abc import Callable, Iterator
+from typing import Any
 
 from PIL import Image
 
-from libre_panel.devices.turzx_usb import ACK, READ_LEN, UsbTransport, decode_packet
+# the panels' protocol (rust/devices' turzx, as the reference library has it): a command is
+# 512 bytes, 504 of them DES in CBC under the key, with the magic at [2:4] and a trailer; the
+# panel answers the command's number and ACK
+ACK = 0xC8
+READ_LEN = 1024  # (a read of one packet leaves the zero-length packet in the pipe)
+DES_KEY = b"slv3tuzx"
+MAGIC, TRAILER = b"\x1a\x6d", b"\xa1\x1a"
+
+
+def decode_packet(packet: bytes) -> bytes:
+    """A command packet's plain bytes (its number first); ValueError if it is none."""
+    from Crypto.Cipher import DES
+
+    if len(packet) < 512 or packet[510:512] != TRAILER:
+        raise ValueError("not a command packet")
+    plain = DES.new(DES_KEY, DES.MODE_CBC, iv=DES_KEY).decrypt(bytes(packet[:504]))
+    if plain[2:4] != MAGIC:
+        raise ValueError("bad magic")
+    return plain[:500]
 
 
 class Unplugged(Exception):
@@ -362,5 +381,8 @@ class FakePanel:
         return self.pending.pop(0)
 
 
-def transport_for(panel: FakePanel) -> UsbTransport:
+def transport_for(panel: FakePanel) -> Any:
+    """The Python driver's transport on the simulated panel (for the Python app's tests)."""
+    from libre_panel.devices.turzx_usb import UsbTransport
+
     return UsbTransport(device=None, ep_out=panel, ep_in=panel, pid=panel.pid)

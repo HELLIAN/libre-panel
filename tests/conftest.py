@@ -61,8 +61,6 @@ def _golden(request, tmp_path_factory):
         and golden.kept_here(mark("c_library"))
     )
     golden.begin(Path(str(request.node.fspath)).stem, request.node.name, kept)
-    if kept and not golden.RECORDING:
-        assert golden.has_kept(), "nothing was kept for this test (LP_GOLDEN=record keeps it)"
     yield
     unasked, untold = golden.unasked(), golden.untold()
     passed = getattr(request.node, "_golden_passed", False)

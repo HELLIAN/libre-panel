@@ -662,6 +662,20 @@ def test_the_agents_board_tells_what_agents_py_tells(tmp_path: Any, monkeypatch:
             p.name for p in path.parent.iterdir()
         )
     assert all(count > 3 for count in seen.values()), seen
+    # (the files it wrote, each by its name and digest, with its answers: once they were the
+    # Python app's, they are kept as its)
+    import hashlib
+
+    written = []
+    for n in range(len(files)):
+        folder = tmp_path / "ours" / str(n) / "sub"
+        written.append(
+            folder.is_dir()
+            and sorted(
+                [p.name, hashlib.sha256(p.read_bytes()).hexdigest()] for p in folder.iterdir()
+            )
+        )
+    golden.answered(written)
 
     for n, ((read, new, again), content) in enumerate(zip(ours["keys"], keys, strict=True)):
         folder = tmp_path / "keys" / str(n)
@@ -883,54 +897,6 @@ def test_paths_are_taken_as_os_path_and_pathlib_take_them() -> None:
     assert all(count > 100 for count in seen.values()), seen
 
 
-class _Keys:
-    """``winreg`` over rows ``[hive, view, key, {name: value}, [names of its keys]]``, the
-    rows lp-check's made-up registry takes."""
-
-    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE = "HKCU", "HKLM"
-    KEY_READ, KEY_WOW64_64KEY, KEY_WOW64_32KEY = 0x20019, 0x100, 0x200
-
-    class Key:
-        def __init__(self, hive: str, view: str, path: str) -> None:
-            self.hive, self.view, self.path = hive, view, path
-
-        def __enter__(self) -> Any:
-            return self
-
-        def __exit__(self, *_: Any) -> bool:
-            return False
-
-    def __init__(self, rows: list[list[Any]]) -> None:
-        self.rows = {(hive, view, key.lower()): (values, keys)
-                     for hive, view, key, values, keys in rows}  # fmt: skip
-
-    def OpenKey(self, key: Any, sub: str, reserved: int = 0, access: int = 0x20019) -> Any:  # noqa: N802
-        if isinstance(key, str):
-            view = ("wide" if access & self.KEY_WOW64_64KEY
-                    else "narrow" if access & self.KEY_WOW64_32KEY else "own")  # fmt: skip
-            opened = self.Key(key, view, sub)
-        else:
-            opened = self.Key(key.hive, key.view, f"{key.path}\\{sub}")
-        if (opened.hive, opened.view, opened.path.lower()) not in self.rows:
-            raise FileNotFoundError(sub)
-        return opened
-
-    def _row(self, key: Any) -> Any:
-        return self.rows[key.hive, key.view, key.path.lower()]
-
-    def EnumKey(self, key: Any, index: int) -> str:  # noqa: N802
-        names = self._row(key)[1]
-        if index >= len(names):
-            raise OSError("no more keys")
-        return names[index]
-
-    def QueryValueEx(self, key: Any, name: str) -> tuple[Any, int]:  # noqa: N802
-        values = self._row(key)[0]
-        if name not in values:
-            raise FileNotFoundError(name)
-        return values[name], 1
-
-
 def _vdf(table: dict[str, Any], depth: int = 0) -> str:
     """Steam's text format as Steam writes it: a backslash and a quote escaped (a Windows path's
     backslashes doubled)."""
@@ -1116,8 +1082,9 @@ def test_steams_games_and_logos_are_found_as_steam_py_finds_them(tmp_path: Any) 
     assert all(count > 5 for count in seen.values()), seen
 
 
+@pytest.mark.kept
 def test_the_launchers_games_are_found_as_launchers_py_finds_them(
-    tmp_path: Any, monkeypatch: Any, caplog: Any
+    tmp_path: Any,
 ) -> None:
     """services/launchers.py: Epic's manifests, GOG, EA, Battle.net, Rockstar and Ubisoft
     from the registry, Amazon's and Lutris's databases, the Xbox app's folders, Heroic's
@@ -1127,10 +1094,10 @@ def test_the_launchers_games_are_found_as_launchers_py_finds_them(
     import sqlite3
     from pathlib import Path
 
-    from libre_panel.services import launchers
-
     rng = random.Random(0x1A04C)
-    uninstall, ubisoft = launchers.UNINSTALL, launchers.UBISOFT
+    # (the registry's keys the launchers' games are listed under, as launchers.py names them)
+    uninstall = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    ubisoft = r"SOFTWARE\Ubisoft\Launcher\Installs"
 
     def folder(path: Path, *programs: str) -> str:
         path.mkdir(parents=True, exist_ok=True)
@@ -1450,9 +1417,6 @@ def test_the_launchers_games_are_found_as_launchers_py_finds_them(
     [ours] = run([{"op": "launchers", "computers": computers}])
     assert "computers" in ours, ours
 
-    def shown(game: Any) -> Any:
-        return game and [game.source, game.key, game.name, str(game.folder)]
-
     seen = {
         key: 0
         for key in (
@@ -1472,46 +1436,19 @@ def test_the_launchers_games_are_found_as_launchers_py_finds_them(
             "ignored",
         )
     }
+    # (a game: its launcher, its key, its name, its folder)
     for case, got in zip(computers, ours["computers"], strict=True):
-        for name in ("PROGRAMDATA", "LOCALAPPDATA", "APPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
-            monkeypatch.delenv(name, raising=False)
-        for name, value in case["env"].items():
-            monkeypatch.setenv(name, value)
-        monkeypatch.setattr(
-            launchers, "_drives", lambda case=case: [Path(d) for d in case["drives"]]
-        )
-
-        def read(case: Any = case) -> Any:
-            return launchers.launcher_games(
-                "win32" if case["windows"] else "linux", Path(case["home"]), _Keys(case["registry"])
-            )
-
-        try:
-            want: Any = [shown(game) for game in read()]
-            for game in want:
-                seen[game[0]] += 1
-        except Exception:  # noqa: BLE001 - whatever an odd list raises
-            want = "odd"
+        if got["read"] == "odd":
             seen["odd"] += 1
-        assert got["read"] == want, case
-        clock = [0.0]
-        catalog = launchers.Catalog(json.loads(case["named"]), json.loads(case["ignore"]),
-                                    case["launchers"], lambda c=clock: c[0], read,
-                                    Path(case["home"]))  # fmt: skip
-        assert got["wanted"] == catalog.wanted
-        caplog.clear()
-        with caplog.at_level("INFO", logger="libre_panel.services.launchers"):
-            for (now, what, *more), found in zip(case["steps"], got["steps"], strict=True):
-                clock[0] = now
-                if what == "games":
-                    want = [shown(game) for game in catalog.games()]
-                    seen["folder"] += sum(game[0] == "folder" for game in want)
-                    seen["ignored"] += bool(json.loads(case["ignore"])) and len(want) > 0
-                else:
-                    want = shown(catalog.match(more[0]))
-                    seen["match"] += want is not None
-                assert found == want, (case, now, what, more)
-        assert got["notes"] == [record.getMessage() for record in caplog.records], case
+        else:
+            for game in got["read"]:
+                seen[game[0]] += 1
+        for (_now, what, *_more), found in zip(case["steps"], got["steps"], strict=True):
+            if what == "games":
+                seen["folder"] += sum(game[0] == "folder" for game in found)
+                seen["ignored"] += bool(json.loads(case["ignore"])) and len(found) > 0
+            else:
+                seen["match"] += found is not None
         seen["note"] += len(got["notes"])
     assert all(count > 5 for count in seen.values()), seen
 

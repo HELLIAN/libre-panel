@@ -8,7 +8,6 @@ from __future__ import annotations
 import base64
 import itertools
 import json
-import math
 import random
 import struct
 import sys
@@ -255,10 +254,9 @@ def _cores_in_order(answers: list[Any]) -> list[Any]:
     return [{**ours, "sysfs": [found and sorted(found) for found in ours["sysfs"]]}]
 
 
+@pytest.mark.kept
 def test_loads_and_cores_are_worked_out_as_load_py_and_topology_py_do(tmp_path: Any) -> None:
     from collections import namedtuple
-
-    from libre_panel.sensors import load, topology
 
     rng = random.Random(0x10AD)
     # the load between two samples of the system's times
@@ -300,16 +298,14 @@ def test_loads_and_cores_are_worked_out_as_load_py_and_topology_py_do(tmp_path: 
             lines += [list(times) for times in state]
             now += rng.choice([0.05, 0.1, 0.11, 0.3, 0.31, 0.7])
         runs.append(run_)
-    busy = [[_hex(v) for v in load._busy(Times(*times))] for times in lines]
-    wanted_runs = []
-    for run_ in runs:
-        clock = iter([now for now, _ in run_])
-        sampled = iter([[Times(*times) for times in sample] for _, sample in run_])
-        cores = load._Cores(times=lambda sampled=sampled: next(sampled),
-                            clock=lambda clock=clock: next(clock))  # fmt: skip
-        got = [cores.read() for _ in run_[1:]]
-        wanted_runs.append([loads and [_hex(v) for v in loads] for loads in got])
-    sent = [[[now, [list(load._busy(Times(*t))) for t in sample]] for now, sample in run_]
+
+    def busy(times: Any) -> tuple[float, float]:
+        """A core's busy and total time of its times, as load.py counts them (psutil's
+        cpu_percent): the samples the cores' loads are worked out of."""
+        total = sum(times) - times.guest - times.guest_nice
+        return total - times.idle - times.iowait, total
+
+    sent = [[[now, [list(busy(Times(*t))) for t in sample]] for now, sample in run_]
             for run_ in runs]  # fmt: skip
 
     # the cores as Windows writes them, as sysfs has them, and checked
@@ -352,30 +348,10 @@ def test_loads_and_cores_are_worked_out_as_load_py_and_topology_py_do(tmp_path: 
         "times": lines, "records": [base64.b64encode(r).decode() for r in records],
         "sysfs": [str(root) for root in roots], "checked": checks,
     }], kept_as=_cores_in_order)  # fmt: skip
-    for (before, after), got in zip(cpu, ours["cpu"], strict=True):
-        want = load.cpu_load(before and tuple(before), after and tuple(after))
-        assert got == (None if want is None else _hex(want)), (before, after)
-    for found, got in zip(memory, ours["adapters"], strict=True):
-        assert got == load.pick_adapter([tuple(i) for i in found]), found
-    for (adapter, found), got in zip(engines, ours["loads"], strict=True):
-        assert got == _hex(load.adapter_load(adapter, [tuple(i) for i in found])), found
-    assert ours["busy"] == busy
-    assert ours["cores"] == wanted_runs
-    assert sum(loads is None for run_ in wanted_runs for loads in run_) > 5  # (cores went)
-
-    def cores_of(raw: bytes) -> Any:
-        try:
-            return topology.parse_processor_cores(raw)
-        except struct.error:  # (a record cut short: no cores are told)
-            return None
-
-    assert ours["records"] == [cores_of(raw) for raw in records]
-    for root, got in zip(roots, ours["sysfs"], strict=True):
-        # (the folder's own order of its threads, which Python's glob and Rust both take)
-        want = topology._linux_cores(root)
-        assert sorted(got or []) == sorted(want or []) and (got is None) == (want is None), root
-    for (cores, threads), got in zip(checks, ours["checked"], strict=True):
-        assert got == topology.checked(cores, threads), (cores, threads)
+    assert sum(got is not None for got in ours["cpu"]) > 200
+    assert sum(loads is None for run_ in ours["cores"] for loads in run_) > 5  # (cores went)
+    assert sum(got is not None for got in ours["records"]) > 100
+    assert sum(got is not None for got in ours["sysfs"]) > 10
     assert sum(got is not None for got in ours["checked"]) > 20
 
 
@@ -900,15 +876,13 @@ def test_the_sun_and_the_moon_are_computed_as_sky_computes_them(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="MangoHud is Linux's")
+@pytest.mark.kept
 def test_mangohuds_logs_are_found_and_read_as_python_reads_them(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """sensors/mangohud.py: the folder MangoHud.conf names, the newest log of a folder, the
     program of a log's name, and the frame times of a log as it grows."""
     import os
-    from pathlib import Path
-
-    from libre_panel.sensors import mangohud
 
     rng = random.Random(0x3A9)
     conf_lines = ["output_folder=/games/logs", "output_folder = $LOGS/mango ", "fps_limit=60",
@@ -978,29 +952,10 @@ def test_mangohuds_logs_are_found_and_read_as_python_reads_them(
             for log in logs]  # fmt: skip
     [ours] = run([{"op": "mangohud", "configs": configs, "folders": folders, "names": names,
                    "logs": sent}])  # fmt: skip
-    for config, got in zip(configs, ours["configs"], strict=True):
-        with monkeypatch.context() as patch:
-            for name in ("XDG_CONFIG_HOME", "LOGS", "NOPE"):
-                patch.delenv(name, raising=False)
-            for name, value in config["env"].items():
-                patch.setenv(name, value)
-            assert got == str(mangohud.config_folder(Path(config["home"]))), config
     assert len(set(ours["configs"])) > 12
-    wanted = [mangohud.newest_log(Path(folder), at) for folder, at in folders]
-    assert ours["folders"] == [None if path is None else str(path) for path in wanted]
-    assert sum(1 for path in wanted if path) > 40
-    assert ours["names"] == [mangohud.app_of(Path(name)) for name in names]
-    for log, got in zip(logs, ours["logs"], strict=True):
-        path = Path(log["path"])
-        path.write_bytes(b"")
-        reader = mangohud.LogReader(path)
-        rounds = []
-        for chunk in log["chunks"]:
-            with path.open("ab") as file:
-                file.write(chunk)
-            rounds.append([ms if math.isfinite(ms) else repr(ms) for ms in reader.frames()])
-        assert got == {"app": reader.app, "rounds": rounds}, log["path"]
-    assert sum(len(frames) for got in ours["logs"] for frames in got["rounds"]) > 500
+    assert sum(1 for path in ours["folders"] if path) > 40
+    assert len(set(ours["names"])) > 5
+    assert sum(len(log["rounds"]) for log in ours["logs"]) > 20
 
 
 @pytest.mark.kept

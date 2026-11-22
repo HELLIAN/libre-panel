@@ -12,6 +12,7 @@ mod backup;
 mod beside;
 mod capture;
 mod client;
+mod clock;
 mod colour_show;
 mod colours;
 mod community;

@@ -22,7 +22,10 @@ from rust_check import run
 
 from libre_panel import fonts
 
-pytestmark = pytest.mark.kept  # (what moving.py and the renderer answered: tests/golden)
+# (what moving.py and the renderer answered: tests/golden. The frames of the videos, which the
+# computer's ffmpeg makes and reads, are another's on another processor, CI's computers among
+# themselves too: those comparisons are ``live``, and say what a frame must be without them)
+pytestmark = pytest.mark.kept
 
 THEME_FORMAT = "libre-panel-theme/1"
 FFMPEG = shutil.which("ffmpeg")
@@ -156,7 +159,7 @@ def _videos(folder: Path) -> list[Path]:
     return [*made, turned, sound, nothing, folder / "missing.mp4"]
 
 
-@pytest.mark.live("win32")
+@pytest.mark.live
 @needs_ffmpeg
 def test_videos_and_their_first_frames_as_python_reads_them(tmp_path: Path) -> None:
     videos = _videos(tmp_path)
@@ -184,7 +187,7 @@ def test_videos_and_their_first_frames_as_python_reads_them(tmp_path: Path) -> N
     assert all(a.get("first") for a in got[2]["made"]), got[2]["made"]  # (what ffmpeg said)
 
 
-@pytest.mark.live("win32")
+@pytest.mark.live
 @needs_ffmpeg
 def test_a_video_s_frame_of_each_moment_as_python_s_feed_gives_it(tmp_path: Path) -> None:
     # (frames asked for at their moments, between them, late, after a pause, back in time;
@@ -318,7 +321,7 @@ def _theme(folder: Path, rng: random.Random, videos: list[str]) -> list[str]:
 SNAPSHOT = {"readings": {}, "images": {}, "now": [2026, 11, 8, 12, 0, 0, 0, 0]}
 
 
-@pytest.mark.live("win32")
+@pytest.mark.live
 @needs_ffmpeg
 def test_frames_with_videos_as_python_draws_them(tmp_path: Path) -> None:
     # (a renderer's frames one after another at their moments, as the panel's loop draws them,

@@ -144,11 +144,6 @@ def begin(file: str, name: str, kept: bool) -> None:
     _test.update(file=file, name=name, kept=kept, calls=0, made=made, told={})
 
 
-def has_kept() -> bool:
-    """Whether answers were kept for the test that runs."""
-    return _test["file"] is not None and _test["name"] in _kept(_test["file"])
-
-
 def unasked() -> int:
     """How many of the calls kept for the test that runs it has not made (none: all were)."""
     if not _test["kept"] or RECORDING:
@@ -195,8 +190,9 @@ def answered(answers: list[Any]) -> None:
     if RECORDING or not _test["kept"]:
         return
     kept = _kept(_test["file"]).get(_test["name"])
-    if kept is None:
-        return
+    # (asked for with the first answer, not before the test: one that leaves a system out
+    # has nothing kept there, and no answer either)
+    assert kept is not None, "nothing was kept for this test (LP_GOLDEN=record keeps it)"
     assert call < len(kept), f"call {call} of {_test['name']}: none was kept"
     differ = [n for n, (ours, theirs) in enumerate(zip(digests, kept[call], strict=False))
               if ours != theirs]  # fmt: skip

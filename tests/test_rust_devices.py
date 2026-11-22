@@ -208,10 +208,11 @@ def test_hongtai_answers_as_hongtai_py_reads_them() -> None:
     streams = [_stream(rng) for _ in range(400)]
     streams += [_answer_frame(b"[" * 2000 + b"]" * 2000), _answer_frame(b'{"a": ' * 3000)]
     ours = run([{"op": "hongtai_answer", "stream": _b64(s)} for s in streams])
-    # (what it read of each: the panel's own account, or nothing where the answer held none)
-    read = sum(got["info"] != "{}" for got in ours)
+    # (what it read of each: the panel's own account, or nothing where the answer held none;
+    # one nested too deep is nothing, or refused where the reader's stack is smaller: Windows)
+    read = sum(got.get("info", "{}") != "{}" for got in ours)
     assert read > 200 and len(ours) - read > 100, read
-    assert ours[-2]["info"] == ours[-1]["info"] == "{}"  # (nested too deep: nothing)
+    assert all(got.get("info", "{}") == "{}" for got in ours[-2:])
 
 
 def _session(rng: random.Random, majesty: bool = False) -> dict[str, Any]:

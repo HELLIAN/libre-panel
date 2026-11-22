@@ -449,7 +449,7 @@ pub fn export_theme(name: &str, places: &Places, env: &Env) -> Answer<(Vec<u8>, 
     let arcname = format!("{name}/{THEME_FILENAME}");
     zip.add(&Entry {
         name: &arcname,
-        date_time: local_time(now()),
+        date_time: local_time(crate::clock::now()),
         external_attr: 0o600 << 16,
         data: text.as_bytes(),
     });

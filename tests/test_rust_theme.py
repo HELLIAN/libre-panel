@@ -16,7 +16,6 @@ import os
 import random
 import re
 import struct
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -772,13 +771,10 @@ def _listed_in_order(answers: list[Any]) -> list[Any]:
     return [{**ours, "versions": versions}]
 
 
+@pytest.mark.kept
 def test_versions_beside_one_s_own_themes_are_found_and_laid_out_as_python_does(
     tmp_path: Path,
 ) -> None:
-    # (still held against the Python app itself: its answers are kept from this run on, the
-    # versions in the order of their names)
-    from libre_panel.theme import adapt, model
-
     rng = random.Random(0x0E5)
     folders, clean = _own_versions(rng, tmp_path)
     sizes = [*SIZES, (250, 250), (320, 170), (1000, 1000), (3000, 400)]
@@ -802,36 +798,7 @@ def test_versions_beside_one_s_own_themes_are_found_and_laid_out_as_python_does(
     case = {"op": "theme_adapt", "fonts_dir": FONTS, "builtin": str(BUILTIN)}
     [ours] = run([{**case, "versions": versions, "laid_out": laid}], kept_as=_listed_in_order)
 
-    def found(v: dict[str, Any]) -> dict[str, Any]:
-        folder = Path(v["folder"])
-        try:
-            listed: Any = [[n, str(w), str(h)] for n, (w, h) in adapt.versions_of(folder).items()]
-        except Exception as error:  # noqa: BLE001
-            listed = {"error": str(error), "kind": type(error).__name__}
-        try:
-            nearest: Any = {"name": adapt.nearest_version(folder, tuple(v["size"]))}
-        except Exception as error:  # noqa: BLE001
-            nearest = {"error": str(error), "kind": type(error).__name__}
-        return {"listed": listed, "nearest": nearest}
-
-    moved = []
-
-    def laid_out(c: dict[str, Any]) -> Any:
-        try:
-            theme = model.load_theme(Path(c["folder"]))
-            made = adapt.laid_out(theme, tuple(c["size"]), c["model"])
-            moved.append(made is not theme)
-            return {"dict": json.dumps(made.to_dict())}
-        except Exception as error:  # noqa: BLE001 (every kind Python raises is compared)
-            return {"error": str(error), "kind": type(error).__name__}
-
-    digits = sys.get_int_max_str_digits()
-    sys.set_int_max_str_digits(0)
-    try:
-        assert ours["versions"] == [found(v) for v in versions]
-        python = [laid_out(c) for c in laid]
-    finally:
-        sys.set_int_max_str_digits(digits)
-    assert ours["laid_out"] == python
-    # (versions laid out on sizes as Python lays them out, not only refused alike)
-    assert sum(moved) >= 10, sum(moved)  # (52 of 113 on Linux)
+    # (versions found and laid out on sizes, not only refused)
+    assert sum(isinstance(v["listed"], list) and len(v["listed"]) > 1
+               for v in ours["versions"]) >= 10  # fmt: skip
+    assert sum("dict" in made for made in ours["laid_out"]) >= 10

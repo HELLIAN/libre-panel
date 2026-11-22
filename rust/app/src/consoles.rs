@@ -425,7 +425,7 @@ fn probes(look: &str) -> Vec<(&'static str, String, lp_render::overlays::Toast)>
         }
     };
     let time = {
-        let at = crate::share::local_time(crate::share::now());
+        let at = crate::share::local_time(crate::clock::now());
         format!("{:02}:{:02}", at[3], at[4])
     };
     let mut volume = vec![("progress", Value::Float(0.42))];

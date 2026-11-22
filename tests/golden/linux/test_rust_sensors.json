@@ -64,6 +64,16 @@
 "7f9049a4789b"
 ]
 ],
+"test_loads_and_cores_are_worked_out_as_load_py_and_topology_py_do": [
+[
+"ed31a0557906"
+]
+],
+"test_mangohuds_logs_are_found_and_read_as_python_reads_them": [
+[
+"505ad16cdd65"
+]
+],
 "test_mqtt_messages_are_read_as_mqtt_py_reads_them": [
 [
 "320188b10094"

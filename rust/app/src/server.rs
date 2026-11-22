@@ -505,7 +505,7 @@ const ROUTES: &[Route] = &[
         let themes = lp_config::dirs::user_themes_dir();
         match crate::backup::make_backup(&s.config_file, &themes) {
             Ok(data) => {
-                let at = crate::share::local_time(crate::share::now());
+                let at = crate::share::local_time(crate::clock::now());
                 let name = format!(
                     "libre-panel-backup-{:04}-{:02}-{:02}.zip",
                     at[0], at[1], at[2]
@@ -976,9 +976,7 @@ fn history(state: &State, exchange: &mut Exchange, url: &Url) {
         Ok(config) => config,
         Err(why) => return exchange.error(&why.msg, 409, ""),
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    let now = crate::clock::now();
     let path = crate::history::database(&config);
     let mut found = match crate::history::history(&path, span, now) {
         Ok(found) => found,
@@ -1628,10 +1626,9 @@ const PICTURES: [(&str, &str); 3] = [
 
 /// The local time of now, and its fold.
 fn moment() -> (lp_render::Moment, bool) {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
-    lp_py::zones::fromtimestamp(zone, since.map_or(0.0, |since| since.as_secs_f64()))
+    lp_py::zones::fromtimestamp(zone, crate::clock::now())
         .unwrap_or((lp_render::Moment::date(1970, 1, 1), false))
 }
 
@@ -1683,10 +1680,9 @@ fn live_snapshot(state: &State) -> Option<Snapshot> {
 
 /// The demo's snapshot of now.
 fn demo_snapshot() -> Option<Snapshot> {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
-    let t = since.map_or(0.0, |since| since.as_secs_f64());
+    let t = crate::clock::now();
     lp_services::demo::demo_snapshot(t, lp_services::demo::HISTORY_SAMPLES, zone).ok()
 }
 

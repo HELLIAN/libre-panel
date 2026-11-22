@@ -1317,25 +1317,31 @@ fn calendar(case: &Value) -> Result<Value, String> {
         let ics = case[0].as_str().unwrap_or("");
         let days = case[2].as_i64().unwrap_or(14);
         let name = case[3].as_str().unwrap_or("");
-        found.push(
-            match calendar::events_from_ics(ics, &now, days, name, local) {
-                Err(why) => json!({"error": why}),
-                Ok(events) => {
-                    let readings = calendar::calendar_readings(&events, &now, local);
-                    json!({
-                        "events": events
-                            .iter()
-                            .map(|e| json!([e.title, stamp(&e.start), stamp(&e.end), e.all_day,
-                                            e.location, e.calendar]))
-                            .collect::<Vec<_>>(),
-                        "readings": readings
-                            .iter()
-                            .map(|(key, r)| json!([key, plain(&r.value), r.unit, r.label]))
-                            .collect::<Vec<_>>(),
-                    })
-                }
-            },
-        );
+        // (several calendars' texts: their events together, as the source lists them)
+        let made = match case[0].as_array() {
+            Some(texts) => {
+                let texts = texts.iter().filter_map(Value::as_str);
+                Ok(calendar::events_of_calendars(texts, &now, days, local).0)
+            }
+            None => calendar::events_from_ics(ics, &now, days, name, local),
+        };
+        found.push(match made {
+            Err(why) => json!({"error": why}),
+            Ok(events) => {
+                let readings = calendar::calendar_readings(&events, &now, local);
+                json!({
+                    "events": events
+                        .iter()
+                        .map(|e| json!([e.title, stamp(&e.start), stamp(&e.end), e.all_day,
+                                        e.location, e.calendar]))
+                        .collect::<Vec<_>>(),
+                    "readings": readings
+                        .iter()
+                        .map(|(key, r)| json!([key, plain(&r.value), r.unit, r.label]))
+                        .collect::<Vec<_>>(),
+                })
+            }
+        });
     }
     lp_i18n::set_language(lp_i18n::Language::english());
     Ok(json!({"cases": found}))
