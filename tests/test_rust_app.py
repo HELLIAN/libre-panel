@@ -49,6 +49,14 @@ this_computer = pytest.mark.skipif(
     not PYTHON and os.environ.get("GITHUB_ACTIONS") != "true",
     reason="what the Python app answered was kept on CI's computers",
 )
+# the services the Rust app has and the Python app never had (the light ring of Lian Li's
+# screen): they are left out where the two apps' lists of services are held side by side
+RUST_ONLY_SERVICES = ("lightring",)
+
+
+def python_s_services(services: list[Any]) -> list[Any]:
+    """The services of a catalog the Rust app gave, as the Python app lists them."""
+    return [one for one in services if one.get("name") not in RUST_ONLY_SERVICES]
 
 
 def _program() -> Path:

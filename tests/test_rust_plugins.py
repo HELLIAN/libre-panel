@@ -20,7 +20,7 @@ from typing import Any
 import golden
 import pytest
 from plugin_parts import SENSOR, SENSOR_PARTS, theme_data
-from test_rust_app import DATA, _libraries, _program, _run
+from test_rust_app import DATA, _libraries, _program, _run, python_s_services
 
 # How long the first drawing, transition, toast style or page of a fresh plugin host may take:
 # on a Windows runner its first imports took over 30 seconds while it still loaded Python's
@@ -262,7 +262,7 @@ def test_settings_list_the_plugins_as_settings_py_lists_them(plugin_folder, isol
 
         _, told = ask("GET", "/api/settings")
         got = json.loads(_plain(json.dumps(told["catalog"]), isolated_home))
-        assert got["services"] == want["services"]
+        assert python_s_services(got["services"]) == want["services"]
         assert got["providers"] == want["providers"]
         status, _ = ask("POST", "/api/settings", json.dumps({"set": {"services.demo.color": 5}}))
         assert status == "HTTP/1.0 400 Bad Request"

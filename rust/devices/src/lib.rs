@@ -16,6 +16,7 @@ pub mod jonsbo_ds916;
 pub mod jonsbo_zc360;
 pub mod keep;
 pub mod lianli;
+pub mod lianli_ring;
 pub mod link;
 pub mod models;
 pub mod ms9132;

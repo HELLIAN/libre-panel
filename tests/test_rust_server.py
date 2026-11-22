@@ -31,11 +31,13 @@ from test_rust_app import (
     BOOT_LOGO,
     DATA,
     PYTHON,
+    RUST_ONLY_SERVICES,
     STANDBY_CLIP,
     Rig,
     _asked,
     _libraries,
     _program,
+    python_s_services,
     this_computer,
 )
 
@@ -157,7 +159,7 @@ def servers(
             request: str | bytes, done: bool = True, left: bool = False
         ) -> list[tuple[str, dict[str, str], bytes]]:
             tape.before(request, done, left)
-            mine = asked((port, token), request, done, left)
+            mine = _as_python_s(asked((port, token), request, done, left))
             return [tape.answer(mine), mine]
 
         ask.shares = tape.shares  # type: ignore[attr-defined]
@@ -177,6 +179,43 @@ def servers(
             ours.send_signal(signal.SIGINT)
         said = ours.communicate(timeout=30)[1]
         assert "panicked" not in said, said
+
+
+def _as_python_s(answer: Any) -> Any:
+    """An answer of the Rust app's server without what the Python app never had: the
+    services only the Rust app has (``python_s_services``), wherever its JSON lists services
+    by name (Settings' catalog, Control's page)."""
+    status, headers, body = answer
+    if not any(name.encode() in body for name in RUST_ONLY_SERVICES):
+        return answer
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return answer
+    taken = 0
+
+    def without(value: Any) -> Any:
+        nonlocal taken
+        if isinstance(value, dict):
+            for key, inner in value.items():
+                listed = isinstance(inner, list) and all(isinstance(i, dict) for i in inner)
+                if key == "services" and listed:
+                    value[key] = python_s_services(inner)
+                    taken += len(inner) - len(value[key])
+                else:
+                    without(inner)
+        elif isinstance(value, list):
+            for inner in value:
+                without(inner)
+        return value
+
+    without(data)
+    if not taken:
+        return answer
+    body = json.dumps(data).encode("utf-8")  # (as the server writes it: json.dumps's way)
+    if "Content-Length" in headers:
+        headers = {**headers, "Content-Length": str(len(body))}
+    return status, headers, body
 
 
 def _get(path: str, *headers: str, method: str = "GET", body: str = "") -> str:

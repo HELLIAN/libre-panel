@@ -37,8 +37,8 @@ motion (the video mode is for the TURZX USB panels). The panel test's speed chec
   JONSBO, Hongtai, VMAX, Lian Li, Thermalright, BeadaPanel, NZXT and Thermaltake (and the
   Turing 1.6" and 2.1" USB panels) the protocol comes from other projects' notes and captures
   and from the makers' own sources: nobody has run them with Libre Panel yet, but for the
-  JONSBO ZC-360's screens as panels of their own (#13) and the JONSBO DS339 (#46), which
-  are supported.
+  JONSBO ZC-360's screens as panels of their own (#13), the JONSBO DS339 (#46) and the Lian Li
+  Universal Screen 8.8", which are supported.
 - **planned** — the panel is in the catalog (editor menu, sizes), the driver is
   not written yet. Design themes now; they will work once the driver lands.
 
@@ -110,7 +110,7 @@ the panel lists show it when you point at one.
 | JONSBO DS916 | yes | no | none: dimming darkens the picture | no: it shows its own animation again | whole JPEG pictures; fine detail may soften |
 | JONSBO DS339, VMAX 4.6" | no: choose the model | no | none: dimming darkens the picture | yes: turned off | on Windows both of its USB interfaces need the WinUSB driver ([how](#jonsbo-ds916-and-ds339)) |
 | Hongtai / Jungle Leopard | yes | no | its own (0–100) | no: it shows its own animation again | whole JPEG pictures of at most 80 KB over a serial port: a few a second, and a busy picture loses detail |
-| Lian Li | yes | no | its own (0–100) | not known yet | whole JPEG pictures; close L-Connect while Libre Panel runs |
+| Lian Li | yes | no | its own (0–100) | not known yet | whole JPEG pictures; close L-Connect while Libre Panel runs; the Universal Screen's light ring is a service |
 | Thermalright Trofeo Vision | yes | no | none: dimming darkens the picture | no: it shows its own picture again | whole JPEG pictures; close TRCC while Libre Panel runs |
 | BeadaPanel | yes | no | its own | yes: the backlight off | whole pictures in 16-bit colour, a few a second |
 | NZXT Kraken (LCD) | yes | no | its own (0–100) | yes: brightness 0 | each picture goes through the cooler's memory: a few a second; close NZXT CAM |
@@ -342,7 +342,23 @@ Curve (2288×1080) speak a protocol close to TURZX's (`1cbe:a088`, `a092`, `a034
 found by `auto`): Libre Panel sends them JPEG pictures to their background layer, clears the
 layer above it once, and waits when the panel says pictures pile up. As
 [InfoPanel](https://github.com/habibrehmansg/infopanel) documents it from the MIT-licensed
-[lian-li-linux](https://github.com/sgtaziz/lian-li-linux) driver; unverified.
+[lian-li-linux](https://github.com/sgtaziz/lian-li-linux) driver. The Universal Screen 8.8"
+runs: its owner's report in the TURZX forum; the others are unverified.
+
+**The light ring around the Universal Screen** (its 60 ARGB LEDs, a USB device of its own,
+`0416:8050`) is a service: *Settings → Services → Light ring*. It lights the ring in one
+colour, breathing, as a rainbow, as a spinning light, or by a reading (green to red between
+two values, the CPU's temperature for one), at the brightness and speed you choose; at 30
+frames a second while it moves, and only every few seconds while it stands still. Libre Panel
+sends the ring nothing but its colours (and asks its firmware's version once): never a
+firmware command. Close L-Connect (and OpenRGB, if it drives the ring) while the service runs:
+one program at a time can hold the ring. On Linux the setup's udev rule (*Settings → Sensors →
+Set up sensors and panel access*) lets you reach it without root. Not yet seen on the hardware: the protocol comes from the
+[Lian Li Universal Screen 8.8" protocol reference](https://github.com/immortalbob/lian-li-universal-screen-protocol)
+by immortalbob ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), written from USB
+captures and bench tests of the ring (OpenRGB published the frame's layout independently).
+Libre Panel's driver (`rust/devices/src/lianli_ring.rs`) follows its LED ring document in code
+of its own; nothing of the reference is copied but the protocol's facts.
 
 Lian Li's other LCDs (UNI FAN TL LCD, Galahad II LCD, Lancool 207 Digital, …) speak Lian Li's
 own HID and wireless protocols, which lian-li-linux documents; they have no driver here yet.

@@ -4032,9 +4032,10 @@ def test_settings_services(app_url, isolated_home):
     with browser_page(app_url, "settings/services") as page:
         page.wait_for_selector(".settings-card.service")
         cards = page.locator(".settings-card.service")
+        # (the Rust app's lists the light ring of Lian Li's screen too: the Python app never had it)
         assert [cards.nth(i).get_attribute("data-service") for i in range(cards.count())] == [
             "game", "memory", "notices", "autopilot", "devices", "cooling", "downloads", "timer",
-            "power", "agents", "waveshare",
+            "power", "agents", *(["lightring"] if RUST else []), "waveshare",
         ]  # fmt: skip
         assert page.locator("[role='switch'][aria-checked='true']").count() == 0  # off until asked
         game = page.locator("[data-service='game']")

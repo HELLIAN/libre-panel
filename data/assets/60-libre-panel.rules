@@ -8,6 +8,9 @@
 # Universal Screen and HydroShift II, which speak a protocol close to theirs
 SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", MODE="0660", TAG+="uaccess"
 
+# the light ring round Lian Li's Universal Screen 8.8" (60 LEDs, a USB device of its own)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0416", ATTRS{idProduct}=="8050", MODE="0660", TAG+="uaccess"
+
 # JONSBO ZC-360: the three screens under its fans (3.38", "TURZX-338inch-r")
 SUBSYSTEM=="usb", ATTRS{idVendor}=="43a8", ATTRS{idProduct}=="0e61", MODE="0660", TAG+="uaccess"
 

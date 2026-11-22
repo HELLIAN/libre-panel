@@ -514,9 +514,11 @@ def test_a_computer_in_a_folder_is_read(tmp_path):
     root.powercap("intel-rapl:0", "package-0", energy=5)
     root.write("etc/udev/rules.d/60-libre-panel.rules", "# ours\n")
     root.write(
-        "etc/udev/rules.d/99-other.rules",  # (a rule that gives every kind of USB panel)
+        "etc/udev/rules.d/99-other.rules",  # (a rule that gives every kind of USB panel, and
+        # the light ring of Lian Li's screen)
         'ATTRS{idVendor}=="1CBE", TAG+="uaccess"\nATTRS{idVendor}=="43a8", TAG+="uaccess"\n'
         'ATTRS{idVendor}=="345f", TAG+="uaccess"\n'
+        'ATTRS{idVendor}=="0416", ATTRS{idProduct}=="8050", TAG+="uaccess"\n'
         'ATTRS{idVendor}=="0416", ATTRS{idProduct}=="5302", TAG+="uaccess"\n'
         'ATTRS{idVendor}=="0416", ATTRS{idProduct}=="5408", TAG+="uaccess"\n'
         'ATTRS{idVendor}=="4e58", ATTRS{idProduct}=="1001", TAG+="uaccess"\n'

@@ -768,6 +768,8 @@ _CONFIRMED: set[str] = {
     # runs since 0.9.0 with the start its owner found for it (#46), on Windows once both of
     # its USB interfaces have the WinUSB driver: the owner's report
     "jonsbo-ds339",
+    # runs and "works great": its owner's report in the TURZX forum (0.9.5)
+    "lianli-universal-8.8",
 }
 # What the panels whose drivers were written from other projects' notes cannot do (their
 # drivers say why); each begins with what all of them share: nobody has run them yet.
@@ -832,7 +834,7 @@ _LIMITS = {
         "it, its backlight stays at 95. When Libre Panel quits, the panel shows its own "
         "animation again."
     ),
-    "lianli-universal-8.8": _LIANLI,
+    "lianli-universal-8.8": _LIANLI.removeprefix(f"{_UNSEEN} "),
     "lianli-universal-9.2": _LIANLI,
     "lianli-hydroshift2-lcd": _LIANLI,
     "lianli-hydroshift2-oled": _LIANLI,

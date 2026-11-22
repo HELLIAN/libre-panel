@@ -21,8 +21,10 @@ use lp_py::{Dict, Value};
 
 /// the USB vendor ids the udev rule is for: TURZX USB panels, the JONSBO ZC-360's screens
 pub const USB_VENDORS: [&str; 3] = ["1cbe", "43a8", "345f"];
-/// and other makers' screens, with their product ids
-pub const USB_PRODUCTS: [(&str, &str); 10] = [
+/// and other makers' screens (and the light ring of Lian Li's Universal Screen 8.8"), with
+/// their product ids
+pub const USB_PRODUCTS: [(&str, &str); 11] = [
+    ("0416", "8050"),
     ("0416", "5302"),
     ("0416", "5408"),
     ("4e58", "1001"),

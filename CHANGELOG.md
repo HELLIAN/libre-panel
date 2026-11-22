@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+**New**
+- **The light ring of Lian Li's Universal Screen 8.8".** *Settings → Services → Light ring*
+  lights the 60 LEDs round the screen: in one colour, breathing, as a rainbow, as a light
+  running round, or by a reading (green to red between two values you set, the processor's
+  temperature for one), at the brightness and speed you choose, and the other way round if you
+  like. What moves is sent 30 times a second, what stands still once and again every 5 seconds.
+  Measured here: a frame of the rainbow takes about 2 µs to make, and the service took a quarter
+  of a percent of one CPU core at 30 frames a second (the USB transfers to the ring not
+  counted). Close L-Connect (and OpenRGB, if it drives the ring) while the service runs: one
+  program at a time can hold the ring, and the service says so when another has it. Libre Panel
+  sends the ring nothing but its colours and asks its firmware's version once: never a firmware
+  command. On Linux, *Settings → Sensors → Set up sensors and panel access* lets you reach it
+  without root (Start asks for it again where an earlier setup does not let you reach the
+  ring). Not yet seen on the hardware: written from the
+  [Lian Li Universal Screen 8.8" protocol reference](https://github.com/immortalbob/lian-li-universal-screen-protocol)
+  by immortalbob (CC BY 4.0). Asked for by an owner in the TURZX forum.
+
+**Changed**
+- **The Lian Li Universal Screen 8.8" is supported**: it runs, and "works great", its owner's
+  report in the TURZX forum.
+
 ## 0.9.5rc3 — 2026-11-22
 
 The third candidate for 0.9.5, and the first that is public: the weather from OpenWeatherMap,

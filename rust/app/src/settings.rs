@@ -20,7 +20,7 @@ use crate::sensors::value_of;
 pub const PROJECT_URL: &str = "https://github.com/syntensa/libre-panel";
 const MAX_NOTICE: usize = 200_000;
 /// The built-in services in the order the app lists them; plugins' come after them.
-const SERVICE_ORDER: [&str; 11] = [
+const SERVICE_ORDER: [&str; 12] = [
     "game",
     "memory",
     "notices",
@@ -31,6 +31,7 @@ const SERVICE_ORDER: [&str; 11] = [
     "timer",
     "power",
     "agents",
+    "lightring",
     "waveshare",
 ];
 /// Sources that start by themselves; they are listed only where config.toml names them.

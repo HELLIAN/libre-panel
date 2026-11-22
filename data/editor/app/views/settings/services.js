@@ -71,6 +71,10 @@ export const SERVICES = {
     title: () => t("Power use"),
     hint: () => t("The watts the PC draws, from the sensors of the processor and the graphics card, and the energy of today and of the month with what it costs."),
   },
+  lightring: {
+    title: () => t("Light ring (Lian Li Universal Screen)"),
+    hint: () => t("The 60 LEDs round the Lian Li Universal Screen 8.8″: one colour, breathing, a rainbow, a light running round, or the colour of a reading. Only one program can have the ring: close L-Connect while it runs."),
+  },
   waveshare: {
     title: () => t("Waveshare USB monitor (experimental)"),
     hint: () => t("Sends the readings to a Waveshare USB monitor, which shows them in the themes on its own card. Libre Panel writes nothing on the card. Waveshare's own program must not run at the same time."),
@@ -212,6 +216,34 @@ const OPTIONS = {
   "power.rest_w": { label: () => t("The rest of the PC"), hint: () => t("Mainboard, drives, fans and what the power supply loses, in watts: some 40 to 80."), unit: "W", min: 0, max: 2000 },
   "power.price": { label: () => t("Price of a kWh"), hint: () => t("0: no cost."), min: 0, max: 100, step: 0.01 },
   "power.currency": { label: () => t("Currency") },
+  "lightring.mode": {
+    label: () => t("What the ring shows"),
+    choices: () => [
+      { id: "off", name: t("Off") },
+      { id: "color", name: t("A colour") },
+      { id: "breathing", name: t("Breathing") },
+      { id: "rainbow", name: t("Rainbow") },
+      { id: "spin", name: t("A light running round") },
+      { id: "reading", name: t("The colour of a reading") },
+    ],
+  },
+  "lightring.color": { label: () => t("Colour"), colour: true },
+  "lightring.brightness": { label: () => t("Brightness"), unit: "%", min: 0, max: 100 },
+  "lightring.speed": { label: () => t("How fast it moves"), hint: () => t("Breathing, the rainbow and the running light."), unit: "%", min: 0, max: 100 },
+  "lightring.reverse": { label: () => t("The other way round"), hint: () => t("The rainbow and the running light.") },
+  "lightring.reading": {
+    label: () => t("The reading"),
+    hint: () => t("Green at the first value below, red at the second."),
+    choices: () => [
+      { id: "cpu.temp", name: t("CPU temperature") },
+      { id: "gpu.temp", name: t("GPU temperature") },
+      { id: "cpu.load", name: t("CPU load") },
+      { id: "gpu.load", name: t("GPU load") },
+    ],
+  },
+  "lightring.low": { label: () => t("Green at"), min: -100, max: 10000, step: 1 },
+  "lightring.high": { label: () => t("Red at"), min: -100, max: 10000, step: 1 },
+  "lightring.dark_on_quit": { label: () => t("Dark when Libre Panel quits"), hint: () => t("Otherwise the ring keeps its last colours.") },
   "waveshare.port": { label: () => t("Port"), hint: () => t("Only if Libre Panel does not find the display: COM5, /dev/ttyACM0.") },
   "waveshare.brightness": { label: () => t("Brightness"), hint: () => t("0: as the display has it."), unit: "%", min: 0, max: 100 },
   "waveshare.flip": {
@@ -327,6 +359,11 @@ function OptionRow({ service, option, given }) {
       onChange=${save}
     />`);
   }
+  if (option.type === "string" && meta.colour) {
+    const shown = /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : "#000000";
+    return row(html`<input type="color" class="accent-colour" aria-label=${label} value=${shown}
+      onChange=${(event) => save(event.currentTarget.value.toUpperCase())} />`);
+  }
   if (option.type === "string") {
     const choices = meta.themes
       ? [{ id: "", name: t("None") }, ...themes]
@@ -401,6 +438,20 @@ function ServiceStatus({ row, enabled, loaded, background }) {
   return null;
 }
 
+/** What the light ring's service says of the ring (rust/services/src/lightring.rs, summary()). */
+function LightringStatus({ summary }) {
+  const { state, version, reason } = summary;
+  if (state === "connected") {
+    return html`<${Status} tone="ok">${version ? t("The light ring is connected · firmware {version}", { version }) : t("The light ring is connected")}<//>`;
+  }
+  if (state === "busy") return html`<${Status} tone="warn">${t("Another program has the light ring: close L-Connect (its service too) or OpenRGB.")}<//>`;
+  if (state === "denied") return html`<${Status} tone="warn">${t("Your user may not use the light ring yet: Settings → Sensors → Set up sensors and panel access, then plug the screen in again.")}<//>`;
+  if (state === "absent") return html`<${Status}>${t("No light ring found; Libre Panel keeps looking.")}<//>`;
+  if (state === "lost") return html`<${Status} tone="warn">${t("The light ring went away; Libre Panel looks for it again.")}<//>`;
+  if (state === "failed") return html`<${Status} tone="error">${t("The light ring cannot be used: {reason}", { reason })}<//>`;
+  return html`<${Status}>${t("Looking for the light ring …")}<//>`;
+}
+
 /** What the Waveshare service says of the display (services/waveshare.py, summary()). */
 function WaveshareStatus({ summary }) {
   const { state } = summary;
@@ -463,6 +514,9 @@ function ServiceCard({ service, config, row, loaded, background }) {
     </div>
     ${service.name === "waveshare" && enabled && row?.summary
       ? html`<div class="settings-row waveshare-status"><${WaveshareStatus} summary=${row.summary} /></div>`
+      : null}
+    ${service.name === "lightring" && enabled && row?.summary
+      ? html`<div class="settings-row lightring-status"><${LightringStatus} summary=${row.summary} /></div>`
       : null}
     ${service.name === "game" ? html`<${GameScreen} />` : null}
     ${service.name === "timer" && enabled && background && row?.state === "running" ? html`<${TimerButtons} />` : null}

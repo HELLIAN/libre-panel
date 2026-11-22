@@ -18,6 +18,7 @@ pub mod fancontrol;
 pub mod game;
 pub mod host;
 pub mod launchers;
+pub mod lightring;
 pub mod machine;
 pub mod manager;
 pub mod memory;
