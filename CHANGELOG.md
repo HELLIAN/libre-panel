@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.9.5rc3 — 2026-11-22
+
+The third candidate for 0.9.5: the weather from OpenWeatherMap, transitions that move over all
+the panels at once (Morph among them), light that moves, and Lumen, Arena and Encore in a
+second version. The JONSBO DS339 starts on Windows again, the MAJESTY 9.16" is named as itself,
+and Diagnose tests panels on a serial port too. Everything of 0.9.5rc2 and 0.9.5rc1 below stays.
 
 **New**
 - **The weather from OpenWeatherMap.** *Settings → Weather and place → Source*: Open-Meteo as
