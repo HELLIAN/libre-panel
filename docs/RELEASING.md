@@ -93,8 +93,10 @@ source (pip would make the Python app of them). Only when all of that passed, it
 the GitHub Release with all files and `SHA256SUMS`, the SHA-256 of each (the
 app's *Update to* checks its download against it), its notes taken from the
 CHANGELOG section (a hotfix's, such as 0.9.1's, followed by the sections down to
-the release it fixes, each under its heading, so that who updates from an older
-version reads all that is new; the app's update card shows the first paragraph),
+the release it fixes, and a candidate's, such as 0.9.5rc3's, by those of the
+candidates before it, which were drafts no one else saw, each under its heading,
+so that who updates from an older version reads all that is new; the app's update
+card shows the first paragraph),
 and GitHub's signed attestation for each file that this
 workflow built it from this commit (`gh attestation verify FILE --repo
 syntensa/libre-panel`).

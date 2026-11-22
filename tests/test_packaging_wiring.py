@@ -6,8 +6,12 @@ and on the AppImage's files, and every place agrees on what the folder is called
 import importlib.util
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from libre_panel import bundled
 
@@ -211,6 +215,88 @@ def test_a_release_candidate_is_never_for_everyone():
     forget = workflow[workflow.index("  forget-the-files:") :]
     assert "if: always()" in forget and "needs: [test, app, github-release]" in forget
     assert 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"' in forget
+
+
+CHANGELOG = """# Changelog
+
+## 1.2.0 — 2026-01-05
+
+The release, see [the guide](docs/GUIDE.md).
+
+## 1.2.0rc3 — 2026-01-04
+
+The third candidate, see [the guide](docs/GUIDE.md).
+
+## 1.2.0rc2 — 2026-01-03
+
+The second candidate.
+
+## 1.2.0rc1 — 2026-01-02
+
+The first candidate.
+
+## 1.1.2 — 2026-01-01
+
+The second fix.
+
+## 1.1.1 — 2025-12-31
+
+The first fix.
+
+## 1.1.0 — 2025-12-30
+
+What it fixes.
+
+## 1.0.0 — 2025-12-01
+
+Long ago.
+"""
+
+
+def notes_of(version, folder):
+    """What release.yml's step makes of CHANGELOG for a version's release notes."""
+    workflow = read(".github", "workflows", "release.yml")
+    step = workflow[workflow.index("- name: Release notes from CHANGELOG.md") :]
+    script = step[step.index("run: |\n") + len("run: |\n") : step.index("\n      - name: ")]
+    script = "\n".join(line[10:] for line in script.splitlines())
+    (folder / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
+    env = {**os.environ, "TAG": f"v{version}", "GITHUB_REPOSITORY": "own/app", "GITHUB_SHA": "abc"}
+    subprocess.run(["bash", "-e", "-c", script], cwd=folder, env=env, check=True)
+    notes = (folder / "notes.md").read_text(encoding="utf-8")
+    assert notes.rstrip().endswith("(https://github.com/own/app#install-and-first-start).")
+    return notes[: notes.index("\n**Which file?**")]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or not (shutil.which("bash") and shutil.which("awk")),
+    reason="the step is the release workflow's, which runs on Linux",
+)
+def test_the_notes_of_a_candidate_go_on_with_the_candidates_before_it(tmp_path):
+    """A release's notes are its section of CHANGELOG. A hotfix's go on with the sections down
+    to the release it fixes; a candidate's with those of the candidates before it, which were
+    drafts no one else saw (0.9.5rc3 was the first of its three to be public, and its notes
+    said nothing of what rc1 and rc2 brought); each under its heading, and never further."""
+    third = notes_of("1.2.0rc3", tmp_path)
+    assert "## 1.2.0rc3" not in third and third.lstrip().startswith("The third candidate")
+    assert "(https://github.com/own/app/blob/abc/docs/GUIDE.md)" in third  # (links of the tag)
+    assert third.index("## 1.2.0rc2 — 2026-01-03") < third.index("The second candidate.")
+    assert third.index("The second candidate.") < third.index("## 1.2.0rc1 — 2026-01-02")
+    assert third.rstrip().endswith("The first candidate.")  # (not the release before)
+    second = notes_of("1.2.0rc2", tmp_path)
+    assert "third" not in second and second.count("## ") == 1 and "The first candidate." in second
+    first = notes_of("1.2.0rc1", tmp_path)
+    assert first.strip() == "The first candidate."
+    release = notes_of("1.2.0", tmp_path)  # (the release says it all itself)
+    assert release.strip() == (
+        "The release, see [the guide](https://github.com/own/app/blob/abc/docs/GUIDE.md)."
+    )
+    fix = notes_of("1.1.2", tmp_path)
+    assert [line for line in fix.splitlines() if line.startswith("## ")] == [
+        "## 1.1.1 — 2025-12-31",
+        "## 1.1.0 — 2025-12-30",
+    ]
+    assert fix.rstrip().endswith("What it fixes.") and "candidate" not in fix
+    assert notes_of("1.1.0", tmp_path).strip() == "What it fixes."
 
 
 def test_presentmon_is_a_box_of_the_setup_that_says_first_what_will_not_work_without_it():
