@@ -1,5 +1,7 @@
-"""rust/render's toasts against render/overlays.py (docs/RUST.md, R4): the ToastLayer led
-through the same scripts in both (toasts arriving with their ranks, keys, kinds and hold times,
+"""rust/render's toasts as the Python app's render/overlays.py showed them (docs/RUST.md, R4):
+the ToastLayer led through the scripts the Python app's was led through (what lp-check answers
+is checked against what it answered: golden.py; toasts arriving with their ranks, keys, kinds
+and hold times,
 the clock going on, transitions holding or hiding them, toasts set aside, themes switching),
 each step's state and every frame drawn with the toast on show, to the bit: the built-in card
 with its stripe, icon and text, fading and sliding in by its anchor, clear of the bezel; and
@@ -9,26 +11,20 @@ of render/volume_looks.py, its level gliding on the panel's clock."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import random
 import struct
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pytest
 from PIL import Image
 from rust_check import image, run
 
 from libre_panel import fonts
-from libre_panel.plugins.host import Toast
-from libre_panel.render import volume_looks
-from libre_panel.render.overlays import ToastLayer
-from libre_panel.render.renderer import Renderer
-from libre_panel.render.scene import Scene, SceneFrame
-from libre_panel.sensors.base import Snapshot
-from libre_panel.theme.model import load_theme
+
+pytestmark = pytest.mark.kept
 
 THEME_FORMAT = "libre-panel-theme/1"
 ANCHORS = ["top-right", "top-left", "bottom-right", "bottom-left", "top", "bottom"]
@@ -66,10 +62,6 @@ COLOURS: list[Any] = [None, None, "#ff0000", "#12345678", "@accent", "@nothere",
 
 def _bits(x: float) -> str:
     return struct.pack(">d", x).hex()
-
-
-def _float(v: Any) -> float:
-    return struct.unpack(">d", bytes.fromhex(v["f"]))[0] if isinstance(v, dict) else float(v)
 
 
 def _typed(v: Any) -> Any:
@@ -309,108 +301,21 @@ def _noise(spec: dict[str, Any]) -> Image.Image:
     return Image.frombytes(mode, (w, h), (made >> np.uint64(24)).astype(np.uint8).tobytes())
 
 
-def _sha(im: Image.Image) -> str:
-    return hashlib.sha256(im.tobytes()).hexdigest()
-
-
 # the pictures a band's message may name: a cover not square, an app's icon with its alpha
 PICTURES = {"media.cover": {"size": [120, 90], "mode": "RGB", "seed": 7},
             "app.icon": {"size": [48, 48], "mode": "RGBA", "seed": 11}}  # fmt: skip
-
-
-def _python(folders: list[Path], script: list[list[Any]], preview: bool = True) -> list[Any]:
-    """Each step's answer from Python's ToastLayer, as lp-check gives Rust's. Not a `preview`:
-    the panel, where the volume's level glides on the clock (time.monotonic: the step's)."""
-    renderers = [Renderer(load_theme(folder), preview=True) for folder in folders]
-    for renderer in renderers:  # (the readings it last drew of: their pictures)
-        renderer.snapshot = Snapshot(images={k: _noise(v) for k, v in PICTURES.items()})
-        renderer.preview = preview  # (what the toasts' styles see of it: context.preview)
-    layer: ToastLayer | None = None
-    on, steps = 0, []
-    clock = [0.0]
-    real_time, volume_looks.time = volume_looks.time, SimpleNamespace(monotonic=lambda: clock[0])
-
-    def named(toast: Any) -> Any:
-        return toast.payload.get("n")
-
-    try:
-        for step in script:
-            what = step[0]
-            out: Any = None
-            if what in ("draw", "laid"):
-                clock[0] = _float(step[1])
-            if what == "renderer":
-                on = step[1]
-                if layer is None:
-                    layer = ToastLayer(renderers[on])
-                else:
-                    layer.set_renderer(renderers[on])
-            elif what == "add":
-                assert layer is not None
-                layer.add([Toast(t["text"], t["icon"], t["level"], t["seconds"], t["kind"],
-                                 t["rank"], dict(t["payload"]), "", t["key"])
-                           for t in step[1]])  # fmt: skip
-            elif what == "advance":
-                assert layer is not None
-                layer.advance(_float(step[1]), hold=step[2])
-            elif what == "draw":
-                assert layer is not None
-                frame = _noise(step[3])
-                drawn = layer.draw(frame, _float(step[1]), hidden=step[2])
-                out = {"sha256": None if drawn is frame else _sha(drawn),
-                       "box": list(layer.box) if layer.box else None}  # fmt: skip
-            elif what == "laid":
-                assert layer is not None
-                frame = SceneFrame(Scene(tuple(step[3]), (0, 0, 0), ()))
-                laid = layer.draw(frame, _float(step[1]), hidden=step[2])
-                picture = None
-                if not isinstance(laid, SceneFrame):  # (a style that draws it: the band)
-                    picture = {"sha256": _sha(laid)}
-                elif laid.scene.pieces:
-                    [(_, piece)] = laid.scene.pieces
-                    p = piece.layer
-                    picture = {"sha256": _sha(p), "size": list(p.size), "mode": p.mode,
-                               "x": piece.x, "y": piece.y}  # fmt: skip
-                out = {"picture": picture, "box": list(layer.box) if layer.box else None}
-            elif what == "set_aside":
-                assert layer is not None
-                layer.set_aside()
-            elif what == "state":
-                assert layer is not None
-                now = _float(step[1])
-                current = None
-                if layer.current is not None:
-                    toast, began, previous = layer.current
-                    current = {"id": named(toast), "began": _bits(began),
-                               "seconds": None if toast.seconds is None else _bits(toast.seconds),
-                               "previous": None if previous is None
-                               else [named(previous[0]), _bits(previous[1])]}  # fmt: skip
-                showing = layer.showing(now)
-                out = {"current": current, "ends": _bits(layer.ends),
-                       "queue": [named(q) for q in layer.queue], "inbox": len(layer.inbox),
-                       "active": layer.active, "layered": layer.layered,
-                       "showing": None if showing is None
-                       else [named(showing[0]), _bits(showing[1])]}  # fmt: skip
-            steps.append(out)
-    finally:
-        volume_looks.time = real_time
-        if layer is not None:
-            layer.close()
-        for renderer in renderers:
-            renderer.close()
-    return steps
 
 
 def _compare(
     tmp_path: Path, seed: int, count: int, band: bool = False, scenarios: Any = (),
     looks: bool = False,
 ) -> int:  # fmt: skip
-    """`count` layers led through scripts, in Rust and in Python, and then `scenarios`' own:
-    every step alike. How many frames were drawn with a toast on them. With `band`, all in
+    """`count` layers led through scripts, and then `scenarios`' own, as Rust answers each
+    step. How many frames were drawn with a toast on them. With `band`, all in
     the band; with `looks`, mostly the volume in its looks, half of them on the panel (not a
     preview), where its level glides."""
     rng = random.Random(seed)
-    cases, asked = [], []
+    cases, scripts = [], []
     for n in range(count):
         folders, themes = [], []
         for k in range(rng.choice([1, 2, 2, 3])):
@@ -421,7 +326,7 @@ def _compare(
         preview = not (looks and rng.random() < 0.5)
         wired = [[s[0], [_wire(t) for t in s[1]]] if s[0] == "add" else s for s in script]
         cases.append({"themes": [str(f) for f in folders], "script": wired, "preview": preview})
-        asked.append((folders, themes, script, preview))
+        scripts.append(script)
     for n, scenario in enumerate(scenarios):
         themes, script, *panel = scenario()
         preview = not panel
@@ -433,19 +338,17 @@ def _compare(
             folders.append(folder)
         wired = [[s[0], [_wire(t) for t in s[1]]] if s[0] == "add" else s for s in script]
         cases.append({"themes": [str(f) for f in folders], "script": wired, "preview": preview})
-        asked.append((folders, themes, script, preview))
+        scripts.append(script)
     pictures = {key: image(_noise(spec)) for key, spec in PICTURES.items()}
     answers = run([{"op": "toasts", "fonts_dir": str(fonts.FONT_DIR), "images": pictures, **case}
                    for case in cases])  # fmt: skip
     drawn = 0
-    for n, (got, (folders, _, script, preview)) in enumerate(zip(answers, asked, strict=True)):
-        want = _python(folders, script, preview)
+    for n, (got, script) in enumerate(zip(answers, scripts, strict=True)):
         steps = got["steps"]
         assert got["unported"] is None, (n, got["unported"])
-        assert len(steps) == len(want), n
-        for k, (mine, theirs) in enumerate(zip(steps, want, strict=True)):
-            assert mine == theirs, (n, k, script[k][0], mine, theirs)
-            if script[k][0] in ("draw", "laid") and (theirs.get("sha256") or theirs.get("picture")):
+        assert len(steps) == len(script), n
+        for k, mine in enumerate(steps):
+            if script[k][0] in ("draw", "laid") and (mine.get("sha256") or mine.get("picture")):
                 drawn += 1
     return drawn
 

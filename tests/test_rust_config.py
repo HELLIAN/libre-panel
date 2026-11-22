@@ -458,36 +458,16 @@ def _edit_text(rng: random.Random) -> str | None:
     return text.rstrip("\n") if rng.random() < 0.1 else text
 
 
+@pytest.mark.kept
 def test_config_toml_is_changed_as_config_py_changes_it(tmp_path: Path) -> None:
-    """config.py's edit_config, set_active_theme and set_brightness and scenes.py: a setting
-    set or taken out, arrays of tables replaced, scenes put on, kept and taken out, in files
-    of many layouts (the default one, indented keys, comments, values over several lines,
-    settings that are no more, layouts that are refused): what each step gives or its error,
-    and the file's bytes after it."""
-    from libre_panel import scenes
-
+    """config.py's edit_config, set_active_theme and set_brightness and the Python app's
+    scenes.py: a setting set or taken out, arrays of tables replaced, scenes put on, kept and
+    taken out, in files of many layouts (the default one, indented keys, comments, values over
+    several lines, settings that are no more, layouts that are refused): what each step gives
+    or its error, and the file's bytes after it, as the Python app's were (golden.py)."""
     rng = random.Random(0xED17)
 
-    def taken(step: list[Any], path: Path) -> Any:
-        kind = step[0]
-        if kind == "edit":
-            changes = [(c[0], c[1], c[2] if len(c) > 2 else None) for c in step[1]]
-            config.edit_config(*changes, path=path)
-        elif kind == "theme":
-            config.set_active_theme(step[1], path)
-        elif kind == "brightness":
-            config.set_brightness(step[1], path)
-        elif kind == "next":
-            return scenes.next_one(path)
-        else:
-            how = {"state": scenes.state, "put_on": scenes.put_on, "save": scenes.save,
-                   "delete": scenes.delete}[kind]  # fmt: skip
-            state = how(*step[1:], path)
-            return [[[list(pair) for pair in scene.items()] for scene in state["scenes"]],
-                    state["on"]]  # fmt: skip
-        return None
-
-    files, theirs = [], []
+    files = []
     for number in range(800):
         text = _edit_text(rng)
         steps = [_edit_step(rng) for _ in range(rng.randrange(1, 6))]
@@ -504,15 +484,6 @@ def test_config_toml_is_changed_as_config_py_changes_it(tmp_path: Path) -> None:
         if text is None and paths[0].parent.exists() != paths[1].parent.exists():
             for path in paths:
                 path.parent.mkdir(exist_ok=True)
-        done = []
-        for step in steps:
-            try:
-                answer: Any = {"ok": taken(step, paths[0])}
-            except Exception as error:
-                answer = {"error": {"type": type(error).__name__, "msg": str(error)}}
-            after = paths[0].read_bytes().hex() if paths[0].exists() else None
-            done.append([answer, after])
-        theirs.append(done)
         files.append({"path": str(paths[1]), "steps": steps})
     platforms = ["linux", "win32", "darwin"]
     case = {"op": "config_edit", "platform": sys.platform, "language": "en", "files": files,
@@ -521,20 +492,15 @@ def test_config_toml_is_changed_as_config_py_changes_it(tmp_path: Path) -> None:
     assert "files" in ours, ours
     assert ours["defaults"] == [config.default_config_toml(name) for name in platforms]
     seen = dict.fromkeys(("ok", "by hand", "ConfigError", "state", "changed"), 0)
-    for number, (want, got) in enumerate(zip(theirs, ours["files"], strict=True)):
-        py, rs = str(tmp_path / "py" / str(number)), str(tmp_path / "rs" / str(number))
+    for number, got in enumerate(ours["files"]):
+        assert len(got) == len(files[number]["steps"]), number
         before = None
-        for step, a, b in zip(files[number]["steps"], want, got, strict=True):
-            for answer, folder in ((a[0], py), (b[0], rs)):
-                if "error" in answer:
-                    answer["error"]["msg"] = answer["error"]["msg"].replace(folder, "<folder>")
-                    if answer["error"]["type"] != "ConfigError":
-                        answer["error"]["msg"] = ""  # (the system's own words)
-            assert b == a, (number, step, files[number]["path"])
-            seen["ok"] += "ok" in a[0]
-            seen["state"] += isinstance(a[0].get("ok"), list)
-            seen["by hand"] += "by hand" in a[0].get("error", {}).get("msg", "")
-            seen["ConfigError"] += a[0].get("error", {}).get("type") == "ConfigError"
-            seen["changed"] += a[1] != before
-            before = a[1]
+        for answer, after in got:
+            failed = answer.get("error", {})
+            seen["ok"] += "ok" in answer
+            seen["state"] += isinstance(answer.get("ok"), list)
+            seen["by hand"] += "by hand" in failed.get("msg", "")
+            seen["ConfigError"] += failed.get("type") == "ConfigError"
+            seen["changed"] += after != before
+            before = after
     assert all(count >= 10 for count in seen.values()), seen

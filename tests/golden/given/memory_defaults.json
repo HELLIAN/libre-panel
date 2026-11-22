@@ -1,0 +1,22 @@
+{
+ "keep_days": 730.0,
+ "cooling": true,
+ "cooling_days": 180.0,
+ "music": true,
+ "temperatures": [],
+ "fps_levels": [
+  60,
+  90,
+  120,
+  144,
+  165
+ ],
+ "report": true,
+ "report_minutes": 3.0,
+ "report_compare": 10,
+ "report_seconds": 30.0,
+ "report_theme": "round-report",
+ "report_transition": "tube",
+ "fancontrol": "",
+ "database": ""
+}

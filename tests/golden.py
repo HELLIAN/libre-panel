@@ -204,6 +204,16 @@ def answered(answers: list[Any]) -> None:
     assert not differ, f"call {call}: cases {differ[:20]} answer otherwise than they did"
 
 
+def kept_here(mark: Any) -> bool:
+    """Whether the answers kept for a test hold on this computer, by its ``c_library`` mark
+    (None: it has none, and they hold on any). Such a test's pictures are worked out with the
+    C library's float functions (its sines, arc tangents, exponentials), whose last bits differ
+    from one library to the next: a pixel here and there comes out a level apart. Its answers
+    were kept on CI's computers and are checked there; on another computer the test runs
+    without them."""
+    return mark is None or os.environ.get("GITHUB_ACTIONS") == "true"
+
+
 def live_here(mark: Any, system: str = sys.platform) -> bool:
     """Whether a test's ``live`` mark (None: it has none) leaves it unchecked on ``system``: one
     without arguments on every system, else on those it names. Such a test's answers depend on

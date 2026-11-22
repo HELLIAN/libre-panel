@@ -26,6 +26,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
+import golden
 import pytest
 from rust_check import run
 
@@ -554,7 +555,13 @@ def test_wide_characters_as_python_s_east_asian_width() -> None:
 def test_time_zones_found_as_zoneinfo_finds_them() -> None:
     # (in the search path, else in the tzdata package, on Windows all of them; a key checked
     # by the system's own paths' rules)
-    from libre_panel import timezones
+    from zoneinfo import ZoneInfo
+
+    def found(key: str) -> bool:
+        try:
+            return bool(key) and ZoneInfo(key) is not None
+        except (ValueError, KeyError, OSError):  # (KeyError: ZoneInfoNotFoundError)
+            return False
 
     keys = ["", "UTC", "Asia/Tokyo", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Nope/Zone"]
     keys += ["/etc/localtime", "../etc/passwd", "Europe/", "./UTC", "..", ".", "a//b", "zone.tab"]
@@ -563,7 +570,7 @@ def test_time_zones_found_as_zoneinfo_finds_them() -> None:
     keys += ["Europe\\Berlin", "C:UTC", "..\\zoneinfo\\UTC", "America/Argentina", "Etc/UTC"]
     keys += ["Europe/Berlin/", "America.Argentina/Cordoba", "__init__.py", "America/Indiana/Knox"]
     [ours] = run([{"op": "py_num", "cases": [], "zones": keys}])
-    assert ours["zones"] == [timezones.zone.__wrapped__(k) is not None for k in keys]
+    assert ours["zones"] == [found(k) for k in keys]
 
 
 # -- time zones -----------------------------------------------------------------------------
@@ -1520,13 +1527,10 @@ def test_patterns_match_as_python_s_re() -> None:
     # (lp_py::regex, the part of re the app's own patterns are written in: the app's patterns
     # and ones made up of the same pieces, each searched, matched, matched whole, replaced and
     # split in texts; a pattern re refuses is refused)
-    from libre_panel.sensors import hwnames
-    from libre_panel.sensors import librehardwaremonitor as lhm
-
     rng = random.Random(0x5E)
-    real = [lhm._NUMBER, lhm._CORE_CLOCK, hwnames._MARKS, *hwnames._CPU_CUTS, hwnames._VENDOR,
-            hwnames._GENUINE, hwnames._COMPANY]  # fmt: skip
-    patterns = [(p.pattern, bool(p.flags & re.IGNORECASE)) for p in real]
+    # (the Python app's own, of its sensors' names and numbers: each with whether it ignores
+    # case)
+    patterns = [(pattern, ignore) for pattern, ignore in golden.given("own_patterns")]
     patterns += [
         (r"[^a-z0-9]+", False),
         (r"[*?\[]", False),

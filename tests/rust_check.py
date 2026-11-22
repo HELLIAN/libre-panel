@@ -115,8 +115,10 @@ def picture(value: dict[str, Any]) -> Image.Image:
     return Image.frombytes(value["mode"], tuple(value["size"]), base64.b64decode(value["data"]))
 
 
-def run(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Each case's answer from lp-check, in order."""
+def run(cases: list[dict[str, Any]], kept_as: Any = None) -> list[dict[str, Any]]:
+    """Each case's answer from lp-check, in order. Checked against those kept where the test
+    kept some (golden.py): as they are, or as ``kept_as`` makes of them (what in an answer is
+    the computer's own, a folder's order, put the same way everywhere)."""
     exe = find()
     if exe is None:
         pytest.skip("needs lp-check (cargo build --release in rust/)")
@@ -145,7 +147,7 @@ def run(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # (one answer a line: split at "\n" only, as JSON leaves U+2028 and the like as they are)
     answers = [json.loads(line) for line in done.stdout.split("\n") if line]
     assert len(answers) == len(cases), done.stderr
-    golden.answered(answers)  # (against those kept, where the test kept some)
+    golden.answered(answers if kept_as is None else kept_as(answers))
     return answers
 
 

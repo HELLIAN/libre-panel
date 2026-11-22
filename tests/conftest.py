@@ -54,8 +54,11 @@ def _golden(request, tmp_path_factory):
     if not golden._places:
         root = Path(__file__).resolve().parent.parent
         golden.places(tmp=tmp_path_factory.getbasetemp(), data=root / "data", repo=root)
-    kept = request.node.get_closest_marker("kept") is not None and not golden.live_here(
-        request.node.get_closest_marker("live")
+    mark = request.node.get_closest_marker
+    kept = (
+        mark("kept") is not None
+        and not golden.live_here(mark("live"))
+        and golden.kept_here(mark("c_library"))
     )
     golden.begin(Path(str(request.node.fspath)).stem, request.node.name, kept)
     if kept and not golden.RECORDING:

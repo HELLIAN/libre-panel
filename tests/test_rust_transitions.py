@@ -1,13 +1,12 @@
-"""rust/render's transitions against Python's (docs/RUST.md): overlays.transition for each
-built-in name, with the parameters a service passes, the new theme's colours and language, and
-the frames each draws from an old screen to the new one, the same to the bit; where Python's
-raises, Rust's fails too. The cascade also on the built-in themes as their renderer drew them
-last (their ground and their cards)."""
+"""rust/render's transitions as the Python app's were (docs/RUST.md): overlays.transition for
+each built-in name, with the parameters a service passes, the new theme's colours and language,
+and the frames each draws from an old screen to the new one, the same to the bit; where
+Python's raised, Rust's fails too. The cascade also on the built-in themes as their renderer
+drew them last (their ground and their cards). What lp-check answers is checked against what
+the Python app answered (golden.py)."""
 
 from __future__ import annotations
 
-import dataclasses
-import hashlib
 import json
 import random
 import shutil
@@ -17,15 +16,15 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 from PIL import Image
-from rust_check import image, picture, run
+from rust_check import image, run
 
 from libre_panel import fonts, i18n
-from libre_panel.plugins.render import RenderContext
-from libre_panel.render import overlays
-from libre_panel.render.renderer import Renderer
-from libre_panel.sensors.base import Snapshot
-from libre_panel.theme.model import find_theme, load_theme
+
+pytestmark = pytest.mark.kept
+
+THEMES = Path(__file__).parent.parent / "data" / "themes"  # the app's own themes
 
 THEME_FORMAT = "libre-panel-theme/1"
 NAMES = ["fade", "slide", "tube", "entrance", "wipe", "iris", "blinds", "dissolve", "slide-right",
@@ -75,10 +74,6 @@ def _typed(v: Any) -> Any:
     return None
 
 
-def _float(bits: str) -> float:
-    return struct.unpack(">d", bytes.fromhex(bits))[0]
-
-
 def _noise(spec: dict[str, Any]) -> Image.Image:
     """A frame of noise as lp-check makes it: each byte the top 8 of the low 32 bits of its
     index times 2654435761 plus the seed."""
@@ -86,10 +81,6 @@ def _noise(spec: dict[str, Any]) -> Image.Image:
     index = np.arange(w * h * len(mode), dtype=np.uint64)
     made = (index * np.uint64(2654435761) + np.uint64(seed)) & np.uint64(0xFFFFFFFF)
     return Image.frombytes(mode, (w, h), (made >> np.uint64(24)).astype(np.uint8).tobytes())
-
-
-def _sha(im: Image.Image) -> str:
-    return hashlib.sha256(im.tobytes()).hexdigest()
 
 
 def _frame(size: tuple[int, int], mode: str, seed: int) -> dict[str, Any]:
@@ -101,97 +92,6 @@ def _frame(size: tuple[int, int], mode: str, seed: int) -> dict[str, Any]:
 # The moment a built-in theme is drawn at before its cascade: one of this century (Windows'
 # local time knows nothing before 1970, where Python's clocks fail and Rust's frame is refused).
 DRAWN_ON = datetime(2025, 11, 13, 14, 26, 40)
-
-
-def _python(folder: Path, language: str, switches: list[dict[str, Any]], drawn: str | None = None,
-            before: tuple[Path, str] | None = None, demo: bool = False,
-            after: tuple[Path, str] | None = None,
-            beside: list[dict[str, Any]] | None = None) -> list[Any]:  # fmt: skip
-    """Each switch's answer from Python, as lp-check gives Rust's (``drawn``: the moment the
-    renderer draws its frame of first, a double's bits; ``before``: the old screen's theme and
-    the moment it was drawn at, which the morph takes apart; ``demo``: both drawn with the
-    demo's readings; ``after``: the new screen's, where it is not the renderer's: what a morph
-    shown to see it turns the screen into; ``beside``: the other panels a morph over all of
-    them takes part with, each its theme, the moment, its old screen's and its canvas, which
-    play in step with it from the moment it begins, as lp-check plays them)."""
-
-    def seen() -> Snapshot:  # (its clocks at DRAWN_ON, as lp-check's snapshot is told)
-        pictures = {k: _noise(v) for k, v in PICTURES.items()}
-        if demo:
-            from test_rust_render import _demo
-
-            return dataclasses.replace(_demo(), images={**_demo().images, **pictures})
-        return Snapshot(images=pictures, now=DRAWN_ON)
-
-    i18n.set_language(language)
-    try:
-        renderer = Renderer(load_theme(folder), preview=True)
-        renderer.snapshot = Snapshot(images={k: _noise(v) for k, v in PICTURES.items()})
-        if drawn is not None:
-            renderer.render(seen(), now=_float(drawn))
-        context = RenderContext(renderer)
-        if before is not None:
-            was = Renderer(load_theme(before[0]), preview=True)
-            was.render(seen(), now=_float(before[1]))
-            context.before = was.parting()  # type: ignore[attr-defined]
-            was.close()
-        into = None
-        if after is not None:
-            other = Renderer(load_theme(after[0]), preview=True)
-            other.render(seen(), now=_float(after[1]))
-            into = other.parting()
-            other.close()
-        olds: dict[str, Image.Image] = {}  # (the same spec, the same frame: its id stays)
-        answers: list[Any] = []
-        for switch in switches:
-            made = overlays.transition((switch["name"], switch["raw"]), context)
-            if made is None:
-                answers.append({"made": False})
-                continue
-            if into is not None and hasattr(made, "set_after"):
-                made.set_after(into)
-            if beside and switch["steps"]:  # (the others say theirs, this one, they theirs)
-                others = [_beside(other, switch["raw"], seen()) for other in beside]
-                for other, blank in others:
-                    other.frame(blank, blank, 0.0)
-                old_spec, new_spec, _ = switch["steps"][0]
-                made.frame(_noise(old_spec), _noise(new_spec), 0.0)
-                for other, blank in others:
-                    other.frame(blank, blank, 0.0)
-            steps = []
-            for old_spec, new_spec, t in switch["steps"]:
-                old = olds.setdefault(json.dumps(old_spec), _noise(old_spec))
-                try:
-                    out = made.frame(old, _noise(new_spec), _float(t))
-                    steps.append({"size": list(out.size), "mode": out.mode, "sha256": _sha(out)})
-                    if demo:  # (the glow of rings and bars: drawn by each within a level)
-                        steps[-1]["picture"] = out
-                except Exception:
-                    steps.append({"error": True})
-            answers.append({
-                "made": True, "name": made.name, "duration": _bits(made.duration),
-                "switch": made.switch,
-                "on_switch": [made.on_switch("x", None, False), made.on_switch("x", None, True)],
-                "toasts": made.toasts, "from_shown": made.from_shown, "steps": steps,
-            })  # fmt: skip
-        return answers
-    finally:
-        i18n.set_language("en")
-
-
-def _beside(other: dict[str, Any], raw: dict[str, Any], snapshot: Snapshot) -> tuple[Any, Any]:
-    """Another panel's part of a morph over all the panels: its theme drawn at its moment, its
-    old screen's at its own, and the switch's key in its canvas; and a frame of its size."""
-    renderer = Renderer(load_theme(Path(other["theme"])), preview=True)
-    renderer.render(snapshot, now=_float(other["at"]))
-    context = RenderContext(renderer)
-    was = Renderer(load_theme(Path(other["before"]["theme"])), preview=True)
-    was.render(snapshot, now=_float(other["before"]["at"]))
-    context.before = was.parting()  # type: ignore[attr-defined]
-    was.close()
-    canvas = {**other["canvas"], "key": raw["canvas"]["key"]}
-    made = overlays.transition(("morph", {"canvas": canvas}), context)
-    return made, Image.new("RGB", (renderer.theme.width, renderer.theme.height))
 
 
 def _theme(folder: Path, size: tuple[int, int], palette: dict[str, str]) -> None:
@@ -248,8 +148,9 @@ def _times(rng: random.Random) -> list[float]:
 
 
 def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
-    """`count` themes with switches drawn at random, then `scenarios`' own, in Rust and in
-    Python: every answer alike. How many frames were compared."""
+    """`count` themes with switches drawn at random, then `scenarios`' own, as Rust answers
+    them: lp-check's answers, which are checked against the Python app's (golden.py). How many
+    frames it drew."""
     rng = random.Random(seed)
     cases = []
     for _ in range(count):
@@ -278,7 +179,7 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
             folder.mkdir()
             (folder / "theme.json").write_text(json.dumps(drawn[0]["theme"]), encoding="utf-8")
         elif drawn:  # (a built-in theme, drawn at a moment first)
-            shutil.copytree(find_theme(drawn[0]["theme"]), folder)
+            shutil.copytree(THEMES / drawn[0]["theme"], folder)
         else:
             _theme(folder, size, palette)
         wire = [{"name": s["name"], "steps": s["steps"],
@@ -300,44 +201,29 @@ def _compare(tmp_path: Path, seed: int, count: int, scenarios: Any = ()) -> int:
                                 DRAWN_ON.minute, DRAWN_ON.second, 0, 0]  # fmt: skip
         if drawn and "before" in drawn[0]:  # (the old screen, which the morph takes apart)
             old = drawn[0]["before"]
-            wired[-1]["before"] = {"theme": str(find_theme(old["theme"])), "drawn": old["at"]}
+            wired[-1]["before"] = {"theme": str(THEMES / old["theme"]), "drawn": old["at"]}
         if drawn and "after" in drawn[0]:  # (the new one, where it is not the renderer's)
             new = drawn[0]["after"]
-            wired[-1]["after"] = {"theme": str(find_theme(new["theme"])), "drawn": new["at"]}
+            wired[-1]["after"] = {"theme": str(THEMES / new["theme"]), "drawn": new["at"]}
         if drawn and "beside" in drawn[0]:  # (the other panels of a morph over all of them)
-            wired[-1]["beside"] = [_wired(other, True) for other in drawn[0]["beside"]]
+            wired[-1]["beside"] = [_wired(other) for other in drawn[0]["beside"]]
     answers = run(wired)
     frames = 0
-    for n, (got, (_, _, language, switches, *drawn)) in enumerate(zip(answers, cases, strict=True)):
-        old = drawn[0].get("before") if drawn else None
-        before = (find_theme(old["theme"]), old["at"]) if old else None
-        new = drawn[0].get("after") if drawn else None
-        after = (find_theme(new["theme"]), new["at"]) if new else None
-        beside = [_wired(other) for other in drawn[0].get("beside", [])] if drawn else None
-        want = _python(tmp_path / f"t{n}", language, switches, drawn[0]["at"] if drawn else None,
-                       before, bool(drawn and drawn[0].get("demo")), after, beside)  # fmt: skip
-        assert len(got["switches"]) == len(want), n
-        for k, (mine, theirs) in enumerate(zip(got["switches"], want, strict=True)):
-            if theirs.get("made"):
-                for j, (a, b) in enumerate(zip(mine["steps"], theirs["steps"], strict=True)):
-                    if "picture" in b:  # (in the glow of rings and bars a level or two apart)
-                        got, want = picture(a.pop("image")), b.pop("picture")
-                        apart = np.abs(np.asarray(got, np.int16) - np.asarray(want, np.int16))
-                        assert got.size == want.size and apart.max() <= 2, (n, k, j, apart.max())
-                        a.pop("sha256"), b.pop("sha256")
-                    assert a == b, (n, k, switches[k]["name"], switches[k]["raw"], j, a, b)
-                    frames += "sha256" in b or "size" in b
-            assert mine == theirs, (n, k, switches[k]["name"], mine, theirs)
+    for n, (got, (_, _, _, switches, *_)) in enumerate(zip(answers, cases, strict=True)):
+        assert len(got["switches"]) == len(switches), n
+        for mine in got["switches"]:
+            if mine.get("made"):
+                frames += sum("size" in step for step in mine["steps"])
     return frames
 
 
-def _wired(other: dict[str, Any], typed: bool = False) -> dict[str, Any]:
-    """Another panel of a morph over all of them, its themes found (``typed``: its canvas as
-    lp-check is told it)."""
+def _wired(other: dict[str, Any]) -> dict[str, Any]:
+    """Another panel of a morph over all of them, its themes found, its canvas as lp-check is
+    told it."""
     was = other["before"]
-    return {"theme": str(find_theme(other["theme"])), "at": other["at"],
-            "before": {"theme": str(find_theme(was["theme"])), "at": was["at"]},
-            "canvas": _typed(other["canvas"]) if typed else other["canvas"]}  # fmt: skip
+    return {"theme": str(THEMES / other["theme"]), "at": other["at"],
+            "before": {"theme": str(THEMES / was["theme"]), "at": was["at"]},
+            "canvas": _typed(other["canvas"])}  # fmt: skip
 
 
 # -- scenarios: what the random switches seldom meet, every time ----------------------------

@@ -107,4 +107,5 @@ testpaths = ["tests"]
 markers = [
     "kept: a comparison whose expectations are the Python app's answers as kept (tests/golden.py)",
     "live: a comparison not checked against kept answers (on the systems named, or on all)",
+    "c_library: a comparison whose kept answers hold for CI's C library alone (golden.kept_here)",
 ]

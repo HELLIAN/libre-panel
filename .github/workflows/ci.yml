@@ -432,6 +432,9 @@ jobs:
         if: ${{ !inputs.quick }}
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden  # (the answers, as golden.py keeps them)
+          # (what the comparisons' cases take from the Python app, asked of it here and
+          # written down: tests/harvest.py, while there is a Python app to ask)
+          LP_GIVEN_OUT: ${{ runner.temp }}/given
         run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_py.py tests/test_rust_pixels.py tests/test_rust_decode.py tests/test_rust_text.py tests/test_rust_theme.py tests/test_rust_modules.py tests/test_rust_render.py tests/test_rust_toasts.py tests/test_rust_transitions.py tests/test_rust_field.py tests/test_rust_morph.py tests/test_rust_alarm.py tests/test_rust_boot.py tests/test_rust_video.py tests/test_rust_devices.py tests/test_rust_serial_drivers.py tests/test_rust_usb_drivers.py tests/test_rust_config.py tests/test_rust_sensors.py tests/test_rust_services.py tests/test_rust_app.py tests/test_rust_plugins.py
       - name: The stacks of a comparison that hung
         if: failure()
@@ -452,6 +455,13 @@ jobs:
         with:
           name: golden-${{ runner.os }}
           path: ${{ runner.temp }}/golden
+          if-no-files-found: ignore
+      - name: What the comparisons' cases took from the Python app
+        if: ${{ !inputs.quick && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: given-${{ runner.os }}
+          path: ${{ runner.temp }}/given
           if-no-files-found: ignore
       # lp-panel, for a panel's owner to try the panel with the driver in Rust (the MAJESTY
       # 9.16"'s first): with the libjpeg it saves its pictures with, and their licences

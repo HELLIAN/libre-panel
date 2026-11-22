@@ -1,0 +1,97 @@
+{
+"test_devices_are_told_as_devices_py_tells_them": [
+[
+"be930528c1f2"
+],
+[
+"061a2a576b46"
+]
+],
+"test_downloads_are_followed_as_downloads_py_follows_them": [
+[
+"c4e6a77076ba"
+],
+[
+"3bbcf5dafbff"
+]
+],
+"test_game_mode_follows_the_games_as_game_py_follows_them": [
+[
+"3b1ec59b56bc"
+],
+[
+"9ac2810779fb"
+]
+],
+"test_notices_come_when_notices_py_sends_them": [
+[
+"fd52be8859e3"
+],
+[
+"63abc2db818e"
+]
+],
+"test_power_is_counted_as_power_py_counts_it": [
+[
+"96c22d08b959"
+]
+],
+"test_serial_panels_are_found_among_the_ports_as_serial_link_py_finds_them": [
+[
+"59571a47b539"
+]
+],
+"test_steams_games_and_logos_are_found_as_steam_py_finds_them": [
+[
+"e65ea5489aa3"
+]
+],
+"test_the_autopilot_picks_the_theme_autopilot_py_picks": [
+[
+"270d50f1929f"
+]
+],
+"test_the_cooling_is_judged_as_cooling_py_judges_it": [
+[
+"e86f63f4eafe"
+],
+[
+"a2ced2c94e9e"
+]
+],
+"test_the_demo_is_made_up_as_demo_py_makes_it_up": [
+[
+"565c03d28d5d"
+],
+[
+"5b608fa6b31d"
+],
+[
+"fff1b39e7294"
+]
+],
+"test_the_memory_keeps_what_memory_py_keeps": [
+[
+"b64fa210a4e5"
+],
+[
+"56deb9a1e9d9"
+]
+],
+"test_the_timer_counts_as_timer_py_counts": [
+[
+"2464e01f26c4"
+],
+[
+"63713656793b"
+]
+],
+"test_the_waveshare_display_is_fed_as_waveshare_py_feeds_it": [
+[
+"bdb7503280af"
+],
+[
+"c8a01006f41e"
+]
+]
+}

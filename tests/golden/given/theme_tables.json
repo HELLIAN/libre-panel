@@ -1,0 +1,1659 @@
+{
+ "COMMON": {
+  "id": [
+   "string",
+   ""
+  ],
+  "x": [
+   "int",
+   0
+  ],
+  "y": [
+   "int",
+   0
+  ],
+  "visible": [
+   "bool",
+   true
+  ],
+  "locked": [
+   "bool",
+   false
+  ],
+  "hide_if_missing": [
+   "bool",
+   false
+  ],
+  "needs": [
+   "sensor",
+   ""
+  ],
+  "rotate": [
+   "number",
+   0.0
+  ],
+  "opacity": [
+   "number",
+   1.0
+  ],
+  "glow": [
+   "number",
+   0.0
+  ],
+  "glow_radius": [
+   "int",
+   10
+  ],
+  "shadow": [
+   "color?",
+   null
+  ],
+  "shadow_offset": [
+   "int",
+   3
+  ],
+  "shadow_blur": [
+   "int",
+   6
+  ],
+  "group": [
+   "string",
+   ""
+  ]
+ },
+ "WIDGET_SPECS": {
+  "rect": {
+   "w": [
+    "int",
+    100
+   ],
+   "h": [
+    "int",
+    50
+   ],
+   "color": [
+    "color?",
+    "#1f2937"
+   ],
+   "color2": [
+    "color?",
+    null
+   ],
+   "gradient": [
+    "enum:vertical|horizontal",
+    "vertical"
+   ],
+   "radius": [
+    "int",
+    0
+   ],
+   "outline": [
+    "color?",
+    null
+   ],
+   "outline_width": [
+    "int",
+    1
+   ],
+   "backdrop_blur": [
+    "int",
+    0
+   ]
+  },
+  "text": {
+   "text": [
+    "text",
+    "Label"
+   ],
+   "translate": [
+    "bool",
+    false
+   ],
+   "uppercase": [
+    "bool",
+    false
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "font_size": [
+    "int",
+    24
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "align": [
+    "enum:left|center|right",
+    "left"
+   ],
+   "letter_spacing": [
+    "number",
+    0
+   ],
+   "tabular": [
+    "bool",
+    false
+   ],
+   "max_width": [
+    "int",
+    0
+   ],
+   "fit": [
+    "enum:shrink|ellipsis",
+    "shrink"
+   ],
+   "glow_area": [
+    "box?",
+    null
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "metric": {
+   "sensor": [
+    "sensor",
+    "cpu.load"
+   ],
+   "format": [
+    "format",
+    "{value:.0f}{unit}"
+   ],
+   "fallback": [
+    "string",
+    "--"
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "font_size": [
+    "int",
+    24
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "align": [
+    "enum:left|center|right",
+    "left"
+   ],
+   "letter_spacing": [
+    "number",
+    0
+   ],
+   "tabular": [
+    "bool",
+    true
+   ],
+   "max_width": [
+    "int",
+    0
+   ],
+   "fit": [
+    "enum:shrink|ellipsis",
+    "shrink"
+   ],
+   "smooth": [
+    "bool",
+    false
+   ],
+   "glide_ms": [
+    "int",
+    0
+   ],
+   "color_rules": [
+    "rules",
+    []
+   ],
+   "glow_area": [
+    "box?",
+    null
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "bar": {
+   "sensor": [
+    "sensor",
+    "cpu.load"
+   ],
+   "w": [
+    "int",
+    200
+   ],
+   "h": [
+    "int",
+    16
+   ],
+   "min": [
+    "number",
+    0
+   ],
+   "max": [
+    "number",
+    100
+   ],
+   "color": [
+    "color",
+    "#22d3ee"
+   ],
+   "color2": [
+    "color?",
+    null
+   ],
+   "background": [
+    "color?",
+    "#1f2937"
+   ],
+   "radius": [
+    "int",
+    4
+   ],
+   "direction": [
+    "enum:right|left|up|down",
+    "right"
+   ],
+   "scale": [
+    "enum:linear|sqrt|log",
+    "linear"
+   ],
+   "segments": [
+    "int",
+    0
+   ],
+   "segment_gap": [
+    "int",
+    2
+   ],
+   "rising": [
+    "number",
+    0
+   ],
+   "smooth": [
+    "bool",
+    true
+   ],
+   "glide_ms": [
+    "int",
+    0
+   ],
+   "color_rules": [
+    "rules",
+    []
+   ],
+   "glow_area": [
+    "box?",
+    null
+   ],
+   "mark": [
+    "sensor",
+    ""
+   ],
+   "mark_color": [
+    "color",
+    "#ffffff"
+   ],
+   "mark_width": [
+    "int",
+    2
+   ],
+   "end_dot": [
+    "number",
+    0
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "gauge": {
+   "sensor": [
+    "sensor",
+    "cpu.load"
+   ],
+   "w": [
+    "int",
+    120
+   ],
+   "h": [
+    "int",
+    120
+   ],
+   "min": [
+    "number",
+    0
+   ],
+   "max": [
+    "number",
+    100
+   ],
+   "start_angle": [
+    "number",
+    135
+   ],
+   "end_angle": [
+    "number",
+    405
+   ],
+   "thickness": [
+    "int",
+    12
+   ],
+   "color": [
+    "color",
+    "#22d3ee"
+   ],
+   "color2": [
+    "color?",
+    null
+   ],
+   "background": [
+    "color?",
+    "#1f2937"
+   ],
+   "scale": [
+    "enum:linear|sqrt|log",
+    "linear"
+   ],
+   "cap": [
+    "enum:round|flat",
+    "round"
+   ],
+   "ticks": [
+    "int",
+    0
+   ],
+   "tick_color": [
+    "color?",
+    null
+   ],
+   "smooth": [
+    "bool",
+    true
+   ],
+   "glide_ms": [
+    "int",
+    0
+   ],
+   "color_rules": [
+    "rules",
+    []
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "graph": {
+   "sensor": [
+    "sensor",
+    "cpu.load"
+   ],
+   "w": [
+    "int",
+    200
+   ],
+   "h": [
+    "int",
+    60
+   ],
+   "min": [
+    "number?",
+    0
+   ],
+   "max": [
+    "number?",
+    100
+   ],
+   "scale": [
+    "enum:linear|sqrt|log",
+    "linear"
+   ],
+   "history": [
+    "int",
+    60
+   ],
+   "seconds": [
+    "number",
+    0
+   ],
+   "color": [
+    "color",
+    "#22d3ee"
+   ],
+   "fill": [
+    "bool",
+    true
+   ],
+   "fill_fade": [
+    "bool",
+    true
+   ],
+   "fill_alpha": [
+    "number",
+    0
+   ],
+   "direction": [
+    "enum:up|down",
+    "up"
+   ],
+   "inset": [
+    "bool",
+    true
+   ],
+   "clip": [
+    "bool",
+    false
+   ],
+   "end_dot": [
+    "number",
+    0
+   ],
+   "smooth": [
+    "bool",
+    true
+   ],
+   "per_frame": [
+    "bool",
+    false
+   ],
+   "trace": [
+    "string",
+    ""
+   ],
+   "range_step": [
+    "number",
+    0
+   ],
+   "line_width": [
+    "int",
+    2
+   ],
+   "grid": [
+    "int",
+    0
+   ],
+   "grid_color": [
+    "color?",
+    "#ffffff1f"
+   ],
+   "background": [
+    "color?",
+    null
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "clock": {
+   "format": [
+    "string",
+    "%H:%M"
+   ],
+   "timezone": [
+    "string",
+    ""
+   ],
+   "uppercase": [
+    "bool",
+    false
+   ],
+   "digits": [
+    "enum:jump|roll|fade",
+    "jump"
+   ],
+   "digits_seconds": [
+    "number",
+    0.42
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "font_size": [
+    "int",
+    24
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "align": [
+    "enum:left|center|right",
+    "left"
+   ],
+   "letter_spacing": [
+    "number",
+    0
+   ],
+   "tabular": [
+    "bool",
+    true
+   ],
+   "max_width": [
+    "int",
+    0
+   ],
+   "fit": [
+    "enum:shrink|ellipsis",
+    "shrink"
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "analog": {
+   "w": [
+    "int",
+    160
+   ],
+   "h": [
+    "int",
+    160
+   ],
+   "timezone": [
+    "string",
+    ""
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "color2": [
+    "color",
+    "#22d3ee"
+   ],
+   "face": [
+    "color?",
+    "#1f2937"
+   ],
+   "marks": [
+    "color?",
+    "#8a97a8"
+   ],
+   "seconds": [
+    "bool",
+    true
+   ],
+   "hand": [
+    "enum:tick|glide|sweep",
+    "tick"
+   ],
+   "digits_seconds": [
+    "number",
+    0.42
+   ]
+  },
+  "countdown": {
+   "target": [
+    "string",
+    "12-24"
+   ],
+   "part": [
+    "enum:number|unit|clock|text|days|date",
+    "text"
+   ],
+   "done": [
+    "string",
+    ""
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "font_size": [
+    "int",
+    24
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "align": [
+    "enum:left|center|right",
+    "left"
+   ],
+   "letter_spacing": [
+    "number",
+    0
+   ],
+   "tabular": [
+    "bool",
+    true
+   ],
+   "max_width": [
+    "int",
+    0
+   ],
+   "fit": [
+    "enum:shrink|ellipsis",
+    "shrink"
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "moon": {
+   "size": [
+    "int",
+    64
+   ],
+   "sensor": [
+    "sensor",
+    "moon.phase"
+   ],
+   "color": [
+    "color",
+    "#f2efe6"
+   ],
+   "color2": [
+    "color?",
+    "#2b3242"
+   ],
+   "mirror": [
+    "bool",
+    false
+   ],
+   "pack": [
+    "enum:auto|classic|vivid",
+    "auto"
+   ]
+  },
+  "earth": {
+   "size": [
+    "int",
+    160
+   ],
+   "spin": [
+    "number",
+    0
+   ],
+   "clouds": [
+    "bool",
+    true
+   ],
+   "lights": [
+    "bool",
+    true
+   ],
+   "place": [
+    "bool",
+    true
+   ],
+   "color": [
+    "color",
+    "#6badff"
+   ],
+   "color2": [
+    "color",
+    "#ffd27a"
+   ]
+  },
+  "sunpath": {
+   "w": [
+    "int",
+    160
+   ],
+   "h": [
+    "int",
+    44
+   ],
+   "sensor": [
+    "sensor",
+    "sun.progress"
+   ],
+   "thickness": [
+    "number",
+    2
+   ],
+   "color": [
+    "color",
+    "#f5c46b"
+   ],
+   "color2": [
+    "color?",
+    null
+   ],
+   "background": [
+    "color",
+    "#2a3644"
+   ],
+   "night": [
+    "color",
+    "#c9d3de"
+   ]
+  },
+  "agent": {
+   "size": [
+    "int",
+    64
+   ],
+   "sensor": [
+    "sensor",
+    "ai.claude.state"
+   ],
+   "color": [
+    "color",
+    "#2ee6d6"
+   ],
+   "color2": [
+    "color",
+    "#f5b942"
+   ],
+   "muted": [
+    "color",
+    "#5b6474"
+   ]
+  },
+  "fan": {
+   "sensor": [
+    "sensor",
+    "gpu.fan"
+   ],
+   "w": [
+    "int",
+    48
+   ],
+   "h": [
+    "int",
+    48
+   ],
+   "color": [
+    "color",
+    "#22d3ee"
+   ],
+   "max_rpm": [
+    "number",
+    3000
+   ],
+   "frame": [
+    "enum:ring|square|none",
+    "ring"
+   ],
+   "look": [
+    "enum:auto|noctua-g2|noctua-a12x25|noctua-a14|libre",
+    "auto"
+   ],
+   "paint": [
+    "enum:auto|theme|own",
+    "auto"
+   ]
+  },
+  "image": {
+   "src": [
+    "asset",
+    ""
+   ],
+   "w": [
+    "int",
+    0
+   ],
+   "h": [
+    "int",
+    0
+   ],
+   "fit": [
+    "enum:stretch|contain|cover",
+    "stretch"
+   ],
+   "align": [
+    "enum:left|center|right",
+    "center"
+   ],
+   "radius": [
+    "int",
+    0
+   ],
+   "blur": [
+    "int",
+    0
+   ],
+   "slides": [
+    "text",
+    ""
+   ],
+   "seconds": [
+    "int",
+    10
+   ],
+   "speed": [
+    "number",
+    1.0
+   ]
+  },
+  "weather": {
+   "field": [
+    "enum:temperature|apparent_temperature|humidity|wind_speed|description|code",
+    "temperature"
+   ],
+   "format": [
+    "format",
+    "{value:.0f}{unit}"
+   ],
+   "fallback": [
+    "string",
+    "--"
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "font_size": [
+    "int",
+    24
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "align": [
+    "enum:left|center|right",
+    "left"
+   ],
+   "letter_spacing": [
+    "number",
+    0
+   ],
+   "tabular": [
+    "bool",
+    true
+   ],
+   "max_width": [
+    "int",
+    0
+   ],
+   "fit": [
+    "enum:shrink|ellipsis",
+    "shrink"
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "icon": {
+   "icon": [
+    "icon",
+    "cpu"
+   ],
+   "sensor": [
+    "sensor",
+    ""
+   ],
+   "size": [
+    "int",
+    32
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "stroke": [
+    "number",
+    2.0
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "symbol": {
+   "sensor": [
+    "sensor",
+    "weather.code"
+   ],
+   "size": [
+    "int",
+    64
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "moving": [
+    "bool",
+    true
+   ],
+   "offset": [
+    "number",
+    0.0
+   ],
+   "pack": [
+    "enum:auto|classic|vivid",
+    "auto"
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "downloads": {
+   "state": [
+    "string",
+    "downloads"
+   ],
+   "w": [
+    "int",
+    596
+   ],
+   "h": [
+    "int",
+    130
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "label_font": [
+    "font",
+    ""
+   ],
+   "color": [
+    "color",
+    "#f1f5f9"
+   ],
+   "muted": [
+    "color",
+    "#8a97a8"
+   ],
+   "color2": [
+    "color",
+    "#22d3ee"
+   ],
+   "done": [
+    "color",
+    "#4ade80"
+   ],
+   "background": [
+    "color?",
+    "#1f2937"
+   ],
+   "empty": [
+    "string",
+    ""
+   ],
+   "finish": [
+    "enum:flat|lit|facet|acrylic",
+    "flat"
+   ]
+  },
+  "calendar": {
+   "w": [
+    "int",
+    280
+   ],
+   "h": [
+    "int",
+    200
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "font_size": [
+    "int",
+    16
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "color2": [
+    "color",
+    "#22d3ee"
+   ],
+   "muted": [
+    "color",
+    "#8a97a8"
+   ],
+   "first_day": [
+    "enum:monday|sunday",
+    "monday"
+   ]
+  },
+  "list": {
+   "w": [
+    "int",
+    240
+   ],
+   "h": [
+    "int",
+    160
+   ],
+   "items": [
+    "text",
+    "cpu.temp = CPU\ngpu.temp = GPU\nfan.*"
+   ],
+   "style": [
+    "enum:rows|bars|columns|cells|fans",
+    "bars"
+   ],
+   "columns": [
+    "int",
+    0
+   ],
+   "max_items": [
+    "int",
+    0
+   ],
+   "sort": [
+    "enum:none|high|low|name",
+    "none"
+   ],
+   "format": [
+    "format",
+    "auto"
+   ],
+   "detail": [
+    "string",
+    ""
+   ],
+   "detail_format": [
+    "format",
+    "{value:.0f} {unit}"
+   ],
+   "min": [
+    "number",
+    0
+   ],
+   "max": [
+    "number",
+    100
+   ],
+   "scale": [
+    "enum:linear|sqrt|log",
+    "linear"
+   ],
+   "levels": [
+    "bool",
+    true
+   ],
+   "smooth": [
+    "bool",
+    true
+   ],
+   "hide_unused": [
+    "bool",
+    false
+   ],
+   "font": [
+    "font",
+    ""
+   ],
+   "font_size": [
+    "int",
+    18
+   ],
+   "label_font": [
+    "font",
+    ""
+   ],
+   "uppercase": [
+    "bool",
+    true
+   ],
+   "color": [
+    "color",
+    "#ffffff"
+   ],
+   "muted": [
+    "color",
+    "#8a97a8"
+   ],
+   "color2": [
+    "color",
+    "#22d3ee"
+   ],
+   "background": [
+    "color?",
+    "#1f2937"
+   ],
+   "empty": [
+    "string",
+    ""
+   ],
+   "color_rules": [
+    "rules",
+    []
+   ]
+  },
+  "module": {
+   "module": [
+    "enum:clock|date|weather|ring|stat|graph|bars|network|system|text|temps|cores|drives|processes|netinfo|battery|values|sun|analog|world|countdown|image|music|agenda|game|playback|forecast|download|instrument|cards|netcard|volume|moon|outlook|ping|timer|power|mic|ups|huge|ai|earth",
+    "ring"
+   ],
+   "col": [
+    "int",
+    0
+   ],
+   "row": [
+    "int",
+    0
+   ],
+   "cols": [
+    "int",
+    1
+   ],
+   "rows": [
+    "int",
+    1
+   ],
+   "source": [
+    "enum:cpu|gpu|mem|disk|net|sensor|fan",
+    "cpu"
+   ],
+   "sensor": [
+    "sensor",
+    ""
+   ],
+   "format": [
+    "format",
+    ""
+   ],
+   "title": [
+    "string",
+    ""
+   ],
+   "text": [
+    "text",
+    ""
+   ],
+   "color": [
+    "color?",
+    null
+   ],
+   "fallback": [
+    "enum:auto|none|cpu|gpu|mem|disk",
+    "auto"
+   ],
+   "card": [
+    "enum:auto|on|off",
+    "auto"
+   ],
+   "forecast": [
+    "enum:auto|days|hours|both|off",
+    "auto"
+   ],
+   "step": [
+    "int",
+    0
+   ],
+   "items": [
+    "text",
+    ""
+   ],
+   "fans": [
+    "int",
+    6
+   ],
+   "fan_items": [
+    "text",
+    ""
+   ],
+   "threads": [
+    "bool",
+    false
+   ],
+   "total": [
+    "bool",
+    true
+   ],
+   "history": [
+    "bool",
+    false
+   ],
+   "top": [
+    "number",
+    175
+   ],
+   "sort": [
+    "enum:cpu|memory",
+    "cpu"
+   ],
+   "timezone": [
+    "string",
+    ""
+   ],
+   "target": [
+    "string",
+    ""
+   ],
+   "seconds": [
+    "int",
+    10
+   ],
+   "speed": [
+    "number",
+    1.0
+   ],
+   "moving": [
+    "bool",
+    true
+   ],
+   "hold": [
+    "number",
+    2.0
+   ],
+   "change": [
+    "number",
+    0.6
+   ],
+   "slide": [
+    "number",
+    0
+   ],
+   "order": [
+    "enum:first|turns",
+    "first"
+   ],
+   "turn": [
+    "number",
+    5.0
+   ],
+   "transition": [
+    "enum:light|fade|slide|rise|wipe|cut|random",
+    "light"
+   ],
+   "time": [
+    "enum:total|remaining",
+    "total"
+   ],
+   "agent": [
+    "enum:both|claude|codex",
+    "both"
+   ],
+   "finish": [
+    "enum:auto|flat|lit|facet|acrylic",
+    "auto"
+   ]
+  }
+ },
+ "LOOK_SPECS": {
+  "grid": {
+   "spacing": [
+    "int",
+    8
+   ],
+   "major": [
+    "int",
+    5
+   ],
+   "color": [
+    "color?",
+    null
+   ],
+   "major_color": [
+    "color?",
+    null
+   ],
+   "alpha": [
+    "number",
+    1.0
+   ]
+  }
+ },
+ "TOAST_STYLES": {
+  "card": {},
+  "band": {
+   "roll_in": [
+    "number",
+    0.45
+   ],
+   "roll_out": [
+    "number",
+    0.32
+   ]
+  }
+ },
+ "PRIMARY_FIELDS": {
+  "rect": [
+   "color",
+   "color2",
+   "radius",
+   "outline"
+  ],
+  "text": [
+   "text",
+   "finish",
+   "color",
+   "font_size"
+  ],
+  "metric": [
+   "sensor",
+   "format",
+   "finish",
+   "color",
+   "smooth",
+   "color_rules"
+  ],
+  "bar": [
+   "sensor",
+   "finish",
+   "color",
+   "smooth",
+   "color_rules"
+  ],
+  "gauge": [
+   "sensor",
+   "finish",
+   "color",
+   "smooth",
+   "color_rules"
+  ],
+  "graph": [
+   "sensor",
+   "finish",
+   "color",
+   "fill",
+   "seconds"
+  ],
+  "clock": [
+   "format",
+   "timezone",
+   "color",
+   "font_size"
+  ],
+  "analog": [
+   "timezone",
+   "hand",
+   "color",
+   "color2",
+   "seconds"
+  ],
+  "countdown": [
+   "target",
+   "part",
+   "color",
+   "font_size"
+  ],
+  "moon": [
+   "color",
+   "color2",
+   "mirror"
+  ],
+  "earth": [
+   "spin",
+   "clouds",
+   "color",
+   "color2"
+  ],
+  "agent": [
+   "sensor",
+   "color",
+   "color2"
+  ],
+  "sunpath": [
+   "color",
+   "color2",
+   "background",
+   "night"
+  ],
+  "image": [
+   "src",
+   "fit",
+   "slides",
+   "seconds",
+   "speed"
+  ],
+  "weather": [
+   "field",
+   "format",
+   "color",
+   "font_size"
+  ],
+  "icon": [
+   "icon",
+   "finish",
+   "color",
+   "sensor"
+  ],
+  "calendar": [
+   "first_day",
+   "color",
+   "color2",
+   "muted"
+  ],
+  "list": [
+   "items",
+   "style",
+   "sort",
+   "color2",
+   "color_rules"
+  ],
+  "module": [
+   "module",
+   "source",
+   "finish",
+   "color",
+   "card"
+  ]
+ },
+ "FINISH_TYPES": {
+  "acrylic": [
+   "clock",
+   "countdown",
+   "metric",
+   "text",
+   "weather"
+  ],
+  "facet": [
+   "bar",
+   "clock",
+   "countdown",
+   "gauge",
+   "graph",
+   "metric",
+   "text",
+   "weather"
+  ],
+  "lit": [
+   "bar",
+   "downloads",
+   "gauge",
+   "graph",
+   "icon",
+   "metric",
+   "symbol",
+   "text"
+  ]
+ },
+ "LOOK_RANGES": [
+  [
+   "grid",
+   "spacing",
+   2,
+   400
+  ],
+  [
+   "grid",
+   "major",
+   0,
+   50
+  ],
+  [
+   "grid",
+   "alpha",
+   0,
+   1
+  ]
+ ],
+ "STYLE_DEFAULTS": {
+  "card": "glass",
+  "radius": 18,
+  "glow": 0.6,
+  "backdrop": "gradient",
+  "display_font": "builtin:Barlow-SemiBold",
+  "text_font": "builtin:Barlow-Medium",
+  "card_opacity": 1.0
+ },
+ "TOAST_DEFAULTS": {
+  "anchor": "top-right",
+  "seconds": 4.0,
+  "queue": true,
+  "off": [],
+  "style": "",
+  "options": {}
+ },
+ "GRID_DEFAULTS": {
+  "columns": 0,
+  "rows": 0,
+  "gap": 0,
+  "margin": 0
+ },
+ "FINISHES": [
+  "flat",
+  "lit",
+  "facet",
+  "acrylic"
+ ],
+ "EFFECT_FIELDS": [
+  "opacity",
+  "glow",
+  "glow_radius",
+  "shadow",
+  "shadow_offset",
+  "shadow_blur"
+ ],
+ "TOAST_ANCHORS": [
+  "top-right",
+  "top-left",
+  "bottom-right",
+  "bottom-left",
+  "top",
+  "bottom"
+ ],
+ "GONE_LOOK": [
+  "dust",
+  "light"
+ ],
+ "CARDS": [
+  "glass",
+  "flat",
+  "outline",
+  "none"
+ ],
+ "BACKDROPS": [
+  "gradient",
+  "flat"
+ ],
+ "MODULE_SOURCES": [
+  "cpu",
+  "gpu",
+  "mem",
+  "disk",
+  "net",
+  "sensor",
+  "fan"
+ ],
+ "MODULE_FALLBACKS": [
+  "auto",
+  "none",
+  "cpu",
+  "gpu",
+  "mem",
+  "disk"
+ ],
+ "ICON_NAMES": [
+  "cpu",
+  "gpu",
+  "ram",
+  "disk",
+  "network",
+  "download",
+  "upload",
+  "temperature",
+  "fan",
+  "power",
+  "clock",
+  "sun",
+  "moon",
+  "cloud",
+  "partly",
+  "rain",
+  "snow",
+  "storm",
+  "fog",
+  "humidity",
+  "wind",
+  "battery",
+  "plug",
+  "list",
+  "grid",
+  "signal",
+  "ethernet",
+  "wifi",
+  "wifi-1",
+  "wifi-2",
+  "link",
+  "uptime",
+  "sunrise",
+  "sunset",
+  "hourglass",
+  "image",
+  "globe",
+  "music",
+  "calendar",
+  "home",
+  "gamepad",
+  "agent",
+  "usb",
+  "stick",
+  "phone",
+  "ssd",
+  "play",
+  "pause",
+  "up",
+  "down",
+  "volume",
+  "mute",
+  "mic",
+  "mic_off",
+  "weather"
+ ],
+ "WEATHER_ICONS": [
+  "weather",
+  "sun",
+  "moon",
+  "partly",
+  "cloud",
+  "fog",
+  "rain",
+  "snow",
+  "storm"
+ ],
+ "PART_TYPES": [
+  "bar",
+  "gauge",
+  "graph",
+  "icon",
+  "symbol",
+  "downloads",
+  "text",
+  "metric"
+ ],
+ "GONE_FIELDS": {
+  "rect": [
+   "ridge"
+  ]
+ },
+ "THEME_FORMAT": "libre-panel-theme/1",
+ "THEME_FILENAME": "theme.json",
+ "BLUR_MAX": 64,
+ "MAX_SWITCHES": 8,
+ "MAX_DETACHED": 64,
+ "CARD_OPACITY_MIN": 0.4,
+ "COVER_COLOR": "@cover",
+ "AUTO": "auto",
+ "GRID_CELLS": 96
+}

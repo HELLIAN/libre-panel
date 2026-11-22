@@ -7,15 +7,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from libre_panel.services.machine import Program
-
 
 class FakeMachine:
     """Has the methods of ``services.machine.Machine``; the test sets what is true."""
 
     def __init__(self, has_foreground=True):
         self.has_foreground = has_foreground
-        self.running: list[Program] = []
+        self.running: list = []  # (services.machine's Programs)
         self.front = 0
         self.microphone = False
         self.uptime = 100_000.0
@@ -24,6 +22,8 @@ class FakeMachine:
         self.asked = Counter()  # how often each question was asked
 
     def start(self, name, pid, path=""):
+        from libre_panel.services.machine import Program
+
         self.running.append(Program(name.lower(), pid, str(path)))
         return pid
 

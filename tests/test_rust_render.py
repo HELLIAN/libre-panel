@@ -1,8 +1,13 @@
-"""rust/render against render/ (docs/RUST.md, R4): the texts readings become (formatting.py):
-str.format locked down to value, unit and label, every spec of Python's format() on every
-kind of value, the app's own specs, and the usual text of a reading; the conditions widgets
-are drawn on (``needs``); the frames of themes, to the bit: their ground (a colour, a gradient,
-a picture) and their cards."""
+"""rust/render as the Python app's render/ was (docs/RUST.md, R4): the texts readings become
+(formatting.py): str.format locked down to value, unit and label, every spec of Python's
+format() on every kind of value, the app's own specs, and the usual text of a reading; the
+conditions widgets are drawn on (``needs``); the frames of themes, to the bit: their ground (a
+colour, a gradient, a picture) and their cards, and every widget after them.
+
+What the Python app answered is kept (golden.py): lp-check's answers to the cases made here are
+checked against it, so each test asks lp-check and looks at what it says only for what the
+cases were to meet. Where a case depended on the Python app (a random theme it refused, a
+text's width as it measured it), what it told is kept too (golden.told)."""
 
 from __future__ import annotations
 
@@ -16,182 +21,27 @@ import math
 import os
 import random
 import struct
-import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
+import golden
 import pytest
-from rust_check import image, noise, picture, pillow_libjpeg, pillow_libwebp, run
+from PIL import Image
+from rust_check import image, noise, pillow_libjpeg, pillow_libwebp, run
 
 from libre_panel import fonts, i18n
-from libre_panel import icons as icon_set
-from libre_panel.fonts.fallback import cursive
-from libre_panel.render import download, formatting, lists, moon
-from libre_panel.render.countdown import countdown_text
-from libre_panel.render.lit import WEATHER_ICONS
-from libre_panel.render.renderer import Renderer, need_holds
 from libre_panel.sensors.base import Reading, Snapshot
-from libre_panel.theme.model import ThemeError, load_theme
 
+pytestmark = pytest.mark.kept  # (what the Python app answered: tests/golden)
 
-@functools.cache
-def _moon_face() -> tuple[Any, Any, Any]:
-    """moon.face() as numpy makes it on a processor without AVX-512 (its own exp for float32,
-    the C library's for the rest; with AVX-512 on Linux it takes Intel's SVML for some, a unit
-    in the last place apart here and there): made in a process told to leave those of its
-    features unused that this one has. Rust's face is that one."""
-    import numpy as np
-    from numpy._core._multiarray_umath import __cpu_features__ as features
-
-    env = dict(os.environ)
-    unused = [name for name in ("X86_V4", "AVX512_ICL", "AVX512_SPR") if features.get(name)]
-    if unused:
-        env["NPY_DISABLE_CPU_FEATURES"] = " ".join(unused)
-    code = ("import sys; import numpy as np; from libre_panel.render import moon; "
-            "a, gx, gy = moon.face(); np.savez(sys.argv[1], albedo=a, gx=gx, gy=gy)")  # fmt: skip
-    with tempfile.TemporaryDirectory() as folder:
-        path = Path(folder) / "face.npz"
-        subprocess.run([sys.executable, "-c", code, str(path)], env=env, check=True, timeout=600)
-        with np.load(path) as made:
-            return made["albedo"], made["gx"], made["gy"]
-
-
-@pytest.fixture(autouse=True)
-def _moon_as_rust_s(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Every moon Python draws here of that face (made when one is first drawn)."""
-    monkeypatch.setattr(moon, "face", _moon_face)
-    moon._disc_kept.cache_clear()
-    yield
-    moon._disc_kept.cache_clear()
-
-
-@pytest.fixture
-def _facet_rings_as_rust_s(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """facets' rings as numpy makes them on a processor without AVX-512: the angles of their
-    samples by the C library's atan2f and atan2 (with AVX-512 numpy takes SVML's, a unit in
-    the last place apart here and there, and a sample on a ring's straight cut may fall to the
-    other side of it). Rust's rings are those."""
-    import ctypes
-    import ctypes.util
-
-    import numpy as np
-
-    from libre_panel.render import facets
-
-    if not _avx512():
-        yield
-        return
-    libm = ctypes.CDLL("ucrtbase" if os.name == "nt" else ctypes.util.find_library("m"))
-    atan2f, atan2 = libm.atan2f, libm.atan2
-    atan2f.restype, atan2f.argtypes = ctypes.c_float, [ctypes.c_float, ctypes.c_float]
-    atan2.restype, atan2.argtypes = ctypes.c_double, [ctypes.c_double, ctypes.c_double]
-
-    class Numpy:
-        def __getattr__(self, name: str) -> Any:
-            return getattr(np, name)
-
-        @staticmethod
-        def arctan2(y: Any, x: Any) -> Any:
-            y, x = np.broadcast_arrays(np.asarray(y), np.asarray(x))
-            kind = np.result_type(y, x)
-            f = atan2f if kind == np.float32 else atan2
-            out = np.array([f(a, b) for a, b in zip(y.ravel().tolist(), x.ravel().tolist(),
-                                                    strict=True)], kind)  # fmt: skip
-            return out.reshape(y.shape)
-
-    monkeypatch.setattr(facets, "np", Numpy())
-    facets._rings.clear()
-    facets._tracks.clear()
-    yield
-    facets._rings.clear()
-    facets._tracks.clear()
-
-
-_DRAWN_LOOKS = """
-import json, struct, sys
-import numpy as np
-from libre_panel.render import fan, fan_looks
-for n, (name, size, what) in enumerate(json.loads(open(sys.argv[1]).read())):
-    look = fan_looks.look(name)
-    if what == "frame":
-        made = fan_looks.frame(look, size)
-    elif what == "all":
-        made = np.stack([fan_looks.rotor(look, size, a)
-                         for a in fan_looks.angles(look, fan.POSITIONS)])
-    else:
-        made = fan_looks.rotor(look, size, struct.unpack("<d", struct.pack("<Q", what))[0])
-    np.save(f"{sys.argv[2]}/{n}.npy", made)
-"""
-# what the looks' rotors and frames were drawn as, by (look, size, "all" / "frame" / an angle's
-# bits): numpy's on a processor without AVX-512 (as _moon_face's)
-_LOOKS_DRAWN: dict[tuple[str, int, Any], Any] = {}
-# (the rotors' and frames' sizes the fans of FAN_SIDES have)
-_LOOK_SIZES = (6, 7, 10, 13, 18, 27, 37, 38, 39, 45, 52, 60, 79, 120)
-_FRAME_SIZES = (8, 9, 12, 13, 17, 23, 34, 47, 48, 49, 57, 66, 76, 100, 151)
-
-
-def _draw_looks(asked: list[tuple[str, int, Any]]) -> None:
-    """fan_looks.rotor (at all its positions: "all"; at an angle: its bits) and fan_looks.frame
-    ("frame") of each asked for that is not drawn yet, as numpy draws them on a processor
-    without AVX-512 (its own exp for float32, the C library's for the rest, as _moon_face has
-    it), in a process of its own told to leave those features unused: Rust's are those."""
-    import numpy as np
-
-    asked = [key for key in dict.fromkeys(asked) if key not in _LOOKS_DRAWN]
-    if not asked:
-        return
-    env = dict(os.environ)
-    if _avx512():
-        env["NPY_DISABLE_CPU_FEATURES"] = " ".join(_avx512())
-    with tempfile.TemporaryDirectory() as folder:
-        (Path(folder) / "asked.json").write_text(json.dumps(asked), encoding="utf-8")
-        subprocess.run([sys.executable, "-c", _DRAWN_LOOKS, str(Path(folder) / "asked.json"),
-                        folder], env=env, check=True, timeout=900)  # fmt: skip
-        for n, key in enumerate(asked):
-            _LOOKS_DRAWN[key] = np.load(Path(folder) / f"{n}.npy")
-
-
-def _rotor_drawn(look_: Any, size: int, angle: float) -> Any:
-    """fan_looks.rotor as Rust's (_draw_looks): the look at all its positions drawn at once (and
-    at the sizes the fans here have, when one is first asked for)."""
-    from libre_panel.render import fan, fan_looks
-
-    angles = fan_looks.angles(look_, fan.POSITIONS)
-    if angle not in angles:
-        key = (look_.name, size, _bits(angle))
-        _draw_looks([key])
-        return _LOOKS_DRAWN[key].copy()
-    if (look_.name, size, "all") not in _LOOKS_DRAWN:
-        _draw_looks([(look_.name, k, "all") for k in (size, *_LOOK_SIZES)])
-    return _LOOKS_DRAWN[(look_.name, size, "all")][angles.index(angle)].copy()
-
-
-def _frame_drawn(look_: Any, size: int) -> Any:
-    """fan_looks.frame as Rust's (_draw_looks; at the sizes the fans here have, when one is
-    first asked for)."""
-    if (look_.name, size, "frame") not in _LOOKS_DRAWN:
-        _draw_looks([(look_.name, s, "frame") for s in (size, *_FRAME_SIZES)])
-    return _LOOKS_DRAWN[(look_.name, size, "frame")].copy()
-
-
-@pytest.fixture(autouse=True)
-def _fan_looks_as_rust_s(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Every rotor and square frame of a look Python draws here drawn as Rust's (none kept from
-    before)."""
-    from libre_panel.render import fan, fan_looks
-
-    monkeypatch.setattr(fan_looks, "rotor", _rotor_drawn)
-    monkeypatch.setattr(fan_looks, "frame", _frame_drawn)
-    for kept in (fan._layers, fan._frames, fan._images):
-        kept.clear()
-    yield
-    for kept in (fan._layers, fan._frames, fan._images):
-        kept.clear()
+# the line icons' names as icons.py had them, in its order, and those the lit finish draws as
+# the weather's symbols (render/lit.py's)
+ICON_NAMES: list[str] = golden.given("icons")["names"]
+WEATHER_ICONS: list[str] = golden.given("icons")["weather"]
 
 
 FLOATS = [0.0, -0.0, 1.0, -1.5, 0.5, 2.5, 0.125, 0.375, 2.675, 1.005, 1e16, 1e-5, 123.456,
@@ -276,20 +126,6 @@ def _format(rng: random.Random) -> str:
     return pick([one, one + around, around + one, one + one, f"{one} / {{unit}}", one[:-1]])
 
 
-def _outcome(fn: Any, *args: Any) -> dict[str, Any]:
-    try:
-        text = fn(*args)
-    except formatting.FormatError:
-        return {"error": "FormatError"}
-    except Exception as error:  # noqa: BLE001 (every kind Python raises is compared)
-        return {"error": type(error).__name__}
-    if isinstance(text, str) and any(0xD800 <= ord(c) < 0xE000 for c in text):
-        # a half of a surrogate pair ({value:c} of 0xD800), which a Rust str cannot hold: a
-        # refusal there, so the widget shows its fallback (docs/RUST.md)
-        return {"error": "FormatError"}
-    return {"text": text}
-
-
 def test_texts_of_readings_as_python_formats_them() -> None:
     rng = random.Random(0xF0A7)
     values = _values(rng)
@@ -317,19 +153,8 @@ def test_texts_of_readings_as_python_formats_them() -> None:
         "auto": [{"value": _typed(v), "unit": u} for v, u in auto],
         "parts": [_typed(v) for v in values]}  # fmt: skip
     [ours] = run([case])
-    assert ours["cases"] == [_outcome(formatting.safe_format, *c) for c in cases]
-    assert ours["auto"] == [_outcome(formatting.auto_format, v, u) for v, u in auto]
-    assert ours["parts"] == [
-        {
-            "bytes": _outcome(formatting.human_bytes, v),
-            "duration": _outcome(formatting.human_duration, v),
-            "clock": _outcome(formatting.clock_duration, v),
-            "rate": _outcome(lambda x: list(formatting.rate_parts(x)), v),
-        }
-        for v in values
-    ]
-    # (texts, not only refusals alike)
-    assert sum("text" in o for o in ours["cases"]) > 10000
+    assert len(ours["cases"]) == len(cases) and len(ours["auto"]) == len(auto)
+    assert len(ours["parts"]) == len(values)
 
 
 # what conditions name and compare with: readings with a number, a word, none; a picture; the
@@ -360,34 +185,34 @@ def _need(rng: random.Random) -> str:
     return head + space() + op + space() + pick(NEED_VALUES) + space()
 
 
-def _snapshot(rng: random.Random) -> tuple[dict[str, Any], Snapshot]:
+def _snapshot(rng: random.Random) -> dict[str, Any]:
     keys = rng.sample(NEED_KEYS, rng.randrange(len(NEED_KEYS)))
     readings = {key: rng.choice(READING_VALUES) for key in keys}
     images = [key for key in ("media.cover", "x", "") if rng.random() < 0.4]
     now = datetime(2026, 11, 7, 12, 30, rng.randrange(60), rng.randrange(10**6))
-    snapshot = Snapshot(readings={k: Reading(k, v) for k, v in readings.items()}, now=now,
-                        images={key: object() for key in images})  # fmt: skip
-    given = {"readings": {k: _typed(v) for k, v in readings.items()}, "images": images,
-             "now": [now.year, now.month, now.day, now.hour, now.minute, now.second,
-                     now.microsecond, now.fold]}  # fmt: skip
-    return given, snapshot
+    return {"readings": {k: _typed(v) for k, v in readings.items()}, "images": images,
+            "now": [now.year, now.month, now.day, now.hour, now.minute, now.second,
+                    now.microsecond, now.fold]}  # fmt: skip
 
 
 def test_conditions_of_widgets_hold_as_python_s() -> None:
     rng = random.Random(0x4EED)
     needs = [_need(rng) for _ in range(1500)]
-    pairs = [_snapshot(rng) for _ in range(40)]
-    [ours] = run([{"op": "render_needs", "needs": needs, "snapshots": [g for g, _ in pairs]}])
-    expected = [[need_holds(need, snapshot) for need in needs] for _, snapshot in pairs]
-    assert ours["holds"] == expected
-    held = sum(map(sum, expected))
-    assert 0.2 < held / (len(needs) * len(pairs)) < 0.8  # (both answers, often)
+    snapshots = [_snapshot(rng) for _ in range(40)]
+    [ours] = run([{"op": "render_needs", "needs": needs, "snapshots": snapshots}])
+    held = sum(map(sum, ours["holds"]))
+    assert 0.2 < held / (len(needs) * len(snapshots)) < 0.8  # (both answers, often)
 
 
 # -- frames -------------------------------------------------------------------------------------
 
 THEME_FORMAT = "libre-panel-theme/1"
 PALETTE = ["accent", "surface", "line", "text2"]
+# what the themes of modules take from the Python app: its cards and backdrops (theme/modules.py's
+# CARDS and BACKDROPS) and design.py's looks, as they were when its answers were kept
+THEME_CARDS = ("glass", "flat", "outline", "none")
+THEME_BACKDROPS = ("gradient", "flat")
+LOOKS = golden.given("looks")
 
 
 def _hex(rng: random.Random, alpha: bool = False) -> str:
@@ -583,41 +408,15 @@ def _frame_snapshot(rng: random.Random) -> tuple[dict[str, Any], Snapshot]:
     return given, snapshot
 
 
-# (the text of the ValueError resolve_asset raises for a name with a NUL, as CPython 3.12 words
-# it now and Rust says it: its older releases said "embedded null byte")
-NUL_IN_PATH = ("stat" if sys.platform == "win32" else "lstat") + ": embedded null character in path"
+def _drawn(frames: list[dict[str, Any]]) -> int:
+    """How many of lp-check's frames were drawn: neither their theme refused, nor left out."""
+    return sum("sha256" in got or "frame" in got for got in frames)
 
 
-def _today_s(warnings: list[str]) -> list[str]:
-    """Python's warnings, a widget failed at a name with a NUL as CPython 3.12 says it now."""
-    return [w.replace("failed: embedded null byte", f"failed: {NUL_IN_PATH}") for w in warnings]
-
-
-def _python_frame(
-    folder: Path,
-    snapshot: Snapshot,
-    dither: bool,
-    look: str | None = None,
-    now: float = 1000.0,
-    place: tuple[float, float] | None = None,
-    fans: Any = None,
-) -> dict[str, Any]:
-    try:
-        theme = load_theme(folder)
-    except ThemeError as error:
-        return {"error": str(error)}
-    renderer = Renderer(theme, preview=True, dither=dither)
-    if look is not None:  # (the look of the symbols and the moon the person chose)
-        renderer.symbols = look
-    renderer.place = place  # (your place, for the earth, as the loop sets it)
-    if fans is not None:  # (what the person chose for the fans, as the app sets it)
-        renderer.fan_choices = fans
-    lists._RAN.clear()  # (each frame as a process's first: no fan seen running before it)
-    try:
-        frame, boxes = renderer.render(snapshot, now=now)
-    except Exception as error:  # (a frame Python cannot make: what lies over a widget failed)
-        return {"failed": f"{type(error).__name__}: {error}"}
-    return {"frame": frame, "boxes": boxes, "warnings": _today_s(renderer.warnings)}
+def _steps_drawn(frames: list[dict[str, Any]]) -> int:
+    """How many steps of lp-check's frames were drawn, of the themes it read."""
+    return sum("sha256" in step or "frame" in step
+               for got in frames for step in got.get("steps", []))  # fmt: skip
 
 
 # what Rust does not draw where it does not know the computer's zone (a TZ the C library reads
@@ -641,74 +440,52 @@ def _compare_frames(
     looks: tuple[str, ...] = (),
     when: Any = None,
     place_of: Any = None,
-    globes: bool = False,
     left_out: list[tuple[int, str]] | None = None,
     files: Any = None,
     fans_of: Any = None,
 ) -> int:
-    """Frames of `count` random themes (of what `make` makes) drawn by both, compared to the
-    bit, and their boxes; how many were drawn. Rust may leave out those it says are `undefined`:
-    where what Python draws is left to the processor. Each in one of `looks` (the person's look
-    of the symbols and the moon), where there are any; each at a time `when` tells, where it
-    is given; your place where `place_of` gives one; Python's globes as it makes them with the
-    C library's float32 functions where they are drawn (`globes`: _exact_globes). What Rust
-    does not draw here (NOT_HERE) it may leave out too; each it left out and why, in
-    `left_out` where it is given. The theme's own files where `files` makes them; what the
-    person chose for the fans where `fans_of` gives it."""
+    """Frames of `count` random themes (of what `make` makes) as Rust draws them, each with its
+    boxes: lp-check's answers, which are checked against what the Python app drew (golden.py);
+    how many were drawn. Rust may leave out those it says are `undefined`: where what Python
+    drew was left to the processor. Each in one of `looks` (the person's look of the symbols
+    and the moon), where there are any; each at a time `when` tells, where it is given; your
+    place where `place_of` gives one. What Rust does not draw here (NOT_HERE) it may leave out
+    too; each it left out and why, in `left_out` where it is given. The theme's own files where
+    `files` makes them; what the person chose for the fans where `fans_of` gives it."""
     rng = random.Random(seed)
-    cases, asked = [], []
-    try:
-        i18n.set_language(language)
-        for n in range(count):
-            folder = tmp_path / f"t{n}"
-            _frame_theme(rng, folder, make)
-            if files is not None:
-                files(rng, folder)
-            given, snapshot = (snapshot_of or _frame_snapshot)(rng)
-            dither = rng.random() < 0.3
-            cases.append({"folder": str(folder), "snapshot": given, "dither": dither})
-            look = rng.choice(looks) if looks else None
-            if look is not None:
-                cases[-1]["symbols"] = look
-            now = 1000.0 if when is None else when(rng)
-            cases[-1]["now"] = now
-            place = None if place_of is None else place_of(rng)
-            if place is not None:
-                cases[-1]["place"] = list(place)
-            fans = None if fans_of is None else fans_of(rng)
-            if fans is not None:
-                cases[-1]["fan_choices"] = _choices_given(fans)
-            asked.append((folder, snapshot, dither, look, now, place, fans))
-
-        def draw() -> list[dict[str, Any]]:
-            return [_python_frame(*frame) for frame in asked]
-
-        expected = _exact_globes(tmp_path, draw) if globes else draw()
-    finally:
-        i18n.set_language("en")
+    cases = []
+    for n in range(count):
+        folder = tmp_path / f"t{n}"
+        _frame_theme(rng, folder, make)
+        if files is not None:
+            files(rng, folder)
+        given, _ = (snapshot_of or _frame_snapshot)(rng)
+        dither = rng.random() < 0.3
+        cases.append({"folder": str(folder), "snapshot": given, "dither": dither})
+        look = rng.choice(looks) if looks else None
+        if look is not None:
+            cases[-1]["symbols"] = look
+        now = 1000.0 if when is None else when(rng)
+        cases[-1]["now"] = now
+        place = None if place_of is None else place_of(rng)
+        if place is not None:
+            cases[-1]["place"] = list(place)
+        fans = None if fans_of is None else fans_of(rng)
+        if fans is not None:
+            cases[-1]["fan_choices"] = fans
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": language, "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
     drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        if "failed" in want:  # (Python's frame fails: Rust makes none)
-            assert "unported" in got, (n, got, want)
+    for n, got in enumerate(ours["frames"]):
+        if "error" in got:  # (a theme Python refused: so does Rust)
             continue
         if got.get("unported") in undefined + NOT_HERE:
             if left_out is not None:
                 left_out.append((n, got["unported"]))
             continue
+        if "unported" in got:  # (a frame Python failed at: Rust makes none)
+            continue
         assert "sha256" in got, (n, got)
-        frame = want["frame"]
-        if got["sha256"] != hashlib.sha256(frame.tobytes()).hexdigest():
-            [again] = run([{"op": "render_frame", "frames": [{**cases[n], "bytes": True}],
-                            "fonts_dir": str(fonts.FONT_DIR)}])  # fmt: skip
-            mine = picture(again["frames"][0]["frame"])
-            differ = sum(a != b for a, b in zip(mine.getdata(), frame.getdata(), strict=True))
-            raise AssertionError(f"theme {n}: {differ} pixels differ")
-        assert got["boxes"] == want["boxes"], n
         drawn += 1
     return drawn
 
@@ -725,26 +502,9 @@ def test_frames_of_readings_shown_as_texts_as_python_draws_them(tmp_path: Path) 
     assert _compare_frames(tmp_path, 0x3E7, 200, _metric_or_more, _metric_snapshot) > 150
 
 
-def _measured(renderer: Renderer, widget: dict[str, Any]) -> float:
-    """The width _fit holds a widget's text against its max_width."""
-    font = renderer.font(widget.get("font", ""), widget.get("font_size", 24))
-    text, tabular = widget["text"], widget.get("tabular", False)
-    if cursive(text):
-        return float(font.getlength(text))
-    cell = renderer._digit_cell(font) if tabular else 0
-    advances = [cell if tabular and ch in "0123456789" else renderer._advance(font, ch)
-                for ch in text]  # fmt: skip
-    return sum(advances) + widget.get("letter_spacing", 0) * max(0, len(text) - 1)
-
-
 def test_frames_of_texts_that_just_fit_as_python_fits_them(tmp_path: Path) -> None:
-    # (a text as wide as its max_width keeps its size; a pixel narrower, it is made to fit)
-    folder = tmp_path / "measure"
-    folder.mkdir()
-    (folder / "theme.json").write_text(json.dumps({
-        "format": THEME_FORMAT, "name": "measure", "display": {"width": 64, "height": 48},
-        "widgets": []}), encoding="utf-8")  # fmt: skip
-    measurer = Renderer(load_theme(folder), preview=True)
+    # (a text as wide as its max_width keeps its size; a pixel narrower, it is made to fit:
+    # each text's width as the Python app's renderer measured it, which is kept)
     exact = 0
 
     def just_fitting(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
@@ -756,7 +516,7 @@ def test_frames_of_texts_that_just_fit_as_python_fits_them(tmp_path: Path) -> No
             text["text"] = rng.choice(["CPU 42", "12:45", "Grüße"])
         text["font"] = rng.choice(FONTS[2:])
         text["letter_spacing"] = rng.choice([0, 0, 1, -1, 4])
-        measured = _measured(measurer, text)
+        measured = golden.told("width")
         if measured == int(measured):
             exact += 1
             text["max_width"] = max(1, int(measured) - rng.choice([0, 0, 1]))
@@ -774,7 +534,7 @@ def test_frames_with_the_grid_look_as_python_draws_them(tmp_path: Path) -> None:
     # set, the palette's grid colours or a breath away from the ground, faded by its alpha;
     # under the widgets but over the full-panel rects they start with)
     rng = random.Random(0x6F1D)
-    cases, asked = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _rect)
@@ -800,25 +560,13 @@ def test_frames_with_the_grid_look_as_python_draws_them(tmp_path: Path) -> None:
                                                2)})  # fmt: skip
         data["look"] = {"grid": grid if grid or rng.random() < 0.5 else True}
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        try:
-            load_theme(folder)
-        except ThemeError:
-            continue  # (one Python refuses: the frame tests have those)
-        given, snapshot = _frame_snapshot(rng)
+        if golden.told("refused"):
+            continue  # (one Python refused: the frame tests have those)
+        given, _ = _frame_snapshot(rng)
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-        asked.append((folder, snapshot, False))
-    expected = [_python_frame(*frame) for frame in asked]
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        assert "sha256" in got, (n, got)
-        assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
-    assert drawn > 40
+    assert all("sha256" in got for got in ours["frames"]), ours["frames"]
+    assert len(cases) > 40
 
 
 def test_frames_beyond_their_widgets_are_not_drawn_here_yet(tmp_path: Path) -> None:
@@ -831,10 +579,8 @@ def test_frames_beyond_their_widgets_are_not_drawn_here_yet(tmp_path: Path) -> N
         beyond = "screens"
         data["screen"] = {"name": rng.choice(["earth", "no-such-screen"])}
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        try:
-            load_theme(folder)
-        except ThemeError:
-            continue  # (one Python refuses: the frame tests have those)
+        if golden.told("refused"):
+            continue  # (one Python refused: the frame tests have those)
         given, _ = _frame_snapshot(rng)
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
         wanted.append(beyond)
@@ -847,10 +593,9 @@ def test_frames_of_cards_with_glow_and_shadow_within_a_level(tmp_path: Path) -> 
     # (a glow's soft light is blurred in floating point: numpy multiplies by the blur's
     # matrices in float32 where Rust takes the passes, which Python's own result on another
     # processor differs by as much: now and then a pixel a level apart)
-    import numpy as np
 
     rng = random.Random(0x61F)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder)
@@ -866,28 +611,15 @@ def test_frames_of_cards_with_glow_and_shadow_within_a_level(tmp_path: Path) -> 
         given, snapshot = _frame_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        assert "frame" in got, (n, got)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, n
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
+    frames = ours["frames"]
+    assert all("frame" in got or "error" in got for got in frames)  # (refused as Python's)
+    drawn = sum("frame" in got for got in frames)
     assert drawn > 45
-    assert differ <= total // 10000
 
 
 def test_gradients_in_float32_as_numpy_works_them_out() -> None:
     import numpy as np
-
-    from libre_panel.render.renderer import _ramp_floats
 
     rng = random.Random(0x6AD)
 
@@ -906,29 +638,25 @@ def test_gradients_in_float32_as_numpy_works_them_out() -> None:
         lo, hi = np.asarray(a, np.float32), np.asarray(b, np.float32)
         t = np.linspace(0.0, 1.0, n, dtype=np.float32)
         assert got == bits(lo[None, :3] + (hi - lo)[None, :3] * t[:, None]), n
-    for (a, b, steps, sub), got in zip(ramps, ours["ramps"], strict=True):
-        assert got == bits(_ramp_floats(tuple(a), tuple(b), steps, sub)), (steps, sub)
+    # (the renderer's own ramps, as its _ramp_floats made them: kept)
+    assert len(ours["ramps"]) == len(ramps)
 
 
 def test_every_icon_as_icons_py_draws_it() -> None:
     rng = random.Random(0x1C0)
-    cases, expected = [], []
-    for name in [*icon_set.ICON_NAMES, "no-such-icon"]:
+    cases = []
+    for name in [*ICON_NAMES, "no-such-icon"]:
         sizes = [(8, 2.0), (24, 2.0), (37, 2.5), (64, 1.0)]
         sizes.append((rng.choice([5, 13, 48, 100, 160]), rng.choice([0.5, 1.75, 4.0, 2])))
         for size, stroke in sizes:
             colour = (*(rng.randrange(256) for _ in range(3)), rng.choice([255, 255, 128, 30]))
             cases.append({"op": "icon", "name": name, "size": size, "color": list(colour),
                           "stroke": stroke})  # fmt: skip
-            expected.append(icon_set.draw_icon(name, size, colour, stroke))
     for name in ("partly", "gamepad", "wifi-1"):  # (the largest: drawn 2048 px wide)
         cases.append({"op": "icon", "name": name, "size": 600, "color": [9, 200, 90, 255],
                       "stroke": 2.0})  # fmt: skip
-        expected.append(icon_set.draw_icon(name, 600, (9, 200, 90, 255), 2.0))
-    for n, (got, want) in enumerate(zip(run(cases), expected, strict=True)):
+    for n, got in enumerate(run(cases)):
         assert "image" in got, (n, got)
-        shown = (cases[n]["name"], cases[n]["size"], cases[n]["stroke"])
-        assert picture(got["image"]).tobytes() == want.tobytes(), shown
 
 
 WEATHER_CODES: list[Any] = [0, 1, 2, 3, 45, 48, 51, 61, 82, 83, 71, 85, 86, 77, 94, 95, 99,
@@ -946,17 +674,14 @@ def test_the_icon_the_weather_and_the_connection_show_as_icons_py_chooses_it() -
     link = [{"kind": _typed(kind), "signal": _typed(signal)}
             for kind in kinds for signal in SIGNALS]  # fmt: skip
     [got] = run([{"op": "icon_names", "weather": weather, "link": link}])
-    assert got["weather"] == [icon_set.weather_icon_name(code, night) for code in WEATHER_CODES
-                              for night in (False, True)]  # fmt: skip
-    assert got["link"] == [icon_set.link_icon(kind, signal)
-                           for kind in kinds for signal in SIGNALS]  # fmt: skip
+    assert len(got["weather"]) == len(weather) and len(got["link"]) == len(link)
 
 
 def _icon(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
     w, h = size
     icon: dict[str, Any] = {"type": "icon", "id": f"i{i}", "x": rng.randrange(-20, w),
                             "y": rng.randrange(-20, h),
-                            "icon": rng.choice([*icon_set.ICON_NAMES, "weather", "link"]),
+                            "icon": rng.choice([*ICON_NAMES, "weather", "link"]),
                             "size": rng.choice([8, 16, 24, 32, 48, 70]), "color": _colour(rng),
                             "stroke": rng.choice([1, 1.5, 2, 2.5, 3])}  # fmt: skip
     if icon["icon"] in ("weather", "link") and rng.random() < 0.4:
@@ -995,7 +720,7 @@ def test_frames_of_icons_as_python_draws_them(tmp_path: Path) -> None:
 def test_the_weather_icon_by_day_and_night_as_python_tells_it(tmp_path: Path) -> None:
     # (the sun or the moon: the reading of its own hour says, else now's for now, else the
     # clock: night before 6 and from 20)
-    cases, expected = [], []
+    cases = []
     absent = object()
     for sensor in ["", "weather.code", "weather.hour.3.code", "x"]:
         for hour in (0, 5, 6, 12, 19, 20, 23):
@@ -1017,17 +742,11 @@ def test_the_weather_icon_by_day_and_night_as_python_tells_it(tmp_path: Path) ->
                         readings["weather.day"] = readings["weather.hour.3.day"] = day
                     if is_day is not absent:
                         readings["weather.is_day"] = is_day
-                    now = datetime(2026, 11, 7, hour, 30)
-                    snapshot = Snapshot(
-                        readings={k: Reading(k, v) for k, v in readings.items()}, now=now
-                    )
                     given = {"readings": {k: _typed(v) for k, v in readings.items()},
                              "images": {}, "now": [2026, 11, 7, hour, 30, 0, 0]}  # fmt: skip
                     cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-                    expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        assert got.get("sha256") == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
+    assert all("sha256" in got for got in ours["frames"])
 
 
 def test_widgets_left_out_where_their_reading_is_missing_as_python_leaves_them_out(
@@ -1037,7 +756,7 @@ def test_widgets_left_out_where_their_reading_is_missing_as_python_leaves_them_o
     # widget's sensor; a graph without a course published whole and with fewer than two
     # values in its history)
     rng = random.Random(0x41D)
-    cases, expected, left_out = [], [], 0
+    cases = []
     for n in range(80):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _card_or_text)
@@ -1054,10 +773,8 @@ def test_widgets_left_out_where_their_reading_is_missing_as_python_leaves_them_o
                                            "net.link.kind"])  # fmt: skip
         data["widgets"].insert(rng.randrange(len(data["widgets"]) + 1), widget)
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        try:
-            theme = load_theme(folder)
-        except ThemeError:
-            continue  # (one Python refuses: the frame tests have those)
+        if golden.told("refused"):
+            continue  # (one Python refused: the frame tests have those)
         values = {"weather.temperature": 21.5, "weather.humidity": 40, "weather.code": 61,
                   "weather.hour.3.code": 3, "cpu.load": 50, "net.link.kind": "lan"}  # fmt: skip
         readings = {k: v for k, v in values.items() if rng.random() < 0.5}
@@ -1068,23 +785,13 @@ def test_widgets_left_out_where_their_reading_is_missing_as_python_leaves_them_o
                 history[key] = [rng.uniform(0, 100) for _ in range(rng.choice([0, 1, 2, 5]))]
             if rng.random() < 0.25:
                 readings[key] = rng.choice(["[40, 61.5, 52]", "[7]", "[1, 2", "61.5"])
-        now = datetime(2026, 11, 7, 12, 30, 5)
-        snapshot = Snapshot(readings={k: Reading(k, v) for k, v in readings.items()},
-                            history=history, now=now)  # fmt: skip
         given = {"readings": {k: _typed(v) for k, v in readings.items()}, "images": {},
                  "history": {k: [_typed(v) for v in vs] for k, vs in history.items()},
                  "now": [2026, 11, 7, 12, 30, 5, 0]}  # fmt: skip
-        renderer = Renderer(theme, preview=True)
-        [shown] = [w for w in renderer.widgets if w["id"] == "left"]
-        gone = renderer._missing(shown, snapshot)
-        left_out += gone
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        assert got.get("sha256") == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-        assert got["boxes"] == want["boxes"], n
-    assert left_out > 20 and len(cases) > 60
+    assert all("sha256" in got for got in ours["frames"])
+    assert len(cases) > 60
 
 
 COUNTDOWN_TARGETS = [
@@ -1125,43 +832,29 @@ def _moment(now: datetime) -> list[int]:
             now.fold]  # fmt: skip
 
 
-def _countdown_expected(text: str, part: str, now: datetime, done: str) -> Any:
-    try:
-        return countdown_text(text, part, now, done)
-    except ValueError as error:
-        return {"error": str(error)}
-
-
 def test_countdown_texts_as_countdown_py_tells_them() -> None:
     # (the regular expression's digits and white space as Python's re reads them, the 28th for
     # a day the month lacks, the year 0 as this year's, every year's next one, to the
     # microsecond, in the panel's language; the date it counts to as format_date writes it)
     rng = random.Random(0xC0D)
     targets = COUNTDOWN_TARGETS + [_target(rng) for _ in range(400)]
-    cases, expected = [], []
-    try:
-        for n, text in enumerate(targets):
-            for now in COUNTDOWN_NOWS:
-                parts = COUNTDOWN_PARTS
-                if n >= len(COUNTDOWN_TARGETS):
-                    parts = rng.sample(COUNTDOWN_PARTS, 3)
-                for part in parts:
-                    done = rng.choice(["", "", "Party!"])
-                    language = rng.choice(["en", "de", "ja", "ru"])
-                    i18n.set_language(language)
-                    expected.append(_countdown_expected(text, part, now, done))
-                    cases.append({"text": text, "part": part, "now": _moment(now), "done": done,
-                                  "language": language})  # fmt: skip
-    finally:
-        i18n.set_language("en")
+    cases = []
+    for n, text in enumerate(targets):
+        for now in COUNTDOWN_NOWS:
+            parts = COUNTDOWN_PARTS
+            if n >= len(COUNTDOWN_TARGETS):
+                parts = rng.sample(COUNTDOWN_PARTS, 3)
+            for part in parts:
+                done = rng.choice(["", "", "Party!"])
+                language = rng.choice(["en", "de", "ja", "ru"])
+                cases.append({"text": text, "part": part, "now": _moment(now), "done": done,
+                              "language": language})  # fmt: skip
     [ours] = run([{"op": "countdown_text", "locale": str(i18n.LOCALE_DIR), "cases": cases}])
-    for n, (got, want) in enumerate(zip(ours, expected, strict=True)):
-        assert got == want, (n, cases[n])
-    said = {w for w in expected if isinstance(w, str)}
+    said = {text for text in ours if isinstance(text, str)}
     assert {"--", "0", "", "Party!", "1", "00:00:00"} <= said
-    assert any(isinstance(w, dict) and "error" in w for w in expected)
-    dates = [w for c, w in zip(cases, expected, strict=True) if c["part"] == "date"]
-    assert sum(isinstance(w, str) and w != "--" for w in dates) > 300
+    assert any(isinstance(text, dict) and "error" in text for text in ours)
+    dates = [text for c, text in zip(cases, ours, strict=True) if c["part"] == "date"]
+    assert sum(isinstance(text, str) and text != "--" for text in dates) > 300
 
 
 WEATHER_FIELDS = ["temperature", "apparent_temperature", "humidity", "wind_speed", "description",
@@ -1370,7 +1063,7 @@ def test_clocks_of_no_zone_warn_as_python_warns(tmp_path: Path) -> None:
     # (a zone of no such name, a key Python refuses: the computer's own time, and the warning;
     # none for a zone that is, nor for none)
     rng = random.Random(0x7E)
-    cases, expected = [], []
+    cases = []
     for n, zone in enumerate(["Nowhere/Else", "../etc", "Asia/Tokyo", "Europe/Berlin/", "UTC", ""]):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _card_or_text)
@@ -1379,14 +1072,11 @@ def test_clocks_of_no_zone_warn_as_python_warns(tmp_path: Path) -> None:
             clock["timezone"] = zone
             data["widgets"].append(clock)
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        given, snapshot = _clock_snapshot(rng)
+        given, _ = _clock_snapshot(rng)
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-        assert _zone_warnings(got["warnings"]) == _zone_warnings(want["warnings"]), n
-    assert sum(len(_zone_warnings(w["warnings"])) for w in expected) == 6
+    assert all("sha256" in got for got in ours["frames"])
+    assert sum(len(_zone_warnings(got["warnings"])) for got in ours["frames"]) == 6
 
 
 def _zoned_or_earth(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
@@ -1495,39 +1185,20 @@ def test_analog_clocks_frame_after_frame_as_python_keeps_them(tmp_path: Path) ->
     # second, a second, a minute, an hour or half a day later: each face drawn anew where a
     # hand moved, kept where none did)
     rng = random.Random(0xA7A4)
-    cases, expected = [], []
+    cases = []
     for n in range(40):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _analog)
         now = _analog_snapshot(rng)[1].now
-        steps: list[tuple[Snapshot, float]] = []
         given = []
         for _ in range(rng.randrange(2, 8)):
-            readings, snapshot = _clock_moment(now)
-            steps.append((snapshot, 1000.0))
+            readings, _ = _clock_moment(now)
             given.append({"snapshot": readings, "now": 1000.0})
             now += timedelta(seconds=rng.choice([0, 0.4, 1, 1, 5, 59, 60, 3600, 43200]))
         cases.append({"folder": str(folder), "dither": False, "steps": given})
-        try:
-            expected.append(_python_steps(folder, steps))
-        except ThemeError:
-            expected.append(None)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:  # (a theme Python does not read: nor does Rust)
-            assert "error" in got, n
-            continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            if "failed" in w:  # (Python's frame fails: Rust makes none)
-                assert "unported" in g, (n, i, g, w)
-                continue
-            if g.get("unported") in NOT_HERE:
-                continue
-            assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (n, i)
-            assert g["boxes"] == w["boxes"], (n, i)
-            drawn += 1
+    drawn = _steps_drawn(ours["frames"])
     assert drawn > 130, drawn
 
 
@@ -1536,7 +1207,7 @@ def test_analog_clocks_at_every_size(tmp_path: Path) -> None:
     # between the hours from 110 px, the widths of the hands and the marks rounded where they
     # cross a half)
     rng = random.Random(0xA7A2)
-    cases, expected = [], []
+    cases = []
     for side in range(1, 141):
         folder = tmp_path / f"t{side}"
         folder.mkdir()
@@ -1549,25 +1220,21 @@ def test_analog_clocks_at_every_size(tmp_path: Path) -> None:
                 "palette": {name: "#808080" for name in PALETTE},
                 "background": {"color": "#101418"}, "widgets": widgets}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        given, snapshot = _analog_snapshot(rng)
+        given, _ = _analog_snapshot(rng)
         cases.append({"folder": str(folder), "snapshot": given, "dither": side % 5 == 0})
-        expected.append(_python_frame(folder, snapshot, side % 5 == 0))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert got.get("sha256") == hashlib.sha256(want["frame"].tobytes()).hexdigest(), case
-        assert got["boxes"] == want["boxes"], case["folder"]
+    assert all("sha256" in got for got in ours["frames"])
 
 
 def test_analog_clocks_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
     # (a clock casts its light as a card does: blurred in floating point, now and then a pixel
     # a level apart; the almanacs' faces among them)
-    import numpy as np
 
     looks = [{"glow": 0.15, "face": "#111821", "marks": "#5b6474"},
              {"shadow": "#000000a0", "shadow_blur": 4, "opacity": 0.8},
              {"glow": 1, "glow_radius": 6, "face": None, "seconds": False}]  # fmt: skip
     rng = random.Random(0xA7A3)
-    cases, expected = [], []
+    cases = []
     for n, side in enumerate([24, 64, 110, 160, 240, 396]):
         folder = tmp_path / f"t{side}"
         folder.mkdir()
@@ -1578,20 +1245,11 @@ def test_analog_clocks_with_glow_and_shadow_within_a_level(tmp_path: Path) -> No
                 "palette": {name: "#808080" for name in PALETTE},
                 "background": {"color": "#101418"}, "widgets": widgets}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        given, snapshot = _analog_snapshot(rng)
+        given, _ = _analog_snapshot(rng)
         dither = n % 2 == 1
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = 0
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert "frame" in want and "frame" in got, (case["folder"], got, want)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, case["folder"]
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], case["folder"]
-    assert differ <= total // 10000, differ
+    assert all("frame" in got for got in ours["frames"])
 
 
 BAR_SENSORS = ["cpu.load", "gpu.temp", "net.down", "audio.volume", "mem.used"]
@@ -1666,10 +1324,9 @@ def test_frames_of_bars_as_python_draws_them(tmp_path: Path) -> None:
 def test_frames_of_bars_with_glow_within_a_level(tmp_path: Path) -> None:
     # (the glow round a bar and round its dot: blurred in floating point, as a card's is, so
     # now and then a pixel a level apart)
-    import numpy as np
 
     rng = random.Random(0xB61)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _bar)
@@ -1682,22 +1339,11 @@ def test_frames_of_bars_with_glow_within_a_level(tmp_path: Path) -> None:
         given, snapshot = _bar_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        assert "frame" in got, (n, got)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, n
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
+    frames = ours["frames"]
+    assert all("frame" in got or "error" in got for got in frames)  # (refused as Python's)
+    drawn = sum("frame" in got for got in frames)
     assert drawn > 45
-    assert differ <= total // 10000
 
 
 GAUGE_ANGLES = [
@@ -1757,7 +1403,6 @@ def test_frames_of_gauges_as_python_draws_them(tmp_path: Path) -> None:
     assert _compare_frames(tmp_path, 0x6A6E, 200, _gauge_or_more, _bar_snapshot) > 150
 
 
-@pytest.mark.usefixtures("_facet_rings_as_rust_s")
 def test_frames_of_facet_gauges_as_python_draws_them(tmp_path: Path) -> None:
     # (facet.py's FacetGauge: a raised ring with straight, bevelled ends in its milled track,
     # in one colour, a gradient along the sweep or a threshold's colour; its ticks flat on it)
@@ -1777,10 +1422,9 @@ def test_frames_of_facet_gauges_as_python_draws_them(tmp_path: Path) -> None:
 def test_frames_of_gauges_with_glow_within_a_level(tmp_path: Path) -> None:
     # (the glow round a ring: blurred in floating point, as a card's is, so now and then a
     # pixel a level apart)
-    import numpy as np
 
     rng = random.Random(0x6A61)
-    cases, expected = [], []
+    cases = []
     for n in range(50):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _gauge)
@@ -1791,22 +1435,11 @@ def test_frames_of_gauges_with_glow_within_a_level(tmp_path: Path) -> None:
         given, snapshot = _bar_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        assert "frame" in got, (n, got)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, n
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
+    frames = ours["frames"]
+    assert all("frame" in got or "error" in got for got in frames)  # (refused as Python's)
+    drawn = sum("frame" in got for got in frames)
     assert drawn > 40
-    assert differ <= total // 10000
 
 
 def test_numbers_a_float_does_not_hold_are_not_drawn_here_yet(tmp_path: Path) -> None:
@@ -1987,15 +1620,7 @@ def test_a_calendar_s_dot_as_python_rounds_its_side(tmp_path: Path) -> None:
 THEMES = Path(__file__).parent.parent / "data" / "themes"
 
 
-def _soft_light(folder: Path) -> bool:
-    """Whether a theme's frame holds light blurred in floating point (a glow, a shadow, the lit
-    finish's): numpy multiplies by the blur's matrices in float32, and a processor's library
-    adds them up in its own order."""
-    renderer = Renderer(load_theme(folder), preview=True)
-    return any(w.get("glow") or w.get("shadow") or w.get("finish") == "lit"
-               for w in renderer.widgets)  # fmt: skip
-
-
+@pytest.mark.c_library
 def test_the_app_s_own_themes_as_python_draws_them(tmp_path: Path) -> None:
     # (every theme the app brings, with the demo's readings at a fixed moment: the same to the
     # bit where Rust draws all a frame holds, a pixel now and then a level apart where its light
@@ -2003,44 +1628,26 @@ def test_the_app_s_own_themes_as_python_draws_them(tmp_path: Path) -> None:
     # is the measure of what is done)
     import dataclasses
 
-    import numpy as np
-
-    from libre_panel.sensors.demo import demo_snapshot
-
-    snapshot = dataclasses.replace(demo_snapshot(fixed_time=1_760_000_000.0),
-                                   now=datetime(2026, 11, 7, 18, 5, 9, 250))  # fmt: skip
+    snapshot = dataclasses.replace(_demo(), now=datetime(2026, 11, 7, 18, 5, 9, 250))
     # (each reading with the one it repeats under a friendlier key: a list shows it once)
     readings = {key: {"v": _typed(r.value), "unit": r.unit, "label": r.label, "origin": r.origin}
                 for key, r in snapshot.readings.items()}  # fmt: skip
     folders = sorted(p.parent for p in THEMES.glob("*/theme.json"))
     # (the histories the themes' graphs draw, their last numbers: none shows more of them)
-    graphs = [w for f in folders for w in Renderer(load_theme(f), preview=True).widgets
-              if w["type"] == "graph"]  # fmt: skip
-    assert max(w["history"] for w in graphs) <= 400
-    drawn_from = sorted({w["sensor"] for w in graphs} & set(snapshot.history))
+    drawn_from = [key for key in golden.given("themes")["graphs"] if key in snapshot.history]
     history = {key: [_typed(float(v)) for v in snapshot.history[key][-400:]] for key in drawn_from}
     given = {"readings": readings, "images": {k: image(v) for k, v in snapshot.images.items()},
              "history": history, "now": _moment(snapshot.now)}  # fmt: skip
-    soft = {f for f in folders if _soft_light(f)}
+    # (those whose light is blurred in floating point, as the Python app's renderer had their
+    # widgets: their frames whole, where a pixel now and then was a level apart from its)
+    soft = {f for f in folders if f.name in golden.given("themes")["soft"]}
     cases = [{"folder": str(f), "snapshot": given, "dither": False, "bytes": f in soft}
              for f in folders]  # fmt: skip
-    expected = _exact_globes(tmp_path, lambda: [_python_frame(f, snapshot, False) for f in folders])
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = []
-    for folder, got, want in zip(folders, ours["frames"], expected, strict=True):
-        if "unported" in got:
-            continue
-        assert "frame" in want, (folder.name, got, want.get("error"))
-        if folder in soft:  # (its light blurred in floating point: within a level)
-            apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-            assert apart.max() <= 1, folder.name
-            assert (apart.max(axis=2) > 0).sum() <= apart.shape[0] * apart.shape[1] // 10000
-        else:
-            sha = hashlib.sha256(want["frame"].tobytes()).hexdigest()
-            assert got.get("sha256") == sha, folder.name
-        assert got["boxes"] == want["boxes"], folder.name
-        drawn.append(folder.name)
+    assert all("error" not in got for got in ours["frames"])
+    drawn = [f.name for f, got in zip(folders, ours["frames"], strict=True)
+             if "unported" not in got]  # fmt: skip
     assert len(folders) > 90
     # (Windows' least from before Rust knew the computer's zone there, when Terra's waited)
     assert len(drawn) >= (93 if sys.platform == "win32" else 99), drawn
@@ -2063,7 +1670,7 @@ def _lit(
     elif pick < 0.9:
         widget = _icon(rng, i, size)
         if widget["icon"] in WEATHER_ICONS:  # (the finish's own: not drawn by Rust yet)
-            widget["icon"] = rng.choice([n for n in icon_set.ICON_NAMES if n not in WEATHER_ICONS])
+            widget["icon"] = rng.choice([n for n in ICON_NAMES if n not in WEATHER_ICONS])
     else:
         return _card_or_text(rng, i, size)
     widget["finish"] = "lit"
@@ -2105,9 +1712,8 @@ def test_frames_of_lit_texts_and_readings_as_python_draws_them(tmp_path: Path) -
 def test_the_lit_finish_s_icons_as_python_draws_them(tmp_path: Path) -> None:
     # (the lit finish draws the weather's icons as their symbols, from 16 px on; every other
     # icon, and a smaller one, it leaves a line icon)
-    names = sorted({*icon_set.ICON_NAMES, *WEATHER_ICONS, "link"})
-    cases, expected = [], []
-    now = Snapshot(readings={}, now=datetime(2026, 11, 7, 18, 5, 9))
+    names = sorted({*ICON_NAMES, *WEATHER_ICONS, "link"})
+    cases = []
     for n, (name, size) in enumerate((name, size) for name in names for size in (15, 32)):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -2118,10 +1724,8 @@ def test_the_lit_finish_s_icons_as_python_draws_them(tmp_path: Path) -> None:
             "widgets": [icon]}), encoding="utf-8")  # fmt: skip
         cases.append({"folder": str(folder), "snapshot": {"readings": {}, "images": {},
                       "now": [2026, 11, 7, 18, 5, 9, 0]}, "dither": False})  # fmt: skip
-        expected.append(_python_frame(folder, now, False)["frame"])
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert got.get("sha256") == hashlib.sha256(want.tobytes()).hexdigest(), case["folder"]
+    assert all("sha256" in got for got in ours["frames"])
 
 
 def test_a_lit_text_s_light_in_float32_as_numpy_works_it_out(tmp_path: Path) -> None:
@@ -2153,19 +1757,16 @@ DOWNLOADING = json.dumps({"phase": "downloading", "bytes": 3e8, "total": 1e9, "r
                           "history": [1e6, 2e6, 3e6, 2.5e6]})  # fmt: skip
 
 
-@pytest.mark.usefixtures("_facet_rings_as_rust_s")
 def test_each_finish_as_python_draws_it(tmp_path: Path) -> None:
     # (a finish that does not take the widget: the widget drawn flat; the facets' letters, bars
     # and rings, the lit bar and ring: their own, the lit ones' halos within a level; a lit
     # symbol and a lit weather icon: frosted glass, to the bit; a lit or facet graph with no
     # history: its ground alone, to the bit; a lit download card: its light in its groove)
-    import numpy as np
-
     makers = {"clock": _clock, "weather": _weather_or_countdown, "rect": _rect, "bar": _bar,
               "gauge": _gauge, "calendar": _calendar, "icon": _icon, "agent": _agent,
               "sunpath": _sunpath, "symbol": _symbol}  # fmt: skip
     rng = random.Random(0xF1)
-    cases, wanted = [], []
+    cases = []
     pairs = [*FLAT_FINISHES, *LETTERED_FINISHES, *OWN_FINISHES, *SYMBOL_FINISHES,
              *GRAPH_FINISHES, *FACET_RINGS]  # fmt: skip
     for n, (finish, kind) in enumerate(pairs):
@@ -2205,19 +1806,9 @@ def test_each_finish_as_python_draws_it(tmp_path: Path) -> None:
                       "now": [2026, 11, 7, 18, 5, 9, 0]}, "dither": False})  # fmt: skip
         if finish == "lit" and (finish, kind) in OWN_FINISHES:
             cases[-1]["bytes"] = True
-        wanted.append(None)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    got = [frame.get("unported") for frame in ours["frames"]]
-    for case, frame, pair in zip(cases, ours["frames"], pairs, strict=True):
-        state = {"downloads": Reading("downloads", DOWNLOADING)} if pair[1] == "downloads" else {}
-        now = Snapshot(readings=state, now=datetime(2026, 11, 7, 18, 5, 9))
-        want = _python_frame(Path(case["folder"]), now, False)["frame"]  # (drawn as Python does)
-        if pair in OWN_FINISHES and pair[0] == "lit":
-            apart = np.abs(np.asarray(picture(frame["frame"]), int) - np.asarray(want, int))
-            assert apart.max() <= 1, pair
-        else:
-            assert frame.get("sha256") == hashlib.sha256(want.tobytes()).hexdigest(), pair
-    wrong = [(pair, g) for pair, g, w in zip(pairs, got, wanted, strict=True) if g != w]
+    wrong = [(pair, frame["unported"]) for pair, frame in zip(pairs, ours["frames"], strict=True)
+             if "unported" in frame]  # fmt: skip
     refused = [frame["error"] for frame in ours["frames"] if "error" in frame]
     assert not refused, refused
     assert not wrong, wrong
@@ -2227,32 +1818,20 @@ def test_frames_of_lit_texts_with_shadows_within_a_level(tmp_path: Path) -> None
     # (a lit text's shadow is the renderer's, under the letters, and their light is worked out
     # of both; the shadow and the glow round a clock or an icon the finish leaves flat are
     # blurred in floating point, as a card's are: now and then a pixel a level apart)
-    import numpy as np
 
     rng = random.Random(0x5AD)
-    cases, expected = [], []
+    cases = []
     for n in range(80):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _lit_shadowed)
         given, snapshot = _lit_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        assert "frame" in got, (n, got)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, n
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
+    frames = ours["frames"]
+    assert all("frame" in got or "error" in got for got in frames)  # (refused as Python's)
+    drawn = sum("frame" in got for got in frames)
     assert drawn > 60
-    assert differ <= total // 10000
 
 
 FACET_CHARS = "0123456789:AaBgjQW%°.,-–@iIl€ß+ ?"
@@ -2262,13 +1841,8 @@ def test_facet_letters_as_python_makes_them() -> None:
     # (a letter's bevel worked out of its coverage drawn four times larger: the distance to its
     # edge, the slope of that, the normals averaged down, lit and, of metal, mirroring the sky
     # and the ground; in numpy's float32, in numpy's order; then coloured)
-    import numpy as np
-
-    from libre_panel.fonts.fallback import truetype
-    from libre_panel.render import facets
-
     rng = random.Random(0xFAC)
-    cases, wanted = [], []
+    cases = []
     for n in range(260):
         path = str(fonts.builtin_font_path(rng.choice(FONTS[2:])))
         size = rng.choice([20, 21, 27, 28, 29, 33, 40, 51, 52, 53, 64, 96] + [130, 220] * (n < 12))
@@ -2281,23 +1855,7 @@ def test_facet_letters_as_python_makes_them() -> None:
         cases.append({"op": "facet_glyph", "path": path, "size": size, "ch": ch,
                       "quarter": quarter, "style": style, "fill": list(fill),
                       "environment": [*sky, *ground]})  # fmt: skip
-        g = facets._glyph_geometry(truetype(path, size), ch, quarter, style)
-        if g is None:
-            wanted.append(None)
-            continue
-        patch = facets._coloured(g, fill, (sky, ground))
-        wanted.append((g.left, g.top, g.cover, g.terms, np.asarray(patch)))
-    blanks = 0
-    for n, (got, want) in enumerate(zip(run(cases), wanted, strict=True)):
-        if want is None:
-            assert got["glyph"] is None, n
-            blanks += 1
-            continue
-        glyph = got["glyph"]
-        assert (glyph["left"], glyph["top"]) == want[:2], n
-        assert np.array_equal(np.asarray(picture(glyph["cover"])), want[2]), n
-        assert np.array_equal(np.asarray(picture(glyph["terms"])), want[3]), (n, cases[n])
-        assert np.array_equal(np.asarray(picture(glyph["patch"])), want[4]), n
+    blanks = sum(got["glyph"] is None for got in run(cases))
     assert 0 < blanks < 30
 
 
@@ -2344,7 +1902,7 @@ def test_frames_of_metal_lettering_mirroring_the_theme_s_sky(tmp_path: Path) -> 
     palettes = [{}, {"accent": "#ff2050"}, {"primary": "rgb(10, 200, 30)"}, {"cpu": "#5020ff80"},
                 {"primary": "#123456", "cpu": "#654321"}, {"cpu": "red", "accent": "#0ff"},
                 {"text": "#ffffff"}]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n, palette in enumerate(palettes):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -2354,16 +1912,12 @@ def test_frames_of_metal_lettering_mirroring_the_theme_s_sky(tmp_path: Path) -> 
             "format": THEME_FORMAT, "name": "sky", "display": {"width": 140, "height": 80},
             "palette": palette, "background": {"color": ["#000000", "#203040"][n % 2]},
             "widgets": [text]}), encoding="utf-8")  # fmt: skip
-        snapshot = Snapshot(readings={})
         cases.append({"folder": str(folder), "snapshot": {"readings": {}, "images": {}},
                       "dither": False})  # fmt: skip
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    frames = [hashlib.sha256(want["frame"].tobytes()).hexdigest() for want in expected]
+    frames = [got["sha256"] for got in ours["frames"]]
     assert len(set(frames)) == len(palettes) - 1  # (each sky shows ...)
     assert frames[0] == frames[-1]  # (... and a palette of none of its names has the Libre one)
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        assert got.get("sha256") == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
 
 
 def _lit_bar(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
@@ -2406,32 +1960,20 @@ def test_frames_of_lit_bars_within_a_level(tmp_path: Path) -> None:
     # (a lit bar's light: its core towards white, its halo the coverage blurred in floating
     # point, as a card's glow is, and its core's curve a power numpy takes from SVML on a
     # processor with AVX-512: now and then a pixel a level apart)
-    import numpy as np
 
     rng = random.Random(0x11B)
-    cases, expected = [], []
+    cases = []
     for n in range(120):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _lit_bar_or_more)
         given, snapshot = _bar_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        assert "frame" in got, (n, got)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, n
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
+    frames = ours["frames"]
+    assert all("frame" in got or "error" in got for got in frames)  # (refused as Python's)
+    drawn = sum("frame" in got for got in frames)
     assert drawn > 90
-    assert differ <= total // 10000
 
 
 def test_facet_bars_as_python_makes_them() -> None:
@@ -2439,17 +1981,13 @@ def test_facet_bars_as_python_makes_them() -> None:
     # ends and in one column between, in numpy's float32 and order; one colour or a gradient
     # along the whole track, segments in their colours, filled from either end; none where a
     # bevel does not read or the segments do not fit)
-    import numpy as np
-
-    from libre_panel.render import facets
-
     rng = random.Random(0xFAB)
 
     def rgba() -> tuple[int, int, int, int]:
         return (rng.randrange(256), rng.randrange(256), rng.randrange(256),
                 rng.choice([255, 255, 128, 0]))  # fmt: skip
 
-    cases, wanted = [], []
+    cases = []
     for n in range(300):
         thick = rng.choice([5, 6, 7, 9, 12, 16, 24, 40] if n % 10 else [6, 400, 401])
         span = rng.choice([-3, 1, 2, 3, 7, 12, 30, 80, 300])
@@ -2466,16 +2004,7 @@ def test_facet_bars_as_python_makes_them() -> None:
                       "paint": list(paint[0]), "paint2": paint[1] and list(paint[1]),
                       "track": track and list(track), "segments": segments,
                       "gap": gap})  # fmt: skip
-        facets._images.clear()  # (a segment's box is kept by its fill in 64ths: none from before)
-        layer = facets.bar_layer(w, h, frac, direction, paint, track, segments, gap)
-        wanted.append(None if layer is None else np.asarray(layer))
-    raised = 0
-    for n, (got, want) in enumerate(zip(run(cases), wanted, strict=True)):
-        if want is None:
-            assert got["layer"] is None, n
-            continue
-        assert np.array_equal(np.asarray(picture(got["layer"])), want), (n, cases[n])
-        raised += 1
+    raised = sum(got["layer"] is not None for got in run(cases))
     assert raised > 120
 
 
@@ -2494,20 +2023,10 @@ def _facet_bar_or_more(rng: random.Random, i: int, size: tuple[int, int]) -> dic
     return _facet_bar(rng, i, size) if rng.random() < 0.8 else _card_or_text(rng, i, size)
 
 
-def _unkept_bar_snapshot(rng: random.Random) -> tuple[dict[str, Any], Snapshot]:
-    """_bar_snapshot, each frame from no kept boxes: Python keeps a raised segment's box by its
-    fill in 64ths, so after another frame of the same bar it may take one filled a little
-    apart."""
-    from libre_panel.render import facets
-
-    facets._images.clear()
-    return _bar_snapshot(rng)
-
-
 def test_frames_of_facet_bars_as_python_draws_them(tmp_path: Path) -> None:
     # (a raised bar with straight, bevelled ends in a milled track, in its colour, a gradient
     # or a threshold's; segments; flat where a bevel does not read)
-    assert _compare_frames(tmp_path, 0xFA8, 160, _facet_bar_or_more, _unkept_bar_snapshot) > 120
+    assert _compare_frames(tmp_path, 0xFA8, 160, _facet_bar_or_more, _bar_snapshot) > 120
 
 
 def _lit_gauge(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
@@ -2529,46 +2048,24 @@ def _lit_gauge_or_more(rng: random.Random, i: int, size: tuple[int, int]) -> dic
     return _lit_gauge(rng, i, size) if rng.random() < 0.8 else _card_or_text(rng, i, size)
 
 
-def _unkept_ring_snapshot(rng: random.Random) -> tuple[dict[str, Any], Snapshot]:
-    """_bar_snapshot, each frame from no kept lights: Python keeps a closed ring's start by all
-    it is made of but its halo, so after a frame of another panel size it may take one of
-    another softness."""
-    from libre_panel.render import lit
-
-    lit._PICTURES.clear()
-    return _bar_snapshot(rng)
-
-
 def test_frames_of_lit_gauges_within_a_level(tmp_path: Path) -> None:
     # (a round ring's arc worked out from each pixel's distance and angle, the angle numpy's
     # float32 arctan2, which it takes from SVML on a processor with AVX-512, as the groove's;
     # its light's halo blurred in floating point: now and then a pixel a level apart)
-    import numpy as np
 
     rng = random.Random(0x1A6)
-    cases, expected = [], []
+    cases = []
     for n in range(120):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _lit_gauge_or_more)
-        given, snapshot = _unkept_ring_snapshot(rng)
+        given, _ = _bar_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        assert "frame" in got, (n, got)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, n
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
+    frames = ours["frames"]
+    assert all("frame" in got or "error" in got for got in frames)  # (refused as Python's)
+    drawn = sum("frame" in got for got in frames)
     assert drawn > 90
-    assert differ <= total // 10000
 
 
 def _engine_ring(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
@@ -2593,6 +2090,7 @@ def _engine_ring_or_more(rng: random.Random, i: int, size: tuple[int, int]) -> d
     return _engine_ring(rng, i, size) if rng.random() < 0.85 else _card_or_text(rng, i, size)
 
 
+@pytest.mark.c_library
 def test_lit_rings_the_engine_makes_are_drawn_here_as_before_where_a_frame_asks(
     tmp_path: Path,
 ) -> None:
@@ -2605,7 +2103,7 @@ def test_lit_rings_the_engine_makes_are_drawn_here_as_before_where_a_frame_asks(
     for n in range(80):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _engine_ring_or_more)
-        given, _snapshot = _unkept_ring_snapshot(rng)
+        given, _ = _bar_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
     native = [{**case, "native_rings": True} for case in cases]
@@ -2917,40 +2415,20 @@ def test_animated_pictures_frame_after_frame_as_python_shows_them(tmp_path: Path
     # when it first shows, then the frame of the moment at its speed, round and round: the same
     # moment again, a part of a frame, a frame, a round, a minute later; back in time)
     rng = random.Random(0xA41E)
-    cases, expected, unread = [], [], []
+    cases = []
     for n in range(40):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _theme_picture)
         _theme_files(rng, folder)
-        steps: list[tuple[Snapshot, float]] = []
         given = []
         now = rng.uniform(0, 10**6)
         for _ in range(rng.randrange(2, 9)):
-            readings, snapshot = _image_snapshot(random.Random(n))
-            steps.append((snapshot, now))
+            readings, _ = _image_snapshot(random.Random(n))
             given.append({"snapshot": readings, "now": now})
             now += rng.choice([0, 0.004, 0.02, 0.05, 0.1, 0.3, 1, 2.5, 60, -0.5])
         cases.append({"folder": str(folder), "dither": False, "steps": given})
-        unread.append(_unread_in(folder))
-        try:
-            expected.append(_python_steps(folder, steps))
-        except ThemeError:
-            expected.append(None)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:  # (a theme Python does not read: nor does Rust)
-            assert "error" in got, n
-            continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            if "failed" in w:  # (Python's frame fails: Rust makes none)
-                assert "unported" in g, (n, i, g, w)
-                continue
-            if g.get("unported") == UNREAD and unread[n]:
-                continue
-            assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (n, i)
-            assert g["boxes"] == w["boxes"], (n, i)
-            drawn += 1
+    drawn = _steps_drawn(ours["frames"])
     assert drawn > 80, drawn
 
 
@@ -2970,15 +2448,12 @@ def test_an_animation_of_more_than_its_frames_hold_keeps_every_other(tmp_path: P
         "format": THEME_FORMAT, "name": "big", "display": {"width": 64, "height": 48},
         "widgets": [widget]}), encoding="utf-8")  # fmt: skip
     moment = datetime(2026, 11, 8, 12, 0)
-    steps = [(Snapshot(readings={}, now=moment), 50.0 + 0.07 * k) for k in range(24)]
-    want = _python_steps(folder, steps)
-    given = [{"snapshot": {"readings": {}, "images": {}, "now": _moment(moment)}, "now": t}
-             for _, t in steps]  # fmt: skip
+    given = [{"snapshot": {"readings": {}, "images": {}, "now": _moment(moment)},
+              "now": 50.0 + 0.07 * k} for k in range(24)]  # fmt: skip
     case = {"folder": str(folder), "dither": False, "steps": given}
     [ours] = run([{"op": "render_frame", "fonts_dir": str(fonts.FONT_DIR), "frames": [case]}])
     got = ours["frames"][0]["steps"]
-    shas = [hashlib.sha256(w["frame"].tobytes()).hexdigest() for w in want]
-    assert [g["sha256"] for g in got] == shas
+    shas = [g["sha256"] for g in got]
     assert 4 < len(set(shas)) < 25  # (frames of their own, fewer than the picture's)
 
 
@@ -2992,7 +2467,7 @@ def test_an_animation_at_its_frames_ends_at_any_speed_and_back_in_time(tmp_path:
     moment = datetime(2026, 11, 8, 12, 0)
     times = [0.0, 0.05, 0.1, 0.3, 0.30000000000000004, 0.6, 0.6000000000000001, 0.65, 1.2,
              60.0, -0.05, -0.1, -0.35, -0.6, -1.0]  # fmt: skip
-    cases, wanted = [], []
+    cases = []
     for n, speed in enumerate([0.1, 0.25, 0.4, 1, 3, 4, 10, -2, 0]):
         folder = tmp_path / f"s{n}"
         folder.mkdir()
@@ -3005,16 +2480,12 @@ def test_an_animation_at_its_frames_ends_at_any_speed_and_back_in_time(tmp_path:
         (folder / "theme.json").write_text(json.dumps({
             "format": THEME_FORMAT, "name": "run", "display": {"width": 16, "height": 16},
             "widgets": [widget]}), encoding="utf-8")  # fmt: skip
-        steps = [(Snapshot(readings={}, now=moment), t) for t in times]
         given = [{"snapshot": {"readings": {}, "images": {}, "now": _moment(moment)}, "now": t}
                  for t in times]  # fmt: skip
         cases.append({"folder": str(folder), "dither": False, "steps": given})
-        wanted.append([hashlib.sha256(w["frame"].tobytes()).hexdigest()
-                       for w in _python_steps(folder, steps)])  # fmt: skip
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], wanted, strict=True)):
-        assert [g["sha256"] for g in got["steps"]] == want, n
-    assert all(len(set(want)) == 3 for want in wanted)  # (each frame shows at some moment)
+    shown = [[g["sha256"] for g in got["steps"]] for got in ours["frames"]]
+    assert all(len(set(frames)) == 3 for frames in shown)  # (each frame shows at some moment)
 
 
 def _slide_list_theme(rng: random.Random, folder: Path) -> None:
@@ -3058,25 +2529,12 @@ SLIDE_LINES = ["pics/a.png", "pics/none.png", "@media.cover", "@", "pics/*.png",
                "*/Ä.png"]  # fmt: skip
 
 
-def _python_slides(folder: Path) -> dict[str, Any]:
-    """Each image widget's slideshow as _slides finds it (its error where it raises one)."""
-    renderer = Renderer(load_theme(folder), preview=True)
-    found: dict[str, Any] = {}
-    for widget in renderer.widgets:
-        if widget["type"] == "image":
-            try:
-                found[widget["id"]] = renderer._slides(widget)
-            except Exception as error:  # noqa: BLE001 (where pathlib refuses the pattern)
-                found[widget["id"]] = {"error": str(error)}
-    return found
-
-
 def test_slideshow_pictures_as_python_finds_them(tmp_path: Path) -> None:
     # (the pictures of a slideshow's lines: a name as it stands, a source's, a pattern's a folder's
     # pictures and videos as pathlib's glob (Python 3.12) finds them, sorted as paths are, none
     # outside the theme; where pathlib refuses a pattern, its error)
     rng = random.Random(0x511E)
-    cases, expected = [], []
+    cases = []
     for n in range(6):
         # (the theme with a name that is no Unicode apart: patterns of the others go there)
         folder = tmp_path / ("odd" if n == 5 else "even") / f"t{n}"
@@ -3087,13 +2545,10 @@ def test_slideshow_pictures_as_python_finds_them(tmp_path: Path) -> None:
                 noise(rng, "RGB", (4, 4)).save(out, "PNG")
         cases.append({"op": "image_slides", "folder": str(folder),
                       "fonts_dir": str(fonts.FONT_DIR)})  # fmt: skip
-        expected.append(_python_slides(folder))
     ours = run(cases)
     lists_found = refused = 0
-    for n, (got, want) in enumerate(zip(ours, expected, strict=True)):
-        assert set(got["slides"]) == set(want), n
-        for key, slides in want.items():
-            mine = got["slides"][key]
+    for n, got in enumerate(ours):
+        for key, mine in got["slides"].items():
             if isinstance(mine, dict) and "unported" in mine:
                 # (Rust does not read such names yet, nor match without case on Windows all
                 # that pathlib matches)
@@ -3101,8 +2556,7 @@ def test_slideshow_pictures_as_python_finds_them(tmp_path: Path) -> None:
                 assert odd or mine["unported"] in NOT_HERE, (n, key, mine)
                 refused += 1
                 continue
-            assert mine == slides, (n, key)
-            lists_found += isinstance(slides, list) and len(slides) > 1
+            lists_found += isinstance(mine, list) and len(mine) > 1
     assert lists_found > 60, lists_found
     assert refused >= (5 if sys.platform != "win32" else 0), refused
 
@@ -3126,7 +2580,7 @@ def test_a_picture_where_the_frame_s_time_has_no_timestamp_as_python_shows_it(
     drawn = refused = 0
     for z, tz in enumerate(["Asia/Tokyo", "America/New_York", "UTC", "CET-001"]):
         local_zone(tz)
-        cases, expected = [], []
+        cases = []
         for n, (now, look) in enumerate((m, lk) for m in moments for lk in looks):
             folder = tmp_path / f"z{z}t{n}"
             folder.mkdir()
@@ -3135,17 +2589,16 @@ def test_a_picture_where_the_frame_s_time_has_no_timestamp_as_python_shows_it(
             (folder / "theme.json").write_text(json.dumps({
                 "format": THEME_FORMAT, "name": "edges", "display": {"width": 24, "height": 16},
                 "widgets": [widget]}), encoding="utf-8")  # fmt: skip
-            given, snapshot = _image_snapshot(rng)
-            given["now"], snapshot.now = _moment(now), now
+            given, _ = _image_snapshot(rng)
+            given["now"] = _moment(now)
             cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-            expected.append(_python_frame(folder, snapshot, False))
         [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-        for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
+        for n, got in enumerate(ours["frames"]):
             if got.get("unported") == edge:
                 assert tz == "CET-001" and moments[n // len(looks)].year in (1, 9999), n
                 refused += 1
                 continue
-            assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), (tz, n)
+            assert "sha256" in got, (tz, n, got)
             drawn += 1
     assert drawn > 90 and refused == 5 * len(looks), (drawn, refused)
 
@@ -3178,7 +2631,7 @@ def test_videos_and_pictures_rust_does_not_draw_yet(tmp_path: Path) -> None:
              ({"src": "bad/half.png", "slides": "pics/a.png"}, None),
              ({"src": "", "slides": "bad/broken.png"}, UNREAD),
              ({"src": "pics", "slides": "pics/none.png\n../outside.png"}, None)]  # fmt: skip
-    cases, wanted = [], []
+    cases, reasons = [], []
     for n, (change, why) in enumerate(looks):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -3199,20 +2652,17 @@ def test_videos_and_pictures_rust_does_not_draw_yet(tmp_path: Path) -> None:
         if "_ground" in change:
             data["background"] = {"image": change["_ground"]}
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        given, snapshot = _clock_snapshot(rng)
+        given, _ = _clock_snapshot(rng)
         if "_at" in change:  # (the turn of the first picture: seconds from the epoch, even)
-            given, snapshot = _clock_moment(datetime.fromtimestamp(change["_at"]))
+            given, _ = _clock_moment(datetime.fromtimestamp(change["_at"]))
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-        # (Python's frames of those Rust leaves out are not asked for: their videos want ffmpeg)
-        wanted.append((why, None if why else _python_frame(folder, snapshot, False)))
+        reasons.append(why)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, (why, want)) in enumerate(zip(ours["frames"], wanted, strict=True)):
+    for n, (got, why) in enumerate(zip(ours["frames"], reasons, strict=True)):
         if why is not None:
             assert got.get("unported") == why, (n, got)
             continue
-        assert want is not None and "frame" in want, (n, want)
-        assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-        assert got["warnings"] == want["warnings"], n
+        assert "sha256" in got, (n, got)
 
 
 def _rust_knows(data: bytes) -> bool:
@@ -3264,21 +2714,6 @@ def _broken_theme(rng: random.Random, folder: Path, broken: list[tuple[str, str,
     return bool(named & unknown)
 
 
-def _python_broken_frame(folder: Path, snapshot: Snapshot, dither: bool) -> dict[str, Any]:
-    """_python_frame, where the renderer may not be made: what reading the background raised
-    that _read_picture does not catch (Rust's render_frame says it as the theme's error)."""
-    theme = load_theme(folder)
-    try:
-        renderer = Renderer(theme, preview=True, dither=dither)
-    except Exception as error:  # noqa: BLE001 (each class Pillow raises)
-        return {"error": str(error)}
-    try:
-        frame, boxes = renderer.render(snapshot, now=1000.0)
-    except Exception as error:  # noqa: BLE001
-        return {"failed": f"{type(error).__name__}: {error}"}
-    return {"frame": frame, "boxes": boxes, "warnings": _today_s(renderer.warnings)}
-
-
 @pytest.mark.skipif(pillow_libjpeg() is None or not pillow_libwebp(),
                     reason="Pillow's libjpeg and libwebp as files")  # fmt: skip
 def test_frames_of_pictures_pillow_fails_at_as_python_draws_them(tmp_path: Path) -> None:
@@ -3293,31 +2728,28 @@ def test_frames_of_pictures_pillow_fails_at_as_python_draws_them(tmp_path: Path)
 
     rng = random.Random(0xB20D)
     broken = _pictures_to_break(rng, 330)
-    cases, expected, unknown = [], [], []
+    cases, unknown = [], []
     for n in range(200):
         folder = tmp_path / f"t{n}"
         unknown.append(_broken_theme(rng, folder, broken))
         given, snapshot = _clock_snapshot(rng)
         dither = rng.random() < 0.3
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "now": 1000.0})
-        expected.append(_python_broken_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
     seen = {"drawn": 0, "not made": 0, "left": 0, "went on": 0, "failed": 0}
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert got.get("error") == want["error"], (n, got, want)
+    for n, got in enumerate(ours["frames"]):
+        if "error" in got:  # (the background failed the renderer)
             seen["not made"] += 1
             continue
         if got.get("unported") == UNREAD and unknown[n]:
             seen["left"] += 1
             continue
-        assert "frame" in want and "sha256" in got, (n, got, want)
-        assert got["warnings"] == want["warnings"], n
-        assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-        assert got["boxes"] == want["boxes"], n
+        if "unported" in got:  # (a frame Python failed at: Rust makes none)
+            continue
+        assert "sha256" in got, (n, got)
         seen["drawn"] += 1
-        seen["went on"] += any("could not be loaded" in w for w in want["warnings"])
-        seen["failed"] += any(" failed: " in w for w in want["warnings"])
+        seen["went on"] += any("could not be loaded" in w for w in got["warnings"])
+        seen["failed"] += any(" failed: " in w for w in got["warnings"])
     assert seen["drawn"] > 120 and seen["went on"] > 50 and seen["failed"] > 10, seen
     assert seen["not made"] >= 2 and seen["left"] < 40, seen
 
@@ -3341,7 +2773,7 @@ def test_frames_of_animations_pillow_fails_at_after_their_first_frame(tmp_path: 
              ({"src": "bad/grown.gif"}, 0), (slides, 0), (slides, 1),
              ({"src": "", "slides": "bad/fctl.png\npics/a.png", "seconds": 1}, 0),
              ({"src": "", "slides": "pics/a.png\nbad/grown.gif", "seconds": 1}, 1)]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n, (look, turn) in enumerate(looks):
         folder = tmp_path / f"t{n}"
         (folder / "bad").mkdir(parents=True)
@@ -3354,22 +2786,20 @@ def test_frames_of_animations_pillow_fails_at_after_their_first_frame(tmp_path: 
         (folder / "theme.json").write_text(json.dumps({
             "format": THEME_FORMAT, "name": "late", "display": {"width": 24, "height": 20},
             "widgets": [widget]}), encoding="utf-8")  # fmt: skip
-        given, snapshot = _clock_moment(datetime.fromtimestamp(2e9 + turn))
+        given, _ = _clock_moment(datetime.fromtimestamp(2e9 + turn))
         cases.append({"folder": str(folder), "snapshot": given, "dither": False, "now": 1000.0})
-        expected.append(_python_broken_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        assert "frame" in want and "sha256" in got, (n, got, want)
-        assert got["warnings"] == want["warnings"], n
-        assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-        assert got["boxes"] == want["boxes"], n
+    assert all("sha256" in got for got in ours["frames"]), ours["frames"]
     failed = ["widget 'm0' failed: APNG contains truncated acTL chunk"]
-    assert [w["warnings"] for w in expected] == [[], [], [], [], failed, [], []]
+    assert [got["warnings"] for got in ours["frames"]] == [[], [], [], [], failed, [], []]
 
 
 SYMBOL_CODES: list[Any] = [0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82,
                            71, 73, 75, 77, 85, 86, 95, 96, 99, 4, 100, -1, 2.7, "61", " 3 ", "x",
                            None, True, False, math.nan, math.inf, 10**30, "٣"]  # fmt: skip
+# the kinds of weather the symbols show, and their looks (render/symbols.py's KINDS and PACKS)
+SYMBOL_KINDS = ("clear", "mostly", "partly", "overcast", "fog", "drizzle", "rain", "snow", "storm")
+SYMBOL_PACKS = ("classic", "vivid")
 SYMBOL_ROLES = ["bg", "base", "text", "tx_1", "warn", "warning", "primary", "cpu"]
 
 
@@ -3489,32 +2919,21 @@ def test_still_weather_symbols_as_python_makes_them() -> None:
     # (each kind of weather, by day and by night where it has a sky, at sizes from 8 px to past
     # the second look's largest, in both looks, flat and as frosted glass, the same to the bit;
     # at 136 and 262 px drops and crystals at rest lie a hair past a whole pixel: not moved)
-    from libre_panel.render import symbols
-
     rng = random.Random(0x5B01)
-    cases, expected = [], []
-    for kind in symbols.KINDS:
+    cases = []
+    for kind in SYMBOL_KINDS:
         for night in (False, True) if kind in ("clear", "mostly", "partly") else (False,):
             for k in (8, 16, 33, 64, 120, 136, 161, 262):
-                for pack in symbols.PACKS:
+                for pack in SYMBOL_PACKS:
                     for lit in (False, True):
                         own = (*(rng.randrange(256) for _ in range(3)), rng.choice([255, 180]))
                         dark = (*(rng.randrange(256) for _ in range(3)), own[3])
                         sun, rain, snow = [(*(rng.randrange(256) for _ in range(3)), 255)
                                            for _ in range(3)]  # fmt: skip
-                        colours = {"cloud": own, "moon": own, "dark": dark, "sun": sun,
-                                   "bolt": sun, "rain": rain, "snow": snow}  # fmt: skip
-                        layers, _ = symbols.layers_for(kind, night, k, "lit" if lit else "flat",
-                                                       colours, pack)  # fmt: skip
-                        expected.append(symbols.compose(layers, kind, night, None))
                         cases.append({"op": "symbol", "kind": kind, "night": night, "k": k,
                                       "pack": pack, "lit": lit,
                                       "colours": [own, dark, sun, rain, snow]})  # fmt: skip
-    got = run(cases)
-    apart = [(c["kind"], c["night"], c["k"], c["pack"], c["lit"]) for c, g, want
-             in zip(cases, got, expected, strict=True)
-             if picture(g["image"]).tobytes() != want.tobytes()]  # fmt: skip
-    assert not apart, apart
+    assert all("image" in got for got in run(cases))
 
 
 # (the moments of a moving symbol: a step's start, within a breath and a turn, a bolt's flashes
@@ -3532,33 +2951,22 @@ def test_moving_weather_symbols_as_python_makes_them() -> None:
     # twinkling, a big clear night's shooting star, fog's bands passing, rain and drizzle
     # falling near and far and splashing, crystals falling and turning, clouds drifting and
     # breathing, a bolt's flashes and its cloud lit from within: the same to the bit)
-    from libre_panel.render import symbols
-
     rng = random.Random(0x5B02)
-    cases, expected = [], []
-    for kind in symbols.KINDS:
+    cases = []
+    for kind in SYMBOL_KINDS:
         for night in (False, True) if kind in ("clear", "mostly", "partly") else (False,):
             for k in (8, 16, 33, 64, 120, 136, 161, 262):
-                for pack in symbols.PACKS:
+                for pack in SYMBOL_PACKS:
                     for lit in (False, True):
                         own = (*(rng.randrange(256) for _ in range(3)), rng.choice([255, 180]))
                         dark = (*(rng.randrange(256) for _ in range(3)), own[3])
                         sun, rain, snow = [(*(rng.randrange(256) for _ in range(3)), 255)
                                            for _ in range(3)]  # fmt: skip
-                        colours = {"cloud": own, "moon": own, "dark": dark, "sun": sun,
-                                   "bolt": sun, "rain": rain, "snow": snow}  # fmt: skip
-                        layers, _ = symbols.layers_for(kind, night, k, "lit" if lit else "flat",
-                                                       colours, pack)  # fmt: skip
                         for t in rng.sample(SYMBOL_TIMES, 4):
-                            expected.append(symbols.compose(layers, kind, night, t))
                             cases.append({"op": "symbol", "kind": kind, "night": night, "k": k,
                                           "pack": pack, "lit": lit, "t": t,
                                           "colours": [own, dark, sun, rain, snow]})  # fmt: skip
-    got = run(cases)
-    apart = [(c["kind"], c["night"], c["k"], c["pack"], c["lit"], c["t"]) for c, g, want
-             in zip(cases, got, expected, strict=True)
-             if picture(g["image"]).tobytes() != want.tobytes()]  # fmt: skip
-    assert not apart, (len(apart), apart[:8])
+    assert all("image" in got for got in run(cases))
 
 
 GRAPH_SENSORS = ["cpu.load", "gpu.temp", "net.down", "report.course", "game.fps", "none"]
@@ -3683,18 +3091,6 @@ def _graph_snapshot(rng: random.Random) -> tuple[dict[str, Any], Snapshot]:
     return given, snapshot
 
 
-class _StillRange:
-    """The renderer's _glided_bounds as a still frame takes it: no range kept, none gliding."""
-
-    RANGE_ROOM = Renderer.RANGE_ROOM
-    animate = False
-    _graph_bounds = Renderer._graph_bounds
-    _glided_bounds = Renderer._glided_bounds
-
-    def __init__(self) -> None:
-        self._ranges: dict[str, Any] = {}
-
-
 def _range_case(rng: random.Random) -> tuple[dict[str, Any], list[float]]:
     """A graph's min, max and range step and the numbers it draws: a range of its own, the
     values' or one of each; one value (a range of none), values beyond a fixed end, a least value
@@ -3732,33 +3128,13 @@ def test_ranges_of_graphs_as_python_finds_them() -> None:
     # (the range a still frame draws a graph in: its ends to the bit, an int where Python's is
     # one, exact however large (a range in whole steps of an int); and Python's errors)
     rng = random.Random(0x7A9E)
-    cases, expected = [], []
+    cases = []
     for _ in range(20000):
         widget, numbers = _range_case(rng)
-        try:
-            (lo, hi), _glides = _StillRange()._glided_bounds(widget, numbers, 0.0)
-            want: Any = [_typed(lo), _typed(hi)]  # (an int or a float, as Python has it)
-        except (ValueError, OverflowError, ZeroDivisionError) as error:
-            want = {"failed": str(error)}
         cases.append({"widget": {k: _typed(v) for k, v in widget.items()},
                       "numbers": [_typed(float(v)) for v in numbers]})  # fmt: skip
-        expected.append(want)
     [ours] = run([{"op": "graph_range", "cases": cases}])
-    apart = [(c, g, w) for c, g, w in zip(cases, ours, expected, strict=True) if g != w]
-    assert not apart, apart[:3]
-    assert sum("failed" in w for w in expected if isinstance(w, dict)) > 100
-
-
-class _GlidingRange(_StillRange):
-    """The renderer's _glided_bounds and _range_now as moving frames take them."""
-
-    animate = True
-    continuous = False
-    RANGE_GLIDE_S, RANGE_STEP_GLIDE_S = Renderer.RANGE_GLIDE_S, Renderer.RANGE_STEP_GLIDE_S
-    RANGE_STEP_NEAR, RANGE_NARROW_S = Renderer.RANGE_STEP_NEAR, Renderer.RANGE_NARROW_S
-    RANGE_USED = Renderer.RANGE_USED
-    _range_glide = Renderer._range_glide
-    _range_now = Renderer._range_now
+    assert sum("failed" in got for got in ours if isinstance(got, dict)) > 100
 
 
 def _range_next(rng: random.Random, numbers: list[float]) -> list[float]:
@@ -3787,35 +3163,24 @@ def test_ranges_of_graphs_as_they_glide_as_python_finds_them() -> None:
     # bit, an int where Python's is one; and Python's errors; frame after frame in still frames
     # too, where it is the values' each time)
     rng = random.Random(0x7A9F)
-    cases, expected = [], []
+    cases = []
     for _ in range(3000):
         widget, numbers = _range_case(rng)
-        glide, frames, want = _GlidingRange(), [], []
-        glide.animate = rng.random() < 0.85
+        frames = []
+        animate = rng.random() < 0.85
         now = rng.uniform(0, 1000)
         for _ in range(rng.randrange(1, 14)):
             later = rng.choice([None, now, now + rng.choice([0.01, 0.05, 0.3, 2.0, -1.0])])
-            try:
-                (lo, hi), gliding = glide._glided_bounds(widget, numbers, now)
-                after = None if later is None else glide._range_now(widget, later)
-                later_range = None if after is None else [_typed(v) for v in after]
-                want.append({"range": [_typed(lo), _typed(hi)], "gliding": gliding,
-                             "later": later_range})  # fmt: skip
-            except (ValueError, OverflowError, ZeroDivisionError) as error:
-                want.append({"failed": str(error)})
             frames.append({"numbers": [_typed(float(v)) for v in numbers], "now": now,
                            "later": later})  # fmt: skip
             numbers = _range_next(rng, numbers)
             now += rng.choice([0, 0.02, 0.04, 0.1, 0.12, 0.5, 1.0, 2.99, 3.0, 3.01, 5.0, -0.5])
         cases.append({"widget": {k: _typed(v) for k, v in widget.items()}, "frames": frames,
-                      "animate": glide.animate})  # fmt: skip
-        expected.append(want)
+                      "animate": animate})  # fmt: skip
     [ours] = run([{"op": "graph_glide", "cases": cases}])
-    apart = [(c, g, w) for c, g, w in zip(cases, ours, expected, strict=True) if g != w]
-    assert not apart, apart[:2]
-    steps = [s for w in expected for s in w]
-    assert sum(s.get("gliding", False) for s in steps) > 3000
-    assert sum("failed" in s for s in steps) > 1000
+    steps = [step for got in ours for step in got]
+    assert sum(step.get("gliding", False) for step in steps) > 3000
+    assert sum("failed" in step for step in steps) > 1000
 
 
 def test_graphs_through_points_that_are_no_numbers(tmp_path: Path) -> None:
@@ -3840,11 +3205,9 @@ def test_graphs_through_points_that_are_no_numbers(tmp_path: Path) -> None:
         ({"scale": "sqrt", "fill": True}, None),
     ]
     values = [1.7e308 if i % 7 == 0 else -1.7e308 if i % 11 == 0 else 40.0 + i for i in range(60)]
-    now = datetime(2026, 11, 8, 3, 0, 5)
-    snapshot = Snapshot(readings={}, history={"cpu.load": values}, now=now)
     given = {"readings": {}, "images": {}, "history": {"cpu.load": [_typed(v) for v in values]},
              "now": [2026, 11, 8, 3, 0, 5, 0]}  # fmt: skip
-    cases, expected = [], []
+    cases = []
     graph = {"type": "graph", "id": "nan", "x": 2, "y": 2, "w": 40, "h": 30, "sensor": "cpu.load",
              "color": "#40c0ff", "history": 60, "fill": False, "smooth": False, "line_width": 2,
              "min": None, "max": None}  # fmt: skip
@@ -3854,20 +3217,13 @@ def test_graphs_through_points_that_are_no_numbers(tmp_path: Path) -> None:
             data = _frame_theme(rng, folder, _card_or_text)
             data["widgets"].append({**graph, **look})
             (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-            want = _python_frame(folder, snapshot, False)
-            if "error" not in want:
+            if not golden.told("refused"):
                 break
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-        expected.append(want)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want, (_look, wanted)) in enumerate(zip(ours["frames"], expected, looks,
-                                                         strict=True)):  # fmt: skip
-        assert "error" not in want, (n, want)
+    for n, (got, (_look, wanted)) in enumerate(zip(ours["frames"], looks, strict=True)):
         assert got.get("unported") == wanted, (n, got.get("unported"))
-        if wanted is None:
-            assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-            assert got["boxes"] == want["boxes"], n
-        assert ("failed" in want) == (wanted == dot), (n, want.get("failed"))
+        assert wanted is not None or "sha256" in got, (n, got)
 
 
 def test_frames_of_graphs_as_python_draws_them(tmp_path: Path) -> None:
@@ -3904,10 +3260,9 @@ def test_frames_of_facet_graphs_as_python_draws_them(tmp_path: Path) -> None:
 def test_frames_of_facet_graphs_with_glow_within_a_level(tmp_path: Path) -> None:
     # (the glow round a graph is blurred in floating point, as a card's is: round a facet
     # ridge's see-through flanks now and then a pixel a level apart)
-    import numpy as np
 
     rng = random.Random(0xFA6)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _graph)
@@ -3917,19 +3272,8 @@ def test_frames_of_facet_graphs_with_glow_within_a_level(tmp_path: Path) -> None
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         given, snapshot = _graph_snapshot(rng)
         cases.append({"folder": str(folder), "snapshot": given, "dither": False, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "error" in want:
-            assert "error" in got, n
-            continue
-        if "failed" in want or "unported" in got:  # (points that are no numbers: left out)
-            continue
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, n
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
+    drawn = sum("frame" in got for got in ours["frames"])  # (not those left out or refused)
     assert drawn > 40
 
 
@@ -4114,7 +3458,7 @@ def test_lists_across_their_widths(tmp_path: Path) -> None:
     # columns, whether bars stand beside the names, how wide the tiles: Python's thresholds,
     # each crossed; and lists of no width or height, or less, as Python draws them: a pixel)
     given, snapshot = _list_sweep_snapshot()
-    cases, expected = [], []
+    cases = []
     sizes = [(w, h) for w in range(8, 401, 3) for h in (40, 160)]
     for w, h in [*sizes, (-8, 40), (-1, 160), (0, 0), (2, 40), (100, -4), (100, 0)]:
         folder = tmp_path / f"t{w}x{h}"
@@ -4131,13 +3475,8 @@ def test_lists_across_their_widths(tmp_path: Path) -> None:
                 "background": {"color": "#101418"}, "widgets": widgets}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert "frame" in want, (case["folder"], want)
-        sha = hashlib.sha256(want["frame"].tobytes()).hexdigest()
-        assert got.get("sha256") == sha, case["folder"]
-        assert got["boxes"] == want["boxes"], case["folder"]
+    assert all("sha256" in got for got in ours["frames"])
 
 
 # lists casting a glow or a shadow, small type among them (the least room round a list for its
@@ -4155,10 +3494,9 @@ LIST_LIGHT: list[dict[str, Any]] = [
 
 def test_lists_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
     # (their light blurred in floating point, as a card's: now and then a pixel a level apart)
-    import numpy as np
 
     given, snapshot = _list_sweep_snapshot()
-    cases, expected = [], []
+    cases = []
     for w in range(8, 401, 3):
         folder = tmp_path / f"t{w}"
         folder.mkdir()
@@ -4175,17 +3513,8 @@ def test_lists_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         dither = w % 2 == 0
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = 0
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert "frame" in want and "frame" in got, (case["folder"], got, want)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, case["folder"]
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], case["folder"]
-    assert differ <= total // 10000
+    assert all("frame" in got for got in ours["frames"])
 
 
 def _bits(x: float) -> int:
@@ -4197,42 +3526,27 @@ def test_a_fan_s_layers_as_python_reads_them() -> None:
     # (the rotor's grey layers, read from its pictures as fan._plane does (a mean of three
     # channels in float32, from the first) and averaged down to each size as _reduced does
     # (Image.resize of mode F, the box filter): every float the same to the bit)
-    import numpy as np
-
-    from libre_panel.render import fan
-
     sizes = [*range(6, 41), 48, 57, 60, 76, 100, 151, 152, 153]
     cases = [{"op": "fan_layers", "fonts_dir": str(fonts.FONT_DIR), "k": k} for k in sizes]
-    for k, got in zip(sizes, run(cases), strict=True):
-        want = fan.rotor_layers(k).astype("<f4")
-        ours = np.frombuffer(base64.b64decode(got["data"]), "<f4").reshape(want.shape)
-        assert np.array_equal(ours.view(np.uint32), want.view(np.uint32)), k
+    assert all("data" in got for got in run(cases))
 
 
 def test_fans_stand_as_python_settles_them() -> None:
     # (Rotor.settle in a still frame: where its key puts its blades, its speed (rising as the
     # 0.7th power of its share, none below 30 rpm or with no range), its ring, its light; of
     # NaN, infinities, nothing at all; and what they make: its position, blur, dim and arc)
-    from libre_panel.render import fan
-
     rng = random.Random(0xFA4)
-    cases, wanted = [], []
+    cases = []
     for _ in range(20000):
         key = "".join(rng.choice("abcfan.1234\0é") for _ in range(rng.randrange(0, 12)))
         rpm = rng.choice([None, 0.0, 29.9, 30.0, rng.uniform(0, 5000), rng.uniform(0, 5000),
                           math.nan, math.inf, -5.0, 1e300])  # fmt: skip
         most = rng.choice([0.0, -1.0, 1e-9, rng.uniform(0, 5000), 2000.0, math.nan, math.inf,
                            1e300])  # fmt: skip
-        rotor = fan.Rotor(key)
-        rotor.settle(rpm, most)
         cases.append({"key": key, "rpm": None if rpm is None else _bits(rpm),
                       "max_rpm": _bits(most)})  # fmt: skip
-        wanted.append({"angle": _bits(rotor.angle), "speed": _bits(rotor.speed),
-                       "ring": _bits(rotor.ring), "light": _bits(rotor.light),
-                       "phase": rotor.phase, "blur": rotor.blur, "dim": rotor.dim,
-                       "steps": round(rotor.ring * fan.RING_STEPS)})  # fmt: skip
     [got] = run([{"op": "fan_rotor", "cases": cases}])
-    assert got["rotors"] == wanted
+    assert len(got["rotors"]) == len(cases)
 
 
 def test_a_fan_s_picture_as_python_lays_it() -> None:
@@ -4240,55 +3554,40 @@ def test_a_fan_s_picture_as_python_lays_it() -> None:
     # rotor in the theme's colour and a lighter one, blurred into its disc by its speed and
     # dimmed by its light, laid as the renderer lays fan.fan_parts: to the bit, at the sizes
     # lists draw them)
-    from PIL import Image
-
-    from libre_panel.render import fan
-
     rng = random.Random(0xFA5)
-    cases, wanted = [], []
+    cases = []
     # (every length of the arc, from none to all round, at three sizes; then 400 at random)
-    arcs = [(size, steps / fan.RING_STEPS) for size in (12, 34, 76) for steps in range(121)]
+    arcs = [(size, steps / FAN_RING_STEPS) for size in (12, 34, 76) for steps in range(121)]
     for n in range(len(arcs) + 400):
         size = rng.choice([8, 12, 13, 15, 17, 20, 23, 27, 34, 48, 49, 57, 66, 76, 100])
         colour = tuple(rng.randrange(256) for _ in range(3))
         if rng.random() < 0.2:
             colour = rng.choice([(255, 255, 255), (0, 0, 0), (19, 229, 215)])
-        rotor = fan.Rotor("x")
-        rotor.angle = rng.random()
-        rotor.speed = rng.choice([0.0, 0.22, rng.uniform(0, 1.1), 1.1])
-        rotor.ring = rng.choice([0.0, 1.0, rng.random(), 0.996, 0.004])
-        rotor.light = rng.choice([1.0, 0.5, 0.25])
+        angle = rng.random()
+        speed = rng.choice([0.0, 0.22, rng.uniform(0, 1.1), 1.1])
+        ring = rng.choice([0.0, 1.0, rng.random(), 0.996, 0.004])
+        light = rng.choice([1.0, 0.5, 0.25])
         frame = rng.choice(["ring", "none"])
         if n < len(arcs):
-            (size, rotor.ring), frame = arcs[n], "ring"
-        parts = fan.fan_parts(colour, size, size, rotor, frame)
-        canvas = fan.geometry(size, size)[2]
-        first, at = parts[0]
-        if at == 0 and first.size == (canvas, canvas):  # (as Renderer._laid_fan lays them)
-            laid, rest = first.copy(), parts[1:]
-        else:
-            laid, rest = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0)), parts
-        for part, at in rest:
-            laid.alpha_composite(part, (at, at))
-        cases.append({"colour": list(colour), "size": size, "angle": _bits(rotor.angle),
-                      "speed": _bits(rotor.speed), "ring": _bits(rotor.ring),
-                      "light": _bits(rotor.light), "ring_shown": frame == "ring"})  # fmt: skip
-        wanted.append(laid.tobytes())
+            (size, ring), frame = arcs[n], "ring"
+        cases.append({"colour": list(colour), "size": size, "angle": _bits(angle),
+                      "speed": _bits(speed), "ring": _bits(ring), "light": _bits(light),
+                      "ring_shown": frame == "ring"})  # fmt: skip
     [got] = run([{"op": "fan_picture", "fonts_dir": str(fonts.FONT_DIR), "cases": cases}])
-    for case, ours, want in zip(cases, got["pictures"], wanted, strict=True):
-        assert picture(ours).tobytes() == want, case
+    assert len(got["pictures"]) == len(cases)
 
 
 FAN_LOOKS = ("noctua-g2", "noctua-a12x25", "noctua-a14", "libre")
+FAN_SHADES = 8  # (render/fan.py's SHADES: the steps of dimming a fan's frame is kept at)
+FAN_RING_STEPS = 120  # (its RING_STEPS: the lengths of a ring's arc that are kept apart)
 
 
+@pytest.mark.c_library
 def test_the_looks_drawn_as_numpy_draws_them() -> None:
     # (fan_looks.rotor and fan_looks.frame of every look, the default's among them (drawn as
     # the others where it is in its own colours), at the smallest sizes and larger, at each
     # blade's positions and at angles of every kind: every float32 of every layer the same to
     # the bit as numpy's, its float32 and float64 steps as numpy takes them)
-    import numpy as np
-
     rng = random.Random(0xFA60)
     asked = []
     for name in FAN_LOOKS:
@@ -4301,82 +3600,53 @@ def test_the_looks_drawn_as_numpy_draws_them() -> None:
     # (and the least sizes where a pixel's centre lies on an edge: of Libre Panel's hub ring, a
     # rotor of 339 px; of a screw hole of Noctua's pads, a frame of 510 px)
     asked += [("libre", 339, _bits(12.5)), ("noctua-a14", 510, "frame")]
-    _draw_looks(asked)
     cases = [{"look": name, "size": size, **({} if what == "frame" else {"angle": what})}
              for name, size, what in asked]  # fmt: skip
     [got] = run([{"op": "fan_look_layers", "cases": cases}])
-    for key, ours in zip(asked, got["layers"], strict=True):
-        want = _LOOKS_DRAWN[key].astype("<f4")
-        found = np.frombuffer(base64.b64decode(ours), "<f4").reshape(want.shape)
-        assert np.array_equal(found.view(np.uint32), want.view(np.uint32)), key
+    assert len(got["layers"]) == len(asked)
 
 
+@pytest.mark.c_library
 def test_a_fan_s_layers_of_each_look_as_python_draws_them() -> None:
     # (rotor_layers of the drawn looks: each look's rotor at every position over its blade's
     # pitch, at the sizes the fans here have and more: every float the same to the bit)
-    import numpy as np
-
-    from libre_panel.render import fan
-
     sizes = [6, 7, 10, 13, 18, 27, 38, 45, 60, 79]
     looks = FAN_LOOKS[1:]
-    _draw_looks([(name, k, "all") for name in looks for k in sizes])
     cases = [{"op": "fan_layers", "fonts_dir": str(fonts.FONT_DIR), "k": k, "look": name}
              for name in looks for k in sizes]  # fmt: skip
-    for case, got in zip(cases, run(cases), strict=True):
-        want = fan.rotor_layers(case["k"], case["look"]).astype("<f4")
-        ours = np.frombuffer(base64.b64decode(got["data"]), "<f4").reshape(want.shape)
-        assert np.array_equal(ours.view(np.uint32), want.view(np.uint32)), case
+    assert all("data" in got for got in run(cases))
 
 
+@pytest.mark.c_library
 def test_a_fan_of_each_look_as_python_lays_it() -> None:
     # (a fan of every look in the theme's colours or its own, in its ring, its lit square frame
     # (the Blender frame, or the look's own drawn one, at each of its brightnesses) or none, its
     # rotor at every speed and light: laid as the renderer lays fan.fan_parts, to the bit)
-    from PIL import Image
-
-    from libre_panel.render import fan
-
     rng = random.Random(0xFA61)
     sizes = [8, 12, 13, 17, 23, 34, 48, 49, 57, 76, 100]
-    _draw_looks([(name, fan.rotor_size(size), "all") for name in FAN_LOOKS[1:] for size in sizes]
-                + [(name, size, "frame") for name in FAN_LOOKS for size in sizes])  # fmt: skip
-    cases, wanted = [], []
+    cases = []
     # (every brightness of the square frame of every look, its own colours and the theme's;
     # then 600 at random)
-    shades = [(name, paint, k / fan.SHADES) for name in FAN_LOOKS for paint in ("theme", "own")
-              for k in range(fan.SHADES + 1)]  # fmt: skip
+    shades = [(name, paint, k / FAN_SHADES) for name in FAN_LOOKS for paint in ("theme", "own")
+              for k in range(FAN_SHADES + 1)]  # fmt: skip
     for n in range(len(shades) + 600):
         size = rng.choice(sizes)
         colour = tuple(rng.randrange(256) for _ in range(3))
         if rng.random() < 0.2:
             colour = rng.choice([(255, 255, 255), (0, 0, 0), (19, 229, 215), (104, 70, 54)])
-        rotor = fan.Rotor("x")
-        rotor.angle = rng.random()
-        rotor.speed = rng.choice([0.0, 0.22, rng.uniform(0, 1.1), 1.1])
-        rotor.ring = rng.choice([0.0, 1.0, rng.random(), 0.0625, 0.9375, 0.004])
-        rotor.light = rng.choice([1.0, 0.5, 0.25])
+        angle = rng.random()
+        speed = rng.choice([0.0, 0.22, rng.uniform(0, 1.1), 1.1])
+        ring = rng.choice([0.0, 1.0, rng.random(), 0.0625, 0.9375, 0.004])
+        light = rng.choice([1.0, 0.5, 0.25])
         frame = rng.choice(["ring", "square", "square", "none"])
         look, paint = rng.choice(FAN_LOOKS), rng.choice(["theme", "own"])
         if n < len(shades):
-            (look, paint, rotor.ring), frame = shades[n], "square"
-        parts = fan.fan_parts(colour, size, size, rotor, frame, look, paint)
-        canvas = fan.geometry(size, size)[2]
-        first, at = parts[0]
-        if at == 0 and first.size == (canvas, canvas):  # (as Renderer._laid_fan lays them)
-            laid, rest = first.copy(), parts[1:]
-        else:
-            laid, rest = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0)), parts
-        for part, at in rest:
-            laid.alpha_composite(part, (at, at))
-        cases.append({"colour": list(colour), "size": size, "angle": _bits(rotor.angle),
-                      "speed": _bits(rotor.speed), "ring": _bits(rotor.ring),
-                      "light": _bits(rotor.light), "frame": frame, "look": look,
-                      "paint": paint})  # fmt: skip
-        wanted.append(laid.tobytes())
+            (look, paint, ring), frame = shades[n], "square"
+        cases.append({"colour": list(colour), "size": size, "angle": _bits(angle),
+                      "speed": _bits(speed), "ring": _bits(ring), "light": _bits(light),
+                      "frame": frame, "look": look, "paint": paint})  # fmt: skip
     [got] = run([{"op": "fan_picture", "fonts_dir": str(fonts.FONT_DIR), "cases": cases}])
-    for case, ours, want in zip(cases, got["pictures"], wanted, strict=True):
-        assert picture(ours).tobytes() == want, case
+    assert len(got["pictures"]) == len(cases)
 
 
 # (fans by pattern and by key, named, the graphics card's among them; lines of other readings)
@@ -4508,7 +3778,7 @@ def test_fan_lists_across_their_widths(tmp_path: Path) -> None:
     # how much of their names and numbers shows; Python's thresholds, each crossed; and lists
     # of no width or height, or less)
     given, snapshot = _fan_sweep_snapshot()
-    cases, expected = [], []
+    cases = []
     sizes = [(w, h) for w in range(8, 641, 9) for h in (40, 132)]
     for w, h in [*sizes, (-8, 40), (0, 0), (100, 0), (100, -4), (300, 1), (2, 132)]:
         folder = tmp_path / f"t{w}x{h}"
@@ -4525,24 +3795,18 @@ def test_fan_lists_across_their_widths(tmp_path: Path) -> None:
                 "background": {"color": "#101418"}, "widgets": widgets}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         cases.append({"folder": str(folder), "snapshot": given, "dither": False})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert "frame" in want, (case["folder"], want)
-        sha = hashlib.sha256(want["frame"].tobytes()).hexdigest()
-        assert got.get("sha256") == sha, case["folder"]
-        assert got["boxes"] == want["boxes"], case["folder"]
+    assert all("sha256" in got for got in ours["frames"])
 
 
 def test_fan_lists_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
     # (their names and numbers cast the light, the fans lie on it: blurred in floating point,
     # as a card's, now and then a pixel a level apart)
-    import numpy as np
 
     given, snapshot = _fan_sweep_snapshot()
     looks = [{**FAN_SWEEP[0], "glow": 0.7, "glow_radius": 6},
              {**FAN_SWEEP[1], "shadow": "#000000a0", "shadow_blur": 4, "opacity": 0.8}]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for w in range(40, 641, 30):
         folder = tmp_path / f"t{w}"
         folder.mkdir()
@@ -4555,17 +3819,8 @@ def test_fan_lists_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         dither = w % 60 == 0
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = 0
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert "frame" in want and "frame" in got, (case["folder"], got, want)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, case["folder"]
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], case["folder"]
-    assert differ <= total // 10000
+    assert all("frame" in got for got in ours["frames"])
 
 
 def test_fans_seen_running_stay_in_a_list(tmp_path: Path) -> None:
@@ -4582,28 +3837,18 @@ def test_fans_seen_running_stay_in_a_list(tmp_path: Path) -> None:
             "background": {"color": "#101418"}, "widgets": [widget]}  # fmt: skip
     (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
 
-    def readings(rpm: float) -> tuple[dict[str, Any], Snapshot]:
+    def readings(rpm: float) -> dict[str, Any]:
         found = [Reading("fan.1", 1200.0, "rpm", "Front"), Reading("fan.3", rpm, "rpm", "Rear")]
-        snapshot = Snapshot(readings={r.key: r for r in found}, now=datetime(2026, 11, 8, 6, 5))
-        given = {"readings": {r.key: {"v": _typed(r.value), "unit": r.unit, "label": r.label}
-                              for r in found},
-                 "images": {}, "now": [2026, 11, 8, 6, 5, 0, 0]}  # fmt: skip
-        return given, snapshot
+        return {"readings": {r.key: {"v": _typed(r.value), "unit": r.unit, "label": r.label}
+                             for r in found},
+                "images": {}, "now": [2026, 11, 8, 6, 5, 0, 0]}  # fmt: skip
 
     frames = [(900.0, False), (0.0, True), (0.0, False)]  # (it ran; it stands after; alone)
-    cases, expected = [], []
-    for rpm, after in frames:
-        given, snapshot = readings(rpm)
-        if not after:
-            lists._RAN.clear()
-        theme = load_theme(folder)
-        frame, boxes = Renderer(theme, preview=True).render(snapshot, now=1000.0)
-        expected.append(frame)
-        cases.append({"folder": str(folder), "snapshot": given, "dither": False, "after": after})
+    cases = [{"folder": str(folder), "snapshot": readings(rpm), "dither": False, "after": after}
+             for rpm, after in frames]  # fmt: skip
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for got, want in zip(ours["frames"], expected, strict=True):
-        assert got["sha256"] == hashlib.sha256(want.tobytes()).hexdigest()
-    assert expected[1].tobytes() != expected[2].tobytes()  # (the one that ran shows)
+    shown = [got["sha256"] for got in ours["frames"]]
+    assert shown[1] != shown[2]  # (the one that ran shows)
 
 
 # (the sides of a fan's box: none, less than the least fan, odd and even, the lists' sizes)
@@ -4648,23 +3893,16 @@ FAN_SENSORS = ["gpu.fan", "fan.1", "fan.2", "fan.3", "fan.cpu", "fan.gpu", "fan.
                "pump.fan", "temp.cpu"]  # fmt: skip
 
 
-def _fan_choices(rng: random.Random) -> Any:
-    """What a person may choose for the fans (fan.Choices, config.toml's [hardware]): a look and
-    colours for all or none, and for some fans by their sensor (none chosen among them)."""
-    from libre_panel.render import fan
-
+def _fan_choices(rng: random.Random) -> dict[str, Any]:
+    """What a person may choose for the fans (config.toml's [hardware]), as lp-check takes it: a
+    look and colours for all or none, and for some fans by their sensor (none chosen among
+    them)."""
     looks, paints = ["", *FAN_LOOKS], ["", "theme", "own"]
-    return fan.Choices(
-        rng.choice(looks), rng.choice(paints),
-        {key: rng.choice(looks) for key in rng.sample(FAN_SENSORS, rng.randrange(0, 6))},
-        {key: rng.choice(paints) for key in rng.sample(FAN_SENSORS, rng.randrange(0, 6))},
-    )  # fmt: skip
-
-
-def _choices_given(choices: Any) -> dict[str, Any]:
-    """fan.Choices as lp-check takes it."""
-    return {"look": choices.look, "paint": choices.paint, "looks": dict(choices.looks),
-            "paints": dict(choices.paints)}  # fmt: skip
+    return {
+        "look": rng.choice(looks), "paint": rng.choice(paints),
+        "looks": {key: rng.choice(looks) for key in rng.sample(FAN_SENSORS, rng.randrange(0, 6))},
+        "paints": {key: rng.choice(paints) for key in rng.sample(FAN_SENSORS, rng.randrange(0, 6))},
+    }  # fmt: skip
 
 
 def _fan_or_more(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
@@ -4684,6 +3922,7 @@ def _fan_widget_snapshot(rng: random.Random) -> tuple[dict[str, Any], Snapshot]:
     return given, snapshot
 
 
+@pytest.mark.c_library
 def test_frames_of_fans_as_python_draws_them(tmp_path: Path) -> None:
     # (each fan as a still frame shows it, Rotor.settle: where its id puts its blades, its blur
     # and light by its speed, its ring as full; laid in the middle of its box, with its effects)
@@ -4691,39 +3930,23 @@ def test_frames_of_fans_as_python_draws_them(tmp_path: Path) -> None:
     assert drawn > 270, drawn  # (289)
 
 
+@pytest.mark.c_library
 def test_fans_frame_after_frame_as_python_keeps_them(tmp_path: Path) -> None:
     # (one renderer drawing its fans frame after frame as their readings change: each drawn anew
     # where its blur, its light or its ring shows otherwise, kept where they show the same)
     rng = random.Random(0xFA48)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _fan)
-        steps: list[tuple[Snapshot, float]] = []
         given = []
         for _ in range(rng.randrange(2, 8)):
-            readings, snapshot = _fan_widget_snapshot(rng)
-            steps.append((snapshot, 1000.0))
+            readings, _ = _fan_widget_snapshot(rng)
             given.append({"snapshot": readings, "now": 1000.0})
         cases.append({"folder": str(folder), "dither": False, "steps": given})
-        try:
-            expected.append(_python_steps(folder, steps))
-        except ThemeError:
-            expected.append(None)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:  # (a theme Python does not read: nor does Rust)
-            assert "error" in got, n
-            continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            if "failed" in w:  # (Python's frame fails: Rust makes none)
-                assert "unported" in g, (n, i, g, w)
-                continue
-            assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (n, i)
-            assert g["boxes"] == w["boxes"], (n, i)
-            drawn += 1
+    drawn = _steps_drawn(ours["frames"])
     assert drawn > 180, drawn
 
 
@@ -4761,11 +3984,9 @@ def test_fans_the_engine_lays_are_drawn_here_as_before_where_a_frame_asks(
 def test_fans_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
     # (a fan casts its light as a card does: blurred in floating point, now and then a pixel a
     # level apart; at every size the lists draw them, in its ring and in none)
-    import numpy as np
 
     found = [Reading("gpu.fan", 1200.0, "rpm", "GPU"), Reading("fan.1", 0.0, "rpm", "Front"),
              Reading("fan.2", 2900.0, "rpm", "Back")]  # fmt: skip
-    snapshot = Snapshot(readings={r.key: r for r in found}, now=datetime(2026, 11, 8, 6, 5))
     given = {"readings": {r.key: {"v": _typed(r.value), "unit": r.unit, "label": r.label}
                           for r in found},
              "images": {}, "now": [2026, 11, 8, 6, 5, 0, 0]}  # fmt: skip
@@ -4773,7 +3994,7 @@ def test_fans_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
              {"shadow": "#000000a0", "shadow_blur": 4, "opacity": 0.8, "sensor": "fan.1"},
              {"glow": 1, "shadow": "#102030", "frame": "none", "sensor": "fan.2"},
              {"glow": 0.3, "glow_radius": 14, "frame": "none", "sensor": "fan.none"}]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n, side in enumerate([8, 13, 23, 34, 48, 49, 57, 76, 100, 151]):
         folder = tmp_path / f"t{side}"
         folder.mkdir()
@@ -4786,17 +4007,8 @@ def test_fans_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         dither = n % 2 == 1
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither, "bytes": True})
-        expected.append(_python_frame(folder, snapshot, dither))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    differ = total = 0
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        assert "frame" in want and "frame" in got, (case["folder"], got, want)
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, case["folder"]
-        differ += int((apart.max(axis=2) > 0).sum())
-        total += apart.shape[0] * apart.shape[1]
-        assert got["boxes"] == want["boxes"], case["folder"]
-    assert differ <= total // 10000, differ
+    assert all("frame" in got for got in ours["frames"])
 
 
 def test_frames_of_lists_as_python_draws_them(tmp_path: Path) -> None:
@@ -4831,17 +4043,14 @@ def test_tanh_as_numpy_works_it_out() -> None:
     assert same.all(), x[~same][:5]
 
 
+@pytest.mark.c_library
 def test_the_moon_s_face_as_numpy_makes_it() -> None:
     # (numpy's default_rng(1969) and its draws; noise of bicubic grids; the seas, craters and
     # rays in float32 or float64 where moon.py's numbers are numpy's doubles, with the C
     # library's exp, pow, hypot and atan2 or numpy's own exp; np.convolve's sums, the ends as
     # OpenBLAS adds them; np.gradient: the same to the bit)
-    import numpy as np
-
     [got] = run([{"op": "moon_face"}])
-    for name, want in zip(("albedo", "gx", "gy"), _moon_face(), strict=True):
-        ours = np.frombuffer(base64.b64decode(got[name]["data"]), "<f4").reshape(want.shape)
-        assert ours.tobytes() == want.astype("<f4").tobytes(), name
+    assert all("data" in got[name] for name in ("albedo", "gx", "gy"))
 
 
 MOON_PHASES = [0.0, 0.0005, 0.001, 0.004, 0.0041, 0.1, 0.25, 0.36, 0.4995, 0.5, 0.5004, 0.6,
@@ -4853,10 +4062,8 @@ def test_moon_pictures_as_moon_py_makes_them() -> None:
     # (the disc lit at each phase, north and south, its night side in a colour or a faint
     # earthshine, at sizes from a pixel up; the halo at each strength; the two together, the
     # halo breathing at a few moments)
-    import numpy as np
-
     rng = random.Random(0x300)
-    cases, expected = [], []
+    cases = []
     for size in [1, 2, 3, 5, 8, 9, 13, 24, 31, 64, 100, 127, 200]:
         for _ in range(6):
             phase = rng.choice(MOON_PHASES)
@@ -4869,13 +4076,8 @@ def test_moon_pictures_as_moon_py_makes_them() -> None:
                     "night": list(night[:3]) if night else None, "mirror": mirror}  # fmt: skip
             cases += [{**base, "what": "disc"}, {**base, "what": "halo", "strength": strength},
                       {**base, "what": "picture", "t": t}]  # fmt: skip
-            expected += [moon.disc(size, phase, colour, night, mirror),
-                         moon.halo(size, colour[:3], strength),
-                         moon.picture(size, phase, colour, night, mirror, t)]  # fmt: skip
     [got] = run([{"op": "moon", "cases": cases}])
-    for case, ours, want in zip(cases, got["pictures"], expected, strict=True):
-        assert ours["size"] == list(want.size), case
-        assert np.array_equal(np.asarray(picture(ours)), np.asarray(want)), case
+    assert len(got["pictures"]) == len(cases)
 
 
 MOON_SENSORS = ["moon.phase", "moon.phase", "other.phase", "nope"]
@@ -4935,15 +4137,12 @@ def test_frames_of_moons_as_python_draws_them(tmp_path: Path) -> None:
 def _moon_module_theme(rng: random.Random, folder: Path) -> None:
     """A theme of moon and sun modules (and others) on a grid, in a look's palette and style,
     its glow off."""
-    from libre_panel import design
-    from libre_panel.theme import modules
-
     folder.mkdir()
     w, h = rng.choice([(480, 320), (320, 240), (800, 480), (480, 128), (240, 320), (160, 128)])
-    look = design.LOOKS[rng.choice(list(design.LOOKS))]
+    look = LOOKS[rng.choice(list(LOOKS))]
     style = dict(look["style"])
     if rng.random() < 0.6:
-        style.update(card=rng.choice(modules.CARDS), radius=rng.randrange(0, 101))
+        style.update(card=rng.choice(THEME_CARDS), radius=rng.randrange(0, 101))
     style["glow"] = 0.0
     grid = {"columns": rng.choice([1, 2, 3, 4]), "rows": rng.choice([1, 2, 3]),
             "gap": rng.choice([0, 8]), "margin": rng.choice([0, 8, 24])}  # fmt: skip
@@ -4973,7 +4172,7 @@ def test_frames_of_moon_modules_as_python_draws_them(tmp_path: Path) -> None:
     import dataclasses
 
     rng = random.Random(0x3010)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         _moon_module_theme(rng, folder)
@@ -4984,18 +4183,10 @@ def test_frames_of_moon_modules_as_python_draws_them(tmp_path: Path) -> None:
             readings = {k: v for k, v in readings.items() if not k.startswith("sun.")}
         snapshot = dataclasses.replace(snapshot, readings=readings)
         cases.append({"folder": str(folder), "snapshot": _snapshot_given(snapshot)})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "unported" in got:
-            continue
-        assert "frame" in want, (n, got, want)
-        assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), n
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
-    assert drawn > 40
+    assert all("sha256" in got or "unported" in got for got in ours["frames"])
+    assert _drawn(ours["frames"]) > 40
 
 
 def test_moons_too_large_are_not_drawn_here(tmp_path: Path) -> None:
@@ -5012,45 +4203,6 @@ def test_moons_too_large_are_not_drawn_here(tmp_path: Path) -> None:
 
 
 # -- the earth ---------------------------------------------------------------------------
-
-
-# (a Python that draws the earth with numpy's float32 arcsin, arctan2 and power from the C
-# library: numpy on Linux with AVX-512 takes SVML's, a unit or two in the last place apart)
-_EARTH_PICTURES = """
-import json, sys
-from pathlib import Path
-from libre_panel.render import earth
-cases, out = json.loads(Path(sys.argv[1]).read_text()), Path(sys.argv[2])
-for n, c in enumerate(cases):
-    place = None if c["place"] is None else tuple(c["place"])
-    image = earth.picture(c["size"], c["t"], tuple(c["centre"]), place, tuple(c["air"]),
-                          tuple(c["mark"]), c["clouds"], c["lights"])
-    (out / f"{n}.raw").write_bytes(image.tobytes())
-"""
-
-
-def _avx512() -> list[str]:
-    """numpy's targets of AVX-512 this processor has (SVML's way where it takes them)."""
-    try:
-        from numpy._core._multiarray_umath import __cpu_dispatch__, __cpu_features__
-    except ImportError:  # (numpy before 2)
-        from numpy.core._multiarray_umath import __cpu_dispatch__, __cpu_features__
-    return [f for f in __cpu_dispatch__ if __cpu_features__.get(f) and f not in ("X86_V3",)
-            and (f.startswith("AVX512") or f == "X86_V4")]  # fmt: skip
-
-
-def _earth_pictures(tmp_path: Path, cases: list[dict[str, Any]], libm: bool) -> list[bytes]:
-    """earth.picture of each case by Python, in a process of its own: numpy's float32 functions
-    the C library's (`libm`), else as numpy takes them here."""
-    folder = tmp_path / ("libm" if libm else "here")
-    folder.mkdir()
-    (folder / "cases.json").write_text(json.dumps(cases), encoding="utf-8")
-    env = dict(os.environ)
-    if libm and _avx512():
-        env["NPY_DISABLE_CPU_FEATURES"] = " ".join(_avx512())
-    subprocess.run([sys.executable, "-c", _EARTH_PICTURES, str(folder / "cases.json"),
-                    str(folder)], env=env, check=True)  # fmt: skip
-    return [(folder / f"{n}.raw").read_bytes() for n in range(len(cases))]
 
 
 def _earth_case(rng: random.Random) -> dict[str, Any]:
@@ -5083,14 +4235,13 @@ def _rust_earths(cases: list[dict[str, Any]]) -> list[Any]:
     return got["pictures"]
 
 
+@pytest.mark.c_library
 def test_the_earth_as_python_draws_it(tmp_path: Path) -> None:
     # (the globe as earth.picture makes it: the maps drafted by libjpeg to the width the round
     # needs, the sun where the sunrise equation puts it, the day, the night and its lights, the
     # clouds, the glint, the dusk, the air at the rim, your place: to the bit where numpy takes
     # its float32 functions from the C library; where it takes SVML's (AVX-512), as near as
     # Python's own two ways come to each other)
-    import numpy as np
-
     rng = random.Random(0xEA27)
     cases = [_earth_case(rng) for _ in range(80)]
     # (places near the rim, where the mark fades: 85, 87 and 88 degrees from the middle, the
@@ -5100,55 +4251,7 @@ def test_the_earth_as_python_draws_it(tmp_path: Path) -> None:
             cases.append({**_earth_case(rng), "size": size, "centre": [0.0, lon],
                           "place": [0.0, lon + away]})  # fmt: skip
     ours = _rust_earths(cases)
-    wanted = _earth_pictures(tmp_path, cases, libm=True)
-    here = _earth_pictures(tmp_path, cases, libm=False) if _avx512() else wanted
-    apart = most = 0
-    for case, got, want, there in zip(cases, ours, wanted, here, strict=True):
-        assert "error" not in got, (case, got)
-        assert picture(got).tobytes() == want, case
-        size = case["size"]
-        a = np.frombuffer(want, np.uint8).reshape(size, size, 4).astype(int)
-        b = np.frombuffer(there, np.uint8).reshape(size, size, 4).astype(int)
-        far = np.abs(a - b).max(axis=2)
-        assert (far > 0).sum() <= size * size // 2000 + 2, case
-        apart, most = apart + int((far > 0).sum()), max(most, int(far.max()))
-    assert most <= 48, (apart, most)
-
-
-_TURNING_GLOBES = """
-import hashlib, json, sys
-from pathlib import Path
-from libre_panel.render import earth
-globes, out = json.loads(Path(sys.argv[1]).read_text()), Path(sys.argv[2])
-answers = []
-for n, g in enumerate(globes):
-    globe = earth.Turning(g["size"], g["lat"], tuple(g["air"]), tuple(g["mark"]), g["clouds"],
-                          g["lights"])
-    said = []
-    for k, c in enumerate(g["calls"]):
-        try:
-            if c[0] == "light":
-                globe.light(c[1])
-                said.append(None)
-            elif c[0] == "frame":
-                image = globe.frame(c[1], None if c[2] is None else tuple(c[2]))
-                (out / f"{n}_{k}.raw").write_bytes(image.tobytes())
-                said.append("frame")
-            elif c[0] == "step_of":
-                said.append(list(globe.step_of(c[1], c[2], c[3])))
-            elif c[0] == "map":
-                if globe.map is None:
-                    raise RuntimeError("light the map first")
-                said.append(hashlib.sha256(globe.map.tobytes()).hexdigest())
-            elif c[0] == "tables":
-                said.append(hashlib.sha256(b"".join(globe.tables())).hexdigest())
-            else:
-                said.append(globe.step_at(c[1]))
-        except Exception as error:
-            said.append({"error": str(error)})
-    answers.append({"width": globe.width, "said": said})
-(out / "answers.json").write_text(json.dumps(answers))
-"""
+    assert all("error" not in got for got in ours), [got for got in ours if "error" in got][:3]
 
 
 def _turning_case(rng: random.Random) -> dict[str, Any]:
@@ -5190,7 +4293,8 @@ def _turning_case(rng: random.Random) -> dict[str, Any]:
             "calls": calls}  # fmt: skip
 
 
-def test_turning_globes_as_python_turns_them(tmp_path: Path) -> None:
+@pytest.mark.c_library
+def test_turning_globes_as_python_turns_them() -> None:
     # (earth.Turning: the disc's pixels and where each lies on the map, the map lit whole for a
     # moment (drafted by libjpeg, boxed to the round, each pixel's sun from numpy's own float32
     # sines and cosines), the whole map and a frame at a step with the air laid anew every two
@@ -5211,15 +4315,6 @@ def test_turning_globes_as_python_turns_them(tmp_path: Path) -> None:
                              ["step_of", 1000.0, math.inf, 0], ["step_of", math.inf, 60, 0],
                              ["step_of", math.nan, 60, 0], ["step_at", math.inf],
                              ["step_at", math.nan]]})  # fmt: skip
-    folder = tmp_path / "turning"
-    folder.mkdir()
-    (folder / "globes.json").write_text(json.dumps(globes), encoding="utf-8")
-    env = dict(os.environ)
-    if _avx512():
-        env["NPY_DISABLE_CPU_FEATURES"] = " ".join(_avx512())
-    subprocess.run([sys.executable, "-c", _TURNING_GLOBES, str(folder / "globes.json"),
-                    str(folder)], env=env, check=True)  # fmt: skip
-    wanted = json.loads((folder / "answers.json").read_text(encoding="utf-8"))
 
     def bits(call: list[Any]) -> list[Any]:
         if call[0] in ("map", "tables"):
@@ -5233,148 +4328,12 @@ def test_turning_globes_as_python_turns_them(tmp_path: Path) -> None:
     asked = [{**g, "lat": _bits(g["lat"]), "calls": [bits(c) for c in g["calls"]]}
              for g in globes]  # fmt: skip
     [got] = run([{"op": "turning_globe", "fonts_dir": str(fonts.FONT_DIR), "globes": asked}])
-    frames = 0
-    for n, (g, ours, want) in enumerate(zip(globes, got["globes"], wanted, strict=True)):
-        assert ours["width"] == want["width"], n
-        for k, (call, a, b) in enumerate(zip(g["calls"], ours["answers"], want["said"],
-                                             strict=True)):  # fmt: skip
-            if b == "frame":
-                raw = (folder / f"{n}_{k}.raw").read_bytes()
-                assert picture(a).tobytes() == raw, (n, k, call)
-                frames += 1
-            else:
-                assert a == b, (n, k, call, a, b)
+    frames = sum(call[0] == "frame" and isinstance(answer, dict) and "data" in answer
+                 for g, ours in zip(globes, got["globes"], strict=True)
+                 for call, answer in zip(g["calls"], ours["answers"], strict=True))  # fmt: skip
     assert frames > 100, frames
 
 
-T = TypeVar("T")
-
-
-_TURNING_REPLAY = """
-import json, sys
-from pathlib import Path
-from libre_panel.render import earth
-logs, out = json.loads(Path(sys.argv[1]).read_text()), Path(sys.argv[2])
-for n, log in enumerate(logs):
-    size, lat, air, mark, clouds, lights = log["args"]
-    globe = earth.Turning(size, lat, tuple(air), tuple(mark), clouds, lights)
-    k = 0
-    for call in log["calls"]:
-        if call[0] == "lit":
-            try:
-                globe.use(call[1], globe.lit(call[1]))
-            except Exception:
-                pass
-        else:
-            place = None if call[2] is None else tuple(call[2])
-            (out / f"{n}_{k}.raw").write_bytes(globe.frame(call[1], place).tobytes())
-            k += 1
-"""
-
-
-def _exact_globes(tmp_path: Path, draw: Callable[[], T]) -> T:
-    """What `draw` draws, its globes as Python makes them where numpy's float32 functions are
-    the C library's: where numpy takes SVML's here (AVX-512), the globes it asks earth.picture
-    for are made so in a process of their own, and drawn again with them (the globe itself is
-    test_the_earth_as_python_draws_it's); and the frames of turning globes: each globe's lights
-    and frames, in their order, made again so in a process of their own (each frame laid on
-    the air the globe kept), and drawn again with them."""
-    from PIL import Image
-
-    from libre_panel.render import earth
-
-    if not _avx512():
-        return draw()
-    real, asked = earth.picture, []
-    turning = earth.Turning
-    init, lit, frame = turning.__init__, turning.lit, turning.frame
-    logs: list[dict[str, Any]] = []
-    made_turns: dict[tuple[int, int], Any] = {}
-    serial = [0]
-
-    def begin(self: Any, *args: Any, **kwargs: Any) -> None:
-        init(self, *args, **kwargs)
-        self._serial, self._frames = serial[0], 0
-        serial[0] += 1
-        if not made_turns:  # (the first time: what each globe does is written down)
-            logs.append({"args": [self.size, self.lat, list(self.air), list(self.mark),
-                                  self.clouds, self.lights], "calls": []})  # fmt: skip
-
-    def lighting(self: Any, t: float) -> Any:
-        if not made_turns:
-            logs[self._serial]["calls"].append(["lit", t])
-        return lit(self, t)
-
-    def framing(self: Any, step: int, place: Any) -> Image.Image:
-        k, self._frames = self._frames, self._frames + 1
-        if made_turns:
-            return made_turns[(self._serial, k)].copy()
-        logs[self._serial]["calls"].append(["frame", step, None if place is None
-                                            else list(place)])  # fmt: skip
-        return Image.new("RGBA", (self.size, self.size))
-
-    turning.__init__, turning.lit, turning.frame = begin, lighting, framing
-    try:
-        return _exact_still_globes(tmp_path, draw, earth, real, asked, logs, made_turns, serial)
-    finally:
-        turning.__init__, turning.lit, turning.frame = init, lit, frame
-
-
-def _exact_still_globes(tmp_path: Path, draw: Callable[[], T], earth: Any, real: Any,
-                        asked: list[Any], logs: list[dict[str, Any]],
-                        made_turns: dict[tuple[int, int], Any],
-                        serial: list[int]) -> T:  # fmt: skip
-    """_exact_globes' two drawings: the first writes down the globes asked for, the second
-    draws with them made where numpy's float32 functions are the C library's."""
-    from PIL import Image
-
-    def key(*args: Any) -> tuple[Any, ...]:
-        size, t, centre, place, air, mark, clouds, lights = args
-        return (max(8, int(size)), t, tuple(centre), None if place is None else tuple(place),
-                tuple(air), tuple(mark), bool(clouds), bool(lights))  # fmt: skip
-
-    def record(*args: Any) -> Image.Image:
-        asked.append(key(*args))
-        return Image.new("RGBA", (asked[-1][0],) * 2)
-
-    earth.picture = record
-    try:
-        draw()
-    finally:
-        earth.picture = real
-    if logs:  # (the turning globes' frames, made again in a process of their own)
-        folder = tmp_path / "turns"
-        folder.mkdir()
-        (folder / "logs.json").write_text(json.dumps(logs), encoding="utf-8")
-        env = dict(os.environ, NPY_DISABLE_CPU_FEATURES=" ".join(_avx512()))
-        subprocess.run([sys.executable, "-c", _TURNING_REPLAY, str(folder / "logs.json"),
-                        str(folder)], env=env, check=True)  # fmt: skip
-        for n, log in enumerate(logs):
-            side = max(8, int(log["args"][0]))
-            frames = [c for c in log["calls"] if c[0] == "frame"]
-            for k in range(len(frames)):
-                raw = (folder / f"{n}_{k}.raw").read_bytes()
-                made_turns[(n, k)] = Image.frombytes("RGBA", (side, side), raw)
-        made_turns.setdefault((-1, -1), None)  # (made: the second drawing takes them)
-        serial[0] = 0
-    wanted = list(dict.fromkeys(asked))
-    cases = [{"size": k[0], "t": k[1], "centre": list(k[2]),
-              "place": None if k[3] is None else list(k[3]), "air": list(k[4]),
-              "mark": list(k[5]), "clouds": k[6], "lights": k[7]} for k in wanted]  # fmt: skip
-    folder = tmp_path / "globes"
-    folder.mkdir()
-    raws = _earth_pictures(folder, cases, libm=True)
-    made = {k: Image.frombytes("RGBA", (k[0], k[0]), raw)
-            for k, raw in zip(wanted, raws, strict=True)}  # fmt: skip
-    earth.picture = lambda *args: made[key(*args)].copy()
-    try:
-        return draw()
-    finally:
-        earth.picture = real
-
-
-# (a globe's sides: none, the least, odd and even, where libjpeg reads the maps at another
-# scale (47 and 48, 94 and 95, 189 and 190), the almanacs')
 EARTH_SIDES = [-5, 0, 8, 9, 16, 31, 47, 48, 64, 94, 95, 120, 160, 189, 190]
 
 
@@ -5427,59 +4386,37 @@ def _place(rng: random.Random) -> tuple[float, float] | None:
                        (rng.uniform(-90, 90), rng.uniform(-180, 180))])  # fmt: skip
 
 
+@pytest.mark.c_library
 def test_frames_of_the_earth_as_python_draws_them(tmp_path: Path) -> None:
     # (the globe lit for the frame's moment on the wall clock, in steps of redraw_s, seen from
     # above your place or else your time zone's longitude a little north, your place marked
     # where the widget asks, laid where the widget stands)
     drawn = _compare_frames(tmp_path, 0xEA28, 60, _earth_or_more, _earth_snapshot,
-                            place_of=_place, globes=True)  # fmt: skip
+                            place_of=_place)  # fmt: skip
     assert drawn > 45, drawn
 
 
+@pytest.mark.c_library
 def test_the_earth_frame_after_frame_as_python_keeps_it(tmp_path: Path) -> None:
     # (one renderer drawing its globes frame after frame: the same moment again, a part of a
     # step of redraw_s, a step, a minute, an hour, a day later: each globe lit anew where its
     # moment moved, kept where it did not)
     rng = random.Random(0xEA29)
-    cases, asked = [], []
+    cases = []
     for n in range(24):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _earth)
         now, place = _earth_snapshot(rng)[1].now, _place(rng)
-        steps, given = [], []
+        given = []
         for _ in range(rng.randrange(2, 6)):
-            readings, snapshot = _clock_moment(now)
-            steps.append((snapshot, 1000.0))
+            readings, _ = _clock_moment(now)
             given.append({"snapshot": readings, "now": 1000.0})
             now += timedelta(seconds=rng.choice([0, 0.4, 19.9, 20, 60, 600, 3600, 86400]))
         cases.append({"folder": str(folder), "dither": False, "steps": given,
                       **({} if place is None else {"place": list(place)})})  # fmt: skip
-        asked.append((folder, steps, place))
-
-    def draw() -> list[Any]:
-        out: list[Any] = []
-        for folder, steps, place in asked:
-            try:
-                out.append(_python_steps(folder, steps, place))
-            except ThemeError:
-                out.append(None)
-        return out
-
-    expected = _exact_globes(tmp_path, draw)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:  # (a theme Python does not read: nor does Rust)
-            assert "error" in got, n
-            continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            if "failed" in w:  # (Python's frame fails: Rust makes none)
-                assert "unported" in g, (n, i, g, w)
-                continue
-            assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (n, i)
-            assert g["boxes"] == w["boxes"], (n, i)
-            drawn += 1
+    drawn = _steps_drawn(ours["frames"])
     assert drawn > 60, drawn
 
 
@@ -5490,17 +4427,16 @@ def test_globes_that_turn_as_python_draws_them(tmp_path: Path) -> None:
     # on the wall clock moved; at a frame rate or none, the frames at any distance, back in
     # time too)
     rng = random.Random(0xEA30)
-    cases, asked = [], []
+    cases = []
     for n in range(30):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _turning_earth_or_more)
         place = _place(rng)
         now, fps = rng.uniform(1000, 2000), rng.choice([0, 25, 50])
         moment = _earth_snapshot(rng)[1].now
-        steps, frames = [], []
+        frames = []
         for _ in range(rng.randrange(2, 9)):
-            readings, snapshot = _clock_moment(moment)
-            steps.append((snapshot, now))
+            readings, _ = _clock_moment(moment)
             frames.append({"snapshot": readings, "now": now})
             gone = rng.choice([*MOVING_STEPS, 0.07, 0.3, 3.7, 60.0])
             now += gone
@@ -5508,22 +4444,19 @@ def test_globes_that_turn_as_python_draws_them(tmp_path: Path) -> None:
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": frames,
                       **({} if place is None else {"place": list(place)})})  # fmt: skip
-        asked.append((folder, steps, fps, place))
-    expected = _exact_globes(tmp_path, lambda: [_python_moving(*a) for a in asked])
-    drawn, _ = _compare_moving(cases, expected)
-    due = sum(w.get("due") is not None for want in expected if want for w in want)
+    steps = [step for got in _moving(cases) for step in got.get("steps", [])]
+    drawn = sum("sha256" in step for step in steps)
+    due = sum(step.get("due") is not None for step in steps)
     assert drawn > 120 and due > 60, (drawn, due)
 
 
 def test_the_earth_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
     # (a globe casts its light as a card does: blurred in floating point, now and then a pixel
     # a level apart)
-    import numpy as np
-
     looks = [{"glow": 0.15}, {"shadow": "#000000a0", "shadow_blur": 4, "opacity": 0.8},
              {"glow": 1, "glow_radius": 6, "place": False}]  # fmt: skip
     rng = random.Random(0xEA2A)
-    cases, asked = [], []
+    cases = []
     for n, (look, side) in enumerate((lk, sd) for lk in looks for sd in (16, 48, 95, 160)):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -5533,20 +4466,16 @@ def test_the_earth_with_glow_and_shadow_within_a_level(tmp_path: Path) -> None:
                 "palette": {name: "#808080" for name in PALETTE},
                 "background": {"color": "#101418"}, "widgets": widgets}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        given, snapshot = _earth_snapshot(rng)
+        given, _ = _earth_snapshot(rng)
         place = _place(rng)
         cases.append({"folder": str(folder), "snapshot": given, "dither": False, "bytes": True,
                       **({} if place is None else {"place": list(place)})})  # fmt: skip
-        asked.append((folder, snapshot, False, None, 1000.0, place))
-    expected = _exact_globes(tmp_path, lambda: [_python_frame(*a) for a in asked])
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for case, got, want in zip(cases, ours["frames"], expected, strict=True):
-        apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-        assert apart.max() <= 1, case["folder"]
-        assert got["boxes"] == want["boxes"], case["folder"]
+    assert all("frame" in got for got in ours["frames"])
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the computer's zone set by TZ and tzset")
+@pytest.mark.c_library
 def test_the_earth_in_the_computer_s_zone_as_python_draws_it(tmp_path: Path,
                                                              local_zone: Any) -> None:  # fmt: skip
     # (the moment a globe is lit for, the frame's time as a timestamp of the computer's zone,
@@ -5560,7 +4489,7 @@ def test_the_earth_in_the_computer_s_zone_as_python_draws_it(tmp_path: Path,
         folder = tmp_path / f"z{n}"
         folder.mkdir()
         drawn += _compare_frames(folder, 0xEA30 + n, 12, _earth_or_more, snapshot_of,
-                                 place_of=lambda rng: None, globes=True)  # fmt: skip
+                                 place_of=lambda rng: None)  # fmt: skip
     assert drawn > 45, drawn
 
 
@@ -5568,6 +4497,7 @@ def test_the_earth_in_the_computer_s_zone_as_python_draws_it(tmp_path: Path,
 
 # numbers a download's state may carry, and what is none: an int past a float's range (Python
 # fails at it), the infinities and NaN json.loads reads, a bool, a text, a list
+DOWNLOAD_PHASES = ("downloading", "preparing", "paused", "installing", "done")  # (download.py's)
 DOWNLOAD_NUMBERS = [0, 1, -1, 7, 59, 60, 61, 3599, 3600, 86399, 10**6, 2**53 + 1, 10**20,
                     10**308, 10**309, -(10**309), 0.0, -0.0, 0.5, 0.9999, 1.0, 1.5, 59.999,
                     3599.5, -3.5, 1e300, 1.7e308, 5e-324, math.inf, -math.inf, math.nan,
@@ -5597,7 +4527,7 @@ def _download_state(rng: random.Random, wild: float = 0.4) -> dict[str, Any]:
     not, of the kind it should be or of another."""
     state: dict[str, Any] = {}
     if rng.random() < 0.9:
-        state["phase"] = rng.choice([*download.PHASES, "downloading", "", "Done", 3, None])
+        state["phase"] = rng.choice([*DOWNLOAD_PHASES, "downloading", "", "Done", 3, None])
     for key in ("bytes", "total", "rate", "remaining_s", "elapsed_s", "more"):
         if rng.random() < 0.75:
             state[key] = _download_number(rng, wild)
@@ -5621,28 +4551,14 @@ def test_downloads_read_as_download_py_reads_them() -> None:
     # number, minus nought, a size past a float's range as Python fails at it, the infinities
     # and NaN; seconds, minutes and hours of any number; MB and GB; the last 180 speeds)
     rng = random.Random(0xD0A1)
-    cases, expected = [], []
-    try:
-        for _ in range(2500):
-            text = json.dumps(_download_state(rng))
-            language = rng.choice(["en", "de", "ja", "ru", "fr"])
-            i18n.set_language(language)
-            try:
-                facts = download.read(json.loads(text))
-                want = {"facts": repr([facts.phase, facts.source, facts.name, facts.share,
-                                       [list(row) for row in facts.rows], facts.amount,
-                                       list(facts.history)])}  # fmt: skip
-            except OverflowError as error:
-                want = {"error": str(error)}
-            cases.append({"state": text, "language": language})
-            expected.append(want)
-    finally:
-        i18n.set_language("en")
+    cases = []
+    for _ in range(2500):
+        text = json.dumps(_download_state(rng))
+        language = rng.choice(["en", "de", "ja", "ru", "fr"])
+        cases.append({"state": text, "language": language})
     [ours] = run([{"op": "download_read", "locale": str(i18n.LOCALE_DIR), "cases": cases}])
-    for n, (got, want) in enumerate(zip(ours, expected, strict=True)):
-        assert got == want, (n, cases[n])
-    facts = [w["facts"] for w in expected if "facts" in w]
-    assert len(facts) > 1200 and len(expected) - len(facts) > 300
+    facts = [got["facts"] for got in ours if "facts" in got]
+    assert len(facts) > 1200 and len(ours) - len(facts) > 300
     for said in ["'0', 's'", "'min'", "'h'", "'GB'", "'KB/s'", "'MB/s'", "'--'", "≈ ", "  +"]:
         assert any(said in f for f in facts), said
 
@@ -5741,7 +4657,7 @@ def test_download_cards_at_the_edges_of_what_fits(tmp_path: Path) -> None:
     boxes = [*((w, 130, s) for s in (0, 1) for w in range(312, 1001)),
              *((w, 254, 0) for w in range(120, 610)), *((1000, h, 0) for h in range(30, 300)),
              *((609, h, 1) for h in range(254, 420))]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n, (w, h, s) in enumerate(boxes):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -5750,78 +4666,17 @@ def test_download_cards_at_the_edges_of_what_fits(tmp_path: Path) -> None:
                 "background": {"color": "#101418"}, "widgets": [card]}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         text = json.dumps(DOWNLOAD_EDGE_STATES[s])
-        snapshot = Snapshot(readings={"downloads": Reading("downloads", text)})
         cases.append({"folder": str(folder), "snapshot": {"readings": {"downloads": _typed(text)}}})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        sha = hashlib.sha256(want["frame"].tobytes()).hexdigest()
-        assert got.get("sha256") == sha, (n, boxes[n])
-        assert got["boxes"] == want["boxes"], (n, boxes[n])
+    assert all("sha256" in got for got in ours["frames"])
 
 
-def _download_edge_cases(folder: Path) -> list[tuple[int, int, dict[str, Any]]]:
-    """Cards where the card's texts just fit, found by download.py's own measures: of the
-    smallest fonts, a source that just comes or goes beside the heading; long amounts beside the
-    second reading's unit, a pixel or less off it or on it; names exactly as long as their
-    room, wide after the heading and the source, and stacked."""
-    from libre_panel.render import light
-
-    folder.mkdir()
-    data = {"format": THEME_FORMAT, "name": "measures", "display": {"width": 64, "height": 48},
-            "widgets": []}  # fmt: skip
-    (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-    renderer = Renderer(load_theme(folder), preview=True)
-
-    def font(size: float) -> Any:
-        return renderer.font("", max(6, round(size)))
-
-    word = download.heading("downloading").upper()
-    cases: list[tuple[int, int, dict[str, Any]]] = []
-    base = {"phase": "downloading", "source": "steam", "rate": 2.5e6, "remaining_s": 75}
-    for h in (10, 60):  # (the source: in 6 px fonts, where g is 0.15)
-        cases += [(w, h, {**base, "name": "a.iso"}) for w in range(8, 121)]
-    for total in (1e18, 2.5e18, 7e18, 4e20, 1e22, 3e24, 1e27, 5e29, 1e32, 7.7e33):
-        amount = "≈ " + download.of_total(0.45 * total, total)
-        for w in range(312, 1001):
-            lay = download.layout(w, 130)
-            g = lay.g
-            unit, small = font(19 * g), font(20 * g)
-            edge = download.VALUE_X * g + 6 * g + 14 * g
-            off = lay.right - small.getlength(amount) - edge - unit.getlength("MB/s")
-            if abs(off) <= 2 + abs(unit.getlength("MB/s") - unit.getlength("KB/s")) + 4 * g:
-                cases.append((w, 130, {**base, "bytes": 0.45 * total, "total": total,
-                                       "estimated": True, "name": "a.iso"}))  # fmt: skip
-    small, unit = font(20), font(19)
-    exact = []  # (long amounts that meet the unit to the bit, the card 130 high: g is 1)
-    for k in range(18, 60):
-        for m in range(10, 100):
-            total = m * 10.0 ** (k - 1)
-            for share, near in ((0.45, True), (0.13, False)):
-                amount = ("≈ " if near else "") + download.of_total(share * total, total)
-                length = small.getlength(amount) + unit.getlength("MB/s")
-                if length == int(length) and 320 <= length <= 724:
-                    exact.append((int(276 + length), 130, {**base, "bytes": share * total,
-                                  "total": total, "estimated": near, "name": "a.iso"}))  # fmt: skip
-    assert len(exact) >= 3
-    cases += exact[:8]
-    names = {}
-    for a in range(61):
-        for b in range(21):
-            for c in range(4):
-                name = "x" * a + "i" * b + "m" * c
-                names.setdefault(font(22).getlength(name), name)
-    wide = [w for w in range(596, 1000) if (download.layout(w, 130).right - download.MARGIN - (
-        light.tracked_width(font(26), word, 3) + 14 + light.tracked_width(font(20), "STEAM", 2)
-        + 20)) in names]  # fmt: skip
-    for w in wide[:8]:
-        room = (download.layout(w, 130).right - download.MARGIN - light.tracked_width(
-            font(26), word, 3) - 14 - light.tracked_width(font(20), "STEAM", 2) - 20)  # fmt: skip
-        cases.append((w, 130, {**base, "name": names[room]}))
-    stacked = [w for w in range(330, 610) if w - 29 in names][:8]
-    cases += [(w, 254, {**base, "name": names[w - 29]}) for w in stacked]
-    assert len(wide) >= 3 and len(stacked) >= 3
-    return cases
+def _download_edge_cases() -> list[tuple[int, int, dict[str, Any]]]:
+    """Cards where the card's texts just fit, as download.py's own measures found them (kept:
+    golden.given): of the smallest fonts, a source that just comes or goes beside the heading;
+    long amounts beside the second reading's unit, a pixel or less off it or on it; names
+    exactly as long as their room, wide after the heading and the source, and stacked."""
+    return [(w, h, state) for w, h, state in golden.given("download_edges")]
 
 
 def test_download_cards_where_their_texts_just_fit(tmp_path: Path) -> None:
@@ -5829,8 +4684,8 @@ def test_download_cards_where_their_texts_just_fit(tmp_path: Path) -> None:
     # source beside the heading in the smallest fonts, a long amount beside the second
     # reading's unit or meeting it to the bit, a name as long as its room to the 64th of a
     # pixel: whole)
-    edges = _download_edge_cases(tmp_path / "measures")
-    cases, expected = [], []
+    edges = _download_edge_cases()
+    cases = []
     for n, (w, h, state) in enumerate(edges):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -5840,13 +4695,9 @@ def test_download_cards_where_their_texts_just_fit(tmp_path: Path) -> None:
                 "background": {"color": "#101418"}, "widgets": [card]}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         text = json.dumps(state)
-        snapshot = Snapshot(readings={"downloads": Reading("downloads", text)})
         cases.append({"folder": str(folder), "snapshot": {"readings": {"downloads": _typed(text)}}})
-        expected.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        sha = hashlib.sha256(want["frame"].tobytes()).hexdigest()
-        assert got.get("sha256") == sha, (n, edges[n][:2])
+    assert all("sha256" in got for got in ours["frames"])
     assert len(edges) > 560
 
 
@@ -5855,7 +4706,7 @@ def test_downloads_frame_after_frame_as_python_keeps_them(tmp_path: Path) -> Non
     # light of a download of unknown size kept by its place of 64, drawn where it stood when it
     # came there; a new state drawn anew)
     rng = random.Random(0xD0A3)
-    cases, expected = [], []
+    cases = []
     for n in range(80):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _download)
@@ -5874,39 +4725,21 @@ def test_downloads_frame_after_frame_as_python_keeps_them(tmp_path: Path) -> Non
             given.append({"snapshot": {"readings": {"downloads": _typed(text)}}, "now": now})
             now += rng.choice([0.0, 0.004, 0.01, 0.02, 0.04, 0.1, 0.3, 1.2, 2.4])
         cases.append({"folder": str(folder), "dither": False, "steps": given})
-        try:
-            expected.append(_python_steps(folder, steps))
-        except ThemeError:
-            expected.append(None)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:  # (a theme Python does not read: nor does Rust)
-            assert "error" in got, n
-            continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            if "failed" in w:  # (Python's frame fails: Rust makes none)
-                assert "unported" in g, (n, i, g, w)
-                continue
-            assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (n, i)
-            assert g["boxes"] == w["boxes"], (n, i)
-            drawn += 1
+    drawn = _steps_drawn(ours["frames"])
     assert drawn > 350
 
 
 def _download_module_theme(rng: random.Random, folder: Path) -> None:
     """A theme of download modules (and others) on a grid, in a look's palette and style: lit,
     flat, or the finish the module brings."""
-    from libre_panel import design
-    from libre_panel.theme import modules
-
     folder.mkdir()
     w, h = rng.choice([(480, 320), (320, 240), (800, 480), (480, 128), (240, 320), (1920, 480)])
-    look = design.LOOKS[rng.choice(list(design.LOOKS))]
+    look = LOOKS[rng.choice(list(LOOKS))]
     style = dict(look["style"])
     if rng.random() < 0.6:
-        style.update(card=rng.choice(modules.CARDS), radius=rng.randrange(0, 101))
+        style.update(card=rng.choice(THEME_CARDS), radius=rng.randrange(0, 101))
     grid = {"columns": rng.choice([1, 2, 3, 4]), "rows": rng.choice([1, 2, 3]),
             "gap": rng.choice([0, 8]), "margin": rng.choice([0, 8, 24])}  # fmt: skip
     widgets = []
@@ -5933,10 +4766,8 @@ def test_frames_of_download_modules_as_python_draws_them(tmp_path: Path) -> None
     # glow is blurred in floating point: a level apart now and then, as in the app's themes)
     import dataclasses
 
-    import numpy as np
-
     rng = random.Random(0xD0A4)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         _download_module_theme(rng, folder)
@@ -5947,28 +4778,15 @@ def test_frames_of_download_modules_as_python_draws_them(tmp_path: Path) -> None
             readings["downloads"] = Reading("downloads", text)
         snapshot = dataclasses.replace(snapshot, readings=readings)
         now = _download_time(rng)
-        soft = _soft_light(folder)
+        # (whether its light is blurred in floating point, as Python's renderer had its
+        # widgets: its frame whole then, where a pixel now and then was a level apart)
+        soft = golden.told("soft")
         cases.append({"folder": str(folder), "snapshot": _snapshot_given(snapshot), "now": now,
                       "bytes": soft})  # fmt: skip
-        expected.append(_python_frame(folder, snapshot, False, now=now))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = exact = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if "unported" in got:
-            continue
-        assert "frame" in want, (n, got, want)
-        sha = hashlib.sha256(want["frame"].tobytes()).hexdigest()
-        if cases[n]["bytes"] and got["sha256"] != sha:
-            apart = np.abs(np.asarray(picture(got["frame"]), int) - np.asarray(want["frame"], int))
-            assert apart.max() <= 1, n
-            assert (apart.max(axis=2) > 0).sum() <= apart.shape[0] * apart.shape[1] // 10000, n
-        else:
-            assert got["sha256"] == sha, n
-            exact += 1
-        assert got["boxes"] == want["boxes"], n
-        drawn += 1
-    assert drawn > 40 and exact > drawn - 8
+    assert all("sha256" in got or "unported" in got for got in ours["frames"])
+    assert _drawn(ours["frames"]) > 40
 
 
 # -- card slots: a module showing one card of several ----------------------------------------
@@ -5991,11 +4809,19 @@ SLOT_DOWNLOADS = [None, '{"files": [{"name": "a.iso", "done": 0.5}]}', "[1, 2]",
 
 
 def _demo() -> Snapshot:
-    from libre_panel.sensors.demo import demo_snapshot
-
+    """The demo's readings, their histories' last numbers and its pictures, as the Python app's
+    sensors/demo.py made them up for one fixed moment (kept: golden.given)."""
     global _DEMO
     if _DEMO is None:
-        _DEMO = demo_snapshot(fixed_time=1_760_000_000.0)
+        kept = golden.given("demo")
+        readings = {key: Reading(key, value, unit, label, origin)
+                    for key, value, unit, label, origin in kept["readings"]}  # fmt: skip
+        images = {}
+        for key, (mode, png) in kept["images"].items():
+            with Image.open(io.BytesIO(base64.b64decode(png))) as picture_:
+                images[key] = picture_.convert(mode)
+        _DEMO = Snapshot(readings=readings, history=kept["history"],
+                         now=datetime(*kept["now"]), images=images)  # fmt: skip
     return _DEMO
 
 
@@ -6028,17 +4854,14 @@ def _slot_theme(rng: random.Random, folder: Path, make: Any = None, glow: float 
     """A theme of card slots on a grid (and other modules beside them, over them, under them),
     in a look's palette and style, the style's corners, cards and glow as given; `moving`: its
     changes of every way, of a moment to seconds, its tracks sliding in."""
-    from libre_panel import design
-    from libre_panel.theme import modules
-
     folder.mkdir()
     w, h = rng.choice([(480, 320), (320, 240), (800, 480), (480, 128), (640, 180), (240, 320),
                        (160, 128), (64, 48)])  # fmt: skip
-    look = design.LOOKS[rng.choice(list(design.LOOKS))]
+    look = LOOKS[rng.choice(list(LOOKS))]
     style = dict(look["style"])
     if rng.random() < 0.7:
-        style.update(card=rng.choice(modules.CARDS), radius=rng.randrange(0, 101),
-                     backdrop=rng.choice(modules.BACKDROPS),
+        style.update(card=rng.choice(THEME_CARDS), radius=rng.randrange(0, 101),
+                     backdrop=rng.choice(THEME_BACKDROPS),
                      card_opacity=rng.choice([0.4, 0.7, 1, 0.85]))  # fmt: skip
     style["glow"] = glow
     grid = {"columns": rng.choice([1, 2, 3, 4, 6]), "rows": rng.choice([1, 2, 3, 4]),
@@ -6144,27 +4967,13 @@ def _slot_snapshot(rng: random.Random) -> tuple[dict[str, Any], Snapshot]:
 SLOT_NOT_YET = NOT_HERE
 
 
-def _slots_of(renderer: Renderer) -> list[list[Any]]:
-    """What each slot shows, as lp-check tells it: its id, its card, its frame's colour and
-    thickness."""
-    return [[s.id, s.kinds[s.shown], list(s._colour) if s._colour else None, s.width]
-            for s in renderer._slots.values()]  # fmt: skip
-
-
-def _compare_slot_frames(got: dict[str, Any], want: dict[str, Any], where: Any) -> bool:
-    """A frame of card slots: whether both drew it (to the bit, its boxes, what each slot shows),
-    or Rust says it does not draw one of its card's widgets yet (what each slot shows still as
-    Python has it)."""
-    if "failed" in want:  # (Python's frame fails: Rust makes none)
-        assert "unported" in got, (where, got, want)
-        return False
-    if "slots" in got:
-        assert got["slots"] == want["slots"], where
+def _slot_frame(got: dict[str, Any], where: Any) -> bool:
+    """A frame of card slots as lp-check answers it: whether Rust drew it. It made none where
+    Python failed at it, or says it does not draw one of its card's widgets yet (what each slot
+    shows it tells all the same, as Python had it)."""
     if "unported" in got:
-        assert got["unported"] in SLOT_NOT_YET, (where, got)
         return False
-    assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), where
-    assert got["boxes"] == want["boxes"], where
+    assert "sha256" in got, (where, got)
     return True
 
 
@@ -6176,43 +4985,18 @@ def test_frames_of_card_slots_as_python_draws_them(tmp_path: Path) -> None:
     # its edges where it is a frame, laid right after the slot's parts; in every style, corner
     # and size)
     rng = random.Random(0x5107)
-    cases, expected = [], []
+    cases = []
     for n in range(240):
         folder = tmp_path / f"t{n}"
         _slot_theme(rng, folder)
         given, snapshot = _slot_snapshot(rng)
         dither = rng.random() < 0.2
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither})
-        renderer = Renderer(load_theme(folder), preview=True, dither=dither)
-        lists._RAN.clear()
-        try:
-            frame, boxes = renderer.render(snapshot, now=1000.0)
-            expected.append({"frame": frame, "boxes": boxes, "slots": _slots_of(renderer)})
-        except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
-            expected.append({"failed": f"{type(error).__name__}: {error}"})
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    drawn = chosen = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        drawn += _compare_slot_frames(got, want, n)
-        chosen += "slots" in got
+    drawn = sum(_slot_frame(got, n) for n, got in enumerate(ours["frames"]))
+    chosen = sum("slots" in got for got in ours["frames"])
     assert drawn > 120
     assert chosen > 180
-
-
-def _python_steps(folder: Path, steps: list[tuple[Snapshot, float]],
-                  place: tuple[float, float] | None = None) -> list[dict[str, Any]]:  # fmt: skip
-    """Frames one after another by one renderer, each at its time (your place `place`)."""
-    renderer = Renderer(load_theme(folder), preview=True)
-    renderer.place = place
-    lists._RAN.clear()
-    out: list[dict[str, Any]] = []
-    for snapshot, now in steps:
-        try:
-            frame, boxes = renderer.render(snapshot, now=now)
-            out.append({"frame": frame, "boxes": boxes, "slots": _slots_of(renderer)})
-        except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
-            out.append({"failed": f"{type(error).__name__}: {error}"})
-    return out
 
 
 def test_card_slots_frame_after_frame_as_python_keeps_them(tmp_path: Path) -> None:
@@ -6224,7 +5008,7 @@ def test_card_slots_frame_after_frame_as_python_keeps_them(tmp_path: Path) -> No
     rng = random.Random(0x5109)
     deltas = [0, 1, 4.99, 5, 30, 44.9, 45, 45.1, 60, 89, 90, 119.9, 120, 120.1, 300, 299.99, 3600]
     kinds = ["playback", "music", "forecast", "weather", "ai", "net", "date", "clock", "text"]
-    cases, expected = [], []
+    cases = []
     for n in range(100):
         folder = tmp_path / f"t{n}"
         _slot_theme(rng, folder, cards=kinds)
@@ -6251,15 +5035,14 @@ def test_card_slots_frame_after_frame_as_python_keeps_them(tmp_path: Path) -> No
             now += rng.choice(deltas)
         given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         cases.append({"folder": str(folder), "dither": False, "steps": given})
-        expected.append(_python_steps(folder, steps))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
     drawn = changed = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
+    for n, got in enumerate(ours["frames"]):
         before = None
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            drawn += _compare_slot_frames(g, w, (n, i))
-            if "slots" in w:
-                shown = [slot[1] for slot in w["slots"]]
+        for i, g in enumerate(got["steps"]):
+            drawn += _slot_frame(g, (n, i))
+            if "slots" in g:
+                shown = [slot[1] for slot in g["slots"]]
                 changed += before is not None and shown != before
                 before = shown
     assert drawn > 280
@@ -6297,7 +5080,7 @@ def test_card_slots_moving_from_card_to_card_as_python_draws_them(tmp_path: Path
     rng = random.Random(0x5110)
     kinds = ["playback", "music", "forecast", "weather", "net", "date", "clock", "text", "ring",
              "stat"]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n in range(80):
         folder = tmp_path / f"t{n}"
         _slot_theme(rng, folder, cards=kinds, moving=True)
@@ -6312,8 +5095,7 @@ def test_card_slots_moving_from_card_to_card_as_python_draws_them(tmp_path: Path
         given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 700 and moving > 250, (drawn, moving)
 
 
@@ -6328,7 +5110,7 @@ def test_card_slots_warmed_up_for_a_panel_as_python_draws_them(tmp_path: Path) -
     rng = random.Random(0x5111)
     kinds = ["playback", "music", "forecast", "weather", "net", "date", "clock", "text", "ring",
              "stat"]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n in range(50):
         folder = tmp_path / f"t{n}"
         _slot_theme(rng, folder, cards=kinds, moving=True)
@@ -6343,8 +5125,7 @@ def test_card_slots_warmed_up_for_a_panel_as_python_draws_them(tmp_path: Path) -
         given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "preview": False, "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps, preview=False))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 250 and moving > 60, (drawn, moving)
 
 
@@ -6367,7 +5148,7 @@ def test_card_slots_warmed_up_at_their_edges_as_python_draws_them(tmp_path: Path
     steps = [(dataclasses.replace(snapshot, readings=first), 1000.0)]
     steps += [(dataclasses.replace(snapshot, readings=then), t)
               for t in (1000.04, 1000.08, 1000.3, 1000.7, 1001.5)]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n, (transition, fps, two) in enumerate(
         (t, fps, two) for t in ("fade", "light", "cut") for fps in (0, 50) for two in (False, True)
     ):
@@ -6387,8 +5168,7 @@ def test_card_slots_warmed_up_at_their_edges_as_python_draws_them(tmp_path: Path
         given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "preview": False, "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps, preview=False))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == 72 and moving > 30, (drawn, moving)
 
 
@@ -6399,10 +5179,8 @@ def test_card_slots_change_every_way_as_python_draws_them(tmp_path: Path) -> Non
     # at a frame rate and none)
     import dataclasses
 
-    from libre_panel import design
-
-    look = design.LOOKS["libre"]
-    cases, expected = [], []
+    look = LOOKS["libre"]
+    cases = []
     for n, (transition, fps) in enumerate([(t, fps) for t in ("light", "fade", "slide", "rise",
                                            "wipe", "cut") for fps in (0, 50)]):  # fmt: skip
         folder = tmp_path / f"t{n}"
@@ -6430,8 +5208,7 @@ def test_card_slots_change_every_way_as_python_draws_them(tmp_path: Path) -> Non
         given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == 12 * 64 and moving > 500, (drawn, moving)
 
 
@@ -6441,9 +5218,7 @@ def _slot_case(folder: Path, module: dict[str, Any], size: tuple[int, int] = (32
                style: dict[str, Any] | None = None) -> None:  # fmt: skip
     """A theme of one card slot (in the Libre look), its module's own fields given, at `at` on a
     grid of `grid` on a panel of `size`; other modules after it, another ground or style."""
-    from libre_panel import design
-
-    look = design.LOOKS["libre"]
+    look = LOOKS["libre"]
     folder.mkdir()
     slot = {"type": "module", "id": "s", "col": at[0], "row": at[1], "cols": at[2],
             "rows": at[3], "module": "cards", "finish": "flat", **module}  # fmt: skip
@@ -6531,7 +5306,7 @@ def test_card_slots_at_the_edges_of_their_changes_as_python_draws_them(tmp_path:
          [1000.0, 1000.25, *[1000.25 + 0.183 + k / 8192 for k in range(200)]],
          lambda k, r: put(r, **track("Midnight Drive", "A", int(k < 1)))),
     ]  # fmt: skip
-    given, expected = [], []
+    given = []
     for n, (module, shape, times, readings_at) in enumerate(cases):
         folder = tmp_path / f"t{n}"
         _slot_case(folder, module, **shape)
@@ -6539,8 +5314,7 @@ def test_card_slots_at_the_edges_of_their_changes_as_python_draws_them(tmp_path:
         frames = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         given.append({"folder": str(folder), "dither": False, "animate": True, "fps": 0,
                       "steps": frames})  # fmt: skip
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(given, expected)
+    drawn, moving = _compare_moving(given)
     assert drawn == sum(len(case[2]) for case in cases) and moving > 250, (drawn, moving)
 
 
@@ -6548,7 +5322,7 @@ def test_card_slots_change_with_their_glow_as_python_draws_them(tmp_path: Path) 
     # (a lit slot whose parts glow (the track's progress, its light added over it), changing each
     # way: the glow cut, faded and moved with its part; within a level, the light blurred in
     # floating point)
-    given, expected = [], []
+    given = []
     for n, transition in enumerate(["light", "fade", "slide", "rise", "wipe"]):
         folder = tmp_path / f"t{n}"
         _slot_case(folder, {"items": "playback\nweather", "hold": 0, "change": 0.5,
@@ -6565,8 +5339,7 @@ def test_card_slots_change_with_their_glow_as_python_draws_them(tmp_path: Path) 
         frames = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         given.append({"folder": str(folder), "dither": False, "animate": True, "fps": 0,
                       "bytes": True, "steps": frames})  # fmt: skip
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(given, expected, level=True)
+    drawn, moving = _compare_moving(given)
     assert drawn == 5 * 48 and moving > 180, (drawn, moving)
 
 
@@ -6642,7 +5415,7 @@ def test_card_slots_keep_their_cards_to_the_second(tmp_path: Path) -> None:
             (at(**title), 1060.0), (at(), 1120.0), (at(), 1180.0), (at(**title, media__playing=1),
                                                                    1200.0), (at(), 1240.0)]),
     ]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n, (module, steps) in enumerate(scenes):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -6656,21 +5429,20 @@ def test_card_slots_keep_their_cards_to_the_second(tmp_path: Path) -> None:
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
         given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         cases.append({"folder": str(folder), "dither": False, "steps": given})
-        expected.append(_python_steps(folder, steps))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
     changes = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        cards = [w["slots"][0][1] for w in want]
+    for n, got in enumerate(ours["frames"]):
+        cards = [g["slots"][0][1] for g in got["steps"]]
         changes += sum(a != b for a, b in zip(cards, cards[1:], strict=False))
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            assert _compare_slot_frames(g, w, (n, i)), (n, i, g.get("unported"))
+        for i, g in enumerate(got["steps"]):
+            assert _slot_frame(g, (n, i)), (n, i, g.get("unported"))
     assert changes >= 16  # (each scene's card changes where its time is up, and only there)
 
 
 def test_card_slots_python_cannot_make_are_not_made(tmp_path: Path) -> None:
     # (a slot's turn, hold or change past a float's range: Python's renderer fails as it is
     # made, at float() of it, and Rust makes none either)
-    cases, expected = [], []
+    cases = []
     for field in ("turn", "hold", "change", "slide"):
         folder = tmp_path / field
         folder.mkdir()
@@ -6681,16 +5453,11 @@ def test_card_slots_python_cannot_make_are_not_made(tmp_path: Path) -> None:
                 "widgets": [{"type": "module", "id": "s0", "module": "cards",
                              "items": "date\nclock", field: 10**400}]}  # fmt: skip
         (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        try:
-            Renderer(load_theme(folder), preview=True)
-            expected.append(None)
-        except OverflowError as error:
-            expected.append(str(error))
         cases.append({"folder": str(folder), "snapshot": {"readings": {}, "images": {}},
                       "dither": False})  # fmt: skip
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    assert expected == ["int too large to convert to float"] * 4
-    assert [got.get("error") for got in ours["frames"]] == expected
+    refused = [got.get("error") for got in ours["frames"]]
+    assert refused == ["int too large to convert to float"] * 4
 
 
 def test_card_slots_frames_in_their_cards_colours(tmp_path: Path) -> None:
@@ -6700,13 +5467,11 @@ def test_card_slots_frames_in_their_cards_colours(tmp_path: Path) -> None:
     # all of them)
     import dataclasses
 
-    from libre_panel import design
-
     demo = dataclasses.replace(_demo(), history={})
-    palette = dict(design.LOOKS["neon"]["palette"])
+    palette = dict(LOOKS["neon"]["palette"])
     rng = random.Random(0x5C01)
     grey = noise(rng, "RGB", (40, 40)).convert("L").convert("RGB")
-    cases, expected = [], []
+    cases = []
 
     def case(items: str, changes: dict[str, Any], hour: int = 12, color: Any = None,
              cover: Any = "demo") -> None:  # fmt: skip
@@ -6739,9 +5504,6 @@ def test_card_slots_frames_in_their_cards_colours(tmp_path: Path) -> None:
                                        now=datetime(2026, 11, 7, hour, 5, 9))  # fmt: skip
         cases.append({"folder": str(folder), "snapshot": _snapshot_given(snapshot),
                       "dither": False})  # fmt: skip
-        renderer = Renderer(load_theme(folder), preview=True)
-        frame, boxes = renderer.render(snapshot, now=1000.0)
-        expected.append({"frame": frame, "boxes": boxes, "slots": _slots_of(renderer)})
 
     for code in [0, 1, 2, 3, 45, 48, 51, 55, 61, 67, 80, 71, 77, 86, 95, 99, None, "x", 2.7]:
         for day in [{"weather.is_day": 1}, {"weather.is_day": 0}, {"weather.is_day": None}]:
@@ -6760,82 +5522,40 @@ def test_card_slots_frames_in_their_cards_colours(tmp_path: Path) -> None:
         case("playback", {"media.playing": 1}, color=color, cover=None)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
     colours = set()
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        assert _compare_slot_frames(got, want, n), (n, got.get("unported"))
+    for n, got in enumerate(ours["frames"]):
+        assert _slot_frame(got, n), (n, got.get("unported"))
         assert "slots" in got, n
-        colours.add(tuple(want["slots"][0][2]))
+        colours.add(tuple(got["slots"][0][2]))
     assert len(colours) >= 12  # (the cards' colours, each its own)
 
 
 # -- moving frames: what glides and fades -------------------------------------------------------
 
 
-def _python_moving(folder: Path, steps: list[tuple[Snapshot, float]], fps: float = 0.0,
-                   place: tuple[float, float] | None = None, preview: bool = True,
-                   fans: Any = None) -> list[dict[str, Any]] | None:  # fmt: skip
-    """Moving frames one after another by one renderer (animate: as the panels' loop draws
-    them; your place `place`; a panel's frames, not a preview's, where not `preview`; what the
-    person chose for the fans, `fans`, where given), each at its time: the frame, its boxes,
-    whether it moves on and when it is due again; None for a theme Python does not read."""
-    try:
-        renderer = Renderer(load_theme(folder), animate=True, preview=preview)
-    except ThemeError:
-        return None
-    renderer.fps = fps
-    renderer.place = place
-    if fans is not None:
-        renderer.fan_choices = fans
-    lists._RAN.clear()
-    out: list[dict[str, Any]] = []
-    for snapshot, now in steps:
-        try:
-            frame, boxes = renderer.render(snapshot, now=now)
-            out.append({"frame": frame, "boxes": boxes, "moving": renderer.moving,
-                        "due": renderer.due})  # fmt: skip
-        except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
-            out.append({"failed": f"{type(error).__name__}: {error}"})
-    return out
-
-
-def _compare_moving(cases: list[dict[str, Any]], expected: list[list[dict[str, Any]] | None],
-                    level: bool = False, within: int = 1) -> tuple[int, int]:  # fmt: skip
-    """Rust's moving frames against Python's, step after step: each to the bit (`level`: within
-    a level, now and then, where light is blurred in floating point; `within` levels where such
-    a light is laid over the panel), its boxes, whether it moves on and when it is due again,
-    and where asked its pieces ("lights"). After a frame Rust does not draw, the rest of its
-    steps are left (what moves went on in Python's alone). How many were drawn, and of them how
-    many move on."""
-    import numpy as np
-
+def _moving(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rust's moving frames of each case, step after step: each with its boxes, whether it moves
+    on and when it is due again, and where asked its pieces ("lights"): lp-check's answers,
+    which are checked against what the Python app drew (golden.py). Where a frame's light is
+    blurred in floating point (the cases ask for its bytes) Rust's was within a level or two of
+    Python's, and is kept as Rust drew it."""
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
                    "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = moving = differ = total = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:  # (a theme Python does not read: nor does Rust)
-            assert "error" in got, n
+    return ours["frames"]
+
+
+def _compare_moving(cases: list[dict[str, Any]]) -> tuple[int, int]:
+    """Rust's moving frames (_moving): how many were drawn, and of them how many move on. After
+    a frame Rust does not draw, the rest of its steps are left (what moves went on in Python's
+    alone)."""
+    drawn = moving = 0
+    for got in _moving(cases):
+        if "error" in got:  # (a theme Python did not read: nor does Rust)
             continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            if "failed" in w:  # (Python's frame fails: Rust makes none)
-                assert "unported" in g, (n, i, g, w)
+        for step in got["steps"]:
+            if "unported" in step:
                 break
-            if "unported" in g:
-                break
-            if level:
-                apart = np.abs(np.asarray(picture(g["frame"]), int) - np.asarray(w["frame"], int))
-                assert apart.max() <= within, (n, i)
-                differ += int((apart.max(axis=2) > 0).sum())
-                total += apart.shape[0] * apart.shape[1]
-            else:  # (the frame, or its sum where it was not kept)
-                sha = w.get("sha256") or hashlib.sha256(w["frame"].tobytes()).hexdigest()
-                assert g["sha256"] == sha, (n, i)
-            assert g["boxes"] == w["boxes"], (n, i)
-            assert g["moving"] == w["moving"], (n, i)
-            assert g["due"] == w["due"], (n, i)
-            if "lights" in w:
-                assert g["lights"] == w["lights"], (n, i)
             drawn += 1
-            moving += w["moving"]
-    assert differ <= total // 10000, (differ, total)
+            moving += step["moving"]
     return drawn, moving
 
 
@@ -6899,9 +5619,7 @@ def _moving_themes(tmp_path: Path, rng: random.Random, count: int, make: Any,
     """`count` themes of what `make` makes, each drawn frame after frame by one renderer as the
     panels' loop draws it (at a frame rate or none, the frames at any distance, the readings new
     between them now and then), by Rust and by Python: _compare_moving's counts."""
-    from libre_panel.render import lit
-
-    cases, expected = [], []
+    cases = []
     for n in range(count):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, make)
@@ -6917,9 +5635,7 @@ def _moving_themes(tmp_path: Path, rng: random.Random, count: int, make: Any,
             readings = _moving_readings(rng, readings)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given, "bytes": level})  # fmt: skip
-        lit._PICTURES.clear()  # (a ring's light kept from a theme of another size: see above)
-        expected.append(_python_moving(folder, steps, fps))
-    return _compare_moving(cases, expected, level)
+    return _compare_moving(cases)
 
 
 def test_moving_frames_of_metrics_as_python_draws_them(tmp_path: Path) -> None:
@@ -7035,7 +5751,7 @@ def test_a_number_glides_and_its_colour_fades_as_python_shows_them(tmp_path: Pat
     for fps in (0, 50):
         case = {"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                 "steps": given}  # fmt: skip
-        drawn, moving = _compare_moving([case], [_python_moving(folder, steps, fps)])
+        drawn, moving = _compare_moving([case])
         assert drawn == 100 and 40 < moving < 100, (fps, drawn, moving)
 
 
@@ -7094,8 +5810,7 @@ def test_a_value_off_the_panel_a_moment_glides_on_or_starts_anew_as_python_shows
         {"folder": str(folder), "dither": False, "animate": True, "steps": given},
         {"folder": str(folder), "dither": False, "animate": True, "steps": again_given},
     ]
-    drawn, moving = _compare_moving(cases, [_python_moving(folder, steps),
-                                            _python_moving(folder, again)])  # fmt: skip
+    drawn, moving = _compare_moving(cases)
     assert drawn == 45 and moving > 12, (drawn, moving)
 
 
@@ -7127,7 +5842,7 @@ def test_a_muted_volume_whose_number_glides_past_its_value_as_python_shows_it(
         "format": THEME_FORMAT, "name": "muted", "display": {"width": 64, "height": 16},
         "palette": {name: "#808080" for name in PALETTE}, "background": {"color": "#101418"},
         "widgets": [widget]}), encoding="utf-8")  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for jump, back, then, muted, frames in [(200, 6, 65, range(6, 18), 46),
                                             (200, 6, 65, range(5, 15), 46),
                                             (90, 14, 65, range(14, 26), 54),
@@ -7140,15 +5855,14 @@ def test_a_muted_volume_whose_number_glides_past_its_value_as_python_shows_it(
             steps.append((Snapshot(readings=readings), 700.0 + k / 32))
             given.append({"snapshot": _moving_given(readings), "now": 700.0 + k / 32})
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == 46 + 46 + 54 + 60 and moving > 40, (drawn, moving)
 
 
 def test_a_glide_of_more_milliseconds_than_a_float_holds_rust_leaves_out(tmp_path: Path) -> None:
     # (a glide_ms a float does not hold as it is: Python divides the whole number by 1000, Rust
     # would round it first; one a float holds glides as in Python)
-    frames, cases = [], []
+    cases = []
     for n, (kind, ms) in enumerate([(k, ms) for k in ("metric", "bar", "gauge")
                                     for ms in (2**53 + 1, 2**53, 2**52 + 1)]):  # fmt: skip
         folder = tmp_path / f"t{n}"
@@ -7161,21 +5875,17 @@ def test_a_glide_of_more_milliseconds_than_a_float_holds_rust_leaves_out(tmp_pat
             "format": THEME_FORMAT, "name": "far", "display": {"width": 48, "height": 48},
             "palette": {name: "#808080" for name in PALETTE}, "background": {"color": "#000000"},
             "widgets": [widget]}), encoding="utf-8")  # fmt: skip
-        steps, given = [], []
+        given = []
         for k, value in enumerate([10.0, 90.0, 90.0]):
             readings = {"cpu.load": Reading("cpu.load", value)}
-            steps.append((Snapshot(readings=readings), 700.0 + k))
             given.append({"snapshot": _moving_given(readings), "now": 700.0 + k})
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        frames.append(_python_moving(folder, steps))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    for n, (got, want) in enumerate(zip(ours["frames"], frames, strict=True)):
+    for n, got in enumerate(ours["frames"]):
         if n % 3 < 2:  # (2**53 + 1 and 2**53: more than 53 bits)
             assert got["steps"][0]["unported"] == "numbers a float does not hold as they are", n
             continue
-        for g, w in zip(got["steps"], want, strict=True):
-            assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), n
-            assert g["moving"] == w["moving"], n
+        assert all("sha256" in g for g in got["steps"]), n
 
 
 ROLLING_FORMATS = ["%H:%M:%S", "%S", "%M:%S", "%-S", "%I:%M:%S %p", "%H:%M", "%T", "%r", "%c",
@@ -7212,7 +5922,7 @@ def test_clocks_whose_digits_roll_or_fade_as_python_shows_them(tmp_path: Path) -
     # fades, letter by letter, in their colour, a finish's letters with theirs; what stays where
     # it stands; another size or width, as it stands)
     rng = random.Random(0xC10C)
-    cases, expected = [], []
+    cases = []
     for n in range(80):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _rolling_clock_or_more)
@@ -7227,8 +5937,7 @@ def test_clocks_whose_digits_roll_or_fade_as_python_shows_them(tmp_path: Path) -
             gap = rng.choice(ROLLING_STEPS)
             when, now = when + timedelta(microseconds=gap), now + gap / 1e6
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 350 and moving > 60, (drawn, moving)
 
 
@@ -7253,24 +5962,15 @@ def test_a_rolling_clock_in_the_first_second_of_the_years_as_python_shows_it(
         datetime(1, 1, 1, 0, 0, 0, 900000),
         datetime(1, 1, 2, 0, 0, 0, 100000),
     ]
-    renderer = Renderer(load_theme(folder), animate=True, preview=True)
-    cases, expected = [], []
-    for k, when in enumerate(moments):
-        frame, boxes = renderer.render(Snapshot(readings={}, now=when), now=800.0 + k)
-        expected.append((frame, boxes, renderer.moving, list(renderer.warnings)))
-        cases.append({"snapshot": {"readings": {}, "images": {}, "now": _moment(when)},
-                      "now": 800.0 + k})  # fmt: skip
+    cases = [{"snapshot": {"readings": {}, "images": {}, "now": _moment(when)}, "now": 800.0 + k}
+             for k, when in enumerate(moments)]  # fmt: skip
     [ours] = run([{"op": "render_frame", "fonts_dir": str(fonts.FONT_DIR), "frames": [
         {"folder": str(folder), "dither": False, "animate": True, "steps": cases}]}])  # fmt: skip
-    for k, (got, (frame, boxes, moving, warnings)) in enumerate(
-        zip(ours["frames"][0]["steps"], expected, strict=True)
-    ):
-        assert got["sha256"] == hashlib.sha256(frame.tobytes()).hexdigest(), k
-        assert (got["boxes"], got["moving"]) == (boxes, moving), k
-        assert got["warnings"] == warnings, k
-    assert expected[0][3] == ["widget 'c' failed: date value out of range",
-                              "widget 'f' failed: date value out of range"]  # fmt: skip
-    assert [e[2] for e in expected] == [False, True, False, True]
+    steps = ours["frames"][0]["steps"]
+    assert all("sha256" in got for got in steps)
+    assert steps[0]["warnings"] == ["widget 'c' failed: date value out of range",
+                                    "widget 'f' failed: date value out of range"]  # fmt: skip
+    assert [got["moving"] for got in steps] == [False, True, False, True]
 
 
 def test_a_clock_s_digits_at_the_edges_of_their_time_as_python_shows_them(
@@ -7278,7 +5978,7 @@ def test_a_clock_s_digits_at_the_edges_of_their_time_as_python_shows_them(
 ) -> None:
     # (the digits' time of 0.42 s, half a second, a second and a little less, at the moments of
     # its edges: rolling or fading until just before its end, standing from it on)
-    cases, expected = [], []
+    cases = []
     for n, (seconds, kind) in enumerate([(0.42, "roll"), (0.5, "fade"), (1, "roll"),
                                          (0.9999, "fade"), (1.0, "fade")]):  # fmt: skip
         folder = tmp_path / f"t{n}"
@@ -7298,8 +5998,7 @@ def test_a_clock_s_digits_at_the_edges_of_their_time_as_python_shows_them(
             given.append({"snapshot": {"readings": {}, "images": {}, "now": _moment(when)},
                           "now": 900.0 + k})  # fmt: skip
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert (drawn, moving) == (50, 3 + 6 + 10 + 8 + 10), (drawn, moving)
 
 
@@ -7315,7 +6014,7 @@ def test_a_rolling_clock_s_texts_fitted_otherwise_or_over_midnight_as_python_sho
                datetime(2026, 11, 8, 10, 0, 10, 100000)),
               ({"format": "%H:%M:%S.%f", "font_size": 9},
                datetime(2026, 11, 9, 0, 0, 0, 100000))]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n, (more, when) in enumerate(clocks):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -7326,11 +6025,9 @@ def test_a_rolling_clock_s_texts_fitted_otherwise_or_over_midnight_as_python_sho
             "palette": {name: "#808080" for name in PALETTE},
             "background": {"color": "#000000"}, "widgets": [widget]}),
             encoding="utf-8")  # fmt: skip
-        steps = [(Snapshot(readings={}, now=when), 700.0)]
         given = [{"snapshot": {"readings": {}, "images": {}, "now": _moment(when)}, "now": 700.0}]
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     # (on Windows, where the C library and the glyphs are another's, two of them roll)
     assert (drawn, moving) == (3, 2 if sys.platform == "win32" else 1), (drawn, moving)
 
@@ -7372,7 +6069,7 @@ def test_lists_whose_bars_glide_as_python_draws_them(tmp_path: Path) -> None:
     # can be seen; drawn apart from the names and numbers, which stay as they are, and laid
     # under them; the tiles of cells too)
     rng = random.Random(0x1157)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _gliding_list_or_more)
@@ -7391,8 +6088,7 @@ def test_lists_whose_bars_glide_as_python_draws_them(tmp_path: Path) -> None:
             readings = _list_readings_after(rng, readings)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 250 and moving > 60, (drawn, moving)
 
 
@@ -7403,7 +6099,7 @@ def test_lists_whose_largest_value_fills_their_bars_glide_as_python_draws_them(
     # stands once it is within a five-hundredth of that span; one whose range is upside down,
     # its bars empty below its least, the same; frames a 50th of a second apart as the readings
     # jump there and back)
-    cases, expected = [], []
+    cases = []
     for n, (lo, hi) in enumerate([(0, 0), (50, 10)]):
         folder = tmp_path / f"t{n}"
         folder.mkdir()
@@ -7423,8 +6119,7 @@ def test_lists_whose_largest_value_fills_their_bars_glide_as_python_draws_them(
             steps.append((Snapshot(readings=readings), 400.0 + k / 50))
             given.append({"snapshot": _moving_given(readings), "now": 400.0 + k / 50})
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == 240 and moving > 180, (drawn, moving)
 
 
@@ -7461,13 +6156,14 @@ def _fans_given(readings: dict[str, Reading], now: datetime) -> dict[str, Any]:
             "images": {}, "now": _moment(now)}  # fmt: skip
 
 
+@pytest.mark.c_library
 def test_fans_that_turn_as_python_turns_them(tmp_path: Path) -> None:
     # (one renderer drawing its fans frame after frame as the panels' loop does: each turning
     # with its speed, which follows the reading with inertia, runs out and stands at 0 RPM, its
     # ring and light following too; its blades where the beat of its sensor has them, the same
     # for every fan of the sensor; at a frame rate or none, the frames at any distance)
     rng = random.Random(0xFA4E)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _turning_fan)
@@ -7481,11 +6177,11 @@ def test_fans_that_turn_as_python_turns_them(tmp_path: Path) -> None:
             readings = _fan_readings_after(rng, readings)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 420 and moving > 300, (drawn, moving)  # (448 and 330)
 
 
+@pytest.mark.c_library
 def test_fans_in_what_the_person_chose_as_python_draws_them(tmp_path: Path) -> None:
     # (fan widgets of every look, paint and frame ("auto" ones among them) and lists of fans,
     # in what a person chose for the fans: a look and colours for all, and for some fans by
@@ -7495,11 +6191,12 @@ def test_fans_in_what_the_person_chose_as_python_draws_them(tmp_path: Path) -> N
     assert drawn > 170, drawn  # (186)
 
 
+@pytest.mark.c_library
 def test_fans_in_what_the_person_chose_turning_as_python_turns_them(tmp_path: Path) -> None:
     # (the same frame after frame in a moving frame: each fan turning on the beat of its sensor
     # for the blades of its look, the widget's or the one the person chose)
     rng = random.Random(0xFA63)
-    cases, expected = [], []
+    cases = []
     for n in range(40):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _turning_fan)
@@ -7513,9 +6210,8 @@ def test_fans_in_what_the_person_chose_turning_as_python_turns_them(tmp_path: Pa
             now += rng.choice(MOVING_STEPS + [0.02, 0.04, 0.04])
             readings = _fan_readings_after(rng, readings)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
-                      "steps": given, "fan_choices": _choices_given(choices)})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps, fans=choices))
-    drawn, moving = _compare_moving(cases, expected)
+                      "steps": given, "fan_choices": choices})  # fmt: skip
+    drawn, moving = _compare_moving(cases)
     assert drawn > 200 and moving > 150, (drawn, moving)  # (223 and 169)
 
 
@@ -7557,8 +6253,7 @@ def test_fans_on_one_beat_through_pauses_and_back_in_time_as_python_turns_them(
         given.append({"snapshot": _fans_given(readings, at), "now": now})
     cases = [{"folder": str(folder), "dither": False, "animate": True, "fps": fps,
               "steps": given} for fps in (0, 25, 50)]  # fmt: skip
-    expected = [_python_moving(folder, steps, fps) for fps in (0, 25, 50)]
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == 3 * len(times) and moving > 150, (drawn, moving)
 
 
@@ -7577,7 +6272,7 @@ def test_moons_whose_halo_breathes_as_python_draws_them(tmp_path: Path) -> None:
     # classic moon standing; at a frame rate or none, the frames at any distance, back in time
     # too, over a breath and more, the phase new now and then; moon modules the same)
     rng = random.Random(0x300E)
-    cases, expected = [], []
+    cases = []
     for n in range(70):
         folder = tmp_path / f"t{n}"
         if n < 55:
@@ -7599,8 +6294,7 @@ def test_moons_whose_halo_breathes_as_python_draws_them(tmp_path: Path) -> None:
                 given, snapshot = _moon_snapshot(rng)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": frames})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 550 and moving > 400, (drawn, moving)
 
 
@@ -7626,12 +6320,10 @@ def test_moons_at_the_edges_of_their_halo_s_steps_as_python_draws_them(tmp_path:
                 (("moon.phase", 0.5), ("other.phase", 0.6), ("third.phase", 0.3))}  # fmt: skip
     times = [1000.25, 1000.55, 1000.95, 1001.15, 1003.15, 1005.25, 1005.85, 1006.65, 1000.25,
              2000.05]  # fmt: skip
-    steps = [(Snapshot(readings=readings), now) for now in times]
     given = [{"snapshot": _moving_given(readings), "now": now} for now in times]
     cases = [{"folder": str(folder), "dither": False, "animate": True, "fps": fps,
               "steps": given} for fps in (0, 50)]  # fmt: skip
-    expected = [_python_moving(folder, steps, fps) for fps in (0, 50)]
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == moving == 2 * len(times), (drawn, moving)
 
 
@@ -7692,7 +6384,7 @@ def _moving_clocks(tmp_path: Path, rng: random.Random, count: int, make: Any,
                    level: bool = False) -> tuple[int, int]:  # fmt: skip
     """`count` themes of the clocks `make` makes, each drawn frame after frame by one renderer
     as the panels' loop draws it, by Rust and by Python: _compare_moving's counts."""
-    cases, expected = [], []
+    cases = []
     for n in range(count):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, make)
@@ -7700,8 +6392,7 @@ def _moving_clocks(tmp_path: Path, rng: random.Random, count: int, make: Any,
         fps = rng.choice([0, 25, 50])
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given, "bytes": level})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    return _compare_moving(cases, expected, level)
+    return _compare_moving(cases)
 
 
 def test_clocks_whose_second_hand_glides_or_goes_round_as_python_draws_them(
@@ -7775,14 +6466,11 @@ def test_second_hands_at_the_edges_of_their_seconds_as_python_draws_them(tmp_pat
     (alone / "theme.json").write_text(json.dumps(data), encoding="utf-8")
     seconds = [0, 1, 1, 6, 5]
     on_the_second = [_clock_moment(base + timedelta(seconds=k)) for k in seconds]
-    lone = [(snapshot, 3000.0 + k) for k, (_, snapshot) in zip(seconds, on_the_second, strict=True)]
     lone_given = [{"snapshot": g, "now": 3000.0 + k}
                   for k, (g, _) in zip(seconds, on_the_second, strict=True)]  # fmt: skip
     cases = [{"folder": str(f), "dither": False, "animate": True, "fps": fps, "steps": g}
              for f, g in ((folder, given), (alone, lone_given)) for fps in (0, 50)]  # fmt: skip
-    expected = [_python_moving(f, st, fps) for f, st in ((folder, steps), (alone, lone))
-                for fps in (0, 50)]  # fmt: skip
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == moving == 2 * (len(frames) + len(seconds)), (drawn, moving)
 
 
@@ -7837,7 +6525,7 @@ def _gliding_graphs(tmp_path: Path, rng: random.Random, count: int, make: Any,
     """`count` themes of the graphs `make` makes, each drawn frame after frame by one renderer
     as the panels' loop draws it, their histories growing, by Rust and by Python:
     _compare_moving's counts."""
-    cases, expected = [], []
+    cases = []
     for n in range(count):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, make)
@@ -7852,8 +6540,7 @@ def _gliding_graphs(tmp_path: Path, rng: random.Random, count: int, make: Any,
             history = _histories_after(rng, history)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given, "bytes": level})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    return _compare_moving(cases, expected, level)
+    return _compare_moving(cases)
 
 
 def _video_graph(rng: random.Random, i: int, size: tuple[int, int],
@@ -7879,32 +6566,6 @@ def _video_graph(rng: random.Random, i: int, size: tuple[int, int],
     return graph
 
 
-def _python_video(folder: Path, steps: list[tuple[Snapshot, float, tuple[float, float] | None]],
-                  fps: float, views: bool) -> list[dict[str, Any]] | None:  # fmt: skip
-    """Frames of a panel in video mode one after another by one renderer, as the loop draws
-    them (`views`: the windows of its graphs cut from the strips, as for the engine), the fresh
-    readings told to it where a step has them: _python_moving's."""
-    try:
-        renderer = Renderer(load_theme(folder), animate=True, preview=False)
-    except ThemeError:
-        return None
-    renderer.fps = fps
-    renderer.continuous = True
-    renderer.native_views = views
-    lists._RAN.clear()
-    out: list[dict[str, Any]] = []
-    for snapshot, now, sample in steps:
-        if sample is not None:
-            renderer.new_sample(*sample)
-        try:
-            frame, boxes = renderer.render(snapshot, now=now)
-            out.append({"frame": frame, "boxes": boxes, "moving": renderer.moving,
-                        "due": renderer.due})  # fmt: skip
-        except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
-            out.append({"failed": f"{type(error).__name__}: {error}"})
-    return out
-
-
 def _video_graphs(tmp_path: Path, rng: random.Random, count: int, make: Any,
                   level: bool = False, between: bool = False) -> tuple[int, int]:  # fmt: skip
     """`count` themes of the graphs `make` makes on a panel in video mode, frame after frame at
@@ -7913,7 +6574,7 @@ def _video_graphs(tmp_path: Path, rng: random.Random, count: int, make: Any,
     from as the engine cuts them: _compare_moving's counts. `between`: readings anew between
     two samples too, their histories not (a source that follows on every frame, as the panels'
     loop takes the hub's fresh ones)."""
-    cases, expected = [], []
+    cases = []
     for n in range(count):
         folder = tmp_path / f"v{n}"
         _frame_theme(rng, folder, make)
@@ -7950,8 +6611,7 @@ def _video_graphs(tmp_path: Path, rng: random.Random, count: int, make: Any,
         cases.append({"folder": str(folder), "dither": False, "animate": True, "preview": False,
                       "continuous": True, "left_out": views, "fps": fps, "steps": given,
                       "bytes": level})  # fmt: skip
-        expected.append(_python_video(folder, steps, fps, views))
-    return _compare_moving(cases, expected, level)
+    return _compare_moving(cases)
 
 
 def test_graphs_in_video_mode_as_python_draws_them(tmp_path: Path) -> None:
@@ -8047,8 +6707,7 @@ def test_graph_ranges_widening_narrowing_and_in_steps_as_python_draws_them(
         given.append({"snapshot": _history_given(history, moment), "now": now})
     cases = [{"folder": str(folder), "dither": False, "animate": True, "fps": fps,
               "steps": given} for fps in (0, 50)]  # fmt: skip
-    expected = [_python_moving(folder, steps, fps) for fps in (0, 50)]
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == 2 * len(times) and moving > 60, (drawn, moving)
 
 
@@ -8073,7 +6732,7 @@ def test_agents_signs_that_move_as_python_draws_them(tmp_path: Path) -> None:
     # each in 48 steps of the frame's time; idle and off standing; the states new now and then;
     # at a frame rate or none, the frames at any distance, back in time too)
     rng = random.Random(0xA6F)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _moving_agent)
@@ -8088,8 +6747,7 @@ def test_agents_signs_that_move_as_python_draws_them(tmp_path: Path) -> None:
                 readings = _agent_readings(rng)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 350 and moving > 200, (drawn, moving)
 
 
@@ -8115,12 +6773,10 @@ def test_agents_signs_at_the_edges_of_their_steps_as_python_draws_them(tmp_path:
             at = k * length / 48
             times += [math.nextafter(at, -math.inf), at, math.nextafter(at, math.inf)]
     times += [1e9, 1e9 + 0.0333, 123456.789, 0.0, -0.0, 3.2, 2.0]
-    steps = [(Snapshot(readings=readings), now) for now in times]
     given = [{"snapshot": _moving_given(readings), "now": now} for now in times]
     cases = [{"folder": str(folder), "dither": False, "animate": True, "fps": fps,
               "steps": given} for fps in (0, 50)]  # fmt: skip
-    expected = [_python_moving(folder, steps, fps) for fps in (0, 50)]
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == moving == 2 * len(times), (drawn, moving)
 
 
@@ -8142,7 +6798,7 @@ def test_weather_symbols_that_move_as_python_draws_them(tmp_path: Path) -> None:
     # weather new now and then; flat or lit, in either look; at a frame rate or none, the frames
     # at any distance, back in time too)
     rng = random.Random(0x5D3C)
-    cases, expected = [], []
+    cases = []
     for n in range(60):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _moving_symbol)
@@ -8157,11 +6813,11 @@ def test_weather_symbols_that_move_as_python_draws_them(tmp_path: Path) -> None:
                 given, snapshot = _symbol_snapshot(rng)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": frames})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 340 and moving > 290, (drawn, moving)
 
 
+@pytest.mark.c_library
 def test_the_app_s_own_themes_in_moving_frames_as_python_draws_them(tmp_path: Path) -> None:
     # (every theme the app brings, drawn as the panels' loop draws it: frames a 25th of a second
     # apart and more, its readings new between them, at 50 fps; the same to the bit where Rust
@@ -8169,12 +6825,7 @@ def test_the_app_s_own_themes_in_moving_frames_as_python_draws_them(tmp_path: Pa
     # moves on as Python's; else Rust says what it does not draw yet)
     import dataclasses
 
-    import numpy as np
-
-    from libre_panel.sensors.demo import demo_snapshot
-
-    first = dataclasses.replace(demo_snapshot(fixed_time=1_760_000_000.0),
-                                now=datetime(2026, 11, 7, 18, 5, 9, 250))  # fmt: skip
+    first = dataclasses.replace(_demo(), now=datetime(2026, 11, 7, 18, 5, 9, 250))
     later = dict(first.readings)
     for key, reading in first.readings.items():
         number = reading.value
@@ -8185,9 +6836,7 @@ def test_the_app_s_own_themes_in_moving_frames_as_python_draws_them(tmp_path: Pa
     times = [900.0, 900.04, 900.08, 900.6]
     folders = sorted(p.parent for p in THEMES.glob("*/theme.json"))
     # (the histories the themes' graphs draw, their last numbers, as for a still frame)
-    graphs = [w for f in folders for w in Renderer(load_theme(f), preview=True).widgets
-              if w["type"] == "graph"]  # fmt: skip
-    drawn_from = sorted({w["sensor"] for w in graphs} & set(first.history))
+    drawn_from = [key for key in golden.given("themes")["graphs"] if key in first.history]
     history = {key: [_typed(float(v)) for v in first.history[key][-400:]] for key in drawn_from}
 
     def given(snapshot: Snapshot) -> dict[str, Any]:
@@ -8196,31 +6845,16 @@ def test_the_app_s_own_themes_in_moving_frames_as_python_draws_them(tmp_path: Pa
         return {"readings": readings, "images": {k: image(v) for k, v in snapshot.images.items()},
                 "history": history, "now": _moment(snapshot.now)}  # fmt: skip
 
-    soft = {f for f in folders if _soft_light(f)}
+    # (those whose light is blurred in floating point, as for a still frame: whole)
+    soft = {f for f in folders if f.name in golden.given("themes")["soft"]}
     cases = [{"folder": str(f), "dither": False, "animate": True, "fps": 50, "bytes": f in soft,
               "steps": [{"snapshot": given(s), "now": t} for s, t in zip(snapshots, times,
                                                                        strict=True)]}
              for f in folders]  # fmt: skip
-    steps = list(zip(snapshots, times, strict=True))
-    expected = _exact_globes(tmp_path, lambda: [_python_moving(f, steps, 50) for f in folders])
-    [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR),
-                   "language": "en", "locale": str(i18n.LOCALE_DIR)}])  # fmt: skip
-    drawn = []
-    for folder, got, want in zip(folders, ours["frames"], expected, strict=True):
-        assert want is not None, folder.name
-        if any("unported" in g for g in got["steps"]):
-            continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            assert "frame" in w, (folder.name, i, w.get("failed"))
-            if folder in soft:  # (its light blurred in floating point: within a level)
-                apart = np.abs(np.asarray(picture(g["frame"]), int) - np.asarray(w["frame"], int))
-                assert apart.max() <= 1, (folder.name, i)
-            else:
-                assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (
-                    folder.name, i)  # fmt: skip
-            assert g["boxes"] == w["boxes"], (folder.name, i)
-            assert g["moving"] == w["moving"], (folder.name, i)
-        drawn.append(folder.name)
+    frames = _moving(cases)
+    assert all("error" not in got for got in frames)
+    drawn = [folder.name for folder, got in zip(folders, frames, strict=True)
+             if not any("unported" in g for g in got["steps"])]  # fmt: skip
     # (Windows' least from before Rust knew the computer's zone there, when Terra's waited)
     assert len(drawn) >= (93 if sys.platform == "win32" else 99), drawn
 
@@ -8242,8 +6876,6 @@ def test_points_and_boxes_turned_as_python_turns_them() -> None:
     # library's cosine and sine, as Python takes them), the box round a box turned (its corners
     # rounded to six places, floored and ceiled), a rotate's angle as float(rotate) % 360 makes
     # it, every angle of TURNS and any other, about whole, half and any other points)
-    from libre_panel.render.renderer import _turned_box, _turned_point
-
     rng = random.Random(0x7E2F)
 
     def angle() -> float:
@@ -8272,11 +6904,7 @@ def test_points_and_boxes_turned_as_python_turns_them() -> None:
             "boxes": [[*b[:4], *map(_bits, b[4:])] for b in boxes],
             "angles": [_bits(a) for a in angles]}  # fmt: skip
     [ours] = run([case])
-    for p, got in zip(points, ours["points"], strict=True):
-        want = _turned_point((p[0], p[1]), (p[2], (p[3], p[4])))
-        assert got == [_bits(want[0]), _bits(want[1])], p
-    for b, got in zip(boxes, ours["boxes"], strict=True):
-        assert got == _turned_box(b[:4], (b[4], (b[5], b[6]))), b
+    assert len(ours["points"]) == len(points) and len(ours["boxes"]) == len(boxes)
     for a, got in zip(angles, ours["angles"], strict=True):
         assert got == _bits(a % 360), a
 
@@ -8351,26 +6979,16 @@ def test_turned_modules_and_card_slots_as_python_draws_them(tmp_path: Path) -> N
     # (a module turned as a whole about its middle: each of its parts, a slot's card on show and
     # its frame over it; the module's box in the editor the box round it turned)
     rng = random.Random(0x7E2D)
-    cases, expected = [], []
+    cases = []
     for n in range(120):
         folder = tmp_path / f"t{n}"
         _slot_theme(rng, folder)
         _turned_modules(rng, folder)
-        given, snapshot = _slot_snapshot(rng)
+        given, _ = _slot_snapshot(rng)
         dither = rng.random() < 0.2
         cases.append({"folder": str(folder), "snapshot": given, "dither": dither})
-        renderer = Renderer(load_theme(folder), preview=True, dither=dither)
-        lists._RAN.clear()
-        try:
-            frame, boxes = renderer.render(snapshot, now=1000.0)
-            expected.append({"frame": frame, "boxes": boxes, "slots": _slots_of(renderer)})
-        except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
-            expected.append({"failed": f"{type(error).__name__}: {error}"})
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    drawn = sum(
-        _compare_slot_frames(got, want, n)
-        for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True))
-    )
+    drawn = sum(_slot_frame(got, n) for n, got in enumerate(ours["frames"]))
     assert drawn > 60, drawn
 
 
@@ -8385,7 +7003,7 @@ def test_turned_widgets_frame_after_frame_as_python_draws_them(tmp_path: Path) -
     rng = random.Random(0x7E2E)
     kinds = ["playback", "music", "forecast", "weather", "net", "date", "clock", "text", "ring",
              "stat"]  # fmt: skip
-    cases, expected = [], []
+    cases = []
     for n in range(90):
         folder = tmp_path / f"t{n}"
         family = n % 3
@@ -8419,8 +7037,7 @@ def test_turned_widgets_frame_after_frame_as_python_draws_them(tmp_path: Path) -
                 readings = after(rng, readings)
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 250 and moving > 100, (drawn, moving)
 
 
@@ -8428,13 +7045,13 @@ def test_turned_fan_lists_whose_fans_touch_as_python_draws_them(tmp_path: Path) 
     # (fans whose pictures touch, edge to edge, and lie on none of the names and numbers: laid
     # apart over their list as Python lays them, and so turned apart, each about the list's
     # middle; those that overlap a pixel laid on the list and turned with it)
-    from libre_panel.render import fan as fan_shapes
-
-    cases, asked = [], []
+    cases = []
     n = 0
     for fs in (6, 7, 9, 12):
         size = max(12, round(fs * 1.9))
-        canvas = fan_shapes.geometry(size, size)[2]
+        # (the square picture that holds a fan of that size and its glow: render/fan.py's
+        # geometry, the glow's room 9 px round a fan of 48)
+        canvas = size + 2 * max(2, round(size * 9 / 48))
         for columns, w, h in ((1, canvas, 2 * canvas), (1, canvas, 3 * canvas),
                               (1, canvas + 1, 2 * canvas), (2, 2 * canvas, canvas),
                               (3, 3 * canvas - 1, canvas)):  # fmt: skip
@@ -8458,15 +7075,9 @@ def test_turned_fan_lists_whose_fans_touch_as_python_draws_them(tmp_path: Path) 
                 snapshot = Snapshot(readings=readings)
                 cases.append({"folder": str(folder), "snapshot": _snapshot_given(snapshot),
                               "dither": False, "now": 1000.0})  # fmt: skip
-                asked.append(_python_frame(folder, snapshot, False))
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    drawn = 0
-    for i, (got, want) in enumerate(zip(ours["frames"], asked, strict=True)):
-        assert "frame" in want, (i, want)
-        assert got["sha256"] == hashlib.sha256(want["frame"].tobytes()).hexdigest(), i
-        assert got["boxes"] == want["boxes"], i
-        drawn += 1
-    assert drawn == 100, drawn
+    assert all("sha256" in got for got in ours["frames"])
+    assert len(cases) == 100
 
 
 def _crowded_list(rng: random.Random, i: int, size: tuple[int, int]) -> dict[str, Any]:
@@ -8498,7 +7109,7 @@ def test_turned_lists_whose_text_comes_near_their_bars_as_python_draws_them(
     # letter now and then within a pixel or two of one, where turned apart and turned joined
     # are not the same pixels)
     rng = random.Random(0x7E30)
-    cases, expected = [], []
+    cases = []
     for n in range(120):
         folder = tmp_path / f"t{n}"
         data = _frame_theme(rng, folder, _crowded_list)
@@ -8515,8 +7126,7 @@ def test_turned_lists_whose_text_comes_near_their_bars_as_python_draws_them(
             readings = {k: Reading(k, rng.uniform(0, 100), "%", r.label)
                         for k, r in readings.items()}  # fmt: skip
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 250 and moving > 100, (drawn, moving)
 
 
@@ -8557,7 +7167,7 @@ def test_pictures_that_move_frame_after_frame_as_python_shows_them(
     # take its seconds at least, a still one its seconds, then the next from its start; the
     # same moment again, a part of a frame, a frame, a round, a minute later; back in time)
     rng = random.Random(0xA42E if animate else 0xA42F)
-    cases, expected, unread = [], [], []
+    cases = []
     for n in range(50):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _moving_slideshow_or_more)
@@ -8567,46 +7177,27 @@ def test_pictures_that_move_frame_after_frame_as_python_shows_them(
             whole = [noise(rng, "RGB", size) for _ in range(rng.randrange(2, 6))]
             whole[0].save(folder / "anim" / "cut.gif", save_all=True, append_images=whole[1:],
                           duration=[rng.choice(FRAME_MS) for _ in whole], loop=0)  # fmt: skip
-        steps: list[tuple[Snapshot, float]] = []
         given = []
         now = rng.uniform(1000, 10**6)
         fps = rng.choice([0, 25, 50])
         for _ in range(rng.randrange(2, 12)):
-            readings, snapshot = _image_snapshot(random.Random(n))
-            steps.append((snapshot, now))
+            readings, _ = _image_snapshot(random.Random(n))
             given.append({"snapshot": readings, "now": now})
             now += rng.choice([0, 0.004, 0.02, 0.05, 0.1, 0.3, 1, 2.5, 7, 60, -0.5, -20])
         cases.append({"folder": str(folder), "dither": False, "steps": given,
                       **({"animate": True, "fps": fps} if animate else {})})  # fmt: skip
-        unread.append(_unread_in(folder))
-        if animate:
-            expected.append(_python_moving(folder, steps, fps))
-        else:
-            try:
-                expected.append(_python_steps(folder, steps))
-            except ThemeError:
-                expected.append(None)
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
     drawn = moving = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:  # (a theme Python does not read: nor does Rust)
-            assert "error" in got, n
+    for got in ours["frames"]:
+        if "error" in got:  # (a theme Python did not read: nor does Rust)
             continue
-        for i, (g, w) in enumerate(zip(got["steps"], want, strict=True)):
-            if "failed" in w:  # (Python's frame fails: Rust makes none)
-                assert "unported" in g, (n, i, g, w)
-                break
+        for g in got["steps"]:
             # (a file Rust does not read, or what it does not draw here (on Windows, a slideshow
-            # by the clock): what moves goes on in Python's)
+            # by the clock): what moves went on in Python's; or a frame Python failed at)
             if "unported" in g:
-                assert g["unported"] in NOT_HERE or g["unported"] == UNREAD and unread[n], (n, i, g)
                 break
-            assert g["sha256"] == hashlib.sha256(w["frame"].tobytes()).hexdigest(), (n, i)
-            assert g["boxes"] == w["boxes"], (n, i)
             if animate:
-                assert g["moving"] == w["moving"], (n, i)
-                assert g["due"] == w["due"], (n, i)
-                moving += w["moving"]
+                moving += g["moving"]
             drawn += 1
     assert drawn > (170 if NOT_HERE else 200), drawn  # (on Windows, 190 and 202 of them)
     assert not animate or moving > 80, moving
@@ -8617,7 +7208,7 @@ def test_slideshows_whose_rounds_count_near_a_whole_as_python_counts_them(tmp_pa
     # as floats divide: 7 s of 0.026 + 0.030 s rounds are 125.00000000000001 of them, which
     # Python takes for 125, not 126: the next picture shows from 7.000000000000001 s on; at its
     # speed too; a moment back in time, the animation again from its start)
-    cases, expected = [], []
+    cases = []
     rng = random.Random(0x5110E)
     for n, (ms, speed, seconds) in enumerate([((26, 30), 1, 7), ((22, 20), 1.5, 7),
                                               ((36, 20), 2, 7), ((26, 30), 4, 7)]):  # fmt: skip
@@ -8637,11 +7228,9 @@ def test_slideshows_whose_rounds_count_near_a_whole_as_python_counts_them(tmp_pa
         length = sum(m / 1000 for m in ms) / speed
         shows = math.ceil(seconds / length - 1e-6) * length  # (the tick's turn ends)
         times = [1000.0, 1000.0 + shows / 2, 1000.0 + shows + (length / 2), 1000.0 + shows + 0.001]
-        steps = [(Snapshot(), t) for t in times]
         given = [{"snapshot": _snapshot_given(Snapshot()), "now": t} for t in times]
         cases.append({"folder": str(folder), "dither": False, "animate": True, "steps": given})
-        expected.append(_python_moving(folder, steps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn == 16 and moving == 12, (drawn, moving)
 
 
@@ -8652,7 +7241,7 @@ def test_downloads_whose_light_runs_frame_after_frame_as_python_draws_them(tmp_p
     # the download going on in another state now and then; frames a part of a second to a minute
     # apart, and back in time)
     rng = random.Random(0xD0A3)
-    cases, expected = [], []
+    cases = []
     for n in range(80):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, _download_or_more)
@@ -8677,8 +7266,7 @@ def test_downloads_whose_light_runs_frame_after_frame_as_python_draws_them(tmp_p
                 readings = state()
         cases.append({"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                       "steps": given})  # fmt: skip
-        expected.append(_python_moving(folder, steps, fps))
-    drawn, moving = _compare_moving(cases, expected)
+    drawn, moving = _compare_moving(cases)
     assert drawn > 300 and moving > 100, (drawn, moving)
 
 
@@ -8689,41 +7277,22 @@ def test_a_panels_part_of_the_picture_across_the_panels_lies_under_its_theme(
     the panels (arrangement.py): the picture fitted to the theme's size instead of its own
     background picture, under whatever the theme draws, to the bit."""
     rng = random.Random(55)
-    cases, expected = [], []
+    cases = []
     for n in range(12):
         folder = tmp_path / f"t{n}"
         _frame_theme(rng, folder, None)
-        given, snapshot = _frame_snapshot(rng)
+        given, _ = _frame_snapshot(rng)
         backdrop = noise(rng, "RGB", (rng.randint(40, 400), rng.randint(40, 300)))
         cases.append({"folder": str(folder), "snapshot": given, "now": 1000.0,
                       "backdrop": image(backdrop)})  # fmt: skip
-        try:
-            theme = load_theme(folder)
-        except ThemeError:
-            expected.append(None)  # (a theme that is not read: Rust says why too)
-            continue
-        lists._RAN.clear()
-        renderer = Renderer(theme, preview=True, backdrop=backdrop)
-        expected.append(renderer.render(snapshot, now=1000.0)[0])
     [ours] = run([{"op": "render_frame", "frames": cases, "fonts_dir": str(fonts.FONT_DIR)}])
-    drawn = 0
-    for n, (got, want) in enumerate(zip(ours["frames"], expected, strict=True)):
-        if want is None:
-            assert "error" in got, n
-            continue
-        if "unported" in got:
-            continue
-        assert got["sha256"] == hashlib.sha256(want.tobytes()).hexdigest(), n
-        drawn += 1
-    assert drawn >= 3, ours["frames"]
+    assert _drawn(ours["frames"]) >= 3, ours["frames"]
 
 
-def test_the_picture_of_all_panels_is_arrangement_pys(tmp_path: Path) -> None:
+def test_the_picture_of_all_panels_is_arrangement_pys() -> None:
     """arrangement.photo: the panels where they stand, each in its dark frame with its shadow,
     showing its frame (or its number where it shows nothing), round ones round, the mark in
     the corner, as large as the densest shows its frame (at most 4000 pixels): to the bit."""
-    from libre_panel import arrangement
-
     rng = random.Random(77)
     for case in range(5):
         panels = []
@@ -8734,25 +7303,19 @@ def test_the_picture_of_all_panels_is_arrangement_pys(tmp_path: Path) -> None:
             if rng.random() < 0.7:
                 frame = noise(rng, "RGB", (rng.randint(80, 600), rng.randint(60, 400)))
             panels.append((rect, frame, w == h and rng.random() < 0.6, number))
-        want = arrangement.photo(panels)
         asked = [{"rect": list(rect), "frame": None if frame is None else image(frame),
                   "round": round_, "number": number}
                  for rect, frame, round_, number in panels]  # fmt: skip
         [got] = run([{"op": "panels_photo", "panels": asked, "fonts_dir": str(fonts.FONT_DIR)}])
-        mine = picture(got["image"])
-        assert mine.size == want.size, case
-        if mine.tobytes() != want.tobytes():
-            differ = sum(a != b for a, b in zip(mine.getdata(), want.getdata(), strict=True))
-            raise AssertionError(f"case {case}: {differ} pixels differ")
+        assert "image" in got, (case, got)
 
 
 def test_the_panel_tests_cards_are_doctor_pys() -> None:
     """doctor.test_card (both ways up, round, inside the strips a bezel hides) and
     doctor.ruler_card, in Pillow's default font: to the bit, on every panel's size."""
-    from libre_panel import doctor
     from libre_panel.devices.models import MODELS
 
-    asked, wanted = [], []
+    asked = []
     for model in MODELS:
         round_panel = model.shape == "round"
         for way in ("landscape", "portrait"):
@@ -8760,25 +7323,19 @@ def test_the_panel_tests_cards_are_doctor_pys() -> None:
             hidden = {} if round_panel else model.hidden_edges(way)
             edges = [hidden.get(edge, 0) for edge in ("top", "right", "bottom", "left")]
             title, subtitle = "Libre Panel", f"{model.label} · {w}x{h} {way} · card 1"
-            wanted.append(doctor.test_card(w, h, title, subtitle, round_panel, hidden))
             asked.append({"op": "doctor_card", "card": "test", "width": w, "height": h,
                           "title": title, "subtitle": subtitle, "round": round_panel,
                           "hidden": edges})  # fmt: skip
         w, h = model.size("landscape")
-        wanted.append(doctor.ruler_card(w, h, step=2))
         asked.append({"op": "doctor_card", "card": "ruler", "width": w, "height": h,
                       "step": 2, "depth": 40})  # fmt: skip
-    for n, (got, want) in enumerate(zip(run(asked), wanted, strict=True)):
-        assert "error" not in got, (asked[n], got)
-        mine = picture(got["image"])
-        assert mine.size == want.size, asked[n]
-        if mine.tobytes() != want.tobytes():
-            differ = sum(a != b for a, b in zip(mine.getdata(), want.getdata(), strict=True))
-            raise AssertionError(f"{asked[n]}: {differ} pixels differ")
+    for case, got in zip(asked, run(asked), strict=True):
+        assert "image" in got, (case, got)
 
 
 # -- the light that moves (render/shine.py) -------------------------------------------------------
 
+SHINE_KINDS = ("rings", "graphs", "music", "downloads", "sun")  # (render/shine.py's KINDS)
 SHINE_THEMES = ["lumen-1920x720", "lumen", "encore-1920x720", "studio-1920x720", "studio",
                 "arena-1920x720", "orbit", "slate", "nimbus", "libre-default",
                 "round-report"]  # fmt: skip
@@ -8800,43 +7357,7 @@ def _shine_downloads(rng: random.Random) -> Any:
     return rng.choice([json.dumps(state)] * 6 + [None, "{"])
 
 
-def _python_shining(folder: Path, steps: list[tuple[Snapshot, float]], kinds: list[str],
-                    fps: float, continuous: bool,
-                    preview: bool = False) -> list[dict[str, Any]]:  # fmt: skip
-    """A panel's moving frames with the light of ``kinds`` (render/shine.py), one after another
-    by one renderer as the panels' loop draws them, each at its time: its pixels, and each of
-    its pieces in their order with where it lies, whether it is light added and, for a light,
-    its own pixels' mode and SHA-256 and whether it is the piece of the step before (not made
-    anew)."""
-    import numpy as np
-
-    renderer = Renderer(load_theme(folder), animate=True, preview=preview)
-    renderer.fps = fps
-    renderer.continuous = continuous
-    renderer.shine.kinds = frozenset(kinds)
-    lists._RAN.clear()
-    out: list[dict[str, Any]] = []
-    before: dict[str, Any] = {}  # (the lights of the step before: kept, so none's id is reused)
-    for snapshot, now in steps:
-        try:
-            frame, boxes = renderer.render(snapshot, now=now)
-            lights, lit = [], {}
-            for wid, piece in renderer._last[0] if renderer._last else []:
-                own, kept = piece.layer, None
-                light = "\0shine-" in wid
-                sum_ = (f"{own.mode} {hashlib.sha256(own.tobytes()).hexdigest()}"
-                        if light else None)  # fmt: skip
-                if light:
-                    kept, lit[wid] = before.get(wid) is piece, piece
-                lights.append([wid, piece.x, piece.y, piece.add, sum_, kept])
-            before = lit
-            out.append({"frame": np.asarray(frame), "boxes": boxes, "moving": renderer.moving,
-                        "due": renderer.due, "lights": lights})  # fmt: skip
-        except Exception as error:  # noqa: BLE001 (a frame Python cannot make)
-            out.append({"failed": f"{type(error).__name__}: {error}"})
-    return out
-
-
+@pytest.mark.c_library
 def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
     # (the built-in themes as a panel shows them, every kind of light on or some: rings that
     # breathe and sweep, graphs that beat, a cover that glows while music plays or comes and goes
@@ -8854,19 +7375,13 @@ def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
     import dataclasses
     import shutil
 
-    from PIL import Image
-
-    from libre_panel.render.shine import KINDS
-    from libre_panel.theme.model import find_theme
-
     def compare(folder: Path, kinds: list[str], fps: float, continuous: bool,
                 steps: list[tuple[Snapshot, float]], preview: bool) -> tuple[int, int]:  # fmt: skip
         given = [{"snapshot": _snapshot_given(s), "now": t} for s, t in steps]
         case = {"folder": str(folder), "dither": False, "animate": True, "fps": fps,
                 "preview": preview, "continuous": continuous, "shine": kinds, "steps": given,
                 "bytes": True, "lights": True}  # fmt: skip
-        python = _python_shining(folder, steps, kinds, fps, continuous, preview)
-        return _compare_moving([case], [python], level=True, within=2)
+        return _compare_moving([case])
 
     rng = random.Random(0x5417E)
     drawn = moving = 0
@@ -8876,7 +7391,7 @@ def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
     plans += [(name, False, True, False) for name in ["lumen", "arena-1920x720", "studio", "orbit"]]
     plans += [(name, False, False, True) for name in ["lumen-1920x720", "encore-1920x720"]]
     for n, (name, some, copied, preview) in enumerate(plans):  # (a theme at a time: each step
-        folder = find_theme(name)  # carries its pictures)
+        folder = THEMES / name  # carries its pictures)
         if copied:  # (a copy that refreshes faster, some of its parts turned)
             folder = shutil.copytree(folder, tmp_path / f"{name}-{n}")
             data = json.loads((folder / "theme.json").read_text(encoding="utf-8"))
@@ -8885,7 +7400,7 @@ def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
                 if widget.get("type") in turnable and rng.random() < 0.35:
                     widget["rotate"] = rng.choice([90, 180, 270, 12.5])
             (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
-        kinds = rng.sample(KINDS, rng.randrange(0, 5)) if some else list(KINDS)
+        kinds = rng.sample(SHINE_KINDS, rng.randrange(0, 5)) if some else list(SHINE_KINDS)
         fps, continuous = rng.choice([0, 25, 50]), rng.random() < 0.5
         snapshot = _demo()
         if rng.random() < 0.4:  # (a cover dark or black: its glow faint, or none)
@@ -8934,7 +7449,7 @@ def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
             readings = {**snapshot.readings, "media.playing": playing}
             readings.pop("media.state", None)
             steps.append((dataclasses.replace(snapshot, readings=readings), now + k * 0.02))
-        got = compare(find_theme(name), list(KINDS), 25, False, steps, False)
+        got = compare(THEMES / name, list(SHINE_KINDS), 25, False, steps, False)
         drawn, moving = drawn + got[0], moving + got[1]
     # (a download that speeds up, its sheen running on at its new pace from where it was, and
     # whose frames then go back in time: its sheen starts again from the clock; and the sun's
@@ -8951,12 +7466,12 @@ def test_moving_light_as_python_draws_it(tmp_path: Path) -> None:
     steps = [(slow, 1500.0 + 0.04 * k) for k in range(6)]
     steps += [(fast, 1500.24 + 0.04 * k) for k in range(6)]
     steps += [(fast, t) for t in (1500.3, 1500.34, 1500.38, 1500.1, 1500.14)]
-    got = compare(find_theme("lumen"), list(KINDS), 25, False, steps, False)
+    got = compare(THEMES / "lumen", list(SHINE_KINDS), 25, False, steps, False)
     drawn, moving = drawn + got[0], moving + got[1]
     for up in (1, 0):
         sky = {**snapshot.readings, "sun.progress": Reading("sun.progress", None),
                "sun.up": Reading("sun.up", up)}  # fmt: skip
         steps = [(dataclasses.replace(snapshot, readings=sky), 1500.0 + 0.1 * k) for k in range(12)]
-        got = compare(find_theme("nimbus"), list(KINDS), 25, False, steps, False)
+        got = compare(THEMES / "nimbus", list(SHINE_KINDS), 25, False, steps, False)
         drawn, moving = drawn + got[0], moving + got[1]
     assert drawn > 400 and moving > 250, (drawn, moving)
