@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.9.5rc4 — 2026-11-22
+
+The fourth candidate for 0.9.5, and the first that is public: everything of 0.9.5rc3 below
+(the weather from OpenWeatherMap, transitions that move over all the panels at once with
+Morph among them, light that moves, and Lumen, Arena and Encore in a second version), and now
+the light ring round Lian Li's Universal Screen 8.8", which is supported. Everything of the
+candidates before it stays: start screens made finer, and written to more panels. They go to
+a panel as 0.9.4 sends them, checked before and after; the finer files are run on a 9.2" and
+a 12.3" before this is 0.9.5, which has not been done yet.
 
 **New**
 - **The light ring of Lian Li's Universal Screen 8.8".** *Settings → Services → Light ring*
@@ -25,13 +33,13 @@
 
 ## 0.9.5rc3 — 2026-11-22
 
-The third candidate for 0.9.5, and the first that is public: the weather from OpenWeatherMap,
-transitions that move over all the panels at once (Morph among them), light that moves, and
-Lumen, Arena and Encore in a second version. The JONSBO DS339 starts on Windows again, the
-MAJESTY 9.16" is named as itself, and Diagnose tests panels on a serial port too. Everything of
-0.9.5rc2 and 0.9.5rc1 below stays: start screens made finer, and written to more panels. They
-go to a panel as 0.9.4 sends them, checked before and after; the finer files are run on a 9.2"
-and a 12.3" before this is 0.9.5, which has not been done yet.
+The third candidate for 0.9.5: the weather from OpenWeatherMap, transitions that move over all
+the panels at once (Morph among them), light that moves, and Lumen, Arena and Encore in a second
+version. The JONSBO DS339 starts on Windows again, the MAJESTY 9.16" is named as itself, and
+Diagnose tests panels on a serial port too. Everything of 0.9.5rc2 and 0.9.5rc1 below stays:
+start screens made finer, and written to more panels. They go to a panel as 0.9.4 sends them,
+checked before and after; the finer files are run on a 9.2" and a 12.3" before this is 0.9.5,
+which has not been done yet.
 
 **New**
 - **The weather from OpenWeatherMap.** *Settings → Weather and place → Source*: Open-Meteo as
