@@ -5361,6 +5361,16 @@ def test_the_panels_are_placed_where_they_stand_in_their_real_sizes(app_url, iso
         page.get_by_role("button", name="No picture").click()
         waits_for(page, lambda: settings_config().across == "")
         expect(view.locator(".arrangement-across")).to_have_count(0)
+        # a picture chosen right after "Line them up again", before the view has drawn the
+        # panels lined up: they are placed where the line-up puts them, not where they stood
+        second.focus()
+        page.keyboard.press("ArrowDown")
+        waits_for(page, lambda: settings_config().panels[0].device.at not in (None, (48, 0)))
+        page.get_by_role("button", name="Line them up again").click()
+        page.locator("[data-across-file]").set_input_files(str(wide))
+        waits_for(page, lambda: settings_config().across == "across/picture.jpg")
+        waits_for(page, lambda: settings_config().panels[0].device.at == (48, 0))
+        assert settings_config().device.at == (-275, 0)
 
 
 def test_the_night_follows_the_sun_with_one_switch(app_url, isolated_home):

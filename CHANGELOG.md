@@ -31,6 +31,11 @@ a 12.3" before this is 0.9.5, which has not been done yet.
 - **The Lian Li Universal Screen 8.8" is supported**: it runs, and "works great", its owner's
   report in the TURZX forum.
 
+**Fixed**
+- *Settings → More panels*: a picture across the panels chosen right after *Line them up
+  again* left the panels unplaced, so it covered none of them; they are placed in a row as the
+  view shows them, as when the picture is chosen later.
+
 ## 0.9.5rc3 — 2026-11-22
 
 The third candidate for 0.9.5: the weather from OpenWeatherMap, transitions that move over all

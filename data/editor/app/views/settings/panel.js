@@ -861,7 +861,20 @@ function MorePanelsCard() {
     try {
       const done = await endpoints.setAcross(await file.arrayBuffer());
       setAcrossStamp(done.stamp);
-      if (arrangement.some((item) => !item.at)) await place(arranged(arrangement).map((item) => item.at));
+      // (the places as the settings have them once the writes before this one are done, not as
+      // this view was drawn: "Line them up again" a moment before counts)
+      let placed = false;
+      await saveSettings((now) => {
+        const more = now?.panels || [];
+        if (more.length + 1 !== arrangement.length) return null;
+        const ats = [now?.device?.at, ...more.map((panel) => panel.at)];
+        const items = arrangement.map((item, n) => ({ ...item, at: Array.isArray(ats[n]) && ats[n].length === 2 ? ats[n] : null }));
+        if (!items.some((item) => !item.at)) return null;
+        const places = arranged(items).map((item) => item.at);
+        placed = true;
+        return { "device.at": places[0], panels: more.map((panel, n) => ({ ...panel, at: places[n + 1] })) };
+      });
+      if (placed) loadPanelInfo();
       else await loadSettings();
     } catch (error) {
       toastError(error);
