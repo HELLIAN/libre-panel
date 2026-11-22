@@ -1,7 +1,8 @@
-"""rust/i18n and the modules of rust/theme against i18n.py and theme/modules.py (docs/RUST.md,
-R4): every text of every language as t() finds it, the system's language, and themes of
-modules laid out on their grids (expand) in every language, with every look, size and option of
-every module kind and card, widget for widget, field for field."""
+"""rust/i18n and the modules of rust/theme against i18n.py and the Python app's theme/modules.py
+(docs/RUST.md, R4): every text of every language as t() finds it, the system's language, and
+themes of modules laid out on their grids (expand) in every language, with every look, size and
+option of every module kind and card, widget for widget, field for field. i18n.py and cards.py
+stay (the plugin host's) and are asked; what theme/modules.py answered is kept (golden.py)."""
 
 from __future__ import annotations
 
@@ -13,12 +14,24 @@ import struct
 import sys
 from typing import Any
 
+import golden
 import pytest
 from rust_check import pillow_libfreetype, run
 
-from libre_panel import cards, design, fonts, i18n
+from libre_panel import cards, fonts, i18n
 from libre_panel.devices import models as devices
-from libre_panel.theme import model, modules
+
+# What the cases take from the Python app's theme/: its format, its cards and backdrops, and
+# design.py's looks (as they were when its answers were kept).
+THEME_FORMAT = "libre-panel-theme/1"
+CARDS = ("glass", "flat", "outline", "none")
+BACKDROPS = ("gradient", "flat")
+LOOKS = golden.given("looks")
+
+no_freetype = pytest.mark.skipif(
+    pillow_libfreetype() is None,
+    reason="Pillow's FreeType is built into it here: none for lp-check to load",
+)
 
 # The module kinds of theme/modules.py and theme/cards.py, every one.
 BUILT = [
@@ -137,12 +150,12 @@ def _module(rng: random.Random, i: int, columns: int, rows: int) -> dict[str, An
 
 def _theme(rng: random.Random) -> dict[str, Any]:
     w, h = rng.choice(SIZES)
-    look = design.LOOKS[rng.choice(list(design.LOOKS))]
+    look = LOOKS[rng.choice(list(LOOKS))]
     style = dict(look["style"])
     if rng.random() < 0.5:
-        style.update(card=rng.choice(modules.CARDS), radius=rng.randrange(0, 101),
+        style.update(card=rng.choice(CARDS), radius=rng.randrange(0, 101),
                      glow=rng.choice([0, 0.3, 0.6, 1, 0.45]),
-                     backdrop=rng.choice(modules.BACKDROPS),
+                     backdrop=rng.choice(BACKDROPS),
                      card_opacity=rng.choice([0.4, 0.7, 1, 0.85]))  # fmt: skip
     if rng.random() < 0.4:
         style.update(display_font=rng.choice(FONTS), text_font=rng.choice(FONTS))
@@ -153,7 +166,7 @@ def _theme(rng: random.Random) -> dict[str, Any]:
                 "margin": rng.choice([0, 8, 24])}  # fmt: skip
     columns, rows = grid.get("columns") or 4, grid.get("rows") or 2
     data: dict[str, Any] = {
-        "format": model.THEME_FORMAT, "name": "Modules",
+        "format": THEME_FORMAT, "name": "Modules",
         "display": {"model": "custom", "orientation": "portrait" if h > w else "landscape",
                     "width": w, "height": h},
         "palette": dict(look["palette"]) if rng.random() < 0.8 else {}, "grid": grid,
@@ -164,20 +177,9 @@ def _theme(rng: random.Random) -> dict[str, Any]:
     return data
 
 
-def _expanded(case: dict[str, Any]) -> dict[str, Any]:
-    i18n.set_language(case["language"])
-    try:
-        theme = model.with_light_colours(model.parse_theme(json.loads(case["data"])), case["light"])
-        widgets, boxes = modules.expand(theme)
-    except Exception as error:  # noqa: BLE001 (every kind Python raises is compared)
-        return {"error": str(error), "kind": type(error).__name__}
-    return {"widgets": json.dumps(widgets), "boxes": [[k, b] for k, b in boxes.items()],
-            "warnings": theme.warnings}  # fmt: skip
-
-
+@pytest.mark.kept
+@no_freetype
 def test_modules_laid_out_as_python_lays_them_out() -> None:
-    if pillow_libfreetype() is None:
-        pytest.skip("Pillow's FreeType is built into it here: none for lp-check to load")
     rng = random.Random(0x40D)
     cases = [{"data": json.dumps(_theme(rng)), "light": rng.random() < 0.3,
               "language": rng.choice(list(i18n.LANGUAGES))} for _ in range(500)]  # fmt: skip
@@ -185,7 +187,7 @@ def test_modules_laid_out_as_python_lays_them_out() -> None:
     # (wide) and of an int (narrow)
     for width in (480, 30):
         tiny = {
-            "format": model.THEME_FORMAT,
+            "format": THEME_FORMAT,
             "name": "Tiny",
             "display": {
                 "model": "custom",
@@ -199,14 +201,10 @@ def test_modules_laid_out_as_python_lays_them_out() -> None:
         cases.append({"data": json.dumps(tiny), "light": False, "language": "en"})
     case = {"op": "theme_expand", "fonts_dir": str(fonts.FONT_DIR), "locale": str(i18n.LOCALE_DIR)}
     [ours] = run([{**case, "themes": cases}])
-    try:
-        python = [_expanded(c) for c in cases]
-    finally:
-        i18n.set_language("en")
-    assert ours["answers"] == python
+    answers = ours["answers"]
     # (laid out, not only refused alike: most themes hold modules that are drawn)
-    assert sum("widgets" in answer for answer in python) > 300
-    assert [a["error"] for a in python[-2:]] == ["float division by zero", "division by zero"]
+    assert sum("widgets" in answer for answer in answers) > 300
+    assert [a["error"] for a in answers[-2:]] == ["float division by zero", "division by zero"]
 
 
 CARD_LINES = [
@@ -230,6 +228,7 @@ def _card(card: Any) -> list[Any] | None:
     return None if card is None else [card.name, card.rule, _bits(card.seconds)]
 
 
+@pytest.mark.kept
 def test_what_the_editor_asks_of_the_modules_as_python_answers() -> None:
     grids = [(c, r) for c in range(1, 13) for r in range(1, 7)] + [(24, 6), (16, 12), (1, 24)]
     slots = [{"module": "cards", "items": x} for x in [*CARD_LINES, "\n".join(CARD_LINES)]]
@@ -245,39 +244,18 @@ def test_what_the_editor_asks_of_the_modules_as_python_answers() -> None:
             "modules": [json.dumps(m) for m in slots], "times": TIMES + CARD_LINES,
             "seconds": [_bits(x) for x in seconds], "themes": []}  # fmt: skip
     [ours] = run([case])
-    try:
-        for code, got in zip(languages, ours["languages"], strict=True):
-            i18n.set_language(code)
-            assert got == {
-                "info": json.dumps(modules.module_info()),
-                "templates": [json.dumps(modules.templates(c, r)) for c, r in grids],
-            }
-    finally:
-        i18n.set_language("en")
+    for got in ours["languages"]:  # (what modules.py told of them and offered: kept)
+        assert json.loads(got["info"]) and len(got["templates"]) == len(grids)
+    assert len(ours["slot_cards"]) == len(slots)
+    # cards.py stays, and is asked
     assert ours["lines"] == [_card(cards.card_line(x)) for x in CARD_LINES + TIMES]
-    assert ours["slot_cards"] == [[_card(c) for c in modules.slot_cards(m)] for m in slots]
     assert ours["times"] == [_bits(cards.card_time(x)) for x in TIMES + CARD_LINES]
     assert ours["time_texts"] == [cards.time_text(x) for x in seconds]
 
 
-def _app(case: dict[str, Any]) -> dict[str, Any]:
-    i18n.set_language(case["language"])
-    try:
-        theme = model.with_light_colours(model.parse_theme(json.loads(case["data"])), case["light"])
-    except Exception as error:  # noqa: BLE001 (every kind Python raises is compared)
-        return {"error": str(error), "kind": type(error).__name__}
-    try:
-        detached: Any = json.dumps(modules.detach(theme, case["id"]))
-    except Exception as error:  # noqa: BLE001
-        detached = {"error": str(error), "kind": type(error).__name__}
-    chosen = modules.with_cards(theme, case["cards"], case["order"], case["transition"])
-    return {"detach": detached, "follows": modules.follows_cards(theme),
-            "changed": chosen is not theme, "with_cards": json.dumps(chosen.widgets)}  # fmt: skip
-
-
+@pytest.mark.kept
+@no_freetype
 def test_modules_detached_and_the_person_s_cards_as_python_has_them() -> None:
-    if pillow_libfreetype() is None:
-        pytest.skip("Pillow's FreeType is built into it here: none for lp-check to load")
     rng = random.Random(0xDE7)
     cases = []
     for _ in range(200):
@@ -294,10 +272,6 @@ def test_modules_detached_and_the_person_s_cards_as_python_has_them() -> None:
                       "transition": rng.choice(["light", "fade", "random", "zz"])})  # fmt: skip
     case = {"op": "module_app", "fonts_dir": str(fonts.FONT_DIR), "locale": str(i18n.LOCALE_DIR)}
     [ours] = run([{**case, "themes": cases}])
-    try:
-        python = [_app(c) for c in cases]
-    finally:
-        i18n.set_language("en")
-    assert ours["themes"] == python
-    assert sum("detach" in a and a["detach"] != "[]" for a in python) > 50  # (parts, not none)
-    assert sum(a.get("changed", False) for a in python) > 20  # (cards chosen in open slots)
+    answers = ours["themes"]
+    assert sum("detach" in a and a["detach"] != "[]" for a in answers) > 50  # (parts, not none)
+    assert sum(a.get("changed", False) for a in answers) > 20  # (cards chosen in open slots)

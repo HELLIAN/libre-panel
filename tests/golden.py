@@ -32,9 +32,11 @@ RECORDING = os.environ.get("LP_GOLDEN") == "record"
 OUT = os.environ.get("LP_GOLDEN_OUT") or None
 
 _places: list[tuple[str, str]] = []  # (a path as it is written, its word), longest first
-_test: dict[str, Any] = {"file": None, "name": None, "kept": False, "calls": 0, "made": None}
+_test: dict[str, Any] = {"file": None, "name": None, "kept": False, "calls": 0, "made": None,
+                         "told": {}}  # fmt: skip
 _files: dict[str, dict[str, Any]] = {}  # the kept answers by test file, as read or recorded
 _out: dict[str, dict[str, Any]] = {}  # the answers written to OUT by test file
+_given: dict[str, Any] = {}  # what was taken from the Python app, by name, as read
 
 
 def places(**named: Path | str) -> None:
@@ -90,6 +92,44 @@ def digest(value: Any) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
+def given(name: str) -> Any:
+    """What a comparison's cases took from the Python app (a table of its, the demo's readings),
+    as it was when its answers were kept: tests/golden/given/<name>.json, or the system's own
+    in given/<system>/ where it was another there. The cases stay those the Python app
+    answered, whatever the app's own tables become."""
+    if name not in _given:
+        folders = (FOLDER.parent / "given" / FOLDER.name, FOLDER.parent / "given")
+        found = [f / f"{name}.json" for f in folders if (f / f"{name}.json").is_file()]
+        assert found, f"tests/golden/given has no {name}.json"
+        _given[name] = json.loads(found[0].read_text(encoding="utf-8"))
+    return _given[name]
+
+
+def told(what: str) -> Any:
+    """What the Python app told while the cases of the test that runs were made (``what``:
+    whether it read a theme, how wide it measured a text): the next of what it told then, in
+    the order it was asked. A test's cases depended on such answers here and there; with them
+    kept (given/<test file>.json: by test, by what was asked) the cases stay the ones its
+    kept answers are to."""
+    file, name, taken = _test["file"], _test["name"], _test["told"]
+    tape = given(file).get(name, {}).get(what)
+    assert tape is not None, f"nothing of what the Python app told {name} ({what}) was kept"
+    at = taken.get(what, 0)
+    assert at < len(tape), f"{name} asks for more of {what} than was kept ({len(tape)})"
+    taken[what] = at + 1
+    return tape[at]
+
+
+def untold() -> list[str]:
+    """What was kept of the Python app's telling for the test that runs and was not asked for:
+    its cases are then not the ones that were made."""
+    if _test["file"] is None or not _test["told"]:
+        return []
+    tapes = given(_test["file"]).get(_test["name"], {})
+    return [f"{what}: {len(tape) - _test['told'].get(what, 0)} of {len(tape)}"
+            for what, tape in tapes.items() if _test["told"].get(what, 0) != len(tape)]  # fmt: skip
+
+
 def _kept(file: str) -> dict[str, Any]:
     if file not in _files:
         path = FOLDER / f"{file}.json"
@@ -101,7 +141,7 @@ def begin(file: str, name: str, kept: bool) -> None:
     """A test begins (its file's name without .py, its name with its parameters; whether it is
     checked against what was kept)."""
     made = [] if (RECORDING and kept) or OUT else None
-    _test.update(file=file, name=name, kept=kept, calls=0, made=made)
+    _test.update(file=file, name=name, kept=kept, calls=0, made=made, told={})
 
 
 def has_kept() -> bool:
@@ -126,7 +166,7 @@ def _write(folder: Path, tests: dict[str, Any], file: str) -> None:
 def end(passed: bool) -> None:
     """A test ended: what it recorded is kept where it passed, and written."""
     file, name, kept, made = _test["file"], _test["name"], _test["kept"], _test["made"]
-    _test.update(file=None, name=None, kept=False, calls=0, made=None)
+    _test.update(file=None, name=None, kept=False, calls=0, made=None, told={})
     if file is None or not passed or made is None:
         return
     if OUT and made:
@@ -164,23 +204,42 @@ def answered(answers: list[Any]) -> None:
     assert not differ, f"call {call}: cases {differ[:20]} answer otherwise than they did"
 
 
-def _marked(path: Path) -> set[str] | bool:
-    """The tests of a test file that are marked ``kept``; True where the whole file is."""
+def live_here(mark: Any, system: str = sys.platform) -> bool:
+    """Whether a test's ``live`` mark (None: it has none) leaves it unchecked on ``system``: one
+    without arguments on every system, else on those it names. Such a test's answers depend on
+    the computer there (its clock, how fast a program of its answers), so none are kept."""
+    return mark is not None and (not mark.args or system in mark.args)
+
+
+def _marked(path: Path, system: str) -> set[str]:
+    """The tests of a test file that are checked against kept answers on ``system``: those
+    marked ``kept``, or all of a file that is, without those marked ``live`` there."""
     import ast
 
-    def kept(node: ast.AST) -> bool:
-        return any(isinstance(n, ast.Attribute) and n.attr == "kept" for n in ast.walk(node))
+    def marks(node: ast.FunctionDef, name: str) -> list[ast.AST]:
+        found = []
+        for mark in node.decorator_list:
+            attr = mark.func if isinstance(mark, ast.Call) else mark
+            if isinstance(attr, ast.Attribute) and attr.attr == name:
+                found.append(mark)
+        return found
 
-    found: set[str] = set()
-    for node in ast.parse(path.read_text(encoding="utf-8")).body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
-        ):
-            if kept(node.value):
+    def live(node: ast.FunctionDef) -> bool:
+        for mark in marks(node, "live"):
+            named = [a.value for a in mark.args] if isinstance(mark, ast.Call) else []
+            if not named or system in named:
                 return True
-        if isinstance(node, ast.FunctionDef) and any(kept(d) for d in node.decorator_list):
-            found.add(node.name)
-    return found
+        return False
+
+    body = ast.parse(path.read_text(encoding="utf-8")).body
+    whole = any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets)
+        and any(isinstance(n, ast.Attribute) and n.attr == "kept" for n in ast.walk(node.value))
+        for node in body
+    )
+    tests = [n for n in body if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+    return {t.name for t in tests if (whole or marks(t, "kept")) and not live(t)}
 
 
 def take(folder: Path) -> list[str]:
@@ -193,7 +252,7 @@ def take(folder: Path) -> list[str]:
     for system in ("linux", "win32"):
         mine = FOLDER.parent / system
         for path in sorted(tests.glob("test_*.py")):
-            marked = _marked(path)
+            marked = _marked(path, system)
             if not marked:
                 continue
             given = folder / system / f"{path.stem}.json"
@@ -202,7 +261,7 @@ def take(folder: Path) -> list[str]:
             old = json.loads(old_file.read_text(encoding="utf-8")) if old_file.is_file() else {}
 
             def wanted(name: str) -> bool:
-                return marked is True or name.split("[")[0] in marked  # noqa: B023
+                return name.split("[")[0] in marked  # noqa: B023
 
             kept = {name: made for name, made in old.items() if wanted(name)}
             kept.update({name: made for name, made in new.items() if wanted(name)})

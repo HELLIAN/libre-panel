@@ -11,6 +11,11 @@ import without_app
 
 without_app.take_away()  # (LP_WITHOUT_APP: as the tests run once the Python app is gone)
 
+if os.environ.get("LP_GIVEN_OUT"):  # (what the cases take from the Python app, written down)
+    import harvest
+
+    harvest.install()
+
 from libre_panel import i18n  # noqa: E402
 
 
@@ -49,15 +54,18 @@ def _golden(request, tmp_path_factory):
     if not golden._places:
         root = Path(__file__).resolve().parent.parent
         golden.places(tmp=tmp_path_factory.getbasetemp(), data=root / "data", repo=root)
-    kept = request.node.get_closest_marker("kept") is not None
+    kept = request.node.get_closest_marker("kept") is not None and not golden.live_here(
+        request.node.get_closest_marker("live")
+    )
     golden.begin(Path(str(request.node.fspath)).stem, request.node.name, kept)
     if kept and not golden.RECORDING:
         assert golden.has_kept(), "nothing was kept for this test (LP_GOLDEN=record keeps it)"
     yield
-    unasked = golden.unasked()
+    unasked, untold = golden.unasked(), golden.untold()
     passed = getattr(request.node, "_golden_passed", False)
     golden.end(passed)
     assert not passed or unasked == 0, f"{unasked} of the calls kept for this test were not made"
+    assert not passed or not untold, f"not asked for, of what the Python app told: {untold}"
 
 
 # On GitHub Actions a test that hangs ends the run after ten minutes, with every thread's stack

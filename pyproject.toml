@@ -106,4 +106,5 @@ select = ["E", "F", "W", "I", "B", "UP"]
 testpaths = ["tests"]
 markers = [
     "kept: a comparison whose expectations are the Python app's answers as kept (tests/golden.py)",
+    "live: a comparison not checked against kept answers (on the systems named, or on all)",
 ]
