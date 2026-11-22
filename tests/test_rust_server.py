@@ -128,6 +128,8 @@ def servers(
     env = {**os.environ, "LIBRE_PANEL_HOME": str(homes[1]), "LIBRE_PANEL_DATA": str(DATA),
            "LP_RELEASES_FILE": str(releases), "XDG_CONFIG_HOME": str(homes[1] / "xdg"),
            "LP_GEOCODING_URL": search_url, "LP_NOW": str(NOW), "TZ": "UTC",
+           # (an ordinary user's rights, whoever runs the tests: conftest.py's not_elevated)
+           "LP_TEST_RIGHTS": "user",
            **_libraries()}  # fmt: skip
     command = [str(_program()), "editor", "--port", "0"]
     ours = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -563,6 +565,7 @@ def test_a_transition_is_shown_on_the_panel_as_transition_show_py_shows_it(
         encoding="utf-8",
     )
     # (the card transition_show.py makes of "Fade" in the theme's colours: its pixels' digest)
+    _program()  # (skips where rust/ is not built, before what was kept is read)
     card = golden.told("card")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            **_libraries()}  # fmt: skip
@@ -1156,6 +1159,7 @@ def test_an_update_is_fetched_checked_and_installed_as_updates_py_does(tmp_path:
     import urllib.request
 
     # (updates.py's: where a release's files are, and what Install tells while nothing goes on)
+    _program()  # (skips where rust/ is not built, before what was kept is read)
     theirs = golden.told("update")
     name = "libre-panel-9.1.0-windows-x64-setup.exe"
     content = b"the setup " * 100
@@ -1286,6 +1290,7 @@ def test_the_trays_menu_is_tray_pys_and_what_is_chosen_in_it_is_done(
 
     # (tray.py's menu and its tooltip, of the Python app in the background on these settings:
     # kept with the folder as a word)
+    _program()  # (skips where rust/ is not built, before what was kept is read)
     theirs = json.loads(json.dumps(golden.told("menu")).replace("<home>", _in_json(home)))
     env = {**os.environ, "LIBRE_PANEL_DATA": str(DATA), **_libraries()}
     with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
@@ -1941,16 +1946,6 @@ SCENES = (
 # fmt: on
 
 
-def _with_rights() -> bool:
-    """Whether the tests run with administrator rights (a CI runner on Windows) or as root (a
-    container): the program sees that, whatever the tests make Python believe."""
-    if sys.platform == "win32":
-        import ctypes
-
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    return os.geteuid() == 0
-
-
 def test_the_settings_are_read_and_written_as_settings_py_does(
     servers: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1961,10 +1956,6 @@ def test_the_settings_are_read_and_written_as_settings_py_does(
     files hold the same. With the highest rights the settings that name a program or a file
     are refused, by both."""
     ask, homes = servers
-    if PYTHON:  # (the Python app's server is told the rights the program finds)
-        from libre_panel.editor import access
-
-        monkeypatch.setattr(access, "elevated", _with_rights)
 
     def both(request: str | bytes, what: Any) -> Any:
         theirs, ours = ask(request)
@@ -2280,7 +2271,6 @@ def test_the_update_check_is_told_as_updates_py_tells_it(servers: Any) -> None:
     both(_get("/api/update", WITH), "a file of no table")
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the XDG autostart entry")
 def _replaceable(program: Path) -> bool:
     """Whether a program lies in the user's own folder, where whatever the user runs can
     replace it (autostart.py's writable_by_user): starting it with the highest rights would
@@ -2291,6 +2281,7 @@ def _replaceable(program: Path) -> bool:
         return True
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the XDG autostart entry")
 def test_starting_with_the_system_is_told_and_set_as_settings_py_does(
     servers: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3010,10 +3001,6 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
     import io
     import zipfile
 
-    if PYTHON:  # (the Python app's server is told the rights the program finds)
-        from libre_panel.editor import access
-
-        monkeypatch.setattr(access, "elevated", _with_rights)
     ask, homes = servers
     for side in homes:
         mine = side / "themes" / "mine"
@@ -3024,6 +3011,16 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
         (mine / "Zed.txt").write_bytes(b"z")
         if os.name != "nt":  # (a link needs rights there)
             os.symlink(mine / "notes.txt", mine / "link.txt")
+
+    def still() -> None:
+        """Every file of both settings folders as old as one moment: a backup keeps their
+        times, and is then the same whenever it is made."""
+        for side in homes:
+            for path in side.rglob("*"):
+                if not path.is_symlink():
+                    os.utime(path, (1_600_000_000, 1_600_000_000))
+
+    still()
     answers = ask(_get("/api/backup/file", WITH))
     zips = []
     for status, headers, body in answers:
@@ -3075,15 +3072,15 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
     # back, the config.toml before it kept)
     for side in homes:
         shutil.rmtree(side / "themes" / "Bad Name")
+    still()
     backup = ask(_get("/api/backup/file", WITH))[0][2]
     with zipfile.ZipFile(io.BytesIO(backup)) as archive:
         assert "config.toml" in archive.namelist()
     (homes[0] / "config.toml").write_text('theme = "terra"\n', encoding="utf-8")
     (homes[1] / "config.toml").write_text('theme = "terra"\n', encoding="utf-8")
     restore(backup)
-    if not _with_rights():
-        kept = (homes[1] / "config.toml.before-restore").read_text("utf-8")
-        assert kept == 'theme = "terra"\n'
+    kept = (homes[1] / "config.toml.before-restore").read_text("utf-8")
+    assert kept == 'theme = "terra"\n'
 
 
 def test_ai_activity_comes_in_as_server_py_takes_it(servers: Any) -> None:
@@ -3351,6 +3348,7 @@ def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> 
     share how it went and the version; what the panel holds and the boot logo taken off stay."""
     from libre_panel import __version__
 
+    _program()  # (skips where rust/ is not built, before what was kept is read)
     theirs = golden.told("panel files")  # (panel_files.py's words and tables)
     words = (
         "No one has tried start screens on this panel yet: they are written to it only where you "
@@ -3439,6 +3437,7 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
     sent. What is no action, panel or model is refused in server.py's words."""
     if not PYTHON and not shutil.which("ffmpeg"):
         pytest.skip("what was kept is of a computer with ffmpeg")
+    _program()  # (skips where rust/ is not built, before what was kept is read)
     theirs = golden.told("panel files")  # (panel_files.py's words and tables)
     rig = Rig(tmp_path)
     try:
@@ -4619,10 +4618,6 @@ def test_unlocking_is_told_and_refused_as_settings_py_does(
     would bring this computer and how it is started as Python tells it; what is no request and
     a run that cannot ask for the rights here (or that runs as root already, where the tests
     do) refused in the same words."""
-    if PYTHON:  # (the Rust app knows whether it runs as root: Python's is told the same)
-        from libre_panel.editor import access
-
-        monkeypatch.setattr(access, "elevated", lambda: os.geteuid() == 0)
     ask, _homes = servers
     program = str(_program())
     theirs, ours = ask(_get("/api/unlock", WITH))

@@ -1508,6 +1508,7 @@ def test_the_load_source_measures_the_processor(tmp_path: Path) -> None:
 
 
 @pytest.mark.live  # (this computer's own readings)
+@this_computer
 def test_the_computer_s_own_readings_are_those_of_the_python_source(tmp_path: Path) -> None:
     """`[sensors] providers = ["psutil", ...]`: the keys of this computer's readings with the
     units and labels the Python app's sensors/psutil_provider.py gave their kind (kept by the
@@ -1640,6 +1641,7 @@ def test_a_games_frames_come_from_the_presentmon_named(tmp_path: Path) -> None:
 
 
 @pytest.mark.live  # (this computer's own readings)
+@this_computer
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the kernel's own files")
 def test_a_linux_pcs_sensors_are_those_of_the_python_sources(tmp_path: Path) -> None:
     """`[sensors] providers = ["linux", "psutil", ...]`: this computer's readings from the

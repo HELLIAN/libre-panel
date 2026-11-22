@@ -34,7 +34,13 @@ from urllib.parse import quote
 
 Answer = tuple[str, dict[str, str], bytes]
 WHOLE = 4096
-PORT = re.compile(rb"((?:127\.0\.0\.1|localhost)(?::|%3A))(\d{2,5})")
+# a port a server of this computer was given for the run (32768 and above: one a test names
+# itself, as 8765, is told as it is), after the computer's name or as a number called "port"
+PORT = re.compile(
+    rb"((?:127\.0\.0\.1|localhost)(?::|%3A)|\\?\"port\\?\": )"
+    rb"(3276[89]|327[7-9]\d|32[89]\d\d|3[3-9]\d{3}|[45]\d{4}|6[0-4]\d{3}|65[0-4]\d\d|655[0-2]\d|6553[0-5])"
+    rb"(?!\d)"
+)
 
 
 class Places:

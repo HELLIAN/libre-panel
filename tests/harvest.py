@@ -274,6 +274,24 @@ def _demo_course() -> Any:
     return demo_course()
 
 
+def _agents() -> Any:
+    """agents.py's names and commands, which the agents' comparison makes its cases of: the
+    events of a hook (those that mean working and idle and the notices that mean waiting in
+    the order of their names, those Libre Panel's hooks are for in their own), the commands a
+    program's settings get for a port, and the key's file."""
+    from libre_panel import agents
+
+    return {
+        "working": sorted(agents.WORKING), "idle": sorted(agents.IDLE),
+        "hook_events": list(agents.HOOK_EVENTS),
+        "waiting_notices": sorted(agents.WAITING_NOTICES),
+        "hook_commands": {str(port): agents.hook_command(port, "claude", "s3")
+                          for port in (8765, 9000, 1)},
+        "status_command": agents.status_command(8765, "s3"),
+        "key_file": agents.KEY_FILE,
+    }  # fmt: skip
+
+
 def _memory_defaults() -> Any:
     """services/memory.py's options, each as it is at first."""
     from libre_panel.services import memory
@@ -294,7 +312,7 @@ GIVERS = {"looks": _looks, "icons": _icons, "demo": _demo, "themes": _themes,
           "own_patterns": _own_patterns, "notices_defaults": _notices_defaults,
           "game_defaults": _game_defaults, "memory_schema": _memory_schema,
           "waveshare_keys": _waveshare_keys, "memory_defaults": _memory_defaults,
-          "demo_course": _demo_course}  # fmt: skip
+          "demo_course": _demo_course, "agents": _agents}  # fmt: skip
 
 
 def given(name: str) -> Any:
@@ -1098,7 +1116,7 @@ class PythonServer:
         from libre_panel.editor import drawings
         from libre_panel.editor import server as editor
         from libre_panel.pages import control
-        from libre_panel.sensors import demo
+        from libre_panel.sensors import demo, sky
         from libre_panel.weather import open_meteo
 
         monkeypatch.setenv("LIBRE_PANEL_HOME", str(home))
@@ -1119,7 +1137,7 @@ class PythonServer:
 
         for module in (demo, drawings, editor):
             monkeypatch.setattr(module, "demo_snapshot", demo_now, raising=False)
-        for module in (editor, backup, zipfile):
+        for module in (editor, backup, zipfile, sky):  # (sky: where the sun and the moon are)
             monkeypatch.setattr(module, "time", clock)
         for module in (control, doctor):  # (a notice's time, a report's)
             monkeypatch.setattr(module, "datetime", Moment)
@@ -1134,6 +1152,7 @@ class PythonServer:
         self.server.editor_state.updates.fetch = lambda: json.loads(
             releases.read_text(encoding="utf-8")
         )
+        self.server.editor_state.updates.clock = lambda: now  # (when it asked for a release)
         self.port, self.token = self.server.server_address[1], token
 
     def close(self) -> None:

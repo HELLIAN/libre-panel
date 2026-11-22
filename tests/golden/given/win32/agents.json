@@ -1,0 +1,44 @@
+{
+ "working": [
+  "PostCompact",
+  "PostToolBatch",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "PreCompact",
+  "PreToolUse",
+  "SubagentStart",
+  "SubagentStop",
+  "TaskCreated",
+  "UserPromptSubmit"
+ ],
+ "idle": [
+  "SessionStart",
+  "Stop",
+  "StopFailure"
+ ],
+ "hook_events": [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "PostToolUse",
+  "PermissionRequest",
+  "Notification",
+  "PreCompact",
+  "Stop",
+  "StopFailure",
+  "SessionEnd"
+ ],
+ "waiting_notices": [
+  "agent_needs_input",
+  "elicitation_dialog",
+  "elicitation_url_dialog",
+  "permission_prompt"
+ ],
+ "hook_commands": {
+  "8765": "curl.exe -s -f -m 2 --data-binary \"@-\" \"http://127.0.0.1:8765/api/ai/hook?agent=claude&key=s3\"",
+  "9000": "curl.exe -s -f -m 2 --data-binary \"@-\" \"http://127.0.0.1:9000/api/ai/hook?agent=claude&key=s3\"",
+  "1": "curl.exe -s -f -m 2 --data-binary \"@-\" \"http://127.0.0.1:1/api/ai/hook?agent=claude&key=s3\""
+ },
+ "status_command": "curl.exe -s -f -m 1 --data-binary \"@-\" \"http://127.0.0.1:8765/api/ai/status?agent=claude&key=s3\"",
+ "key_file": "ai.json"
+}
