@@ -2,7 +2,7 @@
 //! every encoder is told, the stamp put into every stream's SPS, the slices of a stream, and
 //! where ffmpeg is (find_ffmpeg).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The kinds of NAL unit that carry a picture's slice.
 const NAL_SLICE: u8 = 1;
@@ -80,11 +80,7 @@ fn program_name(name: &str) -> String {
 /// safe place (rights.rs): a configured one elsewhere is passed over for the others. The
 /// error says why there is none, as Python's DeviceError says it.
 pub fn find_ffmpeg(configured: &str) -> Result<PathBuf, String> {
-    let beside = std::env::current_exe()
-        .ok()
-        .map(|program| std::fs::canonicalize(&program).unwrap_or(program))
-        .and_then(|program| program.parent().map(Path::to_path_buf));
-    find_ffmpeg_beside(configured, beside)
+    find_ffmpeg_beside(configured, crate::rights::program_folder())
 }
 
 /// find_ffmpeg of a program in the folder `beside`.

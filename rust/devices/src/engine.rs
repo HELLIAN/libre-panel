@@ -108,9 +108,8 @@ pub fn find_engine() -> Option<PathBuf> {
             return Some(named);
         }
     }
-    let program = std::env::current_exe().ok()?;
-    let program = std::fs::canonicalize(&program).unwrap_or(program);
-    let beside = program.parent()?;
+    let beside = crate::rights::program_folder()?;
+    let beside = beside.as_path();
     let own = [beside.join("tools").join(&name), beside.join(&name)];
     if let Some(found) = own.into_iter().find(|file| file.is_file()) {
         return Some(found);
