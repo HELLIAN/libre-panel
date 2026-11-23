@@ -3245,7 +3245,7 @@ impl EditorServer {
         controls: Weak<BackgroundApp>,
         token: Option<String>,
     ) -> std::io::Result<EditorServer> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
+        let listener = bind_alone(port)?;
         let token = match token {
             Some(token) => token,
             None => access::new_token()?,
@@ -3378,6 +3378,74 @@ pub fn serve_until(
     Ok(())
 }
 
+/// The server's port on this computer's own address, this server's alone: on Windows another
+/// program's socket with SO_REUSEADDR could otherwise be bound to it too and take requests,
+/// the token with them (SO_EXCLUSIVEADDRUSE, as editor/server.py held it); elsewhere as std
+/// binds it (a port in use is refused).
+fn bind_alone(port: u16) -> std::io::Result<TcpListener> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::FromRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{
+            bind, closesocket, listen, setsockopt, WSAGetLastError, WSASocketW, WSAStartup,
+            AF_INET, INVALID_SOCKET, IN_ADDR, IN_ADDR_0, IPPROTO_TCP, SOCKADDR, SOCKADDR_IN,
+            SOCK_STREAM, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, WSADATA, WSA_FLAG_NO_HANDLE_INHERIT,
+            WSA_FLAG_OVERLAPPED,
+        };
+        let failed = || std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() });
+        // SAFETY: Winsock started (counted: as often as std starts it), a socket of this
+        // call's own, its address and option given as the calls take them; closed where it
+        // is not handed to the listener.
+        unsafe {
+            let mut data: WSADATA = std::mem::zeroed();
+            let started = WSAStartup(0x0202, &mut data);
+            if started != 0 {
+                return Err(std::io::Error::from_raw_os_error(started));
+            }
+            let flags = WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT;
+            let socket = WSASocketW(
+                i32::from(AF_INET),
+                SOCK_STREAM,
+                IPPROTO_TCP,
+                std::ptr::null(),
+                0,
+                flags,
+            );
+            if socket == INVALID_SOCKET {
+                return Err(failed());
+            }
+            let on: i32 = 1;
+            let address = SOCKADDR_IN {
+                sin_family: AF_INET,
+                sin_port: port.to_be(),
+                sin_addr: IN_ADDR {
+                    S_un: IN_ADDR_0 {
+                        S_addr: u32::from(Ipv4Addr::LOCALHOST).to_be(),
+                    },
+                },
+                sin_zero: [0; 8],
+            };
+            let size = std::mem::size_of::<SOCKADDR_IN>() as i32;
+            let option = (&on as *const i32).cast::<u8>();
+            if setsockopt(socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, option, 4) != 0
+                || bind(
+                    socket,
+                    (&address as *const SOCKADDR_IN).cast::<SOCKADDR>(),
+                    size,
+                ) != 0
+                || listen(socket, 128) != 0
+            {
+                let why = failed();
+                closesocket(socket);
+                return Err(why);
+            }
+            Ok(TcpListener::from_raw_socket(socket as u64))
+        }
+    }
+    #[cfg(not(windows))]
+    TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3432,5 +3500,58 @@ mod tests {
             ),
             (".GZ", "", "", "")
         );
+    }
+
+    #[test]
+    fn the_port_is_this_servers_alone() {
+        let held = bind_alone(0).unwrap();
+        let port = held.local_addr().unwrap().port();
+        // (another bind of the port is refused; on Windows even with SO_REUSEADDR)
+        assert!(bind_alone(port).is_err());
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Networking::WinSock::{
+                bind, closesocket, setsockopt, socket, AF_INET, IN_ADDR, IN_ADDR_0, IPPROTO_TCP,
+                SOCKADDR, SOCKADDR_IN, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR,
+            };
+            // SAFETY: a socket of the test's own, closed at its end.
+            unsafe {
+                let other = socket(i32::from(AF_INET), SOCK_STREAM, IPPROTO_TCP);
+                let on: i32 = 1;
+                setsockopt(
+                    other,
+                    SOL_SOCKET,
+                    SO_REUSEADDR,
+                    (&on as *const i32).cast(),
+                    4,
+                );
+                let address = SOCKADDR_IN {
+                    sin_family: AF_INET,
+                    sin_port: port.to_be(),
+                    sin_addr: IN_ADDR {
+                        S_un: IN_ADDR_0 {
+                            S_addr: u32::from(Ipv4Addr::LOCALHOST).to_be(),
+                        },
+                    },
+                    sin_zero: [0; 8],
+                };
+                let size = std::mem::size_of::<SOCKADDR_IN>() as i32;
+                let bound = bind(
+                    other,
+                    (&address as *const SOCKADDR_IN).cast::<SOCKADDR>(),
+                    size,
+                );
+                closesocket(other);
+                assert_ne!(bound, 0, "another socket took the port");
+            }
+        }
+        // the server answers on it
+        let mut asked = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let (mut answering, _) = held.accept().unwrap();
+        use std::io::{Read, Write};
+        asked.write_all(b"x").unwrap();
+        let mut got = [0u8; 1];
+        answering.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"x");
     }
 }

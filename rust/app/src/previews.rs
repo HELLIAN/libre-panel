@@ -294,3 +294,90 @@ fn demo_pictures(fonts: &Path) -> Result<IndexMap<String, Image>, String> {
 fn png(frame: &Image) -> Result<Vec<u8>, String> {
     lp_devices::png::encode_with(frame, lp_devices::png::Compression::new(6))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[test]
+    fn pictures_are_drawn_a_few_at_a_time_and_kept() {
+        let previews = Arc::new(Previews::default());
+        let (running, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let asked: Vec<_> = (0..AT_ONCE + 3)
+            .map(|n| {
+                let (previews, running, most) = (previews.clone(), running.clone(), most.clone());
+                std::thread::spawn(move || {
+                    previews.picture(
+                        &format!("w{n}"),
+                        || false,
+                        || {
+                            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                            most.fetch_max(now, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_millis(50));
+                            running.fetch_sub(1, Ordering::SeqCst);
+                            Ok(vec![n as u8])
+                        },
+                    )
+                })
+            })
+            .collect();
+        for (n, asked) in asked.into_iter().enumerate() {
+            assert!(matches!(asked.join().unwrap(), Some(Ok(png)) if png == [n as u8]));
+        }
+        assert_eq!(most.load(Ordering::SeqCst), AT_ONCE); // (the others waited for a turn)
+                                                          // kept: not drawn again
+        let again = previews.picture("w0", || false, || panic!("drawn twice"));
+        assert!(matches!(again, Some(Ok(png)) if png == [0]));
+        // the oldest go first
+        for n in 0..KEPT {
+            previews
+                .picture(&format!("k{n}"), || false, || Ok(vec![1]))
+                .unwrap()
+                .ok();
+        }
+        let drawn = AtomicUsize::new(0);
+        previews.picture(
+            "w0",
+            || false,
+            || {
+                drawn.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![0])
+            },
+        );
+        assert_eq!(drawn.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_picture_nobody_waits_for_any_more_is_not_drawn() {
+        let previews = Arc::new(Previews::default());
+        let busy: Vec<_> = (0..AT_ONCE)
+            .map(|n| {
+                let previews = previews.clone();
+                std::thread::spawn(move || {
+                    previews.picture(
+                        &format!("slow{n}"),
+                        || false,
+                        || {
+                            std::thread::sleep(Duration::from_millis(300));
+                            Ok(vec![])
+                        },
+                    )
+                })
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(50)); // (every turn taken)
+        let left = previews.picture("left", || true, || panic!("drawn for nobody"));
+        assert!(left.is_none());
+        for busy in busy {
+            busy.join().unwrap();
+        }
+        let refused = previews.picture("bad", || false, || Err(Refused::Drawing("x".into())));
+        assert!(matches!(refused, Some(Err(Refused::Drawing(_)))));
+        // (a picture that was refused is not kept)
+        let drawn = previews.picture("bad", || false, || Ok(vec![7]));
+        assert!(matches!(drawn, Some(Ok(png)) if png == [7]));
+    }
+}
