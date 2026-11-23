@@ -41,3 +41,21 @@ pub fn set_away(reason: &'static str, on: bool) {
 pub fn away() -> bool {
     REASONS.lock().is_ok_and(|reasons| !reasons.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_person_is_away_while_one_reason_holds() {
+        assert!(!away());
+        set_away(LOCKED, true);
+        set_away(DISPLAY_OFF, true);
+        assert!(away());
+        set_away(LOCKED, false); // (the monitor is still off)
+        assert!(away());
+        set_away(DISPLAY_OFF, false);
+        set_away(DISPLAY_OFF, false); // (said twice: no matter)
+        assert!(!away());
+    }
+}
