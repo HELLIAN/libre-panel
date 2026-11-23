@@ -121,13 +121,23 @@ def servers(
     search_url = f"http://127.0.0.1:{search.server_address[1]}/search"
     # GitHub's answer on the releases, the same file for both (the update check's)
     releases = tmp_path / "releases.json"
-    # a stand-in of xdg-open for both, which shows the folders a test asks for: the same
-    # answer on every computer (one without xdg-open says it cannot), and nothing opened
+    # the user's own folder, as both servers see it (where Claude Code's and Codex's settings
+    # are): the test's, not this computer's (one a test gave already, pictures_home's, stays)
+    if not Path(os.environ.get("HOME") or "/").resolve().is_relative_to(tmp_path.resolve()):
+        user = tmp_path / "user"
+        user.mkdir()
+        monkeypatch.setenv("HOME", str(user))
+        monkeypatch.setenv("USERPROFILE", str(user))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    # stand-ins for both: xdg-open, which shows the folders a test asks for (the same answer
+    # on every computer, one without xdg-open says it cannot, and nothing is opened), and the
+    # AI agents' programs, found on every computer alike
     if os.name != "nt":
         stand_in = tmp_path / "bin"
         stand_in.mkdir()
-        (stand_in / "xdg-open").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        (stand_in / "xdg-open").chmod(0o755)
+        for name, done in (("xdg-open", 0), ("claude", 1), ("codex", 1)):
+            (stand_in / name).write_text(f"#!/bin/sh\nexit {done}\n", encoding="utf-8")
+            (stand_in / name).chmod(0o755)
         monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ.get('PATH', '')}")
     i18n.set_language("de")  # (the servers' language, for what the tests say in it)
     python: Any = None
