@@ -256,6 +256,7 @@ fn config(c: &Config) -> Value {
         ("hotkeys", names(&c.hotkeys)),
         ("hotkeys_enabled", flag(c.hotkeys_enabled)),
         ("symbols", text(&c.symbols)),
+        ("data_unit", text(&c.data_unit)),
         ("cards", texts(&c.cards)),
         ("card_order", text(&c.card_order)),
         ("card_transition", text(&c.card_transition)),

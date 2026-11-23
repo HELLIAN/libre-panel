@@ -170,6 +170,9 @@ def servers(
         yield ask, homes
         if getattr(request.node, "_golden_passed", False):
             assert tape.left() == 0, f"{tape.left()} of the kept answers were not asked for"
+            if server_tape.RECORDING:  # (what the Rust app's server answered, kept)
+                given = golden.FOLDER.parent / "given" / "test_rust_server.json"
+                server_tape.keep(golden.given("test_rust_server"), given)
     finally:
         i18n.set_language("en")
         search.shutdown()

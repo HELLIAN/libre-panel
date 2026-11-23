@@ -146,6 +146,30 @@ draws = pytest.mark.skipif(pillow_libfreetype() is None, reason="needs Pillow's 
 
 
 @draws
+@pytest.mark.parametrize("theme", ["studio", "arena"])
+def test_amounts_of_data_are_said_in_mb_alone_where_config_toml_says_so(
+    tmp_path: Path, theme: str
+) -> None:
+    """data_unit = "mb" (Settings → Panel → Amounts of data): the network's rates (Studio's
+    {value:bytes}/s) and the graphics card's memory (Arena's rings) in MB alone; "auto" draws
+    as config.toml without the key, to the bit."""
+    drawn = {}
+    for unit in ("", "auto", "mb"):
+        home = tmp_path / (unit or "none")
+        home.mkdir()
+        (home / "config.toml").write_text(f'data_unit = "{unit}"\n' if unit else "",
+                                          encoding="utf-8")  # fmt: skip
+        out = home / "frame.png"
+        done = _run(home, "render", "--demo", "--theme", theme, "--output", str(out),
+                    LP_NOW="1760000000", TZ="UTC")  # fmt: skip
+        assert done.returncode == 0, done.stderr
+        with Image.open(out) as frame:
+            drawn[unit] = frame.convert("RGB").tobytes()
+    assert drawn["auto"] == drawn[""]
+    assert drawn["mb"] != drawn["auto"]
+
+
+@draws
 def test_it_draws_a_theme_into_a_png_file(tmp_path: Path) -> None:
     out = tmp_path / "frames" / "frame.png"
     done = _run(tmp_path, "render", "--demo", "--theme", "lumen", "--output", str(out))

@@ -191,6 +191,7 @@ fn preview_command(args: &[String]) -> Result<(), String> {
     let home = Home::find()?;
     let file = config.unwrap_or_else(|| home.config_file());
     let config = lp_config::load_config(&file, lp_config::platform()).map_err(|e| e.msg)?;
+    say_data_as(&config);
     let theme = theme.unwrap_or_else(|| "libre-default".into());
     let folder = if std::path::Path::new(&theme).is_dir() {
         PathBuf::from(&theme)
@@ -665,10 +666,13 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             follow_signals();
             let home = Home::find()?;
             let file = asked.config.clone().unwrap_or_else(|| home.config_file());
-            // (the app's language as config.toml sets it; a file that cannot be read: the
-            // system's)
-            let setting = lp_config::load_config(&file, lp_config::platform())
-                .map_or_else(|_| "auto".to_string(), |config| config.language);
+            // (the app's language as config.toml sets it, a file that cannot be read: the
+            // system's; and how it says amounts of data)
+            let config = lp_config::load_config(&file, lp_config::platform());
+            if let Ok(config) = &config {
+                say_data_as(config);
+            }
+            let setting = config.map_or_else(|_| "auto".to_string(), |config| config.language);
             let code = lp_i18n::resolve(Some(&setting), lp_i18n::system_language_here);
             match lp_i18n::Language::load(&home.locale(), &code) {
                 Ok(language) => lp_i18n::set_language(language),
@@ -1019,11 +1023,20 @@ impl TrayFollower {
     }
 }
 
+/// How this process says amounts of data, as config.toml's `data_unit` sets it: in MB alone
+/// ("mb"), or each in the unit that fits it. Set with the language, wherever that is.
+pub fn say_data_as(config: &lp_config::Config) {
+    lp_i18n::set_data_in_mb(config.data_unit == "mb");
+}
+
 /// The app's language as config.toml sets it ("auto", or a file that cannot be read: the
-/// system's), for what the command line says.
+/// system's), for what the command line says; and how it says amounts of data.
 fn speak(home: &Home, file: &std::path::Path) {
-    let setting = lp_config::load_config(file, lp_config::platform())
-        .map_or_else(|_| "auto".to_string(), |config| config.language);
+    let config = lp_config::load_config(file, lp_config::platform());
+    if let Ok(config) = &config {
+        say_data_as(config);
+    }
+    let setting = config.map_or_else(|_| "auto".to_string(), |config| config.language);
     let code = lp_i18n::resolve(Some(&setting), lp_i18n::system_language_here);
     match lp_i18n::Language::load(&home.locale(), &code) {
         Ok(language) => lp_i18n::set_language(language),

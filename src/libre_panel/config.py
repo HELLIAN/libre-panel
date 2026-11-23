@@ -35,6 +35,8 @@ DEFAULT_THEME = "libre-default"
 # The looks of the weather symbols and the moon (rust/render's symbols.rs and moon.rs): the first,
 # and the second with more to them
 SYMBOL_PACKS = ("classic", "vivid")
+# How amounts of data are said (data_unit): each in the unit that fits it, or in MB alone
+DATA_UNITS = ("auto", "mb")
 # How much moves on the panel (app.calm): calm where the panel is slow, full, or calm everywhere
 MOTIONS = ("auto", "full", "calm")
 # How a TURZX USB panel takes its stills: "auto" (JPEG on the 5.2", PNG elsewhere), "png", "jpeg"
@@ -715,6 +717,7 @@ class Config:
     hotkeys: dict[str, str] = field(default_factory=dict)  # action: combination (hotkeys.py)
     hotkeys_enabled: bool = True  # [hotkeys] enabled: off holds no key, the combinations kept
     symbols: str = DEFAULT_SYMBOLS  # the look of the weather symbols and the moon
+    data_unit: str = "auto"  # amounts of data in the unit that fits each, or "mb" alone
     # the cards of the card slots that leave them to the person (Lumen's), in the order they
     # are asked; the first that has something to show is on show (DEFAULT_CARDS)
     cards: list[str] = field(default_factory=lambda: list(DEFAULT_CARDS))
@@ -975,6 +978,10 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
         cfg.symbols = _expect(data["symbols"], str, "symbols").strip()
         if cfg.symbols not in SYMBOL_PACKS:
             raise ConfigError(f"symbols: must be one of {', '.join(SYMBOL_PACKS)}")
+    if "data_unit" in data:
+        cfg.data_unit = _expect(data["data_unit"], str, "data_unit").strip()
+        if cfg.data_unit not in DATA_UNITS:
+            raise ConfigError(f"data_unit: must be one of {', '.join(DATA_UNITS)}")
     if "cards" in data:
         cfg.cards = card_choice(data["cards"], "cards")
     if "card_order" in data or "card_transition" in data:

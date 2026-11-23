@@ -21,13 +21,19 @@ put there before the Rust app's server is asked, as when both were asked in turn
 A test that waits for a server's work asks the same again and again, as often as the work
 takes: more often or less often than when the answers were kept. So a request asked once more
 than was kept gets the last answer again, and answers kept for a request that is not asked again
-are passed over."""
+are passed over.
+
+``LP_GOLDEN=record`` (as golden.py's) keeps what the Rust app's server answers now in place of
+what was kept, for a change meant to be seen (a new setting, a new text): the answers of the
+tests that run and pass are written anew, the other tests' stay, and what the Python server
+wrote into its folder stays as it was kept."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -36,6 +42,7 @@ from urllib.parse import quote
 
 Answer = tuple[str, dict[str, str], bytes]
 WHOLE = 4096
+RECORDING = os.environ.get("LP_GOLDEN") == "record"
 # a port a server of this computer was given for the run (32768 and above: one a test names
 # itself, as 8765, is told as it is), after the computer's name or as a number called "port"
 PORT = re.compile(
@@ -173,6 +180,7 @@ class Played:
         self.theirs, self.ours = Places(homes[0], tmp), Places(homes[1], tmp)
         self.last: dict[str, Any] | None = None
         self.again = False
+        self.request: tuple[str | bytes, bool, bool] | None = None
 
     def shares(self, folder: Path) -> None:
         """A folder both servers write into (the pictures a person keeps): what the Python
@@ -230,6 +238,7 @@ class Played:
 
     def before(self, request: str | bytes, done: bool, left: bool) -> None:
         """The request that is asked next: the kept answer it gets is found."""
+        self.request = (request, done, left)
         digest, at, last = asked(self.theirs, request, done, left), self.at, self.last
         if at < len(self.entries) and self.entries[at]["asked"] == digest:
             pass
@@ -252,8 +261,14 @@ class Played:
         self._lay_shared(self.last.get("shared"))
 
     def answer(self, ours: Answer) -> Answer:
-        """The Python server's answer to the request, with the Rust app's at hand."""
-        assert self.last is not None
+        """The Python server's answer to the request, with the Rust app's at hand (recording:
+        the Rust app's, kept in its place)."""
+        assert self.last is not None and self.request is not None
+        if RECORDING:
+            body = self.last["body"]
+            whole = isinstance(body, str) or "base64" in body
+            now = entry(self.ours, *self.request, ours, whole=whole)
+            self.last.update(status=now["status"], headers=now["headers"], body=now["body"])
         made = played(self.last, self.theirs, self.ours, ours)
         if not self.again:
             self._lay(self.last.get("home"))
@@ -290,3 +305,11 @@ def played(made: dict[str, Any], theirs: Places, ours: Places, mine: Answer) -> 
                 said = theirs.filled(value.encode("latin-1"), own)
             headers[name] = said.decode("latin-1")
     return made["status"], headers, body
+
+
+def keep(given: dict[str, Any], path: Path) -> None:
+    """The kept answers ``given`` (recorded anew: RECORDING) written back to ``path``, a test a
+    line, as they were written."""
+    lines = (f"{json.dumps(name, ensure_ascii=False)}: {json.dumps(told, ensure_ascii=False)}"
+             for name, told in sorted(given.items()))  # fmt: skip
+    path.write_text("{\n" + ",\n".join(lines) + "\n}\n", encoding="utf-8")

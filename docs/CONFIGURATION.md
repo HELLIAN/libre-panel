@@ -73,6 +73,11 @@ fps = 10                       # 1-60; values glide between readings
                                # frames (Settings → Panel → Graphs); a graph with its own
                                # fine course (Arena's frame rate) scrolls on. False or left
                                # out: they scroll
+# data_unit = "mb"             # a network's or a drive's rate and the graphics card's
+                               # memory in MB alone, on every screen (Settings → Panel →
+                               # Amounts of data); "auto" or left out: each in the unit that
+                               # fits it (KB/s, MB/s, GB/s; GB). A theme's own format can ask
+                               # for MB too: {value:mb} (THEMES.md, "Format strings")
 # cards = ["playback", "ai", "forecast", "date"]
                                # the cards of the card slots that leave them to you
                                # (Lumen's, in each of its versions), in the order they are

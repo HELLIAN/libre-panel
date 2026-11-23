@@ -944,9 +944,14 @@ kept.
 | `{value:duration}` | `3d 5h` |
 | `{value:clock}` | `3:07` (a song's length) |
 | `{value:gb}` | `13.5` (a size in GB, whatever unit the reading comes in) |
+| `{value:mb} MB/s`, `{value:mb} MB` | `2.4` and `6234` (a rate or a size in MB, whatever unit the reading comes in: of a count of bytes the MB `{value:bytes}` says, a decimal below 100) |
 | `{value:rate}` and `{value:rate_unit}` | `519` and `KB/s`, from 1 MB/s `1.2` and `MB/s` (a data rate: the number and its unit apart, so each can have its own font) |
 | `{value:upper}` | `ROUND REPORT` (a text in capitals; `{label:upper}` does so for a reading's name) |
 | `{label}: {value:.0f}` | `CPU load: 38` |
+
+Where the app says amounts of data in MB alone (`data_unit = "mb"`, Settings → Panel →
+Amounts of data), `{value:bytes}` says a count of bytes in MB (`0.4 MB`, `2400 MB`) and
+`{value:rate}` with `{value:rate_unit}` a rate in MB/s; a reading that comes in GB stays in GB.
 
 For safety, attribute or index access (`{value.x}`, `{value[0]}`), other field
 names and huge widths are rejected; the widget then shows its `fallback`.

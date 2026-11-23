@@ -545,6 +545,7 @@ function DisplayCard() {
     <${CardOpacity} level=${config.card_opacity ?? 0} />
     <${LightColours} on=${Boolean(config.light_colours)} />
     <${GraphSteps} on=${Boolean(config.graph_steps)} />
+    <${DataUnit} unit=${config.data_unit || "auto"} />
     <${SettingRow}
       title=${t("How the panel is mounted")}
       hint=${t("Libre Panel's screens show in their version for it: Lumen Vertical for Lumen on a bar that stands on end.")}
@@ -699,6 +700,25 @@ function GraphSteps({ on }) {
       value=${on ? "steps" : "scroll"}
       onChange=${(value) => saveSettings({ graph_steps: value === "steps" })}
       options=${[{ value: "scroll", label: t("Scroll on") }, { value: "steps", label: t("A step at each reading") }]}
+    />
+  <//>`;
+}
+
+/**
+ * How every screen says amounts of data (config.toml data_unit): a network's or a drive's rate
+ * and the graphics card's memory each in the unit that fits it, or in MB alone.
+ */
+function DataUnit({ unit }) {
+  return html`<${SettingRow}
+    class="data-unit-row"
+    title=${t("Amounts of data")}
+    hint=${t("A network's or a drive's rate and the graphics card's memory: each in the unit that fits it (KB/s, MB/s, GB), or in MB alone.")}
+  >
+    <${Segmented}
+      label=${t("Amounts of data")}
+      value=${unit}
+      onChange=${(value) => saveSettings({ data_unit: value })}
+      options=${[{ value: "auto", label: t("Automatic") }, { value: "mb", label: t("In MB") }]}
     />
   <//>`;
 }

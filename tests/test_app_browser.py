@@ -5471,6 +5471,21 @@ def test_an_accent_colour_of_one_s_own_for_every_screen(app_url, isolated_home):
         assert radio(page, "Accent colour", "Windows'").count() == 0  # (not on Windows)
 
 
+def test_amounts_of_data_in_mb_alone_on_every_screen(app_url, isolated_home):
+    """Settings → Panel → Amounts of data: in MB alone (a network's and a drive's rate, the
+    graphics card's memory), and back to each in the unit that fits it."""
+    choose_theme(isolated_home)
+    with browser_page(app_url, "settings/panel") as page:
+        row = page.locator(".data-unit-row")
+        expect(row).to_contain_text("KB/s, MB/s, GB")
+        assert radio(page, "Amounts of data", "Automatic").get_attribute("aria-checked") == "true"
+        radio(page, "Amounts of data", "In MB").click()
+        waits_for(page, lambda: settings_config().data_unit == "mb")
+        assert 'data_unit = "mb"' in (isolated_home / "config.toml").read_text(encoding="utf-8")
+        radio(page, "Amounts of data", "Automatic").click()
+        waits_for(page, lambda: settings_config().data_unit == "auto")
+
+
 def test_a_backup_is_saved_and_restored_from_settings(app_url, isolated_home, tmp_path):
     """Settings → System → Backup: the file to keep, and one put back (after a question)."""
     choose_theme(isolated_home)

@@ -26,6 +26,9 @@ pub const CONFIG_FILENAME: &str = "config.toml";
 pub const DEFAULT_THEME: &str = "libre-default";
 pub const SYMBOL_PACKS: [&str; 2] = ["classic", "vivid"];
 pub const DEFAULT_SYMBOLS: &str = "vivid";
+/// How amounts of data are said (`data_unit`): "auto" each in the unit that fits it (KB/s,
+/// MB/s, GB/s; the graphics card's memory in GB), "mb" in MB alone.
+pub const DATA_UNITS: [&str; 2] = ["auto", "mb"];
 pub const MOTIONS: [&str; 3] = ["auto", "full", "calm"];
 pub const STILLS: [&str; 3] = ["auto", "png", "jpeg"];
 pub const VIDEO_RANGES: [&str; 3] = ["auto", "limited", "full"];
@@ -481,6 +484,7 @@ pub struct Config {
     pub hotkeys: IndexMap<String, String>,
     pub hotkeys_enabled: bool,
     pub symbols: String,
+    pub data_unit: String,
     pub cards: Vec<String>,
     pub card_order: String,
     pub card_transition: String,
@@ -530,6 +534,7 @@ impl Config {
             hotkeys: IndexMap::new(),
             hotkeys_enabled: true,
             symbols: DEFAULT_SYMBOLS.into(),
+            data_unit: "auto".into(),
             cards: DEFAULT_CARDS.iter().map(|c| c.to_string()).collect(),
             card_order: "first".into(),
             card_transition: "light".into(),
@@ -1525,6 +1530,15 @@ pub fn parse_config(data: &Table, path: Option<&Path>, platform: &str) -> Result
             return Err(config_error(format!(
                 "symbols: must be one of {}",
                 listed(&SYMBOL_PACKS)
+            )));
+        }
+    }
+    if let Some(value) = data.get("data_unit") {
+        cfg.data_unit = lp_py::strip(str_of(value, "data_unit")?).to_string();
+        if !DATA_UNITS.contains(&cfg.data_unit.as_str()) {
+            return Err(config_error(format!(
+                "data_unit: must be one of {}",
+                listed(&DATA_UNITS)
             )));
         }
     }

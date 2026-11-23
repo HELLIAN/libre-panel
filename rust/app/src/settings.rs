@@ -763,6 +763,7 @@ impl Settings<'_> {
             ),
             ("hotkeys_enabled", Value::Bool(config.hotkeys_enabled)),
             ("symbols", text(&config.symbols)),
+            ("data_unit", text(&config.data_unit)),
             ("cards", texts(&config.cards)),
             ("card_order", text(&config.card_order)),
             ("card_transition", text(&config.card_transition)),
@@ -930,6 +931,12 @@ impl Settings<'_> {
             edits.iter().map(named).collect::<Vec<String>>()
         };
         self.restart.written(&names, self.run());
+        if names.iter().any(|name| name == "data_unit") {
+            // (the pages' previews say amounts of data so at once; the panel when it reads it)
+            if let Ok(config) = self.config() {
+                crate::say_data_as(&config);
+            }
+        }
         self.follow();
         self.read()
     }
@@ -2518,6 +2525,7 @@ fn rule(
         "check_updates" | "allow_notify" | "tray_icon" | "light_colours" | "graph_steps"
         | "hotkeys.enabled" | "weather.enabled" => flag(name, value),
         "symbols" => choice(name, value, &c::SYMBOL_PACKS),
+        "data_unit" => choice(name, value, &c::DATA_UNITS),
         "cards" => rule_cards(name, value),
         "card_order" => choice(name, value, lp_theme::modules::slots::CARD_ORDERS),
         "card_transition" => choice(name, value, lp_theme::modules::slots::CARD_TRANSITIONS),

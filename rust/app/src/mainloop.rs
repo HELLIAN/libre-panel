@@ -761,8 +761,10 @@ impl MainLoop {
         crate::company::since(self.began)
     }
 
-    /// The app's language as config.toml sets it ("auto": the system's).
+    /// The app's language as config.toml sets it ("auto": the system's), and how it says
+    /// amounts of data.
     fn speak(&self) {
+        crate::say_data_as(&self.config);
         let code = lp_i18n::resolve(Some(&self.config.language), lp_i18n::system_language_here);
         match lp_i18n::Language::load(&self.home.locale(), &code) {
             Ok(language) => lp_i18n::set_language(language),

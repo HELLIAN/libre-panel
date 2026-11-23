@@ -1514,8 +1514,9 @@ fn theme_preview(state: &State, exchange: &mut Exchange, theme_id: &str, url: &U
         card_opacity: config.card_opacity,
         light: config.light_colours,
     };
+    // (and how amounts of data are said, as the language: the process's)
     let key = format!(
-        "{theme_id}\0{stamp:?}\0{width}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{size:?}\0{}",
+        "{theme_id}\0{stamp:?}\0{width}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{size:?}\0{}\0{}",
         lp_i18n::language().code(),
         asked.symbols,
         asked.chosen,
@@ -1523,6 +1524,7 @@ fn theme_preview(state: &State, exchange: &mut Exchange, theme_id: &str, url: &U
         asked.cards,
         asked.card_opacity,
         asked.light,
+        lp_i18n::data_in_mb(),
     );
     let env = lp_theme::Env {
         fonts_dir: state.home.fonts(),
