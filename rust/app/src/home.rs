@@ -35,7 +35,7 @@ impl Home {
             };
         }
         let program = std::env::current_exe().map_err(|e| e.to_string())?;
-        let program = std::fs::canonicalize(&program).unwrap_or(program);
+        let program = std::fs::canonicalize(&program).map_or(program, lp_devices::rights::plain);
         let beside = program.parent().unwrap_or(Path::new("."));
         let mut tried = vec![beside.join("share").join("libre-panel")];
         if let Some(above) = beside.parent() {

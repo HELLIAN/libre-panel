@@ -109,10 +109,10 @@ fn is_sid(text: &str) -> bool {
 
 // -- what came with this program ----------------------------------------------------------------
 
+/// The program's folder as a person writes it (on Windows not `\\?\C:\...`: the setup's check,
+/// a service's command line and what is said of the files take it as it is).
 fn program_folder() -> Option<PathBuf> {
-    let program = std::env::current_exe().ok()?;
-    let program = std::fs::canonicalize(&program).unwrap_or(program);
-    program.parent().map(Path::to_path_buf)
+    lp_devices::rights::program_folder()
 }
 
 /// bundled_service: the folder with the sensor service's files that came with this program.
