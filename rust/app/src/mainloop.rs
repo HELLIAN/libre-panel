@@ -449,9 +449,12 @@ fn scene_check() -> bool {
 
 /// The local time of now, and its fold.
 pub(crate) fn moment() -> (Moment, bool) {
-    let since = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    // (where LP_NOW names a moment, the time of day stands still at it: crate::clock)
+    let since = crate::clock::named().unwrap_or_else(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64())
+    });
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     lp_py::zones::fromtimestamp(zone, since).unwrap_or((Moment::date(1970, 1, 1), false))

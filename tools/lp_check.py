@@ -26,6 +26,62 @@ def program() -> Path:
     return built
 
 
+# the C libraries Pillow's wheel brings, as lp-check is told of them (rust/text, rust/decode):
+# Libre Panel's downloads carry the same beside the program
+PILLOW_LIBRARIES = (
+    ("LP_LIBJPEG", "libjpeg"),
+    ("LP_LIBFREETYPE", "libfreetype"),
+    ("LP_LIBHARFBUZZ", "libharfbuzz"),
+    ("LP_LIBWEBP", "libwebp-"),
+    ("LP_LIBWEBPDEMUX", "libwebpdemux"),
+    ("LP_LIBWEBPMUX", "libwebpmux"),
+)
+
+
+@functools.cache
+def libraries() -> dict[str, str]:
+    """Pillow's own C libraries (and Python's tzdata), named for lp-check as tests/rust_check.py
+    names them: the letters, JPEGs and WebPs drawn as the downloads draw them. Those already
+    named in the environment stay; none where Pillow is not there or has them built in."""
+    named: dict[str, str] = {}
+    try:
+        import PIL
+    except ImportError:
+        return named
+    here = Path(PIL.__file__).resolve().parent
+    for key, stem in PILLOW_LIBRARIES:
+        found = [*sorted((here.parent / "pillow.libs").glob(stem + "*.so*")),
+                 *sorted((here / ".dylibs").glob(stem + "*.dylib"))]  # fmt: skip
+        if found and not os.environ.get(key):
+            named[key] = str(found[0])
+    import importlib.util
+
+    spec = importlib.util.find_spec("tzdata")
+    if spec and spec.submodule_search_locations and not os.environ.get("LP_TZDATA"):
+        named["LP_TZDATA"] = str(next(iter(spec.submodule_search_locations)))
+    return named
+
+
+def run(text: str, env: dict[str, str] | None = None) -> str:
+    """What lp-check answers to ``text`` (a case a line), with Pillow's libraries."""
+    done = subprocess.run([str(program())], input=text, capture_output=True, encoding="utf-8",
+                          check=True, env={**os.environ, **libraries(), **(env or {})})  # fmt: skip
+    return done.stdout
+
+
+def app_program() -> Path:
+    """Libre Panel itself: LIBRE_PANEL_PROGRAM, else the one built beside lp-check."""
+    named = os.environ.get("LIBRE_PANEL_PROGRAM")
+    if named:
+        return Path(named)
+    built = program().with_name("libre-panel.exe" if os.name == "nt" else "libre-panel")
+    if not built.is_file():
+        raise SystemExit(
+            "needs libre-panel: cargo build --release in rust/ (or LIBRE_PANEL_PROGRAM)"
+        )
+    return built
+
+
 def typed(value: Any) -> dict[str, Any]:
     """A value as lp-check takes a reading's: its type said, a float by its bits."""
     if isinstance(value, bool):
@@ -46,11 +102,9 @@ def typed(value: Any) -> dict[str, Any]:
 def ask(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each case's answer, in order."""
     text = "".join(json.dumps(case) + "\n" for case in cases)
-    done = subprocess.run([str(program())], input=text, capture_output=True, encoding="utf-8",
-                          check=True)  # fmt: skip
-    answers = [json.loads(line) for line in done.stdout.split("\n") if line]
+    answers = [json.loads(line) for line in run(text).split("\n") if line]
     if len(answers) != len(cases):
-        raise SystemExit(f"lp-check answered {len(answers)} of {len(cases)}: {done.stderr}")
+        raise SystemExit(f"lp-check answered {len(answers)} of {len(cases)}")
     return answers
 
 

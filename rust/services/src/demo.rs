@@ -869,6 +869,16 @@ pub fn demo_history(t: f64, wave: (&str, f64, f64, f64), samples: usize) -> Vec<
     points.collect()
 }
 
+/// wave_histories: each wave's history at `t` (demo_history), by its key.
+pub fn wave_histories(t: f64, samples: usize) -> Vec<(String, Vec<f64>)> {
+    waves()
+        .into_iter()
+        .map(|(key, _, unit, base, amp, period)| {
+            (key, demo_history(t, (unit, base, amp, period), samples))
+        })
+        .collect()
+}
+
 /// demo_snapshot: a complete snapshot at `t` with filled graph history, for previews and
 /// the app (its pictures apart: `pictures`).
 pub fn demo_snapshot(t: f64, samples: usize, local: &Zone) -> Result<Snapshot, String> {
@@ -876,6 +886,7 @@ pub fn demo_snapshot(t: f64, samples: usize, local: &Zone) -> Result<Snapshot, S
     readings.extend(demo_report(t, 7)?);
     readings.extend(demo_session());
     readings.extend(demo_downloads(t));
+    readings.extend(named_readings().iter().cloned());
     let history = waves()
         .into_iter()
         .map(|(key, _, unit, base, amp, period)| {
@@ -888,6 +899,42 @@ pub fn demo_snapshot(t: f64, samples: usize, local: &Zone) -> Result<Snapshot, S
         now,
         fold,
         images: IndexMap::new(),
+    })
+}
+
+/// LP_DEMO_READINGS: a JSON file of readings the demo's snapshot shows over its own, each
+/// `{"key": [value, unit, label]}` (tools/readme_images.py: the weather and the moon of the
+/// README's pictures of the app); none where it is not set or cannot be read.
+pub const NAMED_READINGS_ENV: &str = "LP_DEMO_READINGS";
+
+fn named_readings() -> &'static [(String, Reading)] {
+    static NAMED: std::sync::OnceLock<Vec<(String, Reading)>> = std::sync::OnceLock::new();
+    NAMED.get_or_init(|| {
+        let Some(path) = std::env::var_os(NAMED_READINGS_ENV) else {
+            return Vec::new();
+        };
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let Ok(Value::Dict(given)) = lp_py::json::loads(&text) else {
+            return Vec::new();
+        };
+        let text_of = |v: Option<&Value>| match v {
+            Some(Value::Str(s)) => s.clone(),
+            _ => String::new(),
+        };
+        given
+            .into_iter()
+            .filter_map(|(key, told)| {
+                let Value::List(told) = told else {
+                    return None;
+                };
+                let reading = Reading {
+                    unit: text_of(told.get(1)),
+                    label: text_of(told.get(2)),
+                    ..Reading::of(told.first()?.clone())
+                };
+                Some((key, reading))
+            })
+            .collect()
     })
 }
 

@@ -32,8 +32,6 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import os
-import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -43,7 +41,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # (tools/lp_check.py)
-from lp_check import ROOT, program, typed  # noqa: E402
+from lp_check import ROOT, run, typed  # noqa: E402
 
 # The bands of a 1920 x 480 screen in SPUR II's layout.
 BAR_REGIONS = {
@@ -83,12 +81,10 @@ def render(theme_id: str, values: dict, when: datetime, place, layout: str = "")
         frame["place"] = list(place)
     case = {"op": "render_frame", "fonts_dir": str(ROOT / "data" / "fonts"),
             "locale": str(ROOT / "data" / "locale"), "frames": [frame]}  # fmt: skip
-    env = dict(os.environ)
+    env = {}
     if layout == "basic":
         env["LP_LIBFRIBIDI"] = str(Path(tempfile.gettempdir()) / "no-fribidi")
-    done = subprocess.run([str(program())], input=json.dumps(case) + "\n", capture_output=True,
-                          encoding="utf-8", check=True, env=env)  # fmt: skip
-    (drawn,) = json.loads(done.stdout)["frames"]
+    (drawn,) = json.loads(run(json.dumps(case) + "\n", env))["frames"]
     if "error" in drawn or "frame" not in drawn:
         sys.exit(f"{theme_id} is not drawn: {drawn.get('error') or drawn}")
     for warning in drawn.get("warnings", []):

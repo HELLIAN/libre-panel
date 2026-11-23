@@ -41,6 +41,11 @@ pub trait Source: Send {
     }
     /// Waits until the source's first readings are in (or it gave up), `seconds` at most.
     fn wait_ready(&mut self, _seconds: f64) {}
+    /// Histories its numbers have from the start, by key, asked once (the demo's where LP_NOW
+    /// names a moment: graphs that stand still with the time); none for most.
+    fn seeds(&mut self) -> Vec<(String, Vec<f64>)> {
+        Vec::new()
+    }
     /// How LibreHardwareMonitor is read, where the source is the one that reads it.
     fn lhm_status(&self) -> Option<lp_sensors::service::LhmStatus> {
         None
@@ -824,13 +829,24 @@ pub struct Hub {
     /// when the readings were taken last, and they and their pictures, for the panels beside
     /// the first (`shared`)
     taken: Option<(Instant, Readings, Images)>,
+    /// the histories the sources' numbers have from the start (Source::seeds): they stay so
+    seeds: IndexMap<String, Vec<f64>>,
 }
 
 pub type Images = IndexMap<String, lp_pixels::Image>;
 
-/// The readings with their numbers added to `history`, as a snapshot's histories (remember).
-fn remember(history: &mut IndexMap<String, VecDeque<f64>>, readings: &Readings) -> Histories {
+/// The readings with their numbers added to `history`, as a snapshot's histories (remember);
+/// a number with a history from the start (`seeds`) keeps that one as it is.
+fn remember(
+    history: &mut IndexMap<String, VecDeque<f64>>,
+    readings: &Readings,
+    seeds: &IndexMap<String, Vec<f64>>,
+) -> Histories {
     for (key, reading) in readings {
+        if let Some(seed) = seeds.get(key) {
+            (history.entry(key.clone())).or_insert_with(|| seed.iter().copied().collect());
+            continue;
+        }
         let number = match &reading.value {
             Value::Float(f) => Some(*f),
             Value::Int(n) => lp_py::num::int_to_float(n).ok(),
@@ -867,6 +883,7 @@ impl Hub {
             names: crate::fan_names::FanNames::default(),
             wants: IndexMap::new(),
             taken: None,
+            seeds: IndexMap::new(),
         }
     }
 
@@ -1267,7 +1284,7 @@ impl Hub {
     pub fn snapshot(&mut self, now: Moment, fold: bool) -> Snapshot {
         let (readings, images) = self.take();
         Snapshot {
-            history: Arc::new(remember(&mut self.history, &readings)),
+            history: Arc::new(remember(&mut self.history, &readings, &self.seeds)),
             readings,
             now,
             fold,
@@ -1282,6 +1299,7 @@ impl Hub {
         for (n, source) in self.sources.iter_mut().enumerate() {
             let mut found = Readings::new();
             source.read(&mut found);
+            self.seeds.extend(source.seeds());
             let overrides = source.overrides();
             for (key, reading) in found {
                 if !readings.contains_key(&key) || overrides.contains(&key.as_str()) {
@@ -1355,7 +1373,7 @@ impl View {
         // as it was when the shared ones were taken
         readings.extend(hub.fresh(true));
         Snapshot {
-            history: Arc::new(remember(&mut self.history, &readings)),
+            history: Arc::new(remember(&mut self.history, &readings, &hub.seeds)),
             readings,
             now,
             fold,
@@ -1372,11 +1390,14 @@ impl View {
 /// Readings made up of the time alone, for a look at a theme without a computer's own
 /// (`--demo`): the demo's (sensors/demo.py's DemoProvider, lp-services' demo), with its
 /// pictures: an album's cover, the player's icon and a game's logo.
-pub struct Demo;
+pub struct Demo {
+    /// its histories given (seeds: once)
+    seeded: bool,
+}
 
 impl Demo {
     pub fn new() -> Demo {
-        Demo
+        Demo { seeded: false }
     }
 }
 
@@ -1386,11 +1407,24 @@ impl Source for Demo {
     }
 
     fn read(&mut self, out: &mut Readings) {
-        let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-        let t = since.map_or(0.0, |since| since.as_secs_f64());
+        // (where LP_NOW names a moment, the demo's readings stand still at it: crate::clock)
+        let t = crate::clock::named().unwrap_or_else(|| {
+            let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+            since.map_or(0.0, |since| since.as_secs_f64())
+        });
         let utc = lp_py::zones::Zone::utc();
         let zone = lp_py::zones::local().unwrap_or(&utc);
         out.extend(lp_services::demo::read(t, zone));
+    }
+
+    /// The graphs of its waves as the demo's history has them at LP_NOW's moment (as the
+    /// previews' snapshot has them), where it names one: still, as the time.
+    fn seeds(&mut self) -> Vec<(String, Vec<f64>)> {
+        let Some(t) = crate::clock::named().filter(|_| !self.seeded) else {
+            return Vec::new();
+        };
+        self.seeded = true;
+        lp_services::demo::wave_histories(t, lp_services::demo::HISTORY_SAMPLES)
     }
 
     /// DemoProvider.images: the panel showed the demo's title without its cover.

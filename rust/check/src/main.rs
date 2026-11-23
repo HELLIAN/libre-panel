@@ -772,6 +772,95 @@ fn run(case: &Value) -> Result<Value, String> {
             let picture = lp_render::branding::mark(diameter, light).map_err(|e| e.0)?;
             json!({"image": value_of(&picture)})
         }
+        "demo_keys" => {
+            // the keys of the demo's readings at a moment (sensors/demo.py's demo_snapshot)
+            let utc = lp_py::zones::Zone::utc();
+            let zone = lp_py::zones::local().unwrap_or(&utc);
+            let t = case["t"].as_f64().unwrap_or(0.0);
+            let demo = lp_services::demo::demo_snapshot(t, 1, zone)?;
+            json!({"keys": demo.readings.keys().collect::<Vec<_>>()})
+        }
+        "module_parts" => {
+            // what tools/readme_images.py builds its module pictures of: each look's palette
+            // and cards (look_theme_parts), the kinds' names, for each [model, orientation] its
+            // size, grid and the grid's templates, each model's inches and pixels, and the pair
+            // version of each theme named (JSON text: ints and floats as they are)
+            use lp_theme::modules::info;
+            let how = lp_py::json::Dumps::default();
+            let text = |v: &lp_py::Value| lp_py::json::dumps(v, &how);
+            let mut looks = Vec::new();
+            for (key, look) in lp_theme::design::looks() {
+                let name = look.as_dict().and_then(|l| l.get("name")).cloned();
+                if let Some((palette, style)) = info::look_theme_parts(key) {
+                    looks.push(json!([
+                        key,
+                        text(&name.unwrap_or(lp_py::Value::None)),
+                        text(&lp_py::Value::Dict(palette)),
+                        text(&lp_py::Value::Dict(style))
+                    ]));
+                }
+            }
+            let kinds: serde_json::Map<String, Value> = info::module_info()
+                .get("kinds")
+                .and_then(lp_py::Value::as_dict)
+                .map(|kinds| {
+                    kinds
+                        .iter()
+                        .map(|(key, kind)| {
+                            let name = kind.as_dict().and_then(|k| k.get("name"));
+                            let name = match name {
+                                Some(lp_py::Value::Str(s)) => s.clone(),
+                                _ => String::new(),
+                            };
+                            (key.clone(), json!(name))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut models = serde_json::Map::new();
+            let layouts: Vec<Value> = case["layouts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|l| {
+                    let id = l[0].as_str().unwrap_or("");
+                    let way = l[1].as_str().unwrap_or("landscape");
+                    let Some(model) = lp_devices::models::find_model(id) else {
+                        return json!({"error": format!("no model {id}")});
+                    };
+                    let (w, h) = model.size(way);
+                    models.insert(
+                        id.to_string(),
+                        json!({
+                            "inch": model.size_inch.get(),
+                            "native": [model.native_width, model.native_height],
+                        }),
+                    );
+                    let grid = lp_theme::grid::make_grid(w, h, Default::default(), id);
+                    json!({"size": [w, h], "columns": grid.columns, "rows": grid.rows,
+                        "templates": text(&info::templates(grid.columns, grid.rows))})
+                })
+                .collect();
+            let places = lp_theme::versions::Places {
+                user: case["user"].as_str().unwrap_or("").into(),
+                plugins: Vec::new(),
+                builtin: case["builtin"].as_str().unwrap_or("").into(),
+            };
+            let pairs: serde_json::Map<String, Value> = case["pairs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n.as_str())
+                .map(|n| {
+                    (
+                        n.to_string(),
+                        json!(lp_theme::versions::pair_version(n, &places)),
+                    )
+                })
+                .collect();
+            json!({"looks": looks, "kinds": kinds, "layouts": layouts, "models": models,
+                "pairs": pairs})
+        }
         "design" => {
             // design.py's looks, the names of SPUR II's for their roles, the families of the
             // built-in themes and the cards where nothing says (tools/design.py)
@@ -2693,6 +2782,41 @@ fn run(case: &Value) -> Result<Value, String> {
                         Ok(theme) => theme,
                         Err(e) => return json!({"error": e.msg}),
                     };
+                    // (the theme scaled to another size first, as adapt_theme(..., "custom",
+                    // its orientation, "scale", width, height) makes it, where asked: "width"
+                    // and "height", or "factor" times its own)
+                    let theme = match c["adapt"].as_object() {
+                        None => theme,
+                        Some(size) => {
+                            let factor = size.get("factor").and_then(Value::as_i64);
+                            let own = |k: &str| match k {
+                                "width" => theme.width,
+                                _ => theme.height,
+                            };
+                            let big = |k: &str| {
+                                num_bigint::BigInt::from(match factor {
+                                    Some(f) => own(k) * f,
+                                    None => size[k].as_i64().unwrap_or(0),
+                                })
+                            };
+                            let data = theme.to_dict();
+                            let way = theme.orientation().to_string();
+                            let adapted = lp_theme::adapt::adapt_theme(
+                                &data,
+                                "custom",
+                                &way,
+                                "scale",
+                                &big("width"),
+                                &big("height"),
+                                &env,
+                            )
+                            .and_then(|d| lp_theme::model::parse_theme(&d, Some(&folder), &env));
+                            match adapted {
+                                Ok(theme) => theme,
+                                Err(e) => return json!({"error": e.msg}),
+                            }
+                        }
+                    };
                     let options = lp_render::Options {
                         // (an editor's preview, unless a panel's frame is asked for)
                         preview: c["preview"].as_bool().unwrap_or(true),
@@ -2795,6 +2919,27 @@ fn run(case: &Value) -> Result<Value, String> {
                         String,
                         std::rc::Rc<lp_render::Piece>,
                     > = std::collections::HashMap::new();
+                    // (the demo's snapshot at a moment, with its pictures, where the snapshot asks
+                    // for it ("demo": seconds since 1970), the readings it names over the
+                    // demo's and those of "drop" taken out; else the snapshot as it is given)
+                    let fonts_dir = env.fonts_dir.clone();
+                    let snapshot_at = move |given: &Value| {
+                        let Some(t) = given["demo"].as_f64() else {
+                            return snapshot_of(given);
+                        };
+                        let utc = lp_py::zones::Zone::utc();
+                        let zone = lp_py::zones::local().unwrap_or(&utc);
+                        let demo = lp_services::demo::HISTORY_SAMPLES;
+                        let Ok(mut base) = lp_services::demo::demo_snapshot(t, demo, zone) else {
+                            return snapshot_of(given);
+                        };
+                        base.images = lp_services::demo::pictures(&fonts_dir).unwrap_or_default();
+                        base.readings.extend(snapshot_of(given).readings);
+                        for key in given["drop"].as_array().into_iter().flatten() {
+                            base.readings.shift_remove(key.as_str().unwrap_or(""));
+                        }
+                        base
+                    };
                     let mut frame_at = |snapshot: &Value, now: f64, sample: &Value| {
                         // (fresh readings taken at a time, the next after a while: as the loop
                         // tells the renderer before the frame)
@@ -2808,7 +2953,7 @@ fn run(case: &Value) -> Result<Value, String> {
                         // the engine's frame is, and said so)
                         let mut layered = None;
                         let drawn = if scene {
-                            renderer.render_scene(snapshot_of(snapshot), now).and_then(
+                            renderer.render_scene(snapshot_at(snapshot), now).and_then(
                                 |(drawing, boxes)| {
                                     use lp_render::renderer::Drawing;
                                     let frame = match drawing {
@@ -2825,7 +2970,7 @@ fn run(case: &Value) -> Result<Value, String> {
                                 },
                             )
                         } else {
-                            renderer.render(snapshot_of(snapshot), now)
+                            renderer.render(snapshot_at(snapshot), now)
                         };
                         let mut out = match drawn {
                             Ok((frame, boxes)) => {
@@ -2839,7 +2984,10 @@ fn run(case: &Value) -> Result<Value, String> {
                                     "native_rings": renderer.native_rings_made.get(),
                                     "native_bars": renderer.native_bars_made.get(),
                                     "native_fans": renderer.native_fans_made.get(),
-                                    "moving": renderer.moving, "due": renderer.due});
+                                    "moving": renderer.moving, "due": renderer.due,
+                                    "module_boxes": renderer.module_boxes.iter()
+                                        .map(|(k, b)| (k.clone(), json!(b)))
+                                        .collect::<serde_json::Map<String, Value>>()});
                                 if bytes {
                                     out["frame"] = value_of(&frame);
                                 }
