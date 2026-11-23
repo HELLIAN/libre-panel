@@ -20,6 +20,12 @@ playwright = pytest.importorskip("playwright.sync_api")
 
 from playwright.sync_api import expect  # noqa: E402
 
+# The browser Playwright installed, found where it is also once a test gives the app another
+# home (a test of the user's own folders): Playwright looks for it under the home of the moment
+if sys.platform != "win32" and not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+    _cache = "Library/Caches" if sys.platform == "darwin" else ".cache"
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(Path.home() / _cache / "ms-playwright")
+
 # Every expectation of the browser tests (this file's and those that import from it) waits for what
 # it expects for 15 s instead of the 5 s Playwright gives it: a slow runner (Windows under load)
 # needs the room. What holds is found at once, so a test that passes takes no longer; one that
@@ -141,7 +147,9 @@ def _rust_env():
     # the video experiment's waits shortened, as its test shortens the Python app's
     # (experiment.Experiment.scale)
     env.setdefault("LP_EXPERIMENT_SCALE", "0.002")
-    env.setdefault("XDG_CONFIG_HOME", str(Path(env["LIBRE_PANEL_HOME"]) / "xdg"))
+    # (its start with the system in the test's folder, also where the computer names a place of
+    # its own, as GitHub's runners do: never the computer's)
+    env["XDG_CONFIG_HOME"] = str(Path(env["LIBRE_PANEL_HOME"]) / "xdg")
     # the plugins installed in a test run in this Python's plugin host
     env.setdefault("LIBRE_PANEL_PLUGIN_HOST", sys.executable)
     env.setdefault("LIBRE_PANEL_PLUGIN_HOST_ARGS", "-m libre_panel.plugin_host")

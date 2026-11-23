@@ -825,6 +825,20 @@ def test_controls_sources_are_those_the_panel_reads_as_control_py_lists_them(
     for each in (*ours["sources"], *theirs["sources"]):
         if each["name"] in ("linux", "psutil"):
             each["readings"] = bool(each["readings"])
+    if not PYTHON:
+        # (what the Linux source found of this computer's chips: CI's computers have a chip of
+        # temperatures or none, one run to the next; how it counts is test_rust_sensors.py's,
+        # on computers laid out in folders. Here: that it says the same in both places)
+        for each in (*ours["sources"], *theirs["sources"]):
+            if each["name"] == "linux" and isinstance(each["status"], dict):
+                found = {k: each["status"][k] for k in ("chips", "temperatures", "fans")}
+                assert all(isinstance(n, int) and n >= 0 for n in found.values()), found
+                assert {k: v for k, v in each["details"] if k in found} == {
+                    k: str(n) for k, n in found.items()}  # fmt: skip
+                each["readings"] = "<this computer's>"
+                each["status"].update(dict.fromkeys(found, "<this computer's>"))
+                each["details"] = [[k, "<this computer's>" if k in found else v]
+                                   for k, v in each["details"]]  # fmt: skip
     assert ours == theirs
 
 
