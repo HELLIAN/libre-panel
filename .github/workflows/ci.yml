@@ -451,14 +451,14 @@ jobs:
         if: failure()
         shell: bash
         run: cat "$RUNNER_TEMP/hang-traceback.txt" 2>/dev/null || true
-      # the app's server answering as Python's, request by request, and the running app with a
-      # simulated panel (on Windows not yet: its paths and programs are told apart there)
-      - name: The app's server against the Python app's (Linux)
+      # the app's server answering as Python's did, request by request (what it answered is
+      # kept: tests/golden/given/test_rust_server.json, tests/server_tape.py), and the running
+      # app with a simulated panel (on Windows not yet: its paths and programs are told apart)
+      - name: The app's server against what the Python app's answered (Linux)
         if: runner.os == 'Linux' && !inputs.quick && !cancelled()
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden
-          # (the Python app's server asked anew, and its answers written down: tests/harvest.py)
-          LP_GIVEN_OUT: ${{ runner.temp }}/given
+          LP_WITHOUT_APP: "1"
         run: python -m pytest -q -rfE --durations=20 tests/test_rust_server.py tests/test_rust_wayland.py
       # lp-check's answers to the comparisons that passed, as tests/golden keeps them: what
       # the Python app answered, for the comparisons once it is gone (tests/golden.py)
@@ -468,13 +468,6 @@ jobs:
         with:
           name: golden-${{ runner.os }}
           path: ${{ runner.temp }}/golden
-          if-no-files-found: ignore
-      - name: What the comparisons' cases took from the Python app
-        if: ${{ !inputs.quick && !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: given-${{ runner.os }}
-          path: ${{ runner.temp }}/given
           if-no-files-found: ignore
       # lp-panel, for a panel's owner to try the panel with the driver in Rust (the MAJESTY
       # 9.16"'s first): with the libjpeg it saves its pictures with, and their licences

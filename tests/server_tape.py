@@ -197,11 +197,14 @@ class Played:
     def _as_theirs(self, form: Any, mine: bytes | None, now: bytes | None = None) -> bytes | None:
         """What was kept as ``form``, as the Python server had it in this run: made of what the
         Rust app's has (``mine``) where that is the same; None where it is there already
-        (``now``)."""
+        (``now``). Of a file kept as its digest that neither is (a database another SQLite
+        wrote, on another computer), the Rust app's stands in for it, else the one there."""
         if mine is not None and _same(form, self.ours.plain(mine)):
             return self.theirs.filled(self.ours.plain(mine, ports=False))
         if now is not None and _same(form, self.theirs.plain(now)):
             return None
+        if isinstance(form, dict) and "sha256" in form and (mine is not None or now is not None):
+            return None if mine is None else self.theirs.filled(self.ours.plain(mine, ports=False))
         return self.theirs.filled(_bytes(form), mine or b"")
 
     def _lay(self, changes: dict[str, Any] | None) -> None:
