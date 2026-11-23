@@ -4456,6 +4456,75 @@ def test_settings_start_with_the_system(isolated_home):
             waits_for(page, lambda: not enabled())
 
 
+def test_settings_the_highest_rights_only_when_asked_and_by_an_administrator(
+    isolated_home, monkeypatch, tmp_path
+):
+    """Windows' start with the highest rights, Libre Panel's task in Task Scheduler: never on
+    unasked; not run as an administrator, the page says how to set it up and sets up nothing;
+    as one, a question first, then the task, and off again the start at login is the Run
+    value once more. (The tests' stand-in for the registry and Task Scheduler on any system,
+    LP_TEST_AUTOSTART: the Run value and the task as files, a file `admin` for an
+    administrator.)"""
+    from test_rust_app import _program
+
+    windows = tmp_path / "windows"
+    windows.mkdir()
+    monkeypatch.setenv("LP_TEST_AUTOSTART", str(windows))
+    task, run = windows / "task.xml", windows / "run"
+    with settings_app(isolated_home) as (_app, url):
+        with browser_page(url, "settings/system") as page:
+            start = page.get_by_role("switch", name="Start with Windows")
+            assert start.get_attribute("aria-checked") == "false"
+            rights = page.get_by_role("switch", name="With administrator rights")
+            assert rights.get_attribute("aria-checked") == "false"  # never the default
+            assert "temperature and power of the processor" in page.locator("#main").inner_text()
+            assert "needs Libre Panel to run as administrator" in page.locator("#main").inner_text()
+            rights.click()  # not an administrator: told what to do, nothing is set up
+            dialog = page.locator(".dialog")
+            assert "Run as administrator" in dialog.inner_text()
+            assert (
+                "libre-panel autostart enable --elevated" in dialog.locator(".command").inner_text()
+            )
+            dialog.get_by_role("button", name="Close").click()
+            assert not task.exists() and not run.exists()
+            (windows / "admin").touch()  # started as an administrator
+            page.goto(f"{url}#/settings/panel")
+            page.goto(f"{url}#/settings/system")
+            # (the page asks again: now it may set it up)
+            expect(page.locator("#main")).not_to_contain_text(
+                "needs Libre Panel to run as administrator"
+            )
+            rights.click()
+            dialog = page.locator(".dialog")
+            assert "highest rights at every login" in dialog.inner_text()
+            dialog.get_by_role("button", name="Cancel").click()
+            assert not task.exists()  # a question first
+            rights.click()
+            page.locator(".dialog .btn-primary").click()
+            waits_for(page, task.exists)
+            page.wait_for_function(
+                "document.querySelector(\"[aria-label='With administrator rights']\")"
+                ".getAttribute('aria-checked') === 'true'"
+            )
+            assert start.get_attribute("aria-checked") == "true"
+            expect(page.locator("#main")).to_contain_text(
+                "Task Scheduler: Libre Panel, with the highest rights"
+            )
+            # (at login, with the highest rights, this program's tray)
+            xml = task.read_text(encoding="utf-8")
+            assert "<LogonTrigger>" in xml and "<RunLevel>HighestAvailable</RunLevel>" in xml
+            assert f"<Command>{_program().resolve()}</Command>" in xml, xml
+            assert not run.exists()  # (one start at login, not two)
+            rights.click()  # off: the task goes, the Run value starts Libre Panel again
+            waits_for(page, lambda: not task.exists() and run.exists())
+            page.wait_for_function(
+                "document.querySelector(\"[aria-label='With administrator rights']\")"
+                ".getAttribute('aria-checked') === 'false'"
+            )
+            assert start.get_attribute("aria-checked") == "true"
+            assert str(_program().resolve()) in run.read_text(encoding="utf-8")
+
+
 @pytest.fixture
 def opened_paths(monkeypatch, tmp_path):
     """What the app opened in the system's file manager, in order (``opened_paths()``): through
