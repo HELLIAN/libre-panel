@@ -1,0 +1,556 @@
+{
+ "requests": [
+  [
+   {
+    "v": 2,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 2 is not 1"
+   }
+  ],
+  [
+   {
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol None is not 1"
+   }
+  ],
+  [
+   {
+    "v": "1",
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol '1' is not 1"
+   }
+  ],
+  [
+   {
+    "v": "it's",
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol \"it's\" is not 1"
+   }
+  ],
+  [
+   {
+    "v": null,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol None is not 1"
+   }
+  ],
+  [
+   {
+    "v": false,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol False is not 1"
+   }
+  ],
+  [
+   {
+    "v": true,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": true,
+    "service": "0.9.5rc4",
+    "protocol": 1
+   }
+  ],
+  [
+   {
+    "v": 1.0,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": true,
+    "service": "0.9.5rc4",
+    "protocol": 1
+   }
+  ],
+  [
+   {
+    "v": 2.5,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 2.5 is not 1"
+   }
+  ],
+  [
+   {
+    "v": 1e+16,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 1e+16 is not 1"
+   }
+  ],
+  [
+   {
+    "v": 1e-05,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 1e-05 is not 1"
+   }
+  ],
+  [
+   {
+    "v": 0.0001,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 0.0001 is not 1"
+   }
+  ],
+  [
+   {
+    "v": -0.0,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol -0.0 is not 1"
+   }
+  ],
+  [
+   {
+    "v": 100.0,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 100.0 is not 1"
+   }
+  ],
+  [
+   {
+    "v": 1000000000000000000000000000000,
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 1000000000000000000000000000000 is not 1"
+   }
+  ],
+  [
+   {
+    "v": [
+     1,
+     "a\n",
+     null
+    ],
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol [1, 'a\\n', None] is not 1"
+   }
+  ],
+  [
+   {
+    "v": {
+     "a": {
+      "b": true
+     }
+    },
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol {'a': {'b': True}} is not 1"
+   }
+  ],
+  [
+   {
+    "v": "ä \u0001",
+    "op": "hello"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "protocol 'ä\\u2028\\x01' is not 1"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "bye"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a request is hello or read"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": 1
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a request is hello or read"
+   }
+  ],
+  [
+   {
+    "v": 1
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a request is hello or read"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "hello",
+    "more": "is no matter"
+   },
+   {
+    "v": 1,
+    "ok": true,
+    "service": "0.9.5rc4",
+    "protocol": 1
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": "/amdcpu/0"
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "hardware is a list of at most 64 ids"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": null
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "hardware is a list of at most 64 ids"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": [
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a",
+     "/a"
+    ]
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "hardware is a list of at most 64 ids"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": [
+     "amdcpu/0"
+    ]
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a hardware id is a path such as /amdcpu/0"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": [
+     "/"
+    ]
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a hardware id is a path such as /amdcpu/0"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": [
+     "/a b"
+    ]
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a hardware id is a path such as /amdcpu/0"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": [
+     "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a hardware id is a path such as /amdcpu/0"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": [
+     "/ä"
+    ]
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a hardware id is a path such as /amdcpu/0"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "hardware": [
+     1
+    ]
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "a hardware id is a path such as /amdcpu/0"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "all": 1
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "all is true or false"
+   }
+  ],
+  [
+   {
+    "v": 1,
+    "op": "read",
+    "all": null
+   },
+   {
+    "v": 1,
+    "ok": false,
+    "error": "all is true or false"
+   }
+  ]
+ ],
+ "not_objects": [
+  [
+   [
+    1,
+    2
+   ],
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not a JSON object"
+   }
+  ],
+  [
+   "hello",
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not a JSON object"
+   }
+  ],
+  [
+   7,
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not a JSON object"
+   }
+  ],
+  [
+   null,
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not a JSON object"
+   }
+  ]
+ ],
+ "not_json": [
+  [
+   "{",
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not JSON: Expecting property name enclosed in double quotes: char 1"
+   }
+  ],
+  [
+   "ÿþ",
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not JSON: Unable to translate bytes [FF] at index -1 from specified code page to Unicode."
+   }
+  ],
+  [
+   "NaN",
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not JSON: Expecting value: char 0"
+   }
+  ],
+  [
+   "{\"v\": NaN}",
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not JSON: Expecting value: char 6"
+   }
+  ],
+  [
+   "{\"v\": 1} x",
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not JSON: Extra data: char 9"
+   }
+  ],
+  [
+   "ï»¿{\"v\": 1}",
+   {
+    "v": 1,
+    "ok": false,
+    "error": "not JSON: Expecting value: char 0"
+   }
+  ]
+ ],
+ "pipe": {
+  "dacl": "D:P(D;;FA;;;NU)(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120083;;;IU)"
+ }
+}
