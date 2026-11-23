@@ -2942,6 +2942,7 @@ fn run(case: &Value) -> Result<Value, String> {
                     renderer.video_fps = c["video_fps"].as_u64().map(|f| f as u32);
                     renderer.video_keys = c["video_keys"].as_bool().unwrap_or(false);
                     let bytes = c["bytes"].as_bool() == Some(true);
+                    let with_modules = c["module_boxes"].as_bool() == Some(true);
                     let scene = c["scene"].as_bool() == Some(true);
                     // (the moving lights of the step before, kept alive so that one of this
                     // step is told the same piece by itself, not by an address used again)
@@ -3014,10 +3015,15 @@ fn run(case: &Value) -> Result<Value, String> {
                                     "native_rings": renderer.native_rings_made.get(),
                                     "native_bars": renderer.native_bars_made.get(),
                                     "native_fans": renderer.native_fans_made.get(),
-                                    "moving": renderer.moving, "due": renderer.due,
-                                    "module_boxes": renderer.module_boxes.iter()
+                                    "moving": renderer.moving, "due": renderer.due});
+                                // (where asked: each module's box, as the editor has them)
+                                if with_modules {
+                                    out["module_boxes"] = json!(renderer
+                                        .module_boxes
+                                        .iter()
                                         .map(|(k, b)| (k.clone(), json!(b)))
-                                        .collect::<serde_json::Map<String, Value>>()});
+                                        .collect::<serde_json::Map<String, Value>>());
+                                }
                                 if bytes {
                                     out["frame"] = value_of(&frame);
                                 }

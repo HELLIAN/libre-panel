@@ -125,7 +125,8 @@ def drawn(frames: list[dict]) -> list[dict]:
     its picture (RGB) and its modules' boxes."""
     case = {"op": "render_frame", "fonts_dir": str(ROOT / "data" / "fonts"),
             "locale": str(ROOT / "data" / "locale"),
-            "frames": [{"now": 0.0, "bytes": True, **frame} for frame in frames]}  # fmt: skip
+            "frames": [{"now": 0.0, "bytes": True, "module_boxes": True, **frame}
+                       for frame in frames]}  # fmt: skip
     out = []
     for frame, done in zip(frames, json.loads(run(json.dumps(case) + "\n"))["frames"],
                            strict=True):  # fmt: skip
