@@ -37,6 +37,9 @@ pub const SEEK_SECONDS: f64 = 1.0;
 pub const IDLE_SECONDS: f64 = 60.0;
 /// while nobody looks: how often to see whether somebody does
 pub const IDLE_CHECK_SECONDS: f64 = 1.0;
+/// while nobody looks and the backend must not be let go of (Windows: `ends_when_idle`), how
+/// often to check - less often than a thread that is about to end, and cheap
+const IDLE_HOLD_SECONDS: f64 = 5.0;
 /// a cover that could not be read is asked for again after this long
 pub const COVER_RETRY_SECONDS: f64 = 10.0;
 pub const MAX_COVER: usize = 4 * 1024 * 1024;
@@ -345,6 +348,13 @@ pub trait Backend {
     /// `wake` is called, from any thread, when the player has news.
     fn bind(&mut self, _wake: Arc<dyn Fn() + Send + Sync>) {}
     fn close(&mut self) {}
+    /// Can the thread end while nobody looks, and a new one ask again later? Windows' media
+    /// controls say no: the module that answers them goes away with the thread that asked, and
+    /// what was asked through it - the manager, the factory Windows remembered - points into
+    /// memory that is gone after that (`media_windows`).
+    fn ends_when_idle(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(not(windows))]
@@ -662,16 +672,23 @@ impl Shared {
             } else {
                 let since = *idle_since.get_or_insert_with(Instant::now);
                 if since.elapsed().as_secs_f64() > IDLE_SECONDS {
-                    // nobody looked for a minute: end, start again on demand
+                    // nobody looked for a minute: what was read goes
                     if let Ok(mut track) = self.track.lock() {
                         *track = None;
                     }
                     if let Ok(mut icon) = self.icon.lock() {
                         *icon = (None, 0);
                     }
-                    break;
+                    if backend.ends_when_idle() {
+                        // end, and start again on demand
+                        break;
+                    }
+                    // (this backend stays: its thread holds the module Windows would otherwise
+                    // take back, and everything asked through it would point into memory gone)
+                    IDLE_HOLD_SECONDS
+                } else {
+                    IDLE_CHECK_SECONDS
                 }
-                IDLE_CHECK_SECONDS
             };
             let Ok(flags) = self.flags.lock() else {
                 break;

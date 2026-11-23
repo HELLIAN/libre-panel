@@ -8,7 +8,7 @@
 //! (`SEEK_SECONDS`). The interval is the safety poll for a notice that went missing.
 
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use windows::core::{Result as WinResult, HSTRING};
@@ -22,6 +22,7 @@ use windows::Storage::Streams::{
     Buffer, DataReader, IRandomAccessStreamReference, InputStreamOptions,
 };
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
+use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
 
 use crate::media::{
     app_name, Backend, Cover, Track, COVER_RETRY_SECONDS, MAX_COVER, POLL_SECONDS, SAFETY_SECONDS,
@@ -62,17 +63,38 @@ fn text(found: WinResult<HSTRING>) -> String {
     found.map(|text| text.to_string_lossy()).unwrap_or_default()
 }
 
-/// The managers this process has had, of which one is kept until the process ends.
+/// The modules the media controls stand on, loaded by name and never let go.
 ///
-/// Windows takes back the module that implements the media controls once nothing holds
-/// anything of it, and the reader holds nothing a minute after no theme asked what is playing
-/// (`media.rs` ends its thread and closes the backend). The ask that follows, when a theme
-/// wants what plays again, then hands back a pointer into the memory that module used to be
-/// in: the whole program died about a second after a game ended, on an indirect call through
-/// the vtable of the unloaded `Windows.Media.MediaControl.dll` (0.9.2 and 0.9.4, 0xc0000005 at
-/// +0xe4ca5b and +0xe505bb, and the log said nothing). Keeping one manager for the life of the
-/// process keeps that module in place, and a look after a rest answers from the manager it had
-/// rather than asking Windows for it again.
+/// Windows takes a module back once nothing holds anything of it, and a reference that is
+/// still live points into memory that is gone: the ask that followed died on an indirect
+/// call through the unloaded module (0.9.2 and 0.9.4, 0xc0000005, a second after a game
+/// ended, and the log said nothing). Keeping a manager alive did not stop the module going,
+/// so the process holds the load count itself: `Windows.Media.MediaControl.dll`, and the
+/// modules its calls stand on, `OneCoreUAPCommonProxyStub.dll` (the in-process proxy stubs)
+/// and `wintypes.dll` - the two the dump of the first pinned build showed gone while the
+/// manager still called through them. While the process holds the count Windows cannot take
+/// the module back, and nothing asked through a remembered pointer can reach memory that is
+/// gone.
+fn pin_media_module() {
+    static PINNED: OnceLock<()> = OnceLock::new();
+    PINNED.get_or_init(|| {
+        for module in [
+            "Windows.Media.MediaControl.dll",
+            "OneCoreUAPCommonProxyStub.dll",
+            "wintypes.dll",
+        ] {
+            let name: Vec<u16> = format!("{module}\0").encode_utf16().collect();
+            // SAFETY: the name was just made: UTF-16 and null-terminated.
+            // (a null handle - a module that could not be loaded - is ignored: the old way
+            // of dying stands for it)
+            unsafe { LoadLibraryW(name.as_ptr()); }
+        }
+    });
+}
+
+/// The managers this process has had, of which the last few are kept until the process ends,
+/// so that a look after a rest answers from the manager it had rather than asking Windows for
+/// it again. (What keeps the module in place is `pin_media_module`, not these.)
 static HELD: Mutex<Vec<Manager>> = Mutex::new(Vec::new());
 
 /// What is listened to of a session, to let go of it again.
@@ -106,6 +128,8 @@ pub struct Controls {
 
 impl Controls {
     pub fn new() -> Result<Controls, String> {
+        // (Windows would take the module that answers these back: keep it loaded)
+        pin_media_module();
         // SAFETY: this thread talks to Windows: it joins the multi-threaded apartment (an
         // error says it has joined one already).
         unsafe {
