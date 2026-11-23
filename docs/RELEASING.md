@@ -157,16 +157,19 @@ writes `soak/soak.md` with a chart: it passes when the memory of neither grows b
 or more after the first ten minutes, the threads and the open files stay level and every panel
 kept showing.
 
-How much two panels in video mode slow each other down (they share one interpreter):
+What a frame costs, and what a second panel beside it costs the first:
 
 ```bash
-python tools/panels_bench.py             # Lumen on a 12.3" and Lumen Companion on end
-python tools/panels_bench.py --slow-scan # with a scan of the processes as slow as on Windows
+python tests/frame_load.py --app rust/target/release/libre-panel \
+    --engine engine/target/release/libre-panel-engine --demo \
+    --beside lumen-companion@turing-12.3-usb  # Lumen on a 12.3", Lumen Companion on end
 ```
 
-It prints each panel's frame time alone and beside the other (median and slowest); a frame
-beside the other should stay well below 20 ms (50 frames a second) on the machines it is made
-for.
+It runs Lumen on a simulated 12.3" in video mode, first alone, then with the panels of
+`--beside` (virtual, each in its thread as the app runs them), and prints for each run the
+processor and memory of the app and its engine, where a frame's time goes (the app's profile)
+and how many pictures reached the panel late; a frame beside the other should stay well below
+its time (40 ms at 25 frames a second) on the machines it is made for.
 
 **Dry run:** start *Release* by hand (Actions → Release → Run workflow) with the
 version left empty. It builds and tests everything but publishes nothing and

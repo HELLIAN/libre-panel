@@ -359,8 +359,7 @@ faces away darker. `"flat"` is the default and draws as ever.
   single-band ridge.
 
 Every shape is built once per font, size and colour and kept, so a gliding
-bar or a changing number costs no more than a flat one (`tools/motion_bench.py
---finish facet` compares).
+bar or a changing number costs no more than a flat one.
 
 The milled groove a value lies in is there for other finishes to use, in
 `libre_panel.render.facets`: `groove_bar(w, h, color, vertical=False)` and

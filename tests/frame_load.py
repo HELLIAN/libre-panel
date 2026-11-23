@@ -17,7 +17,10 @@ graphs whose own range glides (as on a computer that works). ``--background`` me
 background app (``start``: with the app's server, and light mode, which gives memory back
 while no page of the app is open) instead of the panel's loop alone (``run``);
 ``LP_LIGHT_S=4,2`` has light mode begin after four seconds and tidy every two, so that half a
-minute shows what it costs the frames.
+minute shows what it costs the frames. ``--beside THEME@MODEL`` (repeatable) runs it again with
+those panels beside the first, virtual ones drawing for nowhere, each in its thread as the app
+runs them: what panels beside it cost the first panel's frames (Lumen Companion on a 12.3" on
+end is the pair most people have: ``--beside lumen-companion@turing-12.3-usb``).
 """
 
 from __future__ import annotations
@@ -47,16 +50,26 @@ def measure(
     extra: dict[str, str],
     demo: bool = False,
     background: bool = False,
+    beside: tuple[str, ...] = (),
 ) -> bool | None:
     """One run: with ``engine`` the video through it to the simulated panel; without, the
     frames drawn for a virtual 12.3" and shown nowhere (what drawing costs alone). False where
     no video reached the simulated panel (nothing was measured), None where the app ended."""
     home = tempfile.mkdtemp(prefix="lp-load-")
+    # (the panels beside the first: virtual, their frames drawn for nowhere)
+    panels = "".join(
+        f'[[panels]]\ntheme = "{other.split("@")[0]}"\ndriver = "virtual"\n'
+        f'model = "{other.split("@")[1]}"\noutput = ""\n'
+        for other in beside
+    )
+    if beside:
+        extra = {**extra, "beside": " ".join(beside)}  # (said in the run's label)
     if engine is None:
         with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
             f.write(
                 f'theme = "{theme}"\nfps = 25\n[device]\ndriver = "virtual"\n'
                 'model = "turing-12.3-usb"\noutput = ""\n[sensors]\nproviders = ["psutil"]\n'
+                + panels
             )
         return run(app, home, {}, seconds, theme, extra, demo, background)
     fake = FakePanel(pid=0x0123, native=(720, 1920))
@@ -77,7 +90,7 @@ def measure(
         f.write(
             f'theme = "{theme}"\n[device]\ndriver = "turzx"\nmodel = "turing-12.3-usb"\n'
             '[video]\nmode = "on"\nfps = 25\ndevice_fps = 30\nlocal_clip = "usr/data/clip.h264"\n'
-            '[sensors]\nproviders = ["psutil"]\n'
+            '[sensors]\nproviders = ["psutil"]\n' + panels
         )
     linked = {"LP_ENGINE_LINK": sock.link, "LIBRE_PANEL_ENGINE": engine}
     got = run(app, home, {**linked, "LP_ENGINE_PRESENT": present}, seconds, theme, extra, demo,
@@ -106,7 +119,7 @@ def run(
         "LIBRE_PANEL_DATA": os.path.join(ROOT, "data"),
         "LP_PROFILE": "1",
         **more,
-        **extra,
+        **{k: v for k, v in extra.items() if k != "beside"},
     }
     env.pop("DISPLAY", None)
     p = subprocess.Popen(
@@ -197,6 +210,8 @@ def main() -> None:
         help="the background app (start) instead of the panel's loop alone (run)",
     )
     ap.add_argument("--only", action="store_true", help="the run with --env alone")
+    ap.add_argument("--beside", action="append", default=[],
+                    help="THEME@MODEL: a panel beside the first, for a second run")  # fmt: skip
     args = ap.parse_args()
     measured = []
     if not (args.only and args.env):
@@ -206,6 +221,9 @@ def main() -> None:
         extra = dict(item.split("=", 1) for item in args.env)
         measured.append(measure(args.app, args.engine, args.seconds, args.theme, extra,
                                 args.demo, args.background))  # fmt: skip
+    if args.beside:
+        measured.append(measure(args.app, args.engine, args.seconds, args.theme, {}, args.demo,
+                                args.background, tuple(args.beside)))  # fmt: skip
     if False in measured:
         sys.exit(
             "no video reached the simulated panel: those runs measured an app that drew nothing"
