@@ -4738,3 +4738,98 @@ def test_unlocking_is_told_and_refused_as_settings_py_does(
         mine, python = (json.loads(_one_program(answer[2], program, itself))
                         for answer in (ours, theirs))  # fmt: skip
         assert mine == python, body
+
+
+# what names a program, a file or a folder Libre Panel starts, loads or writes
+# (editor/settings.py's NAMING)
+NAMING = {
+    "video.ffmpeg": "/tmp/ffmpeg",
+    "device.output": "/etc/frame.png",
+    "services.cooling.database": "/tmp/cooling.db",
+    "services.cooling.fancontrol": "/tmp/fancontrol.json",
+    "services.memory.database": "/tmp/memory.db",
+    "services.memory.fancontrol": "/tmp/fancontrol.json",
+    "services.downloads.folder": "/tmp/downloads",
+    "services.downloads.steam_path": "/tmp/steam",
+    "services.game.steam_path": "/tmp/steam",
+}
+
+
+@pytest.mark.live  # (the kept answers are an ordinary user's)
+def test_with_the_highest_rights_what_names_a_program_or_a_file_is_not_changed_here(
+    tmp_path: Path,
+) -> None:
+    """editor/settings.py's lock, of the Rust app's server run with administrator rights
+    (LP_TEST_RIGHTS=admin): a setting that names a program, a file or a folder Libre Panel
+    starts, loads or writes is refused, the whole request with it, and nothing is written;
+    asked for what config.toml says already it is no change; everything else is written; a
+    JSON source names no new file."""
+    home = tmp_path / "home"
+    home.mkdir()
+    config = home / "config.toml"
+    config.write_text('[device]\nbrightness = 40\n\n[video]\nffmpeg = "/usr/bin/ffmpeg"\n\n'
+                      '[services.cooling]\ndatabase = "/a.db"\n', encoding="utf-8")  # fmt: skip
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(home), "LIBRE_PANEL_DATA": str(DATA),
+           "XDG_CONFIG_HOME": str(home / "xdg"), "LP_TEST_RIGHTS": "admin", "TZ": "UTC",
+           **_libraries()}  # fmt: skip
+    command = [str(_program()), "editor", "--port", "0"]
+    pipe = subprocess.PIPE
+    ours = subprocess.Popen(command, env=env, stdout=pipe, stderr=pipe, encoding="utf-8")
+    try:
+        assert ours.stdout is not None
+        address = ours.stdout.readline().split(" running at ")[1].split()[0]
+        port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
+
+        def write(**changes: Any) -> tuple[int, Any]:
+            text = _post("/api/settings", {"set": changes})
+            text = text.replace(b"{host}", f"127.0.0.1:{port}".encode()).replace(
+                b"{token}", token.encode()
+            )
+            status, _headers, body = _asked(port, text)
+            return int(status.split()[1]), json.loads(body)
+
+        for name, value in NAMING.items():
+            before = config.read_text(encoding="utf-8")
+            status, data = write(**{name: value})
+            assert status == 403, (name, data)
+            assert name in data["error"] and "config.toml" in data["error"], data
+            assert "administrator rights" in data["error"]
+            assert config.read_text(encoding="utf-8") == before, name  # nothing written
+        before = config.read_text(encoding="utf-8")
+        status, _ = write(**{"device.brightness": 10, "video.ffmpeg": "/tmp/ffmpeg"})
+        assert status == 403 and config.read_text(encoding="utf-8") == before
+        # taking out such an option where it is not set changes nothing
+        assert write(**{"services.memory.database": None})[0] == 200
+        # what the file says already is no change; the default of device.output neither
+        same = {"video.ffmpeg": "/usr/bin/ffmpeg", "services.cooling.database": "/a.db"}
+        status, data = write(**same)
+        assert status == 200 and data["config"]["video"]["ffmpeg"] == "/usr/bin/ffmpeg"
+        assert write(**{"device.output": "libre-panel-frame.png"})[0] == 200
+        for changes in ({"video.ffmpeg": ""}, {"services.cooling.database": "/b.db"},
+                        {"services.cooling.database": None}):  # fmt: skip
+            assert write(**changes)[0] == 403, changes
+        # everything else is written
+        status, data = write(**{
+            "device.brightness": 25, "video.local_clip": "clip",
+            "sensors.librehardwaremonitor.url": "http://127.0.0.1:8085/data.json",
+            "services.autopilot.transition": "fade", "services.notices.quiet_s": 30,
+            "services.game.poll_s": 2,
+        })  # fmt: skip
+        assert status == 200 and data["config"]["device"]["brightness"] == 25
+        # a JSON source names no new file: one named already stays, another is refused
+        with config.open("a", encoding="utf-8") as file:
+            file.write('\n[[sensors.json.sources]]\nname = "room"\nfile = "C:/Data/room.json"\n')
+        kept = {"name": "room", "where": "C:/Data/room.json", "fields": {"t": "temp"}}
+        web = {"name": "nas", "where": "http://10.0.0.2/api"}
+        assert write(**{"sensors.json.sources": [kept, web]})[0] == 200
+        other = {"name": "room", "where": "C:/Windows/secret.json"}
+        status, answer = write(**{"sensors.json.sources": [other]})
+        assert status == 403 and "administrator" in answer["error"]
+        assert 'file = "C:/Data/room.json"' in config.read_text(encoding="utf-8")
+    finally:
+        if os.name == "nt":
+            ours.terminate()
+        else:
+            ours.send_signal(signal.SIGINT)
+        said = ours.communicate(timeout=30)[1]
+        assert "panicked" not in said, said

@@ -750,3 +750,44 @@ pub fn set_brightness(percent: i64, path: &Path, platform: &str) -> Result<()> {
         platform,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_that_come_at_once_all_arrive() {
+        // (the app's page sends a setting each as it is changed: none undoes another)
+        let folder = std::env::temp_dir().join(format!("lp-edit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("config.toml");
+        write_default_config(&path, false, "linux").unwrap();
+        let names = [
+            "device.brightness",
+            "fps",
+            "video.local_clip",
+            "device.output",
+        ];
+        let values = [
+            Toml::Int(33.into()),
+            Toml::Int(12.into()),
+            Toml::Str("clip".into()),
+            Toml::Str("frame.png".into()),
+        ];
+        std::thread::scope(|scope| {
+            for (name, value) in names.iter().zip(values.iter()) {
+                let path = &path;
+                scope.spawn(move || {
+                    let change = Change::Value(name.to_string(), value.clone());
+                    edit_config(&[change], path, "linux").unwrap();
+                });
+            }
+        });
+        let config = crate::load_config(&path, "linux").unwrap();
+        assert_eq!((config.device.brightness, config.fps), (33, 12));
+        assert_eq!(config.device.video.local_clip, "clip");
+        assert_eq!(config.device.output, "frame.png");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+}
