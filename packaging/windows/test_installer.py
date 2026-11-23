@@ -403,11 +403,10 @@ def main(setup, rust=False):
     check(lhm.returncode == 0, "the installed program loads its LibreHardwareMonitor libraries")
 
     # It carries ffmpeg, PresentMon and PawnIO's installer next to the program, so that the
-    # video mode, the game frame rates and the CPU's sensors need no other download: here they
-    # are as installed, ffmpeg encodes the video mode's stream, PresentMon starts, and the
-    # app finds them first (packaging/check_tools.py).
-    other = ["--no-discovery"] if rust else []
-    subprocess.run([sys.executable, str(CHECK_TOOLS), str(APP), *other], check=True, timeout=300)
+    # videos, the game frame rates and the CPU's sensors need no other download: here they
+    # are as installed, the app finds them first, ffmpeg makes the standby clip as the app
+    # makes it and PresentMon starts (packaging/check_tools.py).
+    subprocess.run([sys.executable, str(CHECK_TOOLS), str(APP)], check=True, timeout=300)
     check((APP / "tools" / "PawnIO_setup.exe").is_file(), "PawnIO's installer is carried")
 
     check_sensor_service()

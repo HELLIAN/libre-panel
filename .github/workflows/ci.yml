@@ -440,15 +440,16 @@ jobs:
         if: failure()
         shell: bash
         run: cat "$RUNNER_TEMP/hang-traceback.txt" 2>/dev/null || true
-      # (and the community's shared themes, which tools/community_theme.py checks with the
-      # program: `libre-panel share`)
+      # (and what asks the program from outside: the community's shared themes, which
+      # tools/community_theme.py checks with `libre-panel share`, and the check of the programs
+      # a download carries, packaging/check_tools.py, with `libre-panel tools`)
       - name: The running app and its plugins against what the Python app answered
         if: ${{ !inputs.quick && !cancelled() }}
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden
           # (what they take from the Python app is kept: tests/golden/given, given/win32)
           LP_WITHOUT_APP: "1"
-        run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_app.py tests/test_rust_plugins.py tests/test_community_theme.py
+        run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_app.py tests/test_rust_plugins.py tests/test_community_theme.py tests/test_check_tools.py
       - name: The stacks of a comparison that hung
         if: failure()
         shell: bash
@@ -580,8 +581,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      # (the setup's test checks the installed tools with the app's own commands for them:
-      # packaging/check_tools.py imports libre_panel)
+      # (the plugin host's check gives the app a plugin of the plugins' interface:
+      # packaging/check_plugin_host.py imports it)
       - run: pip install -e .
       - uses: actions/download-artifact@v4
         with:

@@ -67,6 +67,7 @@ mod start_screen;
 mod switch;
 mod system;
 mod system_setup;
+mod tools;
 mod transition_show;
 mod tray;
 mod updates;
@@ -138,6 +139,10 @@ Libre Panel
                                 several are connected (turing-12.3-usb);
                                 --wait: up to S seconds (600) for the panel, acting the
                                 moment it comes (one that keeps restarting)
+  libre-panel tools [clip OUT [--model ID]]
+                                the programs it uses beside itself and where it finds them
+                                (ffmpeg, its engine, PresentMon, PawnIO's installer); clip:
+                                a TURZX USB panel's standby clip as it makes it, into OUT
   libre-panel udev-rules        the Linux udev rule for the panels' access
   libre-panel location NAME     latitude and longitude for the weather
   libre-panel version
@@ -617,6 +622,7 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             };
             std::process::exit(share::command(args, &home.places(), &env));
         }
+        "tools" => std::process::exit(tools::command(args)?),
         "location" => std::process::exit(location_command(args)?),
         // (the app's own: its capture program on Wayland, wayland.rs)
         "wayland-feed" => std::process::exit(wayland_feed::run(args)),

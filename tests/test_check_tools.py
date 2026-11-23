@@ -1,18 +1,19 @@
 """packaging/check_tools.py, which CI runs on the program folder, on what the setup installed and
 on the AppImage's content: it must pass a program that does the work, and say what is wrong with
-one that does not. The programs are stand-ins here; one test runs the ffmpeg of this system."""
+one that does not. The programs are stand-ins here; one test runs this system's ffmpeg with the
+program of this checkout, one the engine."""
 
 import hashlib
 import importlib.util
+import json
+import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-from libre_panel import bundled
-from libre_panel.devices.h264 import EncoderSettings, ffmpeg_command
 
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("check_tools", ROOT / "packaging" / "check_tools.py")
@@ -30,27 +31,49 @@ SPS, PPS, IDR, SLICE = (
 ENCODERS = (
     " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC\n V....D libx264rgb  RGB\n"
 )
+CLIP = 44  # the pictures of a standby clip
 
 
 def stream(pictures=check_tools.FRAMES):
-    """What ffmpeg writes: parameter sets and a keyframe, then one slice per picture."""
+    """What x264 writes: parameter sets and a keyframe, then one slice per picture."""
     return SPS + PPS + IDR + SLICE * (pictures - 1)
 
 
-def stand_in(encoders=ENCODERS, output=None, code=0, version="ffmpeg version 8.1.3"):
-    """A ``run`` that answers like ffmpeg does to the three questions the check asks."""
+def stand_in(
+    tools=None, encoders=ENCODERS, clip=None, told=None, found=None, read=None, code=0,
+    version="ffmpeg version 8.1.3",
+):  # fmt: skip
+    """A ``run`` that answers as ffmpeg and the program do to what the check asks: ffmpeg's
+    version and encoders, where the program finds its programs (``found``: those of
+    ``tools``), the standby clip it makes (``clip``, ``told``, ``code``) and the pictures
+    ffmpeg reads of it (``read``)."""
 
     def run(command, **options):
+        name = Path(command[0]).name
+        if name.startswith("libre-panel"):
+            assert "LIBRE_PANEL_ENGINE" not in options["env"]  # (nothing of this computer's)
+            assert Path(options["env"]["LIBRE_PANEL_HOME"]).is_dir()
+            if command[1:] == ["tools"]:
+                where = found if found is not None else {
+                    check_tools.ASKED[f.name]: str(f) for f in tools.iterdir()
+                    if f.name in check_tools.ASKED
+                }  # fmt: skip
+                return subprocess.CompletedProcess(command, 0, json.dumps(where), "")
+            assert command[1:3] == ["tools", "clip"]
+            if code:
+                return subprocess.CompletedProcess(command, code, "", "no ffmpeg found")
+            Path(command[3]).write_bytes(stream(CLIP) if clip is None else clip)
+            ffmpeg = next(f for f in tools.iterdir() if f.name.startswith("ffmpeg"))
+            said = {"model": "turing-8.8-usb", "ffmpeg": str(ffmpeg), "pictures": CLIP}
+            return subprocess.CompletedProcess(command, 0, json.dumps({**said, **(told or {})}), "")
         if "-encoders" in command:
-            out = encoders
-        elif "-version" in command:
+            return subprocess.CompletedProcess(command, 0, encoders, "")
+        if "-version" in command:
             out = f"{version} Copyright (c) the FFmpeg developers\nbuilt with gcc\n"
-        else:
-            assert options["input"], "frames should be fed in"
-            return subprocess.CompletedProcess(
-                command, code, stream() if output is None else output, b"error text"
-            )
-        return subprocess.CompletedProcess(command, 0, out, "")
+            return subprocess.CompletedProcess(command, 0, out, "")
+        assert command[-3:] == ["-f", "framecrc", "-"]
+        lines = "#tb 0: 1/25\n" + "0, 0, 0, 1, 1, 0x0\n" * (CLIP if read is None else read)
+        return subprocess.CompletedProcess(command, 0, lines, "")
 
     return run
 
@@ -70,39 +93,42 @@ def program_folder(tmp_path, files, executable="libre-panel"):
     return tmp_path / "program"
 
 
-def test_the_folder_name_is_the_one_the_app_looks_in():
-    assert check_tools.TOOLS_FOLDER == bundled.TOOLS_FOLDER
+def test_what_the_check_asks_is_what_the_program_says():
+    """The folder the program looks in, the names `libre-panel tools` gives its programs, and
+    what the video mode tells the engine, as rust/ has them."""
+    h264 = (ROOT / "rust/devices/src/h264.rs").read_text()
+    assert f'.join("{check_tools.TOOLS_FOLDER}")' in h264
+    said = (ROOT / "rust/app/src/tools.rs").read_text()
+    assert set(check_tools.ASKED.values()) == set(re.findall(r'told.insert\(\s*"(\w+)"', said)) - {
+        "model", "pictures", "bytes",
+    }  # fmt: skip
+    turzx = (ROOT / "rust/devices/src/turzx.rs").read_text()
+    assert f'pub const DRAWN_X264: &str = "{check_tools.DRAWN_X264}";' in turzx
 
 
-@pytest.fixture
-def on_linux(monkeypatch):
-    """The file names of a Linux download (the app looks for ``ffmpeg``, not ``ffmpeg.exe``),
-    whatever system the tests run on."""
-    monkeypatch.setattr(sys, "platform", "linux")
-
-
-def test_a_good_ffmpeg_passes(tmp_path, capsys, on_linux):
+def test_a_good_folder_passes(tmp_path, capsys):
     program = program_folder(tmp_path, {"ffmpeg": b"x"})
-    check_tools.check(program, stand_in())
+    check_tools.check(program, stand_in(program / "tools"))
     out = capsys.readouterr().out
     assert "ffmpeg is the file that was fetched" in out
+    assert "started from libre-panel, the app finds ffmpeg in tools" in out
     assert "ffmpeg version 8.1.3 Copyright (c) the FFmpeg developers lists libx264" in out
-    assert "encodes 8 frames" in out
+    assert f"makes the standby clip ({CLIP} pictures" in out and "reads it back" in out
 
 
-def test_the_encode_is_the_one_the_video_mode_asks_for(tmp_path):
+def test_the_standby_clip_is_the_one_the_program_makes(tmp_path):
+    program = program_folder(tmp_path, {"ffmpeg": b"x"})
     asked = []
 
     def run(command, **options):
         asked.append(command)
-        return stand_in()(command, **options)
+        return stand_in(program / "tools")(command, **options)
 
-    check_tools.check_ffmpeg(tmp_path / "ffmpeg", run)
-    encode = asked[-1]
-    expected = ffmpeg_command(
-        str(tmp_path / "ffmpeg"), check_tools.SIZE, 270, EncoderSettings(fps=25, keyframe_s=1)
-    )
-    assert encode == expected and "libx264" in encode and "transpose=1" in encode
+    check_tools.check(program, run)
+    clip = next(command for command in asked if command[1:3] == ["tools", "clip"])
+    assert clip[0] == str(program / "libre-panel") and clip[3].endswith("standby.h264")
+    read = asked[-1]
+    assert read[0] == str(program / "tools" / "ffmpeg") and read[read.index("-i") + 1] == clip[3]
 
 
 @pytest.mark.parametrize(
@@ -111,24 +137,29 @@ def test_the_encode_is_the_one_the_video_mode_asks_for(tmp_path):
     ids=["none", "rgb only", "audio"],
 )
 def test_an_ffmpeg_without_libx264_fails(tmp_path, encoders):
+    program = program_folder(tmp_path, {"ffmpeg": b"x"})
     with pytest.raises(check_tools.CheckError, match="does not list libx264"):
-        check_tools.check_ffmpeg(tmp_path / "ffmpeg", stand_in(encoders=encoders))
+        check_tools.check(program, stand_in(program / "tools", encoders=encoders))
 
 
 @pytest.mark.parametrize(
-    "output, code, wanted",
+    "answers, wanted",
     [
-        (b"", 1, "did not encode: exit code 1 error text"),  # ffmpeg failed
-        (b"", 0, "did not encode"),  # and one that says nothing
-        (stream(3), 0, "encoded 3 pictures of 8 frames"),  # some frames missing
-        (SPS + PPS + IDR * 8, 0, "8 of them keyframes"),  # the keyframe interval is not kept
-        (IDR + SLICE * 7, 0, "NAL units"),  # no parameter sets
-        (START + b"\x65\x08\x00" + START + b"\x61\x08\x00" + stream(), 0, "several slices"),
+        ({"code": 1}, "tools clip .*: exit code 1 no ffmpeg found"),  # the program failed
+        ({"clip": stream(3)}, "a standby clip of 3 pictures of 44"),  # pictures missing
+        ({"clip": IDR + SLICE * 43}, "NAL units"),  # no parameter sets
+        (
+            {"clip": START + b"\x65\x08\x00" + START + b"\x61\x08\x00" + stream(CLIP)},
+            "several slices: True",
+        ),  # fmt: skip
+        ({"told": {"ffmpeg": "/usr/bin/ffmpeg"}}, "made with /usr/bin/ffmpeg, not"),
+        ({"read": 40}, "read 40 pictures of the 44 of the standby clip"),
     ],
 )
-def test_an_ffmpeg_that_does_not_encode_the_stream_fails(tmp_path, output, code, wanted):
+def test_an_ffmpeg_that_does_not_make_the_standby_clip_fails(tmp_path, answers, wanted):
+    program = program_folder(tmp_path, {"ffmpeg": b"x"})
     with pytest.raises(check_tools.CheckError, match=wanted):
-        check_tools.check_ffmpeg(tmp_path / "ffmpeg", stand_in(output=output, code=code))
+        check_tools.check(program, stand_in(program / "tools", **answers))
 
 
 @pytest.mark.parametrize(
@@ -148,61 +179,60 @@ def test_presentmon_has_to_start_and_say_its_version(tmp_path, capsys, shown, wa
             check_tools.check_presentmon(tmp_path / "PresentMon.exe", run)
 
 
-def test_a_windows_folder_checks_each_program_it_lists(tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")  # the names the app looks for there
-    monkeypatch.setattr(bundled, "PAWNIO_SETUP_SHA256", hashlib.sha256(b"MZ3").hexdigest())
+def test_a_windows_folder_checks_each_program_it_lists(tmp_path, capsys):
     program = program_folder(
         tmp_path,
         {"ffmpeg.exe": b"MZ1", "PresentMon.exe": b"MZ2", "PawnIO_setup.exe": b"MZ3"},
-        executable="LibrePanel.exe",
+        executable="libre-panel.exe",
     )
+    (program / "LibrePanel.exe").write_bytes(b"its window")  # (not asked: it answers nothing)
     seen = []
 
     def run(command, **options):
         seen.append(Path(command[0]).name)
         if Path(command[0]).name == "PresentMon.exe":
             return subprocess.CompletedProcess(command, 1, "", "PresentMon 2.6.0")
-        return stand_in()(command, **options)
+        return stand_in(program / "tools")(command, **options)
 
     check_tools.check(program, run)
-    assert set(seen) == {"ffmpeg.exe", "PresentMon.exe"}  # the installer is there, and not run
+    # (the installer is there, and not run)
+    assert set(seen) == {"libre-panel.exe", "ffmpeg.exe", "PresentMon.exe"}
     out = capsys.readouterr().out
     assert "PawnIO_setup.exe is the file that was fetched" in out
-    assert "started from LibrePanel.exe, the app finds ffmpeg.exe in tools" in out
+    assert "started from libre-panel.exe, the app finds ffmpeg.exe in tools" in out
     assert "the app finds PresentMon.exe in tools" in out
     assert "the app finds PawnIO_setup.exe in tools" in out
-    (program / "tools" / "PawnIO_setup.exe").write_bytes(b"MZ replaced")  # not the pinned file
-    with pytest.raises(check_tools.CheckError, match="the app finds None and not PawnIO_setup.exe"):
-        check_tools.check_discovery(program, program / "tools", ["PawnIO_setup.exe"])
+    found = {"ffmpeg": str(program / "tools" / "ffmpeg.exe"), "pawnio": None}  # (not pinned)
+    with pytest.raises(check_tools.CheckError, match="the app finds no PawnIO_setup.exe"):
+        check_tools.check_discovery(
+            program / "libre-panel.exe", program / "tools", ["ffmpeg.exe", "PawnIO_setup.exe"],
+            stand_in(found=found),
+        )  # fmt: skip
 
 
-def test_the_app_has_to_find_the_programs_in_the_folder_and_not_somewhere_else(
-    tmp_path, monkeypatch, on_linux
-):
+def test_the_app_has_to_find_the_programs_in_the_folder_and_not_somewhere_else(tmp_path):
     """A build whose tools folder is not where the app looks is a failure, even where a
-    system ffmpeg would make the video mode work."""
+    system ffmpeg would make the videos work."""
     program = program_folder(tmp_path, {"ffmpeg": b"x"})
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/ffmpeg")
-    check_tools.check_discovery(program, program / "tools", ["ffmpeg"])  # in place: found first
-    (program / "tools").rename(program / "kit")  # not under the name the app looks for
+    exe, tools = program / "libre-panel", program / "tools"
+    elsewhere = stand_in(found={"ffmpeg": "/usr/bin/ffmpeg", "engine": None})
     with pytest.raises(check_tools.CheckError, match="finds /usr/bin/ffmpeg and not ffmpeg"):
-        check_tools.check_discovery(program, program / "kit", ["ffmpeg"])
-    monkeypatch.setattr(shutil, "which", lambda name: None)
+        check_tools.check_discovery(exe, tools, ["ffmpeg"], elsewhere)
     with pytest.raises(check_tools.CheckError, match="the app finds no ffmpeg"):
-        check_tools.check_discovery(program, program / "kit", ["ffmpeg"])
-    (program / "libre-panel").unlink()  # and without a program of Libre Panel there is no asking
+        check_tools.check_discovery(exe, tools, ["ffmpeg"], stand_in(found={"ffmpeg": None}))
+    exe.unlink()  # and without a program of Libre Panel there is no asking
     with pytest.raises(check_tools.CheckError, match="has no program of Libre Panel"):
-        check_tools.check_discovery(program, program / "kit", ["ffmpeg"])
+        check_tools.check(program, stand_in(tools))
 
 
 def test_a_file_that_is_not_the_fetched_one_or_is_gone_fails(tmp_path):
     program = program_folder(tmp_path, {"ffmpeg": b"x", "PresentMon.exe": b"MZ"})
     (program / "tools" / "ffmpeg").write_bytes(b"replaced")
     with pytest.raises(check_tools.CheckError, match="is not the file that was fetched"):
-        check_tools.check(program, stand_in())
+        check_tools.check(program, stand_in(program / "tools"))
     (program / "tools" / "ffmpeg").unlink()
     with pytest.raises(check_tools.CheckError, match="cannot be read"):
-        check_tools.check(program, stand_in())
+        check_tools.check(program, stand_in(program / "tools"))
 
 
 def test_a_folder_without_tools_or_sources_or_ffmpeg_fails(tmp_path):
@@ -216,16 +246,16 @@ def test_a_folder_without_tools_or_sources_or_ffmpeg_fails(tmp_path):
         check_tools.check(tmp_path, stand_in())
     program = program_folder(tmp_path / "other", {"PresentMon.exe": b"MZ"})
     with pytest.raises(check_tools.CheckError, match="has no ffmpeg"):
-        check_tools.check(program, stand_in())
+        check_tools.check(program, stand_in(program / "tools"))
 
 
-def test_the_command_says_ok_or_what_failed(tmp_path, capsys, on_linux):
+def test_the_command_says_ok_or_what_failed(tmp_path, capsys):
     assert check_tools.main([str(tmp_path)]) == 1
     assert "FAIL: " in capsys.readouterr().err
     program = program_folder(tmp_path / "good", {"ffmpeg": b"x"})
-    assert check_tools.main([str(program)], stand_in()) == 0
+    assert check_tools.main([str(program)], stand_in(program / "tools")) == 0
     assert capsys.readouterr().out.endswith("OK\n")
-    assert check_tools.main([str(program)], stand_in(encoders="")) == 1
+    assert check_tools.main([str(program)], stand_in(program / "tools", encoders="")) == 1
     assert "does not list libx264" in capsys.readouterr().err
 
 
@@ -237,13 +267,26 @@ def test_a_program_that_cannot_be_started_is_a_failure(tmp_path):
 FFMPEG = shutil.which("ffmpeg")
 
 
-@pytest.mark.skipif(FFMPEG is None, reason="needs ffmpeg with libx264")
-def test_the_ffmpeg_of_this_system_passes_when_it_has_libx264(capsys):
+@pytest.mark.skipif(FFMPEG is None or os.name == "nt", reason="needs ffmpeg (a Linux one here)")
+def test_this_systems_ffmpeg_passes_with_the_program_of_this_checkout(tmp_path, capsys):
+    """This system's ffmpeg in the tools of a folder with the program built in rust/ and the
+    themes and fonts of this checkout: found there, the standby clip made and read back."""
+    from rust_check import find
+
     encoders = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True)
     if "libx264 " not in encoders.stdout:
         pytest.skip("this ffmpeg has no libx264")
-    check_tools.check_ffmpeg(Path(FFMPEG))
-    assert "encodes 8 frames" in capsys.readouterr().out
+    built = (find() or ROOT / "rust/target/release/lp-check").with_name("libre-panel")
+    if not built.is_file():
+        pytest.skip("needs the libre-panel program (rust/ built)")
+    program = program_folder(tmp_path, {"ffmpeg": Path(FFMPEG).read_bytes()})
+    (program / "tools" / "ffmpeg").chmod(0o755)
+    shutil.copy2(built, program / "libre-panel")
+    (program / "share").mkdir()
+    (program / "share" / "libre-panel").symlink_to(ROOT / "data")
+    check_tools.check(program)
+    out = capsys.readouterr().out
+    assert "the app finds ffmpeg in tools" in out and "reads it back" in out
 
 
 # -- Libre Panel's own engine (packaging/add_engine.py puts it in) ----------------------------
@@ -334,11 +377,10 @@ def test_an_engine_that_does_not_encode_the_stream_fails(tmp_path):
 
 
 def test_the_engine_of_this_checkout_passes_when_it_is_built(capsys):
-    from libre_panel import rights
-    from libre_panel.devices.h264 import find_engine
+    from test_rust_app import _engine
 
-    engine = find_engine()
-    if not engine or not rights.safe_place(engine):
+    engine = _engine()
+    if not engine:
         pytest.skip("needs libre-panel-engine (cargo build --release in engine/)")
     check_tools.check_engine(Path(engine))
     out = capsys.readouterr().out

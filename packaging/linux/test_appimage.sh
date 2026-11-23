@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 # Check the AppImage: start it as autostart does (without and with a tray),
 # the autostart entry, the udev rule, the ffmpeg it carries, and the system setup as pkexec
-# starts it. RUST=1: the AppImage carries the Rust app (the smoke test's Rust run, and
-# check_tools.py without the Python app's own look for its programs).
+# starts it. RUST=1: the AppImage carries the Rust app (the smoke test's Rust run).
 set -euo pipefail
 appimage="$(realpath "$1")"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 export APPIMAGE_EXTRACT_AND_RUN=1  # CI and containers have no FUSE
 smoke=(--tools)
-tools=()
 if [ -n "${RUST:-}" ]; then
     smoke+=(--rust)
-    tools+=(--no-discovery)
 fi
 
 "$appimage" --version
@@ -31,11 +28,11 @@ if command -v xvfb-run >/dev/null && command -v stalonetray >/dev/null; then
     grep -q "tray icon ready" "$log"
 fi
 
-echo "== the programs it carries: ffmpeg encodes the video mode's stream, the app finds it"
+echo "== the programs it carries: the app finds them, ffmpeg makes the standby clip"
 # The AppImage is read-only while it runs: take its files out and check them where they are.
 unpacked="$(mktemp -d)"
 (cd "$unpacked" && env -u APPIMAGE_EXTRACT_AND_RUN "$appimage" --appimage-extract > /dev/null)
-python3 "$root/packaging/check_tools.py" "$unpacked/squashfs-root/usr/lib/libre-panel" "${tools[@]}"
+python3 "$root/packaging/check_tools.py" "$unpacked/squashfs-root/usr/lib/libre-panel"
 echo "== the C library it needs: no newer than the oldest Ubuntu LTS still supported has"
 python3 "$root/packaging/linux/check_glibc.py" "$unpacked/squashfs-root" "${GLIBC_LIMIT:-2.35}"
 rm -rf "$unpacked"

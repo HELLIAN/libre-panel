@@ -463,6 +463,20 @@ pub fn clip_command(
     command
 }
 
+/// standby_clip: the standby clip of `model` (landscape, Libre Panel's own look, its range) as
+/// the app writes it to the panel, made with `ffmpeg`, and how many pictures went into it:
+/// `libre-panel tools clip`, the check of the ffmpeg a download carries.
+pub fn standby_clip(
+    env: &lp_theme::Env,
+    model: &PanelModel,
+    ffmpeg: &std::path::Path,
+) -> Result<(Vec<u8>, usize), String> {
+    let frames = boot::standby_frames(env, model, None, "landscape", "", 1.0).map_err(|e| e.0)?;
+    let full = lp_devices::turzx::full_range("auto", Some(model));
+    let clip = clip_h264(ffmpeg, &frames, full, room(Some(model)).0)?;
+    Ok((clip, frames.len()))
+}
+
 /// clip_h264: the standby clip's pictures turned into the framebuffer and encoded as finely
 /// as fits the clip's room (`most` bytes): at crf CLIP_CRF, coarser where that is too much,
 /// up to CLIP_CRF_MAX, and then a quarter of a step at a time finer where that still fits

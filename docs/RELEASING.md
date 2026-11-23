@@ -215,12 +215,13 @@ CI's jobs run it with `--cache`, in a folder GitHub keeps between runs: a file a
 downloaded is taken again where it is the one the table pins (its SHA-256), else downloaded
 anew, so a release page that fails for a while fails no tests. The release downloads them all.
 
-`packaging/check_tools.py` proves it on the PyInstaller folder, on what the Windows setup
-installed and on the files of the AppImage: every file listed in `tools/SOURCES.txt` is the one
-that was fetched, the app started from that folder finds ffmpeg and PresentMon there and not on
-the `PATH`, ffmpeg lists libx264 and encodes the video mode's own command to a stream with one
-slice per picture, and PresentMon starts and says its version. PawnIO's installer is checked
-for its hash and not run. `packaging/smoke_test.py --tools` also asks the running app whether
+`packaging/check_tools.py` proves it on what the Windows setup installed and on the files of
+the AppImage: every file listed in `tools/SOURCES.txt` is the one that was fetched, the program
+started from that folder finds its programs there and not on the `PATH` (`libre-panel tools`),
+ffmpeg lists libx264, makes the standby clip with the app's own command (`libre-panel tools
+clip`) to a stream with one slice per picture and reads it back, the engine encodes frames as
+the video mode feeds it, and PresentMon starts and says its version. PawnIO's installer is
+checked for its hash (the program finds it only as the file it has pinned) and not run. `packaging/smoke_test.py --tools` also asks the running app whether
 its video mode lacks anything.
 
 ffmpeg is FFmpeg-Builds' `win64-gpl` and `linux64-gpl` build, from the last build of a month:
