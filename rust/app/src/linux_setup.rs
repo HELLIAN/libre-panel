@@ -1887,6 +1887,84 @@ mod tests {
         assert_eq!(shlex_quote("it's"), "'it'\"'\"'s'");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_run_ends_as_its_exit_code_and_report_say_and_one_runs_at_a_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = std::env::temp_dir().join(format!("lp-setup-run-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let script = |name: &str, body: &str| {
+            let path = folder.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            Elevation {
+                method: "sudo",
+                argv: vec![path.display().to_string()],
+                terminal: String::new(),
+            }
+        };
+        let ended = || {
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let Value::Dict(told) = snapshot() else {
+                    unreachable!()
+                };
+                if told.get("running") == Some(&Value::Bool(false))
+                    || std::time::Instant::now() > end
+                {
+                    return told;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        let said = |told: &Dict, key: &str| told.get(key).map(Value::str).unwrap_or_default();
+        // nothing runs without a way to ask
+        assert!(!start(
+            &Elevation {
+                method: "",
+                argv: Vec::new(),
+                terminal: String::new()
+            },
+            "unlock"
+        ));
+        // the report is the last line that is JSON; a second run waits for the first
+        let slow = script(
+            "ok",
+            "sleep 0.5; echo working; echo '{\"ok\": true, \"steps\": 2}'",
+        );
+        assert!(start(&slow, "unlock"));
+        assert!(!start(&slow, "remove"));
+        let told = ended();
+        assert_eq!(
+            (said(&told, "state"), said(&told, "action")),
+            ("done".into(), "unlock".into())
+        );
+        assert_eq!(
+            (said(&told, "code"), said(&told, "method")),
+            ("0".into(), "sudo".into())
+        );
+        // a closed dialog (126) and no pkexec (127) without a report; a failure says why
+        for (code, state) in [(126, "cancelled"), (127, "unavailable")] {
+            assert!(start(&script("exit", &format!("exit {code}")), "unlock"));
+            assert_eq!(said(&ended(), "state"), state);
+        }
+        assert!(start(
+            &script(
+                "fails",
+                "echo 'it went wrong' >&2; echo '{\"ok\": false}'; exit 1"
+            ),
+            "remove"
+        ));
+        let told = ended();
+        assert_eq!(
+            (said(&told, "state"), said(&told, "error")),
+            ("failed".into(), "it went wrong".into())
+        );
+        assert_eq!(said(&told, "action"), "remove"); // (a new run forgets the last one)
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
     #[test]
     fn the_system_s_programs_get_the_system_s_libraries() {
         // (an AppImage's loader put its folder first in LD_LIBRARY_PATH; inherited, it made the
