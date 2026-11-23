@@ -9,9 +9,9 @@ Two ways to install, same package:
   into the downloads (Windows setup, AppImage), which cannot pip install. The
   folder goes onto ``sys.path`` when one of its parts is used.
 
-Libre Panel never downloads or installs code itself. Its own services are
-registered here too (source "built in"): they work in the downloads, which
-have no package metadata for entry points.
+Libre Panel never downloads or installs code itself. The names of its own services and
+pages (the Rust app's) are registered here too (source "built in"), so that no plugin takes
+one of them.
 """
 
 from __future__ import annotations
@@ -50,27 +50,13 @@ GROUPS = {
 OWN_DISTRIBUTION = "libre-panel"  # its built-in sensors and drivers are no plugins
 BUILT_IN = "built in"  # the source of what Libre Panel brings itself
 
-# Built-in parts by kind and name ("module:attribute"), found without any package
-# metadata. A plugin cannot use their names. Imported on first use.
-BUILT_IN_PARTS: dict[str, dict[str, str]] = {
-    "services": {
-        "agents": "libre_panel.services.agents:Agents",
-        "autopilot": "libre_panel.services.autopilot:Autopilot",
-        "cooling": "libre_panel.services.cooling:Cooling",
-        "devices": "libre_panel.services.devices:Devices",
-        "downloads": "libre_panel.services.downloads:Downloads",
-        "game": "libre_panel.services.game:Game",
-        "memory": "libre_panel.services.memory:Memory",
-        "notices": "libre_panel.services.notices:Notices",
-        "power": "libre_panel.services.power:Power",
-        "timer": "libre_panel.services.timer:Timer",
-        "waveshare": "libre_panel.services.waveshare:Waveshare",
-    },
-    "editor_pages": {
-        "autopilot": "libre_panel.pages.autopilot:Autopilot",
-        "control": "libre_panel.pages.control:Control",
-    },
-}
+# Libre Panel's own parts by kind (the Rust app's: rust/app/src/plugins.rs, BUILT_IN_PARTS):
+# a plugin cannot use their names.
+BUILT_IN_PARTS: dict[str, tuple[str, ...]] = {
+    "services": ("agents", "autopilot", "cooling", "devices", "downloads", "game", "memory",
+                 "notices", "power", "timer", "waveshare"),
+    "editor_pages": ("autopilot", "control"),
+}  # fmt: skip
 
 
 # The kinds of field a plugin's widget type, screen or toast style declares (theme/model.py's,
@@ -206,9 +192,9 @@ def plugins_dir() -> Path:
 def discover(folder: Path | None = None) -> Registry:
     """Everything installed, without importing any plugin code yet."""
     registry = Registry()
-    for kind, parts in BUILT_IN_PARTS.items():
-        for name, target in parts.items():
-            registry.add(Found(kind, name, target, BUILT_IN))
+    for kind, names in BUILT_IN_PARTS.items():
+        for name in names:
+            registry.add(Found(kind, name, "", BUILT_IN))  # (nothing to load: the app's own)
     for kind, group in GROUPS.items():
         for entry in _installed(group):
             dist = entry.dist

@@ -33,9 +33,6 @@ if sys.platform != "win32" and not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
 expect.set_options(timeout=15_000)
 
 
-RUST = os.environ.get("LP_UI_SERVER") == "rust"  # (the Rust app's server: app_url)
-
-
 def with_token(url, token):
     """``url`` with the access ``token`` in its fragment, after the route if it has one, as the
     window gives it to the page."""
@@ -87,52 +84,36 @@ def no_setup_card(monkeypatch):
     PC (``linux_pc``). The others see the app as on any other system, whatever this machine is:
     one without polkit would add a note of its own to the page of the sensors. (The Rust app is
     told so by its environment: _rust_env.)"""
-    if not RUST:
-        monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: False)
 
 
 @pytest.fixture
 def app_url(request):
-    if RUST:
-        home = request.getfixturevalue("isolated_home")
-        # the USB bus and serial ports as the test makes them up (panel_on_the_bus), read by
-        # the program each time it asks
-        request.getfixturevalue("monkeypatch").setenv("LP_TEST_BUS", str(home.parent / "bus"))
-        for told in ("github",):  # (what tells the app's program where to go, before it starts)
-            if told in request.fixturenames:
-                request.getfixturevalue(told)
-        language = getattr(request.node, "callspec", None)
-        language = language.params.get("language") if language else None
-        if language and language != "en":  # (the app's language as it starts, from its settings)
-            home.mkdir(parents=True, exist_ok=True)
-            config = home / "config.toml"
-            text = config.read_text(encoding="utf-8") if config.is_file() else ""
-            config.write_text(f'language = "{language}"\n' + text, encoding="utf-8")
-        # whether this is the version a person began with (news.json): the Python app's server
-        # starts with this fixture and works it out then, before the test chose a theme; the
-        # Rust app's starts with the first page, and is told what it was as of now
-        from libre_panel.config import theme_chosen
+    home = request.getfixturevalue("isolated_home")
+    # the USB bus and serial ports as the test makes them up (panel_on_the_bus), read by
+    # the program each time it asks
+    request.getfixturevalue("monkeypatch").setenv("LP_TEST_BUS", str(home.parent / "bus"))
+    for told in ("github",):  # (what tells the app's program where to go, before it starts)
+        if told in request.fixturenames:
+            request.getfixturevalue(told)
+    language = getattr(request.node, "callspec", None)
+    language = language.params.get("language") if language else None
+    if language and language != "en":  # (the app's language as it starts, from its settings)
+        home.mkdir(parents=True, exist_ok=True)
+        config = home / "config.toml"
+        text = config.read_text(encoding="utf-8") if config.is_file() else ""
+        config.write_text(f'language = "{language}"\n' + text, encoding="utf-8")
+    # whether this is the version a person began with (news.json): the app's server starts with
+    # the first page, and is told what it was as of now (before the test chose a theme)
+    from libre_panel.config import theme_chosen
 
-        began = not theme_chosen(home / "config.toml")
-        yield from _rust_app_url(home if began else None)
-        return
-    from libre_panel.editor.server import make_server
-
-    srv = make_server(port=0)
-    thread = threading.Thread(target=srv.serve_forever, daemon=True)
-    thread.start()
-    url = AppUrl(f"http://127.0.0.1:{srv.server_address[1]}/")
-    url.token = srv.token
-    yield url
-    srv.shutdown()
-    srv.server_close()
-    srv.editor_state.close()
+    began = not theme_chosen(home / "config.toml")
+    yield from _rust_app_url(home if began else None)
 
 
 def _rust_env():
-    """The Rust app's environment in a test: kept as conftest.py keeps the Python app, away
-    from this computer's sensors, its setup, its autostart, the community's list and its
-    language, until a test brings its own (what a test set by then is in it)."""
+    """The Rust app's environment in a test: kept away from this computer's sensors, its setup,
+    its autostart, the community's list and its language, until a test brings its own (what a
+    test set by then is in it)."""
     from test_rust_app import DATA, _libraries
 
     english = {"LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}
@@ -144,8 +125,7 @@ def _rust_env():
     # the USB bus and the serial ports as the test makes them up (panel_on_the_bus): nothing,
     # until it plugs a panel in; never this computer's
     env.setdefault("LP_TEST_BUS", str(_bus_file()))
-    # the video experiment's waits shortened, as its test shortens the Python app's
-    # (experiment.Experiment.scale)
+    # the video experiment's waits shortened
     env.setdefault("LP_EXPERIMENT_SCALE", "0.002")
     # (its start with the system in the test's folder, also where the computer names a place of
     # its own, as GitHub's runners do: never the computer's)
@@ -183,8 +163,7 @@ def _stopped(process):
 
 class _RustApp(AppUrl):
     """The Rust app's server for a test, started the first time its token is asked for (as
-    the browser opens it): with the environment the test made by then, as the Python app's
-    server sees what a test changed in its process before it asks."""
+    the browser opens it): with the environment the test made by then."""
 
     process = None
     began_here = None  # (a settings folder whose person began with this version: app_url)
@@ -210,7 +189,7 @@ class _RustApp(AppUrl):
 
 class _RustBackground:
     """The Rust app in the background for a test (``libre-panel start``), asked what the tests
-    ask the Python app's BackgroundApp: its panel's state, through its server."""
+    ask of it (its panel's state, its services) through its server."""
 
     def __init__(self):
         self.process, self.said = _started(["start", "--port", "0", "--no-browser"])
@@ -320,12 +299,7 @@ def _bus_file():
 
 def panel_on_the_bus(monkeypatch, model_id=None, serial=None, **more):
     """The panel on the USB bus as the test makes it up: the Rust app reads it from its test
-    bus (LP_TEST_BUS, by model: ``serial`` on a port); the Python app's finders are told so
-    (test_editor_settings.py)."""
-    if not RUST:
-        from test_editor_settings import panel_on_the_bus as python_s
-
-        return python_s(monkeypatch, model_id, serial, **more)
+    bus (LP_TEST_BUS, by model: ``serial`` on a port)."""
     lines = [f"COM7={serial}"] if serial else [model_id] if model_id else []
     _bus_file().write_text("".join(f"{line}\n" for line in lines),
                                                encoding="utf-8")  # fmt: skip
@@ -334,11 +308,7 @@ def panel_on_the_bus(monkeypatch, model_id=None, serial=None, **more):
 
 def plugged_in(monkeypatch, ports=(), usb=(), fail=""):
     """What the system lists as plugged in: the USB panels among ``usb`` join the Rust app's
-    test bus, by their model; the Python app is told all of it (test_editor_settings.py)."""
-    if not RUST:
-        from test_editor_settings import plugged_in as python_s
-
-        return python_s(monkeypatch, ports, usb, fail)
+    test bus, by their model."""
     if fail:
         return None
     from libre_panel.devices.models import MODELS
@@ -354,15 +324,6 @@ def plugged_in(monkeypatch, ports=(), usb=(), fail=""):
     return None
 
 
-def lacking_ffmpeg(monkeypatch, found=False):
-    """The Python app finds no ffmpeg (or, with ``found``, one); the Rust app finds what this
-    computer has, and its tests ask what it found."""
-    if not RUST:
-        from test_editor_settings import lacking_ffmpeg as python_s
-
-        python_s(monkeypatch, found)
-
-
 def server_answer(url, route):
     """What the app's server at ``url`` answers ``GET route`` (with its token): JSON as data,
     else the bytes."""
@@ -376,20 +337,15 @@ def server_answer(url, route):
 
 
 def server_language(url, language):
-    """The app's language as the person sets it in Settings: the Rust app's server is told so
-    through its settings; the Python app's speaks the language of its process."""
-    if RUST:
-        import urllib.request
+    """The app's language as the person sets it in Settings: its server is told so through its
+    settings."""
+    import urllib.request
 
-        body = json.dumps({"language": language}).encode("utf-8")
-        headers = {"Content-Type": "application/json", "X-Libre-Panel": url.token}
-        asked = urllib.request.Request(f"{url}api/language", data=body, headers=headers)
-        with urllib.request.urlopen(asked, timeout=30) as answer:
-            answer.read()
-    else:
-        from libre_panel import i18n
-
-        i18n.set_language(language)
+    body = json.dumps({"language": language}).encode("utf-8")
+    headers = {"Content-Type": "application/json", "X-Libre-Panel": url.token}
+    asked = urllib.request.Request(f"{url}api/language", data=body, headers=headers)
+    with urllib.request.urlopen(asked, timeout=30) as answer:
+        answer.read()
 
 
 def expected_404(message, allow=()):
@@ -426,10 +382,6 @@ def browser_page(url, view="design", strict_csp=False, size=(1440, 900), routes=
             page.route(pattern, handler)
         # the token as the window brings it; a background app wrote it down for its user
         token = getattr(url, "token", None)
-        if token is None and not RUST:
-            from libre_panel.editor import access
-
-            token = access.read_token(str(url))
         page.goto(with_token(f"{url}#/{view}", token))
         page.wait_for_selector(".panel-canvas .preview" if view == "design" else ".view > *")
         page.wait_for_timeout(300)
@@ -471,48 +423,20 @@ PICTURE = ("&format=jpeg",)
 def background(isolated_home):
     """The background app with a panel that writes a PNG file, and the address of its app."""
     write_config(isolated_home)
-    if RUST:
-        app = _RustBackground()
-        yield app, app.url
-        app.quit()
-        return
-    from test_service import FakeRegistry
-
-    from libre_panel.autostart import Autostart
-    from libre_panel.service import BackgroundApp
-
-    app = BackgroundApp(port=0, autostart=Autostart("win32", registry=FakeRegistry()))
-    url = app.start()
-    yield app, url
+    app = _RustBackground()
+    yield app, app.url
     app.quit()
-    app.shutdown()
 
 
 @contextlib.contextmanager
 def running_app(autostart=None, **more):
     """The background app (the tray's) on the config.toml the test wrote, and the address of
-    its app: the Rust app's program, or the Python app's BackgroundApp (``autostart``: its own,
-    else Windows' with a registry of the test's; ``more``: BackgroundApp's)."""
-    if RUST:
-        app = _RustBackground()
-        try:
-            yield app, app.url
-        finally:
-            app.quit()
-        return
-    from test_service import FakeRegistry
-
-    from libre_panel.autostart import Autostart
-    from libre_panel.service import BackgroundApp
-
-    auto = autostart or Autostart("win32", registry=FakeRegistry())
-    app = BackgroundApp(port=0, autostart=auto, **more)
-    url = app.start()
+    its app."""
+    app = _RustBackground()
     try:
-        yield app, url
+        yield app, app.url
     finally:
         app.quit()
-        app.shutdown()
 
 
 def theme_dict(name="libre-default"):
@@ -872,7 +796,6 @@ CLIP = "usr/data/standby.h264"
 def clip_ready(monkeypatch, model="turing-9.2-usb", ffmpeg=True):
     """A panel the video mode is proven on is on the bus, and ffmpeg is there."""
     panel_on_the_bus(monkeypatch, model)
-    lacking_ffmpeg(monkeypatch, found=ffmpeg)
 
 
 def asks_for_the_clip(page):
@@ -1006,10 +929,9 @@ def test_not_now_writes_no_name_and_the_question_is_not_asked_again(
 def test_start_does_not_ask_for_the_standby_clip_unless_it_is_all_that_is_missing(
     app_url, isolated_home, monkeypatch, extra, model, ffmpeg
 ):
-    if RUST and not ffmpeg:  # (rust/devices/src/turzx.rs, video_gaps)
+    if not ffmpeg:  # (rust/devices/src/turzx.rs, video_gaps)
         pytest.skip("the Rust app's engine encodes the video: it looks for no ffmpeg")
     panel_on_the_bus(monkeypatch, model)
-    lacking_ffmpeg(monkeypatch, found=ffmpeg)
     choose_theme(isolated_home)
     with isolated_home.joinpath("config.toml").open("a", encoding="utf-8") as config:
         config.write("\n" + extra)
@@ -1058,15 +980,6 @@ def test_the_question_about_the_standby_clip_is_asked_in_german_too(
 def test_a_running_panel_switches_by_itself_and_the_trays_line_goes(isolated_home, monkeypatch):
     """With the background app a name is taken in at once (the panel loop follows config.toml),
     so Start says so, and the line in the tray's menu is gone as soon as the question is."""
-    if not RUST:  # (no panel answers: the Rust app's bus is empty, as every test's)
-        from libre_panel.devices import turzx_usb
-        from libre_panel.devices.base import DeviceError
-
-        def no_panel(pid=None, beside=()):
-            raise DeviceError("no panel")
-
-        monkeypatch.setattr(turzx_usb.UsbTransport, "open", staticmethod(no_panel))
-    lacking_ffmpeg(monkeypatch, found=True)
     isolated_home.mkdir(parents=True, exist_ok=True)
     (isolated_home / "config.toml").write_text(
         'theme = "libre-default"\nfps = 5\n\n[device]\nmodel = "turing-9.2-usb"\n'
@@ -1627,7 +1540,6 @@ def test_live_says_whether_the_video_mode_is_on_or_what_it_lacks(
         return {"**/api/plugins/control/panel": handler}
 
     def state(config="", ffmpeg=True, streaming=False, app=True):
-        lacking_ffmpeg(monkeypatch, found=ffmpeg)
         choose_theme(isolated_home)
         with (isolated_home / "config.toml").open("a", encoding="utf-8") as file:
             file.write(config)
@@ -1647,7 +1559,7 @@ def test_live_says_whether_the_video_mode_is_on_or_what_it_lacks(
     tone, text, link = state(ffmpeg=False)
     assert (tone, link) == ("warn", ["Panel settings"])
     # (the Rust app's engine encodes the video: it looks for no ffmpeg; turzx.rs, video_gaps)
-    assert text.startswith(f"{missing}." if RUST else f"{missing}, the video program ffmpeg.")
+    assert text.startswith(f"{missing}.")
     tone, text, link = state()
     assert tone == "warn" and text.startswith(f"{missing}.")
     with_clip = f'\n[video]\nlocal_clip = "{CLIP}"\n'
@@ -1846,8 +1758,6 @@ def test_a_plugins_page_in_the_app_has_the_token_too(app_url):
 def test_the_picture_of_a_plugins_page_is_asked_for_with_the_token(background):
     app, url = background
     assert wait_for(lambda: app.panel.state()["state"] == "showing")
-    if not RUST:  # (the Rust app's page waits for its picture as it is)
-        assert wait_for(lambda: app.plugin_host.shown is not None)  # a picture to show
     with browser_page(url, "plugin/control") as page:
         picture = page.frame_locator("iframe.plugin-frame").locator("#live")
         picture.wait_for(state="visible")  # the page shows it when it has come
@@ -2659,17 +2569,9 @@ def test_the_running_panel_in_the_chip(isolated_home):
 
     write_config(isolated_home)
     autostart = None
-    if RUST:  # (the Rust app's start with the system, on Linux: a file of XDG's autostart)
-        started = Path(_rust_env()["XDG_CONFIG_HOME"]) / "autostart" / "libre-panel.desktop"
-        with_system = started.is_file
-    else:
-        from test_service import FakeRegistry
-
-        from libre_panel.autostart import Autostart
-
-        registry = FakeRegistry()
-        autostart = Autostart("win32", registry=registry)
-        with_system = lambda: "Libre Panel" in registry.values  # noqa: E731
+    # (the Rust app's start with the system, on Linux: a file of XDG's autostart)
+    started = Path(_rust_env()["XDG_CONFIG_HOME"]) / "autostart" / "libre-panel.desktop"
+    with_system = started.is_file
     with running_app(autostart) as (app, url), browser_page(url) as page:
         chip = page.locator(".panel-chip")
         page.wait_for_function("document.querySelector('.panel-chip.showing') !== null")
@@ -2695,7 +2597,7 @@ def test_the_running_panel_in_the_chip(isolated_home):
         chip.click()
         page.locator(".popover .btn", has_text="Quit Libre Panel").click()
         page.locator(".dialog .btn-danger").click()  # asked first
-        assert app.ended() if RUST else app.quit_requested.wait(5)
+        assert app.ended()
         page.wait_for_function("window.libre.store.get().app.quit === true")
 
 
@@ -3712,20 +3614,8 @@ def console_app(isolated_home):
     config = isolated_home / "config.toml"
     config.write_text(config.read_text(encoding="utf-8") + '\n[services]\nenabled = ["notices"]\n')
     autostart = None
-    if not RUST:
-        from test_autostart import FakeTasks
-        from test_service import FakeRegistry
-
-        from libre_panel.autostart import Autostart
-
-        autostart = Autostart("win32", registry=FakeRegistry(), tasks=FakeTasks())
     with running_app(autostart) as (app, url):
-        if RUST:
-            assert wait_for(lambda: app.services().get("notices") == "running")
-        else:
-            assert wait_for(
-                lambda: app.plugin_host.shown is not None and "notices" in app.services.running
-            )
+        assert wait_for(lambda: app.services().get("notices") == "running")
         yield app, url
 
 
@@ -3767,12 +3657,10 @@ def test_the_control_page_in_the_app(console_app):
         )
         assert load_config().theme == "orbit"
 
-        first = app.starts("notices") if RUST else app.services.running["notices"][0]
+        first = app.starts("notices")
         row.get_by_role("button", name="Restart").click()
-        if RUST:  # (it says so each time it starts one)
-            assert wait_for(lambda: app.starts("notices") > first)
-        else:
-            assert wait_for(lambda: app.services.running["notices"][0] is not first)
+        # (it says so each time it starts one)
+        assert wait_for(lambda: app.starts("notices") > first)
 
         frame.locator("#log-box summary").click()  # the log of this run (the tray writes it)
         frame.locator("#log-where").wait_for()
@@ -3808,10 +3696,7 @@ def test_the_autopilot_page_in_the_app(console_app):
         rules = load_config().services.options["autopilot"]["rules"]
         assert rules == [{"name": "Quiet", "theme": "slate", "when": {"music": False}}]
         frame.locator("#dirty", has_text="unsaved").wait_for(state="hidden")
-        if RUST:
-            assert wait_for(lambda: app.services().get("autopilot") == "running", 15)
-        else:
-            assert wait_for(lambda: "autopilot" in app.services.running, 15)
+        assert wait_for(lambda: app.services().get("autopilot") == "running", 15)
         # the service runs: the page says what it does (and the rule holds: no music here)
         frame.locator("#now", has_text="Quiet").wait_for(timeout=20000)
         frame.locator("#signals .chip", has_text="No music").wait_for()
@@ -3995,19 +3880,9 @@ def radio(page, group, name):
 @contextlib.contextmanager
 def settings_app(isolated_home, autostart=None):
     """The background app with a panel that writes a PNG file, as the tray runs it, and the
-    address of its app (``autostart``: the Python app's own)."""
+    address of its app."""
     write_config(isolated_home)
-    if RUST:
-        with running_app() as running:
-            yield running
-        return
-    from test_autostart import FakeTasks
-    from test_service import FakeRegistry
-
-    from libre_panel.autostart import Autostart
-
-    auto = autostart or Autostart("win32", registry=FakeRegistry(), tasks=FakeTasks())
-    with running_app(auto, autostart_command=["/opt/libre-panel", "tray"]) as running:
+    with running_app() as running:
         yield running
 
 
@@ -4024,14 +3899,13 @@ def test_settings_panel(app_url, isolated_home, monkeypatch):
     """The panel found, the video mode (and its clip name, written only when typed), the
     frame rate, brightness, upside down, another panel, and Advanced."""
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch)
     with browser_page(app_url, "settings/panel") as page:
         assert page.locator(".panel-found-name").inner_text() == "Turing 9.2″"
         detail = page.locator(".panel-found-detail").inner_text()
         assert "USB · 1920 × 480" in detail and "Connected" in detail
         status = page.locator("#main .settings-row-status").first
         # (the Rust app's engine makes the video itself: it needs no ffmpeg for it)
-        lacking = "" if RUST else ", the video program ffmpeg"
+        lacking = ""
         missing = f"Missing: the name of the standby clip{lacking}."
         assert status.inner_text() == f"Off for now. {missing}"
         # the clip's name is never made up: the placeholder is no value, and nothing is
@@ -4043,7 +3917,6 @@ def test_settings_panel(app_url, isolated_home, monkeypatch):
         clip.press("Tab")
         page.wait_for_timeout(200)
         assert not (isolated_home / "config.toml").exists()
-        lacking_ffmpeg(monkeypatch, found=True)  # ffmpeg is installed meanwhile
         clip.fill("usr/data/standby.h264")
         clip.press("Enter")
         waits_for(
@@ -4218,21 +4091,16 @@ def test_settings_sensors_of_the_running_app(isolated_home):
                 "document.querySelector(\"[data-source='psutil'] .status\") !== null"
             )
             assert "readings" in row.locator(".status").inner_text()
-            if RUST:  # (a loop started again counts its frames from none again)
-                assert wait_for(lambda: app.frames() >= 3)
-            else:
-                loop = app.panel.status
+            # (a loop started again counts its frames from none again)
+            assert wait_for(lambda: app.frames() >= 3)
             page.locator(".source-row[data-source='audio'] [role='switch']").click()
             waits_for(page, lambda: "audio" not in settings_config().sensors.providers)
             note = page.locator(".note.warn")
             assert "after a restart of the panel" in note.inner_text()
-            seen = app.frames() if RUST else None
+            seen = app.frames()
             note.get_by_role("button", name="Restart the panel").click()
-            if RUST:
-                assert wait_for(lambda: app.frames() < seen)
-                assert wait_for(lambda: app.panel.state()["state"] == "showing")
-            else:
-                assert wait_for(lambda: app.panel.status is not loop and app.panel.running)
+            assert wait_for(lambda: app.frames() < seen)
+            assert wait_for(lambda: app.panel.state()["state"] == "showing")
             page.wait_for_function("document.querySelector('.note.warn') === null")
 
 
@@ -4241,10 +4109,10 @@ def test_settings_services(app_url, isolated_home):
     with browser_page(app_url, "settings/services") as page:
         page.wait_for_selector(".settings-card.service")
         cards = page.locator(".settings-card.service")
-        # (the Rust app's lists the light ring of Lian Li's screen too: the Python app never had it)
+        # (the light ring of Lian Li's screen among them)
         assert [cards.nth(i).get_attribute("data-service") for i in range(cards.count())] == [
             "game", "memory", "notices", "autopilot", "devices", "cooling", "downloads", "timer",
-            "power", "agents", *(["lightring"] if RUST else []), "waveshare",
+            "power", "agents", *(["lightring"]), "waveshare",
         ]  # fmt: skip
         assert page.locator("[role='switch'][aria-checked='true']").count() == 0  # off until asked
         game = page.locator("[data-service='game']")
@@ -4309,13 +4177,13 @@ def test_settings_services_of_the_running_app(isolated_home):
     """Each service's state as the running app tells it, and Restart."""
 
     def state(name):
-        return app.services().get(name) if RUST else app.services.state.get(name)
+        return app.services().get(name)
 
     def started():  # (the Rust app says so each time it starts the service)
-        return app.starts("notices") if RUST else app.services.running["notices"][0]
+        return app.starts("notices")
 
     def again(first):
-        return started() > first if RUST else started() is not first
+        return started() > first
 
     with settings_app(isolated_home) as (app, url):
         assert wait_for(lambda: app.panel.state()["state"] == "showing")
@@ -4336,12 +4204,7 @@ def test_settings_services_of_the_running_app(isolated_home):
             notices.locator("[data-option='music'] [role='switch']").click()
             options = lambda: settings_config().services.options.get("notices", {})  # noqa: E731
             assert wait_for(lambda: options().get("music") is False)
-            if RUST:
-                assert wait_for(lambda: again(first))
-            else:
-                assert wait_for(
-                    lambda: app.services.running["notices"][0].options["music"] is False
-                )
+            assert wait_for(lambda: again(first))
             notices.get_by_role("switch", name="Notices", exact=True).click()
             assert wait_for(lambda: state("notices") != "running")
             page.wait_for_function(
@@ -4353,35 +4216,26 @@ def test_the_timer_is_started_and_set_back_from_its_card(isolated_home):
     """The timer's card has the buttons of its keyboard shortcuts while it runs."""
 
     def runs():  # (the Rust app's timer says so in its reading)
-        return (
-            app.reading("timer.running") == 1 if RUST else app.services.running["timer"][0].running
-        )
+        return app.reading("timer.running") == 1
 
     with settings_app(isolated_home) as (app, url), browser_page(url, "settings/services") as page:
         card = page.locator("[data-service='timer']")
         expect(card).to_contain_text("Minutes counted down on the panel")
         expect(card.locator(".timer-buttons")).to_have_count(0)  # off: no buttons
         card.get_by_role("switch", name="Timer", exact=True).click()
-        if RUST:
-            assert wait_for(lambda: app.services().get("timer") == "running")
-        else:
-            assert wait_for(lambda: app.services.state.get("timer") == "running")
+        assert wait_for(lambda: app.services().get("timer") == "running")
         card.get_by_role("button", name="Start or pause").click()
         assert wait_for(runs)
         card.get_by_role("button", name="Back to the start").click()
         assert wait_for(lambda: not runs())
-        if RUST:
-            assert wait_for(lambda: app.reading("timer.text") == "25:00")
-        else:
-            assert app.plugin_host.published()["timer.text"].value == "25:00"
+        assert wait_for(lambda: app.reading("timer.text") == "25:00")
 
 
 @pytest.fixture
 def place_search(monkeypatch):
     """The place search answers ``found(name)`` (the places, Open-Meteo's as geocode gives them,
-    or an error raised): the Python app's through its open_meteo.geocode, the Rust app's through
-    a server of the test's own (LP_GEOCODING_URL), which answers as Open-Meteo does. It gives
-    the names that were asked for."""
+    or an error raised) through a server of the test's own (LP_GEOCODING_URL), which answers as
+    Open-Meteo does. It gives the names that were asked for."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlsplit
 
@@ -4390,11 +4244,6 @@ def place_search(monkeypatch):
     def geocode(name, count=5, language="en"):
         asked.append(name)
         return answers["found"](name)
-
-    if not RUST:
-        from libre_panel.weather import open_meteo
-
-        monkeypatch.setattr(open_meteo, "geocode", geocode)
 
     class Search(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -4538,18 +4387,15 @@ def test_the_weather_from_openweathermap_with_a_key_of_one_s_own(app_url, isolat
 
 def test_settings_weather_search_fails_politely(place_search, app_url):
     def offline(name):
-        if RUST:  # (the test's search server answers 503: place_search)
-            raise OSError("timed out")
-        from libre_panel.weather import open_meteo
-
-        raise open_meteo.WeatherError("timed out")
+        # (the test's search server answers 503: place_search)
+        raise OSError("timed out")
 
     place_search(offline)
     with browser_page(app_url, "settings/weather", allow=("/api/location",)) as page:
         page.get_by_label("Name of a place").fill("Nowhere")
         page.get_by_role("button", name="Search", exact=True).click()
         page.wait_for_selector(".note.error")
-        said = "Could not reach the place search" if RUST else "timed out"
+        said = "Could not reach the place search"
         assert said in page.locator(".note.error").inner_text()
         assert page.get_by_role(
             "button", name="Search", exact=True
@@ -4588,18 +4434,12 @@ def test_settings_start_and_language(app_url, isolated_home):
 
 def test_settings_start_with_the_system(isolated_home):
     """Starting with the system is what the command line's autostart does."""
-    if RUST:  # (the Rust app's, on Linux: a file of XDG's autostart)
-        if sys.platform != "linux":
-            pytest.skip("the start with the system of Linux")
-        autostart = None
-        started = Path(_rust_env()["XDG_CONFIG_HOME"]) / "autostart" / "libre-panel.desktop"
-        enabled = started.is_file
-    else:
-        from libre_panel.autostart import Autostart
-
-        home = isolated_home.parent / "linux-home"
-        autostart = Autostart("linux", home=home, environ={})
-        enabled = autostart.is_enabled
+    # (the Rust app's, on Linux: a file of XDG's autostart)
+    if sys.platform != "linux":
+        pytest.skip("the start with the system of Linux")
+    autostart = None
+    started = Path(_rust_env()["XDG_CONFIG_HOME"]) / "autostart" / "libre-panel.desktop"
+    enabled = started.is_file
     with settings_app(isolated_home, autostart) as (_app, url):
         with browser_page(url, "settings/system") as page:
             toggle = page.get_by_role("switch", name="Start when you log in")
@@ -4616,76 +4456,20 @@ def test_settings_start_with_the_system(isolated_home):
             waits_for(page, lambda: not enabled())
 
 
-@pytest.mark.skipif(
-    RUST, reason="Windows' registry and Task Scheduler: the Rust app has no stand-in for them"
-)
-def test_settings_the_highest_rights_only_when_asked_and_by_an_administrator(isolated_home):
-    from test_autostart import FakeRegistry, FakeTasks
-
-    from libre_panel.autostart import Autostart
-
-    registry, tasks = FakeRegistry(), FakeTasks()
-    autostart = Autostart(  # (the program settings_app gives its autostart command)
-        "win32", registry=registry, tasks=tasks, admin=lambda: False, program="/opt/libre-panel"
-    )
-    with settings_app(isolated_home, autostart) as (_app, url):
-        with browser_page(url, "settings/system") as page:
-            assert (
-                page.get_by_role("switch", name="Start with Windows").get_attribute("aria-checked")
-                == "false"
-            )
-            rights = page.get_by_role("switch", name="With administrator rights")
-            assert rights.get_attribute("aria-checked") == "false"  # never the default
-            assert "temperature and power of the processor" in page.locator("#main").inner_text()
-            assert "needs Libre Panel to run as administrator" in page.locator("#main").inner_text()
-            rights.click()  # not an administrator: told what to do, nothing is set up
-            dialog = page.locator(".dialog")
-            assert "Run as administrator" in dialog.inner_text()
-            assert (
-                "libre-panel autostart enable --elevated" in dialog.locator(".command").inner_text()
-            )
-            dialog.get_by_role("button", name="Close").click()
-            assert not tasks.tasks and registry.get("Libre Panel") is None
-            autostart._admin = lambda: True  # started as an administrator
-            page.goto(f"{url}#/settings/panel")
-            page.goto(f"{url}#/settings/system")
-            page.wait_for_selector("[role='switch'][aria-label='With administrator rights']")
-            rights.click()
-            dialog = page.locator(".dialog")
-            assert "highest rights at every login" in dialog.inner_text()
-            dialog.get_by_role("button", name="Cancel").click()
-            assert not tasks.tasks  # a question first
-            rights.click()
-            page.locator(".dialog .btn-primary").click()
-            waits_for(page, lambda: "Libre Panel" in tasks.tasks)
-            page.wait_for_function(
-                "document.querySelector(\"[aria-label='With administrator rights']\")"
-                ".getAttribute('aria-checked') === 'true'"
-            )
-
-
 @pytest.fixture
 def opened_paths(monkeypatch, tmp_path):
-    """What the app opened in the system's file manager, in order (``opened_paths()``): the
-    Python app's through tray.open_path, the Rust app's through an xdg-open of the test's own,
-    first on the PATH it starts with, which writes down what it is given."""
-    opened = []
+    """What the app opened in the system's file manager, in order (``opened_paths()``): through
+    an xdg-open of the test's own, first on the PATH it starts with, which writes down what it is
+    given."""
     record = tmp_path / "opened.txt"
-    if not RUST:
-        from libre_panel import tray
-
-        monkeypatch.setattr(tray, "open_path", opened.append)
-    else:
-        folder = tmp_path / "programs"
-        folder.mkdir()
-        (folder / "xdg-open").write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$LP_TEST_OPENED"\n')
-        (folder / "xdg-open").chmod(0o755)
-        monkeypatch.setenv("LP_TEST_OPENED", str(record))
-        monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ.get('PATH', '')}")
+    folder = tmp_path / "programs"
+    folder.mkdir()
+    (folder / "xdg-open").write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$LP_TEST_OPENED"\n')
+    (folder / "xdg-open").chmod(0o755)
+    monkeypatch.setenv("LP_TEST_OPENED", str(record))
+    monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ.get('PATH', '')}")
 
     def seen():
-        if not RUST:
-            return list(opened)
         lines = record.read_text(encoding="utf-8").splitlines() if record.is_file() else []
         return [Path(line) for line in lines]
 
@@ -5110,34 +4894,19 @@ def linux_pc(monkeypatch, tmp_path):
             "rapl_closed": ("/sys/class/powercap/intel-rapl:0/energy_uj",),
             **changes,
         }
-        if RUST:
-            # the computer in a folder, pkexec on PATH, the app an AppImage; without a way to
-            # ask, no desktop to show polkit's window on
-            pkexec = ProgramPkexec(tmp_path / "pkexec", answer)
-            _lay_out_a_linux_pc(tmp_path / "pc", facts)
-            monkeypatch.setenv("LP_SETUP_ROOT", str(tmp_path / "pc"))
-            monkeypatch.setenv("LP_SETUP_SYSTEM", "linux")
-            monkeypatch.setenv("APPIMAGE", pkexec.appimage)
-            monkeypatch.setenv("PATH", f"{pkexec.folder / 'bin'}{os.pathsep}{os.environ['PATH']}")
-            if method:
-                monkeypatch.setenv("DISPLAY", ":0")
-            else:
-                monkeypatch.delenv("DISPLAY", raising=False)
-                monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-            return pkexec
-        from libre_panel import linux_rights as rights
-        from libre_panel import linux_setup as setup
-
-        computer = setup.Facts(**facts)
-        monkeypatch.setattr(setup, "gather", lambda *args, **kwargs: computer)
-        monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: True)
-        monkeypatch.setattr(rights, "program", lambda *args, **kwargs: [APPIMAGE])
-        monkeypatch.setattr(
-            rights.shutil, "which", lambda name: f"/usr/bin/{name}" if method else None
-        )
-        monkeypatch.setenv("DISPLAY", ":0")
-        pkexec = Pkexec(answer)
-        monkeypatch.setattr(rights, "JOB", rights.Job(pkexec))
+        # the computer in a folder, pkexec on PATH, the app an AppImage; without a way to
+        # ask, no desktop to show polkit's window on
+        pkexec = ProgramPkexec(tmp_path / "pkexec", answer)
+        _lay_out_a_linux_pc(tmp_path / "pc", facts)
+        monkeypatch.setenv("LP_SETUP_ROOT", str(tmp_path / "pc"))
+        monkeypatch.setenv("LP_SETUP_SYSTEM", "linux")
+        monkeypatch.setenv("APPIMAGE", pkexec.appimage)
+        monkeypatch.setenv("PATH", f"{pkexec.folder / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        if method:
+            monkeypatch.setenv("DISPLAY", ":0")
+        else:
+            monkeypatch.delenv("DISPLAY", raising=False)
+            monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
         return pkexec
 
     return make
@@ -5213,8 +4982,6 @@ def test_start_stays_quiet_where_nothing_is_missing(app_url, isolated_home, linu
 
 def test_another_system_has_no_setup(app_url, isolated_home, linux_pc, monkeypatch):
     linux_pc()
-    if not RUST:
-        monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: False)
     monkeypatch.setenv("LP_SETUP_SYSTEM", "other")  # (the Rust app's word for it)
     with start_with_setup(app_url, isolated_home) as page:
         page.wait_for_function(

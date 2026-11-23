@@ -1,7 +1,7 @@
 # Supported panels
 
 `libre-panel models` prints this list from the code
-(`src/libre_panel/devices/models.py`), which is the source of truth.
+(`rust/devices/src/table.rs`), which is the source of truth.
 
 **USB or USB serial?** Every panel here plugs in with a USB cable, often
 USB-C. They differ in how they show up on the computer:

@@ -1,7 +1,10 @@
 """Collect every text Libre Panel shows through its translation layer.
 
-Used by test_i18n.py: every collected text must have a German translation,
-and the catalog must not carry texts nobody uses any more.
+Used by test_i18n.py and test_locales.py: every collected text must have a translation, and a
+catalog must not carry texts nobody uses any more. The texts are the Rust app's (each
+``t("...")``, ``tf("...", ...)`` and ``t_format("...", ...)`` in rust/, and the tables it
+translates from, which lp-check tells), the plugin host's (src/libre_panel), the pages' scripts
+and the built-in themes'.
 """
 
 from __future__ import annotations
@@ -14,10 +17,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "libre_panel"
+RUST = ROOT / "rust"
 STATIC = ROOT / "data" / "editor" / "static"  # what the console's and plugins' pages share
 PAGES = ROOT / "data" / "pages" / "web"  # the scripts of the built-in pages
 APP = ROOT / "data" / "editor" / "app"  # the app's modules; not its vendored libraries
 
+# a Rust string literal (raw ones are made plain first: _plain_raw)
+_RUST_STRING = re.compile(r'(?<![\w#])"((?:[^"\\]|\\.)*)"', re.S)
+_RUST_RAW = re.compile(r'(?<![\w"])r(#*)"(.*?)"\1', re.S)
+# a call that translates the text it is given: lp_i18n's t and t_format, and the crates' tf
+_RUST_CALL = re.compile(r'(?<![\w])(?:t|tf|t_format)\(\s*"((?:[^"\\]|\\.)*)"', re.S)
+_RUST_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\", '"': '"', "'": "'"}
 _JS_CALL = re.compile(r"""\bt\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')""")
 _JS_TEMPLATE_CALL = re.compile(r"\bt\(\s*`")
 
@@ -34,6 +44,65 @@ def python_messages() -> set[str]:
             if name == "t" and isinstance(first, ast.Constant) and isinstance(first.value, str):
                 found.add(first.value)
     return found
+
+
+def _rust_text(literal: str) -> str:
+    """The text of a Rust string literal's inside: its escapes, its line continuations."""
+    literal = re.sub(r"\\\n\s*", "", literal)
+    out, at = [], 0
+    while at < len(literal):
+        char = literal[at]
+        if char == "\\" and at + 1 < len(literal):
+            code = literal[at + 1]
+            if code == "u" and literal[at + 2 : at + 3] == "{":
+                end = literal.index("}", at)
+                out.append(chr(int(literal[at + 3 : end], 16)))
+                at = end + 1
+                continue
+            out.append(_RUST_ESCAPES.get(code, code))
+            at += 2
+            continue
+        out.append(char)
+        at += 1
+    return "".join(out)
+
+
+def _plain_raw(source: str) -> str:
+    """``r#"..."#`` written as an ordinary literal, so that one pattern reads both."""
+
+    def plain(match: re.Match) -> str:
+        return '"' + match.group(2).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    return _RUST_RAW.sub(plain, source)
+
+
+@functools.cache
+def _rust_sources() -> tuple[str, ...]:
+    return tuple(_plain_raw(path.read_text(encoding="utf-8"))
+                 for path in sorted(RUST.glob("*/src/**/*.rs")))  # fmt: skip
+
+
+def rust_messages() -> set[str]:
+    """The texts the Rust app's code translates as it shows them."""
+    return {
+        _rust_text(m.group(1)) for source in _rust_sources() for m in _RUST_CALL.finditer(source)
+    }
+
+
+@functools.cache
+def rust_literals() -> frozenset[str]:
+    """Every text written in the Rust app's code: a text a catalog has is in use while one of
+    these is it (a table's word, translated where it is shown)."""
+    return frozenset(_rust_text(m.group(1)) for source in _rust_sources()
+                     for m in _RUST_STRING.finditer(source))  # fmt: skip
+
+
+@functools.cache
+def _lp_check(op: str) -> dict:
+    from rust_check import run
+
+    (said,) = run([{"op": op}])
+    return said
 
 
 def script_files() -> list[Path]:
@@ -58,24 +127,17 @@ def js_messages() -> set[str]:
 
 
 def dynamic_messages() -> set[str]:
-    """Texts translated from data tables rather than written as t("...")."""
-    from libre_panel.devices.models import MODELS
-    from libre_panel.editor.presets import PRESETS
-    from libre_panel.sensors.media import MEDIA_STATES
-    from libre_panel.sensors.psutil_provider import BATTERY_STATES
-    from libre_panel.sensors.sky import MOON_PHASES
-    from libre_panel.weather.open_meteo import _WMO
-
+    """Texts translated from data tables rather than written as t("..."): the Rust app's
+    (lp-check's i18n_texts: the weather, the moon, a battery's and a player's state, what a
+    panel model's notes and limits say) and the editor's presets."""
+    tables = _lp_check("i18n_texts")
+    presets = json.loads((RUST / "app" / "src" / "presets.json").read_text(encoding="utf-8"))
     return (
-        set(_WMO.values())
-        | set(BATTERY_STATES)
-        | set(MOON_PHASES)
-        | set(MEDIA_STATES)
-        | {"Unknown"}
-        | {p["name"] for p in PRESETS}
-        | {m.notes for m in MODELS if m.notes}
-        | {m.limits for m in MODELS if m.limits}
-    )
+        set(tables["weather"]) | set(tables["moon"]) | set(tables["battery"])
+        | set(tables["media"]) | set(tables["notes"]) | set(tables["limits"])
+        | {"Unknown"}  # (a weather code the table lacks)
+        | {preset["name"] for preset in presets["presets"]}
+    )  # fmt: skip
 
 
 def theme_messages() -> set[str]:
@@ -95,18 +157,30 @@ def theme_messages() -> set[str]:
 def all_messages() -> frozenset[str]:
     """Every text shown through the translation layer. Worked out once for the whole run (it reads
     every source file of the app: two or three seconds, and every language's test asks twice)."""
-    return frozenset(python_messages() | js_messages() | dynamic_messages() | theme_messages())
+    return frozenset(rust_messages() | python_messages() | js_messages() | dynamic_messages()
+                     | theme_messages())  # fmt: skip
+
+
+def known_texts() -> frozenset[str]:
+    """What a catalog may hold: every text shown through the translation layer, and every text
+    the Rust app's code writes (a table's word, translated where it is shown)."""
+    return all_messages() | rust_literals()
 
 
 def tables() -> dict[str, set[str]]:
-    from libre_panel.icons import ICON_NAMES
-    from libre_panel.render.overlays import BUILT_IN_STYLES
-    from libre_panel.theme.model import COMMON_FIELDS, LOOK_SPECS, TOAST_ANCHORS, WIDGET_SPECS
-
-    fields, enums = set(COMMON_FIELDS), set(TOAST_ANCHORS)  # the editor's toast position
-    styles = [style.options for style in BUILT_IN_STYLES.values()]  # Theme -> Messages
-    looks = list(LOOK_SPECS.values())  # Theme -> Look
-    for spec in [COMMON_FIELDS, *WIDGET_SPECS.values(), *styles, *looks]:
+    """The editor's tables, as the Rust app has them (lp-check's theme_tables): the fields of
+    every widget, of the toast styles (Theme -> Messages) and of the looks (Theme -> Look), the
+    widget types, the words of their choices, and the icons."""
+    said = json.loads(_lp_check("theme_tables")["tables"])
+    common, widgets = said["COMMON"], said["WIDGET_SPECS"]
+    fields, enums = set(common), set(said["TOAST_ANCHORS"])  # the editor's toast position
+    specs = [
+        common,
+        *widgets.values(),
+        *said["TOAST_STYLES"].values(),
+        *said["LOOK_SPECS"].values(),
+    ]
+    for spec in specs:
         fields |= set(spec)
         for kind, _ in spec.values():
             kind = kind.rstrip("?")
@@ -114,9 +188,9 @@ def tables() -> dict[str, set[str]]:
                 enums |= set(kind[5:].split("|"))
     return {
         "fields": fields,
-        "widgets": set(WIDGET_SPECS),
+        "widgets": set(widgets),
         "enums": enums,
-        "icons": set(ICON_NAMES),
+        "icons": set(said["ICON_NAMES"]),
     }
 
 

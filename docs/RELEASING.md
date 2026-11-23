@@ -103,8 +103,7 @@ workflow built it from this commit (`gh attestation verify FILE --repo
 syntensa/libre-panel`).
 The Windows programs carry a version resource (who made them, which version), an
 icon and a manifest (rust/winres.rs; CI reads them back): an antivirus program's
-guess is less likely to take them for malware. (The sections below on PyInstaller
-are the Python app's, which builds no download any more.)
+guess is less likely to take them for malware.
 
 After a release, submit its Windows setup and the programs of its portable zip
 to Microsoft as a software developer
@@ -176,18 +175,18 @@ its time (40 ms at 25 frames a second) on the machines it is made for.
 version left empty. It builds and tests everything but publishes nothing and
 keeps no files.
 
-The bundles are built from `packaging/pyinstaller/libre-panel.spec`. The icons
-come from `packaging/make_icons.py` (the logo is drawn in
-`src/libre_panel/branding.py`); rerun it after changing the logo.
+The icons come from `packaging/make_icons.py` (the logo is drawn in
+`rust/render/src/branding.rs`); rerun it after changing the logo.
 
 ## LibreHardwareMonitor's libraries (Windows)
 
-The Windows bundle carries LibreHardwareMonitor's .NET libraries, so that the
-GPU, temperatures, power and fans need no other program. They are not in the
-repository: the Windows job runs `packaging/windows/fetch_lhm.py` before
-PyInstaller, which downloads the pinned packages from NuGet, checks each against
-the SHA-256 written into the script and takes out the .NET Framework build. The
-spec bundles the result as `lhm`; the job then loads it from the bundle.
+The Windows downloads carry LibreHardwareMonitor's .NET libraries beside the sensor service
+(`sensorhost/`), so that the GPU, temperatures, power and fans need no other program. They are
+not in the repository: CI's job `sensor-host` runs `packaging/windows/fetch_lhm.py` before it
+builds the sensor service, which downloads the pinned packages from NuGet, checks each against
+the SHA-256 written into the script and takes out the .NET Framework build. The build puts the
+result beside the service as `lhm` (`sensorhost/LibrePanel.Sensors.csproj`), and the job has
+the service read the hardware through it (`--check`).
 
 To move to other versions:
 
@@ -200,24 +199,26 @@ To move to other versions:
    to: its assembly references (read them from the file, e.g. with `dnfile`),
    not only the dependencies in its `.nuspec`. Whatever it asks for beyond the
    .NET Framework itself has to be in the set, in the version it asks for. Change
-   `LIBRARIES` in `fetch_lhm.py` and in `libre_panel/sensors/lhm_inprocess.py`
-   (the order is the load order).
+   `LIBRARIES` in `fetch_lhm.py` and `Libraries.All` in `sensorhost/src/Program.cs`
+   (the order is the load order; `tests/test_fetch_lhm.py` holds the two to each other).
 3. Change the versions in the table, run
    `python packaging/windows/fetch_lhm.py --print-pins` and copy the SHA-256 it
    prints for each package and library into the table. Run the script as the job
-   does, and `libre-panel sensors --check-lhm` on a Windows machine.
+   does, build the sensor service and run `libre-panel-sensors.exe --check` on a Windows
+   machine.
 
 ## ffmpeg, PresentMon and PawnIO's installer
 
 Every download carries ffmpeg, which the video mode encodes with; the Windows ones also
 PresentMon (game frame rates) and the installer of the PawnIO driver (the CPU's sensors). They
-are in a `tools` folder next to the program, and not in the repository: the job runs
-`packaging/fetch_tools.py` before PyInstaller. It downloads the pinned files from their
+are in a `tools` folder next to the program, and not in the repository: the jobs that put the
+downloads together (`try`, `appimage`) run `packaging/fetch_tools.py` first. It downloads the pinned files from their
 projects' release pages, checks each against the SHA-256 written into the script, takes only the
 program out of ffmpeg's archive (it holds ffprobe, ffplay and documentation too) and checks that
 ffmpeg is the GPL build with libx264 and without the non-free parts, with its licence text. The
-spec copies the result next to the program as `tools`; `libre_panel/bundled.py` is where the
-app looks, before the `PATH` (`video.ffmpeg` and `[sensors.presentmon] path` still win).
+jobs copy the result next to the program as `tools`, where the app looks before the `PATH`
+(`rust/devices/src/h264.rs`, `rust/sensors/src/presentmon.rs`; `video.ffmpeg` and
+`[sensors.presentmon] path` still win).
 CI's jobs run it with `--cache`, in a folder GitHub keeps between runs: a file a run before
 downloaded is taken again where it is the one the table pins (its SHA-256), else downloaded
 anew, so a release page that fails for a while fails no tests. The release downloads them all.
@@ -249,12 +250,12 @@ To move to other versions:
    `python packaging/fetch_tools.py --print-pins` and copy the SHA-256 it prints (a release of
    FFmpeg-Builds has the same in its `checksums.sha256`, PresentMon's page shows them next to
    the files). PawnIO's installer has its SHA-256 a second time, as `PAWNIO_SETUP_SHA256` in
-   `libre_panel/bundled.py`: the app checks the file against it before it is run with
-   administrator rights, and a test says if the two differ.
-3. Run `python packaging/fetch_tools.py` as the job does, build, and run
-   `python packaging/check_tools.py dist/libre-panel`. A new PresentMon may name its CSV
-   columns differently: `sensors/presentmon.py` reads the names of 2.3 and of 2.6 for the
-   waits, and the test with the header of the version that is carried says what changed.
+   `rust/app/src/system_setup.rs`: the app checks the file against it before it is run with
+   administrator rights, and a test there says if the two differ.
+3. Run `python packaging/fetch_tools.py` as the jobs do, build, and run
+   `python packaging/check_tools.py` on the program's folder. A new PresentMon may name its CSV
+   columns differently: `rust/sensors/src/frames.rs` reads the names of 2.3 and of 2.6 for
+   the waits, and the test with the header of the version that is carried says what changed.
 
 ## Versioning
 

@@ -11,9 +11,9 @@ All of them run at 115200 baud with RTS/CTS flow control and show up as a
 serial port. Libre Panel finds the port by USB id and serial number
 (`device.port` names it if that is not enough). Each driver sends only
 display commands: no reset, no firmware, nothing the panel stores. The
-module docstrings in `src/libre_panel/devices/` hold the byte-level details.
-Simulated panels in `tests/fake_serial.py` read the byte stream as the
-devices do.
+drivers in `rust/devices/src/` (`serial_panel.rs`, `turing_rev_c.rs`) hold the
+byte-level details; `tests/test_rust_serial_drivers.py` holds them to the
+bytes the drivers of the Python app sent, on ports the test scripts.
 
 | Family | Panels | USB id (serial number) | Bitmaps | Brightness | Never sent |
 |---|---|---|---|---|---|

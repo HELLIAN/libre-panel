@@ -1,8 +1,8 @@
 """The sensor service (sensorhost/, the .NET program) held to what it answered where the Python
-service it replaced answered the same (tests/golden/given/win32/sensor_service.json, written
-by test_sensor_host.py on CI): started by hand (--console) and as a Windows service, asked over
-its named pipe by a client of this file's own, as the protocol says (a length of four bytes,
-little-endian, then a JSON object). Its checks of a request word for word, the rights on its
+service it replaced answered the same (tests/golden/given/win32/sensor_service.json, written on
+CI while the Python service was there): started by hand (--console) and as a Windows service,
+asked over its named pipe by a client of this file's own, as the protocol says (a length of four
+bytes, little-endian, then a JSON object). Its checks of a request word for word, the rights on its
 pipe, its limits (the length of a request, a message that stops halfway, requests that come
 too fast), one program at the name, and LibreHardwareMonitor read in it. What the Rust app's
 client makes of it: rust/sensors service.rs's tests.

@@ -12,7 +12,6 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import expect  # noqa: E402
 from test_app_browser import (  # noqa: E402, F401
     PICTURE,
-    RUST,
     a_panel_app,
     app_answer,
     app_url,
@@ -200,12 +199,11 @@ def test_the_overview_mends_what_it_can_with_one_click(
     """Settings opens on the overview: another panel than the one chosen is mended with one
     click, a theme that shows the weather leads to the place, and the count beside the overview
     says how much is left while another section is open."""
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     choose_theme(isolated_home, "nimbus")
     set_config_value("device.model", "turing-8.8-usb")
     routes = {"**/api/app": a_panel_app()}  # the app runs: no "not in the background"
@@ -249,12 +247,11 @@ def test_the_overview_says_all_good_calmly_and_the_short_form_says_nothing(
     isolated_home,
     monkeypatch,
 ):
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     choose_theme(isolated_home, "almanac")  # (no weather on it)
     set_config_value("video.local_clip", "usr/data/standby.h264")
     with browser_page(
@@ -282,10 +279,6 @@ def test_a_panel_the_app_draws_on_is_connected_though_no_search_finds_it(
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch)  # the search finds none
-    if not RUST:  # (the Rust app's bus has nothing on it: panel_on_the_bus)
-        from libre_panel.devices import usb_link
-
-        monkeypatch.setattr(usb_link, "present", lambda vendor, products: None)
     set_config_value("device.model", "jonsbo-ds339")
 
     def driven(route, request):
@@ -551,10 +544,9 @@ def test_smooth_motion_asks_for_the_clip_and_takes_the_panels_own_name_on_a_clic
     """Settings → Panel calls the video mode smooth motion; while it lacks the standby clip's
     name the row offers the one the panel's own app gives it (written only on the click), and
     once it is set the name is under Advanced, which an address opens."""
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus, radio
+    from test_app_browser import panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel") as page:
         expect(page.locator(".settings-lead")).to_contain_text("smooth motion")
         card = page.locator("#panel-video")
@@ -681,10 +673,9 @@ def test_game_mode_and_more_leads_with_game_mode_and_the_place_comes_first(app_u
 
 
 def test_the_sections_speak_german(app_url, monkeypatch):  # noqa: F811
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     server_language(app_url, "de")
     with browser_page(app_url, "settings/panel") as page:
         card = page.locator("#panel-video")
@@ -740,12 +731,11 @@ def test_the_panel_s_fine_tuning_waits_folded_until_it_is_wanted(
     """Settings → Panel: the video experiment and the colour check are for trying things out and
     finding faults, not for setting a panel up, so they wait under one row; it opens on a
     click, and by itself where one of the experiment's settings is not the default."""
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel") as page:
         fold = page.locator("#panel-tinkering")
         expect(fold).to_contain_text("Fine-tuning for experiments")
@@ -766,10 +756,9 @@ def test_the_video_experiment_writes_each_choice_at_once_and_leads_back(
     """Settings → Panel → Video experiment: the cap, the quality, the speed, the profile, the
     encoder and the keyframes, each written on the click; Status's tiles and the log's lines
     about the video under them; and a way back to what was measured, greyed while it holds."""
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus, radio
+    from test_app_browser import panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         expect(card).to_contain_text("Video experiment")
@@ -805,10 +794,9 @@ def test_the_video_experiment_switches_what_the_engine_does(
     """With Libre Panel's engine as the encoder: whether it sends the pictures and whether it
     composes the frames too, each a switch (composing only while it sends), written on the
     click; back to the defaults turns both on again. Other encoders show neither."""
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         sends = card.get_by_role("switch", name="The engine sends the pictures")
@@ -838,16 +826,11 @@ def test_auto_shows_what_the_engine_does_where_the_download_carries_it(
 ):
     """Where the download carries Libre Panel's engine, "auto" (the default) encodes with it:
     its switches show with "auto" as with "native"."""
-    from test_app_browser import as_download, lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import as_download, panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
-    if RUST:  # (the Rust app's server started as a download has it)
-        as_download(app_url, tmp_path / "download")
-    else:
-        from libre_panel.devices import h264
-
-        monkeypatch.setattr(h264, "auto_engine", lambda: "/the/download/libre-panel-engine")
+    # (the Rust app's server started as a download has it)
+    as_download(app_url, tmp_path / "download")
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         expect(card.get_by_role("switch", name="The engine sends the pictures")).to_be_checked()
@@ -864,12 +847,11 @@ def test_the_video_experiment_chooses_the_engines_own_encoder(
     with the panels), x264 or the graphics card's encoder (Windows' Media Foundation), written
     on the click. Off Windows the choice shows only while the card's is set (from the file), to
     set x264 back; back to the defaults is auto again."""
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     set_config_value("video.encoder", "native")
     set_config_value("video.engine_encoder", "card")
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
@@ -897,14 +879,9 @@ def test_the_video_experiment_runs_every_step_by_itself_on_the_running_app(
     """With the background app: the run tries every step in turn (shortened here), a table
     says the outcome per step and panel (a PNG file takes no video), and the settings from
     before the run (quality 20) are back at the end."""
-    from test_app_browser import lacking_ffmpeg, panel_on_the_bus, radio
+    from test_app_browser import panel_on_the_bus, radio
 
-    if not RUST:  # (the Rust app's are shortened by its environment: LP_EXPERIMENT_SCALE)
-        from libre_panel.editor import experiment
-
-        monkeypatch.setattr(experiment.Experiment, "scale", 0.002)
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     _app, url = background
     with browser_page(url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
@@ -919,256 +896,32 @@ def test_the_video_experiment_runs_every_step_by_itself_on_the_running_app(
         expect(card.get_by_role("button", name="Copy the table")).to_be_visible()
 
 
-def colour_check_on(monkeypatch, works=lambda ffmpeg, encoder: False, command=None,
-                    controls=None):  # fmt: skip
-    """Settings → Panel → Check the colours with this machine's ffmpeg; the graphics card's
-    encoders as ``works`` says (none: the same on every machine), the display's ffmpeg command
-    as ``command`` makes it, the running panels as ``controls`` has them (else the app's)."""
+def colour_check_on(monkeypatch):
+    """Settings → Panel → Check the colours with this machine's ffmpeg and a 9.2" on the bus:
+    the app checks with the ffmpeg it finds."""
     import shutil
 
     from test_app_browser import panel_on_the_bus
 
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
+    if shutil.which("ffmpeg") is None:
         pytest.skip("needs ffmpeg with libx264")
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    if RUST:  # (the Rust app checks with the ffmpeg it finds, its graphics card's as they are)
-        assert command is None and controls is None
-        return
-    from libre_panel.devices import h264
-    from libre_panel.editor import server
-    from libre_panel.editor.colours import ColourCheck
-
-    monkeypatch.setattr(h264, "find_ffmpeg", lambda configured="": ffmpeg)
-    monkeypatch.setattr(h264, "encoder_works", works)
-
-    def colours(state):
-        if state._colours is None:
-            state._colours = ColourCheck(state.config_path,
-                                         state.controls if controls is None else controls,
-                                         works=works,
-                                         command=command or h264.ffmpeg_command)  # fmt: skip
-        return state._colours
-
-    monkeypatch.setattr(server.EditorState, "colours", colours)
-
-
-def card_s(extra=""):
-    """AMD's encoder with x264 in its place (no card here): its card's way the processor's
-    conversion with ``extra`` filters after it, which the test may change (``.extra``)."""
-    from dataclasses import replace
-
-    from libre_panel.devices import h264
-
-    def command(ffmpeg, size, rotate, settings):
-        card = h264.passes_through(settings)
-        if settings.encoder == "h264_amf":
-            settings = replace(settings, encoder="libx264", card=False)
-        found = h264.ffmpeg_command(ffmpeg, size, rotate, settings)
-        if card and command.extra:
-            # (said to be what the stream says, so that an ffmpeg that converts to what its
-            # output is told, as 8.x does, leaves the card's own conversion as it is)
-            at = found.index("-color_range") + 1
-            told = f"setparams=range={found[at]}:colorspace=smpte170m"
-            extra = command.extra.format(range=found[at])
-            found[found.index("-vf") + 1] += f",{extra},{told}"
-        return found
-
-    command.extra = extra
-    return command
-
-
-def panels_running(*encoders):
-    """The running app as the colour card asks it: panel 1 (and the panels beside it) showing
-    video with these encoders, the processor converting."""
-    from types import SimpleNamespace
-
-    def status(encoder):
-        return SimpleNamespace(stats={"streaming": True, "encoder": f"{encoder}, rgb0"},
-                               model="turing-9.2-usb", size=(1920, 480))  # fmt: skip
-
-    first = status(encoders[0])
-    first.more = {n: status(encoder) for n, encoder in enumerate(encoders[1:])}
-    return SimpleNamespace(panel=SimpleNamespace(status=first))
 
 
 def test_the_colour_check_measures_each_encoder_and_says_who_converts(
     app_url,  # noqa: F811
     monkeypatch,
 ):
-    """One click: every encoder in a row of its own, those of the graphics card that are not
-    here said so, x264's two rows of swatches the same, measured in the panel's range, and with
-    x264 the processor converts; the result copies as text; the picture on the panel and the
-    range's comparison need the background app."""
+    """One click: the engine converts every video's colours itself (colours.rs), so there is no
+    graphics card's conversion to compare, and the card says so."""
     colour_check_on(monkeypatch)
     with browser_page(app_url, "settings/panel/panel-colour-check") as page:
         card = page.locator("#panel-colour-check")
         expect(card.locator("h2")).to_have_text("Check the colours")
         expect(card.get_by_role("button", name="Copy as text")).to_have_count(0)  # nothing yet
         card.get_by_role("button", name="Check the colours").click()
-        if RUST:  # (its engine makes the video: no graphics card's conversion; colours.rs)
-            expect(card).to_contain_text("there is no graphics card's conversion to compare",
-                                         timeout=30000)  # fmt: skip
-            return
-        x264 = card.locator(".colour-encoder[data-encoder='libx264']")
-        expect(x264).to_have_attribute("data-verdict", "identical", timeout=30000)
-        expect(x264).to_contain_text("Identical")
-        for name in ("h264_amf", "h264_nvenc", "h264_qsv"):
-            block = card.locator(f".colour-encoder[data-encoder='{name}']")
-            expect(block).to_have_attribute("data-verdict", "unavailable")
-            expect(block).to_contain_text("Not available here")
-        rows = x264.locator(".colour-row")
-        expect(rows).to_have_count(2)
-        expect(rows.nth(0)).to_contain_text("Four bytes a pixel")
-        expect(rows.nth(1)).to_contain_text("Three bytes a pixel")
-        expect(rows.nth(0).locator(".colour-swatch")).to_have_count(14)
-        new, old = (rows.nth(i).locator(".colour-swatch").evaluate_all(
-            "cells => cells.map((c) => c.style.background)") for i in (0, 1))  # fmt: skip
-        assert new == old and len(set(new)) == 14  # the same colours, each patch its own
-        expect(card.get_by_text("Measured for limited range (16-235), as panel 1 gets its video."))
-        choice = card.locator(".colour-advice")
-        expect(choice).to_have_attribute("data-why", "x264")
-        expect(choice).to_have_text("The processor converts the colours for x264 (processor).")
-        expect(card.locator(".colour-now")).to_contain_text("x264 (processor)")
-        expect(card.locator(".colour-pick")).to_have_text("Automatic picks x264 (processor).")
-        passed = card.locator("[data-passed='h264_amf']")  # the card's encoder "auto" passed over
-        expect(passed).to_contain_text("AMD (h264_amf) was passed over:")
-        expect(card.get_by_role("button", name="Copy as text")).to_be_visible()
-        expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
-        expect(card.locator(".colour-ab").first).to_contain_text("running in the background")
-        range_ = card.locator(".colour-range")
-        expect(range_).to_have_attribute("data-range", "full")  # (a 9.2" is on the bus)
-        expect(range_.locator(".colour-range-now")).to_have_text(
-            "Panel 1 gets its video in full range (0-255). Automatic: as its model is known "
-            "to show video."
-        )
-        compare = card.get_by_role("button", name="Is black too light on the panel? Compare")
-        expect(compare).to_be_disabled()
-        expect(range_).to_contain_text("running in the background")
-        expect(card.get_by_role("button", name="A looks right")).to_have_count(0)
-
-
-def test_the_card_converts_where_the_check_found_it_identical_and_the_processor_where_not(
-    app_url,  # noqa: F811
-    monkeypatch,
-):
-    """AMD's encoder (x264 in its place) converting the card's way as the processor does: the
-    card says the graphics card converts, checked identical on the day; checked again with
-    BT.709 (as AMD's own converter made it), the processor converts and the card says why; a
-    way video.pixels forces comes with the way back to the automatic choice."""
-    if RUST:
-        pytest.skip("the Rust app's engine converts every video's colours itself (colours.rs)")
-    from libre_panel.config import edit_config
-
-    command = card_s()
-    colour_check_on(monkeypatch, works=lambda ffmpeg, encoder: encoder == "h264_amf",
-                    command=command)  # fmt: skip
-    with browser_page(app_url, "settings/panel/panel-colour-check") as page:
-        card = page.locator("#panel-colour-check")
-        choice = card.locator(".colour-advice")
-        expect(choice).to_have_attribute("data-why", "unchecked")
-        expect(choice).to_contain_text("has not been checked yet")
-        card.get_by_role("button", name="Check the colours").click()
-        amd = card.locator(".colour-encoder[data-encoder='h264_amf']")
-        expect(amd).to_have_attribute("data-verdict", "identical", timeout=30000)
-        expect(amd.locator(".colour-row").nth(0)).to_contain_text("Graphics card")
-        expect(amd.locator(".colour-row").nth(1)).to_contain_text("Processor")
-        expect(choice).to_have_attribute("data-why", "identical")
-        expect(choice).to_contain_text(
-            "The graphics card converts the colours: checked identical on"
-        )
-        expect(card.locator(".colour-now")).to_contain_text("it would start AMD (h264_amf)")
-        # (a new driver, say: BT.709's matrix, the range as it was, whatever ffmpeg's version)
-        command.extra = "scale=in_range={range}:out_range={range}:out_color_matrix=bt709"
-        card.get_by_role("button", name="Check again").click()
-        expect(amd).to_have_attribute("data-verdict", "matrix", timeout=30000)
-        expect(choice).to_have_attribute("data-why", "differs")
-        expect(choice).to_contain_text("The processor converts the colours: the card's differ "
-                                       "(matrix shift, checked on")  # fmt: skip
-        expect(choice).to_contain_text("Largest difference:")
-        edit_config(("value", "video.pixels", "card"))
-        expect(choice).to_have_attribute("data-why", "card", timeout=10000)
-        expect(choice).to_contain_text('video.pixels is "card"')
-        expect(choice).to_contain_text("The check found the card's colours differing")
-        card.get_by_role("button", name="Back to the automatic choice").click()
-        waits_for(page, lambda: settings_config().device.video.pixels == "auto")
-        expect(choice).to_have_attribute("data-why", "differs")
-
-
-def test_the_colour_check_shows_its_picture_on_the_panel_and_the_range_s_answer_is_written(
-    app_url,  # noqa: F811
-    monkeypatch,
-):
-    """Panel 1 shows video with AMD's encoder: the A/B of the card's conversion against the
-    processor's says A and B with the seconds left, and Stop ends it; *Is black too light on the
-    panel? Compare* shows limited (A) against full range (B), and *B looks right* writes the
-    panel's video_range, the picture ends and the card says the range set."""
-    if RUST:  # (to do: the Rust app's background app with a panel showing video)
-        pytest.skip("the Rust app's server asks its background app which panels show video: "
-                    "none here, as the Python app's are made up in its process")  # fmt: skip
-    from libre_panel import colour_show
-
-    colour_check_on(monkeypatch, controls=panels_running("h264_amf"))
-    with browser_page(app_url, "settings/panel/panel-colour-check") as page:
-        card = page.locator("#panel-colour-check")
-        show = card.get_by_role("button", name="Show it on the panel")
-        expect(show).to_be_enabled(timeout=10000)
-        show.click()
-        expect(card.locator(".colour-ab").first).to_contain_text(
-            "On panel 1: A: the card's conversion")  # fmt: skip
-        assert colour_show.now(1) == ("A", "feed", "card")
-        card.get_by_role("button", name="Stop showing it").click()
-        expect(show).to_be_visible(timeout=10000)
-        waits_for(page, lambda: colour_show.state() is None)
-        range_ = card.locator(".colour-range")
-        range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
-        expect(range_).to_contain_text("On panel 1: A: limited range (16-235)")
-        assert colour_show.now(1) == ("A", "range", "limited")
-        expect(show).to_be_disabled()  # (one picture at a time)
-        range_.get_by_role("button", name="B looks right").click()
-        waits_for(page, lambda: settings_config().device.video_range == "full")
-        waits_for(page, lambda: colour_show.state() is None)
-        expect(range_).to_have_attribute("data-range", "full", timeout=10000)
-        expect(range_.locator(".colour-range-now")).to_have_text(
-            "Panel 1 gets its video in full range (0-255). Set for this panel.")  # fmt: skip
-        expect(range_.get_by_role("button", name="B looks right")).to_have_count(0)
-
-
-def test_the_range_s_answer_for_a_panel_beside_the_first_is_its_own(
-    app_url,  # noqa: F811
-    isolated_home,
-    monkeypatch,
-):
-    """Panel 2 chosen at the top, showing video with x264: no A/B of the card's conversion (the
-    processor converts either way), the range's comparison on panel 2, and *A looks right*
-    writes its own video_range, in its [[panels]] table; the first panel's stays automatic."""
-    if RUST:  # (to do: the Rust app's background app with a panel showing video)
-        pytest.skip("the Rust app's server asks its background app which panels show video: "
-                    "none here, as the Python app's are made up in its process")  # fmt: skip
-    from libre_panel import colour_show
-
-    isolated_home.mkdir(parents=True, exist_ok=True)
-    isolated_home.joinpath("config.toml").write_text(
-        '[[panels]]\nmodel = "turing-9.2-usb"\nvideo = { mode = "on" }\n', encoding="utf-8"
-    )
-    colour_check_on(monkeypatch, controls=panels_running("h264_amf", "libx264"))
-    with browser_page(app_url, "settings/panel/panel-colour-check") as page:
-        page.wait_for_function("(window.libre.store.get().settings?.config?.panels || []).length")
-        page.evaluate("() => { const s = window.libre.store;"
-                      " s.set({ prefs: { ...s.get().prefs, target: 2 } }); }")  # fmt: skip
-        card = page.locator("#panel-colour-check")
-        expect(card.locator(".colour-now")).to_contain_text("Panel 2 now: x264 (processor)")
-        expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
-        expect(card.locator(".colour-ab").first).to_contain_text("so A and B would be the same")
-        range_ = card.locator(".colour-range")
-        range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
-        expect(range_).to_contain_text("On panel 2: A: limited range (16-235)")
-        assert colour_show.now(2) == ("A", "range", "limited") and colour_show.now(1) is None
-        range_.get_by_role("button", name="A looks right").click()
-        waits_for(page, lambda: settings_config().panels[0].device.video_range == "limited")
-        assert settings_config().device.video_range == "auto"  # the first panel's: its own
-        waits_for(page, lambda: colour_show.state() is None)
-        expect(range_.locator(".colour-range-now")).to_contain_text("Set for this panel.")
+        expect(card).to_contain_text("there is no graphics card's conversion to compare",
+                                     timeout=30000)  # fmt: skip
 
 
 def test_live_says_how_the_panel_runs_in_a_calm_sentence(app_url):  # noqa: F811
@@ -1312,19 +1065,12 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    if RUST:  # (the Rust app looks for the program on PATH as it starts, with the page)
-        programs = tmp_path / "bin"
-        programs.mkdir()
-        (programs / "claude").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        (programs / "claude").chmod(0o755)
-        monkeypatch.setenv("PATH", f"{programs}{os.pathsep}{os.environ.get('PATH', '')}")
-    else:
-        from libre_panel import agents
-
-        monkeypatch.setattr(
-            agents, "program", lambda name: "/bin/claude" if name == "claude" else None
-        )
-        monkeypatch.setattr(agents, "BOARD", agents.Board())  # (nothing heard from anyone yet)
+    # (the Rust app looks for the program on PATH as it starts, with the page)
+    programs = tmp_path / "bin"
+    programs.mkdir()
+    (programs / "claude").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (programs / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{programs}{os.pathsep}{os.environ.get('PATH', '')}")
     choose_theme(isolated_home, "lumen")
     set_config_value("services.enabled", ["agents"])
     settings = home / ".claude" / "settings.json"
@@ -1344,12 +1090,6 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
     def told(what, data):
         """What Claude Code's hook (``what`` "hook") or status line ("status") tells the app:
         the Rust app's server is sent it as the command written into its settings sends it."""
-        if not RUST:
-            if what == "hook":
-                agents.BOARD.hook("claude", data)
-            else:
-                agents.BOARD.status("claude", data)
-            return
         import re
         import urllib.request
 
@@ -1392,9 +1132,6 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         expect(usage).to_contain_text("asked every few minutes while a theme shows")
         expect(hint).to_contain_text("only while Claude Code runs in a terminal")
         expect(card.locator("[data-agent='codex'] [data-agents-usage]")).to_have_count(0)
-        if not RUST:  # (the Rust app asks the program itself: agents_usage.rs and its tests)
-            agents.BOARD.usage_failed("claude", "too old", "old", "2.1.100")
-            expect(usage).to_contain_text("Claude Code 2.1.100 is too old", timeout=10_000)
         told("status", {"rate_limits": {"five_hour": {"used_percentage": 12}}})
         expect(usage).to_contain_text("from its status line", timeout=10_000)
         expect(hint).to_have_count(0)

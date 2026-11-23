@@ -22,69 +22,31 @@ classifiers = [
     "Topic :: System :: Monitoring",
     "Topic :: System :: Hardware",
 ]
+# (the Python package is the plugin host the Rust app starts for Python plugins and the plugin
+# API, tests/without_app.py; the wheels pip and pipx install carry the Rust app beside it,
+# packaging/platform_wheel.py)
 dependencies = [
-    "pillow>=10.1",
+    "pillow>=10.1",  # what plugins draw with
+    # what plugins have had beside it, as the Python app brought them (the plugin host's
+    # download carries them too: packaging/pyinstaller/libre-panel-plugins.spec)
     "psutil>=5.9",
-    "numpy>=1.24",  # light and facets: whole layers at a time, cheap enough for 50 fps
-    "tzdata; sys_platform == 'win32'",  # time zones for the world clock (Windows has none)
+    "numpy>=1.24",
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
-serial = ["pyserial>=3.5"]
-usb = ["pyusb>=1.2", "pycryptodome>=3.19", "libusb-package>=1.0"]
-tray = ["pystray>=0.19.5"]
-# what is playing, on Windows (Linux uses playerctl)
-media = [
-    "winrt-runtime>=2; sys_platform == 'win32'",
-    "winrt-Windows.Foundation>=2; sys_platform == 'win32'",
-    "winrt-Windows.Media.Control>=2; sys_platform == 'win32'",
-    "winrt-Windows.Storage.Streams>=2; sys_platform == 'win32'",
+# the tests and the tools beside them (the simulated panels, the clips and pictures they compare)
+dev = [
+    "pytest>=8",
+    "ruff==0.16.9",
+    "pyusb>=1.2",
+    "pycryptodome>=3.19",
+    "jeepney>=0.8",
 ]
-mqtt = ["paho-mqtt>=2"]
-# a panel as a monitor on Wayland: the desktop's screen cast over D-Bus (wayland.py)
-screen = ["jeepney>=0.8; sys_platform == 'linux'"]
-# LibreHardwareMonitor inside Libre Panel on Windows (GPU, temperatures, power, fans), with the
-# .NET libraries named by dll_dir (docs/CONFIGURATION.md). 3.0.5 is the first that runs on
-# Python 3.13, 3.1 the first on 3.14; the loading it needs is the same in all of 3.x so far.
-lhm = ["pythonnet>=3.0.5,<3.3; sys_platform == 'win32'"]
-# The app in a window of its own on Windows: pywebview shows it with WebView2, through the
-# same pythonnet as LibreHardwareMonitor. Linux uses the system's GTK and WebKit when
-# pywebview and PyGObject are there (docs/BACKGROUND.md); without a window, the browser.
-window = [
-    "pywebview>=6.2,<7; sys_platform == 'win32'",
-    "pythonnet>=3.0.5,<3.3; sys_platform == 'win32'",
-]
-dev = ["pytest>=8", "ruff==0.16.9", "pyserial>=3.5", "pycryptodome>=3.19", "jeepney>=0.8"]
 
 [project.scripts]
-libre-panel = "libre_panel.cli:main"
 # (the plugin host the Rust app starts for Python plugins, beside its programs in an install)
 libre-panel-plugins = "libre_panel.plugin_host:main"
-
-# Third-party packages can add sensor providers or display drivers without
-# touching the core, e.g. an optional fan-analysis plugin.
-[project.entry-points."libre_panel.sensors"]
-psutil = "libre_panel.sensors.psutil_provider:PsutilProvider"
-linux = "libre_panel.sensors.linux:LinuxProvider"
-librehardwaremonitor = "libre_panel.sensors.librehardwaremonitor:LibreHardwareMonitorProvider"
-load = "libre_panel.sensors.load:LoadProvider"
-audio = "libre_panel.sensors.audio:AudioProvider"
-demo = "libre_panel.sensors.demo:DemoProvider"
-media = "libre_panel.sensors.media:MediaProvider"
-calendar = "libre_panel.sensors.calendar:CalendarProvider"
-homeassistant = "libre_panel.sensors.homeassistant:HomeAssistantProvider"
-mqtt = "libre_panel.sensors.mqtt:MqttProvider"
-sky = "libre_panel.sensors.sky:SkyProvider"
-presentmon = "libre_panel.sensors.presentmon:PresentMonProvider"
-hardware = "libre_panel.sensors.hardware:HardwareProvider"
-mangohud = "libre_panel.sensors.mangohud:MangoHudProvider"
-json = "libre_panel.sensors.json_source:JsonProvider"
-hwinfo = "libre_panel.sensors.hwinfo:HWiNFOProvider"
-
-[project.entry-points."libre_panel.devices"]
-auto = "libre_panel.devices.auto:AutoDisplay"
-virtual = "libre_panel.devices.virtual:VirtualDisplay"
-turzx = "libre_panel.devices.turzx:TurzxDisplay"
 
 [project.urls]
 Homepage = "https://github.com/syntensa/libre-panel"

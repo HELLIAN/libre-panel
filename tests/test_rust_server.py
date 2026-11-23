@@ -5,7 +5,6 @@ and the body, byte for byte."""
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import logging
 import os
@@ -30,7 +29,6 @@ import server_tape
 from test_rust_app import (
     BOOT_LOGO,
     DATA,
-    PYTHON,
     RUST_ONLY_SERVICES,
     STANDBY_CLIP,
     Rig,
@@ -48,12 +46,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 TOKEN = "t" * 43
-# the moment both servers take for now in what they tell (a Thursday, 9 October 2025, 08:53:20
-# in UTC, the zone they are given): the Rust app's by LP_NOW, the Python app's by
-# tests/harvest.py. What they answered then is what they answer whenever the tests run
+# the moment the server takes for now in what it tells (a Thursday, 9 October 2025, 08:53:20
+# in UTC, the zone it is given; LP_NOW): what the Python app's answered then, kept
+# (tests/server_tape.py), is what the Rust app's answers whenever the tests run
 NOW = 1_760_000_000
-# (PYTHON: while the Python app is here its server is asked anew, and what it answers written
-# down, tests/harvest.py; else what it answered is played, tests/server_tape.py)
 
 
 def _failed(ours: tuple[str, dict[str, str], bytes], asked: Any) -> None:
@@ -140,11 +136,6 @@ def servers(
             (stand_in / name).chmod(0o755)
         monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ.get('PATH', '')}")
     i18n.set_language("de")  # (the servers' language, for what the tests say in it)
-    python: Any = None
-    if PYTHON:
-        import harvest
-
-        python = harvest.PythonServer(homes[0], TOKEN, search_url, releases, monkeypatch, NOW)
     env = {**os.environ, "LIBRE_PANEL_HOME": str(homes[1]), "LIBRE_PANEL_DATA": str(DATA),
            "LP_RELEASES_FILE": str(releases), "XDG_CONFIG_HOME": str(homes[1] / "xdg"),
            "LP_GEOCODING_URL": search_url, "LP_NOW": str(NOW), "TZ": "UTC",
@@ -154,7 +145,6 @@ def servers(
     command = [str(_program()), "editor", "--port", "0"]
     ours = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             encoding="utf-8")  # fmt: skip
-    tape: Any = None
     try:
         assert ours.stdout is not None
         said = ours.stdout.readline()
@@ -167,11 +157,7 @@ def servers(
             text = text.replace(b"{token}", side[1].encode())
             return _asked(side[0], text, done, left=left)
 
-        if python is None:
-            tape = server_tape.Played(golden.told("answers"), homes, tmp_path)
-        else:
-            theirs = (python.port, python.token)
-            tape = harvest.Recorded(lambda *asks: asked(theirs, *asks), homes, tmp_path)
+        tape = server_tape.Played(golden.told("answers"), homes, tmp_path)
 
         def ask(
             request: str | bytes, done: bool = True, left: bool = False
@@ -186,10 +172,6 @@ def servers(
             assert tape.left() == 0, f"{tape.left()} of the kept answers were not asked for"
     finally:
         i18n.set_language("en")
-        if python is not None:
-            python.close()
-            if tape is not None:
-                golden.told("answers")  # (harvest.py's: written down)
         search.shutdown()
         if os.name == "nt":
             ours.terminate()
@@ -742,14 +724,8 @@ def test_the_live_picture_is_the_frame_on_each_panel_as_control_py_makes_it(
             program.send_signal(signal.SIGINT) if os.name == "posix" else program.terminate()
             said = program.communicate(timeout=30)[1]
     assert "panicked" not in said, said
-    # (the frames, the panel and the width each picture is of: tests/harvest.py's, which
-    # asks control.py for the same)
-    frames = {n: Image.open(tmp_path / file).convert("RGB")  # noqa: F841
-              for n, file in ((1, "panel.png"), (2, "beside.png"))}  # fmt: skip
-    for query, n, width, kind in (("panel=1", 1, 960, "jpeg"),  # noqa: B007
-                                  ("panel=1&format=PNG&w=400", 1, 400, "png"),
-                                  ("panel=2&w=1920", 2, 1920, "jpeg"),
-                                  ("panel=2&w=100", 2, 160, "jpeg")):  # fmt: skip
+    for query, kind in (("panel=1", "jpeg"), ("panel=1&format=PNG&w=400", "png"),
+                        ("panel=2&w=1920", "jpeg"), ("panel=2&w=100", "jpeg")):  # fmt: skip
         status, headers, body = answers[query]
         assert status == "HTTP/1.0 200 OK", (query, status, body[:200])
         # (what control.py's encode() makes of the same frame: its kind, and the digest of its
@@ -825,20 +801,23 @@ def test_controls_sources_are_those_the_panel_reads_as_control_py_lists_them(
     for each in (*ours["sources"], *theirs["sources"]):
         if each["name"] in ("linux", "psutil"):
             each["readings"] = bool(each["readings"])
-    if not PYTHON:
-        # (what the Linux source found of this computer's chips: CI's computers have a chip of
-        # temperatures or none, one run to the next; how it counts is test_rust_sensors.py's,
-        # on computers laid out in folders. Here: that it says the same in both places)
-        for each in (*ours["sources"], *theirs["sources"]):
-            if each["name"] == "linux" and isinstance(each["status"], dict):
-                found = {k: each["status"][k] for k in ("chips", "temperatures", "fans")}
-                assert all(isinstance(n, int) and n >= 0 for n in found.values()), found
-                assert {k: v for k, v in each["details"] if k in found} == {
-                    k: str(n) for k, n in found.items()}  # fmt: skip
-                each["readings"] = "<this computer's>"
-                each["status"].update(dict.fromkeys(found, "<this computer's>"))
-                each["details"] = [[k, "<this computer's>" if k in found else v]
-                                   for k, v in each["details"]]  # fmt: skip
+    # (what the Linux source found of this computer's chips, its graphics card's driver, NVML
+    # and the processor's power: CI's computers have a chip of temperatures or none, a card
+    # or none, one run to the next; how it counts is test_rust_sensors.py's, on computers
+    # laid out in folders. Here: that it says the same in both places)
+    for each in (*ours["sources"], *theirs["sources"]):
+        if each["name"] == "linux" and isinstance(each["status"], dict):
+            found = {k: each["status"][k] for k in ("chips", "temperatures", "fans")}
+            assert all(isinstance(n, int) and n >= 0 for n in found.values()), found
+            assert {k: v for k, v in each["details"] if k in found} == {
+                k: str(n) for k, n in found.items()}  # fmt: skip
+            named = {k: each["status"][k] for k in ("graphics", "nvidia driver", "cpu power")}
+            assert {k: v for k, v in each["details"] if k in named} == {
+                k: v for k, v in named.items() if v is not None}  # fmt: skip
+            each["readings"] = "<this computer's>"
+            each["status"].update(dict.fromkeys([*found, *named], "<this computer's>"))
+            each["details"] = [[k, "<this computer's>" if k in found else v]
+                               for k, v in each["details"] if k not in named]  # fmt: skip
     assert ours == theirs
 
 
@@ -880,9 +859,8 @@ def test_a_theme_that_is_gone_leaves_the_panel_lit_and_is_said_as_app_py_says_it
         finally:
             program.send_signal(signal.SIGINT) if os.name == "posix" else program.terminate()
             said = program.communicate(timeout=30)[1]
-    # (the theme of its own the Python app has for the panel, and what it says of each theme
+    # (the theme of its own the Python app had for the panel, and what it said of each theme
     # that is not there)
-    model, names = "turing-5", ("gone", "also-gone")  # noqa: F841 (tests/harvest.py's)
     told = golden.told("gone")
     own, whys = told["own"], told["whys"]
     notice = i18n.t(
@@ -968,7 +946,6 @@ def test_a_theme_with_an_error_or_one_that_cannot_be_drawn_is_said_with_its_reas
         finally:
             program.send_signal(signal.SIGINT) if os.name == "posix" else program.terminate()
             said = program.communicate(timeout=30)[1]
-    model, names = "turing-5", ()  # noqa: F841 (tests/harvest.py's)
     own = golden.told("gone")["own"]  # (the theme of its own the Python app has for the panel)
     key = (
         "The theme “{name}” cannot be loaded ({why}), so the panel shows “{shown}”. "
@@ -2088,10 +2065,6 @@ def test_the_panel_and_the_clip_question_are_told_as_settings_py_tells_them(
     from libre_panel.devices.models import find_model
 
     ask, homes = servers
-    if PYTHON:
-        from libre_panel.devices import h264
-
-        monkeypatch.setattr(h264, "find_ffmpeg", lambda path="": "ffmpeg")
     proven, seen, unproven = "turing-9.2-usb", "turing-12.3-usb", "turing-8.8-usb"
     assert [find_model(m).video for m in (proven, seen, unproven)] == [True, True, False]
     serial, other = "turing-3.5", "waveshare-2.8-udisp"
@@ -2361,8 +2334,6 @@ def test_starting_with_the_system_is_told_and_set_as_settings_py_does(
     program it starts), the language; switched on and off, or refused in the same words.
     And the command line's `autostart`, which writes the same entry."""
     ask, homes = servers
-    if PYTHON:  # (the Python app's entry, in its own folder)
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(homes[0] / "xdg"))
     entries = [home / "xdg" / "autostart" / "libre-panel.desktop" for home in homes]
 
     def both(request: str | bytes, what: Any) -> Any:
@@ -2416,9 +2387,8 @@ def test_starting_with_the_system_is_told_and_set_as_settings_py_does(
                               capture_output=True, encoding="utf-8", timeout=60)  # fmt: skip
         assert said in done.stdout + done.stderr, (action, done)
         assert (done.returncode == 0) is ("elevated" not in action), (action, done)
-    # (written by the command line without --config: the start at login takes the usual file)
-    command = [str(_program()), "tray", "--background"]  # noqa: F841 (tests/harvest.py's)
-    # (autostart.py's Exec line of this command, the program as a word)
+    # (written by the command line without --config: the start at login takes the usual file;
+    # autostart.py's Exec line of `tray --background`, the program as a word)
     exec_line = "Exec=" + golden.told("exec").replace("<program>", str(_program()))
     assert exec_line in entries[1].read_text(encoding="utf-8").splitlines()
 
@@ -2971,24 +2941,12 @@ def test_the_hardware_settings_are_as_server_py_has_them(
     is refused."""
     ask, homes = servers
     # (this computer's parts, as the Rust program finds them, not the tests' empty machine)
-    if PYTHON:
-        from libre_panel.sensors import hardware
-
-        spec = importlib.util.find_spec("libre_panel.sensors.hardware")
-        assert spec is not None and spec.loader is not None
-        fresh = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(fresh)
-        monkeypatch.setattr(hardware, "_scan_machine", fresh._scan_machine)
     for side in homes:
         with (side / "config.toml").open("a", encoding="utf-8") as config:
             config.write('[hardware]\ncpu_name = "Mine"\n\n[[hardware.fans]]\n'
                          'sensor = "fan.lpc.fan_10"\nname = "Back"\n')  # fmt: skip
 
     def same(theirs: Any, ours: Any, what: Any) -> None:
-        if PYTHON:  # (this computer's parts, found by both)
-            assert ours[2] == theirs[2], what
-            assert ours == theirs, what
-            return
         # (what was kept is of CI's computer, whose parts are another's than this one's: the
         # names as found are left out, the rest is the same)
         assert ours[0] == theirs[0], what
@@ -3388,17 +3346,14 @@ def test_the_start_screen_is_told_drawn_and_made_as_server_py_does(servers: Any)
         assert _frames_of(ours[2]) == _frames_of(theirs[2]), path
     if shutil.which("ffmpeg"):
         theirs, ours = ask(_get("/api/start-screen/file?model=turing-2.1-usb&what=clip", WITH))
-        if PYTHON:  # (the same ffmpeg on the same computer: the same bytes)
-            assert ours[0] == theirs[0] and ours[1] == theirs[1]
-            assert ours[2] == theirs[2]
-        else:  # (kept of CI's ffmpeg and processor, whose bytes another's are not: an H.264
-            # stream of the same kind, near as large)
-            unsized = [{k: v for k, v in side[1].items() if k != "Content-Length"}
-                       for side in (ours, theirs)]  # fmt: skip
-            assert ours[0] == theirs[0] and unsized[0] == unsized[1]
-            size = server_tape.kept_size(theirs[2])
-            assert ours[2][:4] == b"\x00\x00\x00\x01", ours[2][:16]
-            assert abs(len(ours[2]) - size) <= size // 10, (len(ours[2]), size)
+        # (kept of CI's ffmpeg and processor, whose bytes another's are not: an H.264 stream of
+        # the same kind, near as large)
+        unsized = [{k: v for k, v in side[1].items() if k != "Content-Length"}
+                   for side in (ours, theirs)]  # fmt: skip
+        assert ours[0] == theirs[0] and unsized[0] == unsized[1]
+        size = server_tape.kept_size(theirs[2])
+        assert ours[2][:4] == b"\x00\x00\x00\x01", ours[2][:16]
+        assert abs(len(ours[2]) - size) <= size // 10, (len(ours[2]), size)
     for path in ("picture?model=nope", "picture?model=turing-9.2-usb&what=x",
                  "picture?model=turing-9.2-usb&design=nope", "file?what=clip"):  # fmt: skip
         theirs, ours = ask(_get(f"/api/start-screen/{path}", WITH))
@@ -3511,7 +3466,6 @@ def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> 
                 model = "turing-5.2-usb"
                 status, said = post({"action": "logo", "model": model, "untested": True})
                 assert status == "200", said
-                made = (model, None, False)  # noqa: F841 (tests/harvest.py's)
                 logo = golden.told("logo file")  # (the one panel_files.py makes for it)
                 assert said == {"model": model, "boot_logo": logo["size"],
                                 "design": "libre-panel", "paused": False}  # fmt: skip
@@ -3539,7 +3493,7 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
     size (the time the write took tells); one that ended early is taken off again and not
     played or saved; a boot logo that would be too much beside a clip of before 0.9.4 is not
     sent. What is no action, panel or model is refused in server.py's words."""
-    if not PYTHON and not shutil.which("ffmpeg"):
+    if not shutil.which("ffmpeg"):
         pytest.skip("what was kept is of a computer with ffmpeg")
     _program()  # (skips where rust/ is not built, before what was kept is read)
     theirs = golden.told("panel files")  # (panel_files.py's words and tables)
@@ -3566,7 +3520,6 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                 assert status == "200", said
                 assert said == {"model": model, "files": [], "boot_logo": 0,
                                 "standby_clip": 0, "room": room, "paused": False}  # fmt: skip
-                made = (model, "aurora", False)
                 logo = golden.told("logo file")  # (the one panel_files.py makes of that look)
                 status, said = post({"action": "logo", "design": "aurora"})
                 assert status == "200", said
@@ -3582,9 +3535,8 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                 if shutil.which("ffmpeg"):
                     status, said = post({"action": "clip"})
                     assert status == "200", said
-                    # (the clip the panel got: panel_files.py's of this computer's ffmpeg, byte
-                    # for byte, while it is here to make one)
-                    clip, upside_down = rig.fake.files[STANDBY_CLIP], False
+                    # (the clip the panel got: as panel_files.py made it, byte for byte)
+                    clip = rig.fake.files[STANDBY_CLIP]
                     assert golden.told("same clip")
                     assert said == {"model": model, "standby_clip": len(clip),
                                     "name": STANDBY_CLIP, "design": "libre-panel",
@@ -3602,7 +3554,6 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                     'model = "turing-9.2-usb"\nbrightness = 60\nrotate = 180\n'
                     "[sensors]\nproviders = []\n"
                 )
-                made = (model, "aurora", True)  # noqa: F841 (tests/harvest.py's)
                 turned = golden.told("logo file")  # (panel_files.py's of that look, turned)
                 status, said = post({"action": "logo", "design": "aurora"})
                 assert status == "200" and said["boot_logo"] == turned["size"], said
@@ -3613,7 +3564,6 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                 if shutil.which("ffmpeg"):
                     # (the clip to keep, turned: panel_files.py's, byte for byte)
                     clip = get("/api/start-screen/file?model=turing-9.2-usb&what=clip")
-                    upside_down = True  # noqa: F841 (tests/harvest.py's)
                     assert golden.told("same clip")
                     assert len(clip) <= room["clip"] and turned["size"] <= room["logo"]
 
@@ -3904,10 +3854,6 @@ def test_the_pictures_of_the_panels_and_of_a_round_are_made_as_server_py_makes_t
     (/api/panels/photo) without a panel loop: refused in the same words."""
     from PIL import Image
 
-    if PYTHON:  # (the Python app opens no folder here)
-        from libre_panel import tray
-
-        monkeypatch.setattr(tray, "open_path", lambda path: None)
     ask, homes = servers
     ids = [kept_rounds(home) for home in homes]
     assert ids[0] == ids[1]
@@ -4126,10 +4072,6 @@ def community_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
     threading.Thread(target=site.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{site.server_address[1]}/index.json"
-    if PYTHON:
-        from libre_panel.editor import community
-
-        monkeypatch.setattr(community, "INDEX_URL", url)
     monkeypatch.setenv("LP_COMMUNITY_INDEX", url)
     try:
         yield folder
@@ -4522,17 +4464,6 @@ def test_the_screen_a_panel_can_show_is_told_as_mirror_py_tells_it(x11: Path, se
         theirs, ours = ask(_post("/api/mirror", body))
         assert ours[0] == theirs[0], body
         assert json.loads(ours[2]) == json.loads(theirs[2]), body
-    if not PYTHON:
-        return
-    from libre_panel import mirror  # (what mirror.py refuses in words of its own)
-
-    for raw in (None, {"kind": "tv"}, {"kind": "monitor"}, {"kind": "monitor", "id": 3},
-                {"kind": "window", "id": "0x1", "region": [0, 0, 8, 8]},
-                {"kind": "monitor", "id": "DP-1", "region": [0, 0, 100, True]},
-                {"kind": "monitor", "id": "DP-1", "fit": "zoom"}):  # fmt: skip
-        with pytest.raises(mirror.MirrorError) as said:
-            mirror.source_of(raw)
-        assert str(said.value), raw
 
 
 @pytest.mark.skipif(os.name == "nt", reason="an X11 desktop")
@@ -4587,7 +4518,6 @@ def test_a_panel_shows_a_monitor_and_its_own_as_mirror_py_does(x11: Path, tmp_pa
                                30), "the screen is not shown"  # fmt: skip
                 calls = x11.read_text(encoding="utf-8").splitlines()
                 line = next(c for c in calls if c.startswith("ffmpeg "))
-                rate = int(line.split(",fps=")[1].split()[0])  # noqa: F841 (tests/harvest.py's)
                 # (capture.py's and mirror.py's command for that part of the monitor)
                 assert line == golden.told("capture"), line
                 # the panel's own monitor: xrandr told as extend.py tells it
@@ -4676,11 +4606,9 @@ def test_the_linux_setup_is_planned_and_told_as_linux_setup_py_does(tmp_path: Pa
         """What the setup says without the run's own: the folder, the kernel's release."""
         return text.replace(str(tmp_path), "<tmp>").replace(os.uname().release, "<kernel>")
 
-    runs = [({"rapl": True, "dry_run": True}, ["--rapl", "--dry-run"]),
-            ({"dry_run": True}, ["--dry-run"]),
-            ({"dry_run": True, "json": True}, ["--dry-run", "--json"]),
-            ({"remove": True, "dry_run": True}, ["--remove", "--dry-run"])]  # fmt: skip
-    for flags, words in runs:  # noqa: B007 (tests/harvest.py's)
+    runs = [["--rapl", "--dry-run"], ["--dry-run"], ["--dry-run", "--json"],
+            ["--remove", "--dry-run"]]  # fmt: skip
+    for words in runs:
         done = subprocess.run([program, "system-setup", "--linux", *words], env=env,
                               capture_output=True, text=True, timeout=60)  # fmt: skip
         theirs = golden.told("setup")  # (linux_setup.py's run_cli with the same flags)

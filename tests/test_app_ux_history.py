@@ -15,7 +15,6 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import expect  # noqa: E402
 from test_app_browser import (  # noqa: E402, F401
     PICTURE,
-    RUST,
     app_url,
     browser_page,
     choose_theme,
@@ -161,13 +160,9 @@ def test_a_last_round_is_kept_as_a_picture_and_its_folder_opens(
     set_config_value("services.enabled", ["memory"])
     kept(isolated_home, days=1)
     pictures = tmp_path / "Pictures"
-    if RUST:  # (the Rust app's Pictures folder: the home's, where it has one)
-        pictures.mkdir()
-        monkeypatch.setenv("HOME", str(tmp_path))
-    else:
-        from libre_panel.services import downloads
-
-        monkeypatch.setattr(downloads, "pictures_folder", lambda: pictures)
+    # (the Rust app's Pictures folder: the home's, where it has one)
+    pictures.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
     with browser_page(app_url, "live/history", allow=PICTURE) as page:
         rounds = page.locator(".history-round-list li")
         expect(rounds).to_have_count(1)

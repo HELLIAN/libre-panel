@@ -1993,7 +1993,8 @@ stay as the theme's author wrote them. Command-line output for diagnostics
 Translations live in `data/locale/<language>.json`, keyed by the
 English text; a test makes sure every text has one. To add a language, copy
 `de.json`, translate the values and add the language to `LANGUAGES` in
-`src/libre_panel/i18n.py`.
+`rust/i18n/src/lib.rs` and in `src/libre_panel/i18n.py` (the plugin host's; a test holds the
+two to each other).
 
 ## Video
 

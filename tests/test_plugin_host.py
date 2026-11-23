@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import without_app
 from PIL import Image
-from without_app import KEPT
+from without_app import KEPT, WHEEL
 
 import libre_panel
 from libre_panel.plugins import WidgetType, drawing
@@ -27,8 +26,7 @@ START = ("libre_panel.plugin_host", "libre_panel.plugins", "libre_panel.plugins.
          "libre_panel.plugins.render")  # fmt: skip
 # What it can load of Libre Panel by any import (at the top of a module or in a function): the
 # plugin API and what that stands on, config.toml's Config among it (a sensor source follows
-# it). The rest is the Python app's, which the Rust app replaces (docs/RUST.md); a module new
-# here is one more to keep for plugins (without_app.KEPT).
+# it); a module new here is one more to keep for plugins (without_app.KEPT).
 
 
 def _path(module: str) -> Path:
@@ -63,8 +61,18 @@ def test_the_plugin_host_can_load_only_the_plugin_api_and_what_it_stands_on():
     assert not KEPT - reached, f"no longer reached, so not kept: {sorted(KEPT - reached)}"
 
 
+def test_the_package_holds_the_plugin_host_and_the_windows_command_alone():
+    """What the Rust app replaced is gone from the package: its modules are those the plugin
+    host reaches (KEPT) and the Windows wheel's command (WHEEL)."""
+    held = set()
+    for path in SRC.joinpath("libre_panel").rglob("*.py"):
+        parts = path.relative_to(SRC).with_suffix("").parts
+        held.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    assert held == KEPT | WHEEL, sorted(held ^ (KEPT | WHEEL))
+
+
 # What plugins/drawing.py answers for a theme's file (the path in the theme's folder, or why it is
-# refused), as the Python app's theme/model.py answers it while the Python app is there.
+# refused), as the Python app's theme/model.py answered it.
 THEME_FILES: dict[str, Any] = {
     "fonts/x.ttf": "fonts/x.ttf",
     "theme.json": "theme.json",
@@ -87,19 +95,11 @@ def _theme_file(find: Any, root: Path, rel: str, refused: type[Exception]) -> An
 
 def test_the_drawing_s_numbers_and_files_are_the_python_renderer_s():
     """What plugins/drawing.py keeps of its own: the Python renderer's numbers and its way with
-    a theme's files, and the Python app's own while it is there."""
+    a theme's files (as the Python app's theme/model.py had them)."""
     root = SRC.parent / "data" / "themes" / "lumen"
     assert (drawing.SUPERSAMPLE, drawing.COVER_COLOR) == (3, "@cover")
     for rel, answer in THEME_FILES.items():
         assert _theme_file(drawing.theme_file, root, rel, ValueError) == answer, rel
-    if without_app.ON:
-        return
-    from libre_panel.render.renderer import SUPERSAMPLE
-    from libre_panel.theme.model import COVER_COLOR, ThemeError, resolve_asset
-
-    assert (SUPERSAMPLE, COVER_COLOR) == (3, "@cover")
-    for rel, answer in THEME_FILES.items():
-        assert _theme_file(resolve_asset, root, rel, ThemeError) == answer, rel
 
 
 class Box(WidgetType):

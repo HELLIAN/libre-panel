@@ -17,7 +17,6 @@ import io
 import struct
 import time
 from collections.abc import Callable, Iterator
-from typing import Any
 
 from PIL import Image
 
@@ -379,10 +378,3 @@ class FakePanel:
         if not self.present or not self.pending:
             raise usb.core.USBTimeoutError("Operation timed out")
         return self.pending.pop(0)
-
-
-def transport_for(panel: FakePanel) -> Any:
-    """The Python driver's transport on the simulated panel (for the Python app's tests)."""
-    from libre_panel.devices.turzx_usb import UsbTransport
-
-    return UsbTransport(device=None, ep_out=panel, ep_in=panel, pid=panel.pid)

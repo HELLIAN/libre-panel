@@ -9,8 +9,8 @@ On Linux the programs (libre-panel, its window and tray, the engine in ``tools``
 licences) go where an install keeps its commands (the wheel's ``.data/scripts``, folders
 kept), and the libraries of C that draw as Pillow draws (FreeType, HarfBuzz, libjpeg, libwebp)
 into ``lib/libre-panel`` of the install, where the app looks for them beside its ``bin``
-(rust/app's name_own_libraries); the Python command ``libre-panel`` goes, the Rust program is
-it (pipx links it, and the app finds its files from where the link leads).
+(rust/app's name_own_libraries); the Rust program is the command ``libre-panel`` (pipx links
+it, and the app finds its files from where the link leads).
 
 On Windows the programs with their DLLs, the engine in ``tools`` and the sensor service in
 ``sensors``, as the downloads lay them out, go into ``libre-panel`` of the install, beside its
@@ -37,7 +37,6 @@ import sys
 import zipfile
 from pathlib import Path
 
-PYTHON_COMMAND = "libre-panel = libre_panel.cli:main"
 LAUNCHER = "libre-panel = libre_panel.launch:main"
 # what a program starts with, which is installed as one (by its content: wherever the wheel is
 # made, a licence is no program)
@@ -74,10 +73,9 @@ def build(wheel: Path, programs: Path, libraries: list[Path], platform: str, out
     entries.pop(f"{info_dir}/RECORD")
 
     points = f"{info_dir}/entry_points.txt"
-    text = entries[points].decode()
-    if PYTHON_COMMAND not in text:
-        raise SystemExit(f"{wheel}: no {PYTHON_COMMAND!r} to replace")
-    lines = [line for line in text.splitlines() if line.strip() != PYTHON_COMMAND]
+    lines = entries[points].decode().splitlines()
+    if any(line.partition("=")[0].strip() == "libre-panel" for line in lines):
+        raise SystemExit(f"{wheel}: a command libre-panel of its own (the Rust app's is it)")
     if windows:
         lines.insert(lines.index("[console_scripts]") + 1, LAUNCHER)
     entries[points] = ("\n".join(lines) + "\n").encode()

@@ -2,9 +2,8 @@
 
 import pytest
 
-from libre_panel import accent, app
-from libre_panel.config import Config, ConfigError, parse_config
-from libre_panel.theme.model import builtin_themes_dir, load_theme, with_accent
+from libre_panel import accent
+from libre_panel.config import ConfigError, parse_config
 
 
 def test_a_dark_accent_is_lightened_for_a_dark_panel_and_a_light_one_kept():
@@ -46,32 +45,9 @@ def test_windows_accent_colour_is_read_as_its_registry_keeps_it(monkeypatch):
     assert accent.system_accent() == accent.readable("#0078D6")
 
 
-def test_the_theme_s_accent_and_what_is_in_its_colour_take_the_choice():
-    theme = load_theme(builtin_themes_dir() / "lumen")
-    painted = with_accent(theme, "#E0457B")
-    assert painted.palette["accent"] == "#E0457B" and painted.palette["cpu"] == "#E0457B"
-    assert painted.palette["gpu"] == theme.palette["gpu"]  # another colour: as it is
-    assert theme.palette["accent"] != "#E0457B"  # the theme itself is left as it was
-    assert with_accent(theme, None) is theme
-
-
 def test_the_setting_is_read_and_checked():
     assert parse_config({}).accent == "" and parse_config({"accent": "system"}).accent == "system"
     assert parse_config({"accent": " #E0457B "}).accent == "#E0457B"
     for bad in ("red", "#12345", 3):
         with pytest.raises(ConfigError):
             parse_config({"accent": bad})
-
-
-def test_the_panel_draws_its_theme_in_the_chosen_accent():
-    theme = load_theme(builtin_themes_dir() / "lumen")
-    loop = object.__new__(app.MainLoop)  # (only what _renderer needs)
-    loop.warmup, loop.motion, loop.beats = app._Warmup(), app.Motion(), app.fan.Beats()
-    renderer = loop._renderer(theme, Config(theme="lumen", accent="#E0457B"))
-    try:
-        assert renderer.theme.palette["accent"] == "#E0457B"
-    finally:
-        renderer.close()
-    assert app.MainLoop._warm_key(theme, Config(accent="#E0457B")) != app.MainLoop._warm_key(
-        theme, Config()
-    )  # a theme warmed in other colours is not taken

@@ -2097,7 +2097,7 @@ def test_lit_rings_the_engine_makes_are_drawn_here_as_before_where_a_frame_asks(
     # (where the frames go to an engine that makes lit rings, a ring of one colour goes as what
     # the engine makes it of, its pixels made here only where a frame is composed here: those
     # the same, byte for byte, as the ring drawn here; the engine's are within a level of them,
-    # test_scene.py's test_the_engine_makes_a_lit_ring_as_the_renderer_does_to_a_level)
+    # test_rust_app.py's test_the_engine_composes_each_theme_as_the_app_would)
     rng = random.Random(0x1A7)
     cases = []
     for n in range(80):
@@ -2147,7 +2147,7 @@ def test_lit_bars_the_engine_makes_are_drawn_here_as_before_where_a_frame_asks(
     # (where the frames go to an engine that makes lit bars, a lit bar goes as what the engine
     # makes it of, its pixels and its glow's made here only where a frame is composed here:
     # those the same, byte for byte, as the bar drawn here; the engine's are within a level of
-    # them, test_scene.py's bar tests)
+    # them, test_rust_app.py's test_the_engine_composes_each_theme_as_the_app_would)
     rng = random.Random(0xBA2)
     cases = []
     for n in range(100):

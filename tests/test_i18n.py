@@ -2,11 +2,10 @@
 
 import json
 import re
-import threading
 from datetime import datetime
 
 import pytest
-from i18n_keys import all_messages, tables
+from i18n_keys import all_messages, known_texts, tables
 
 from libre_panel import i18n
 from libre_panel.config import load_config
@@ -28,7 +27,7 @@ def test_no_translation_is_empty():
 
 
 def test_the_catalog_has_no_stale_texts():
-    unused = sorted(set(CATALOG["messages"]) - all_messages())
+    unused = sorted(set(CATALOG["messages"]) - known_texts())
     assert unused == [], "no longer used, remove from locale/de.json:\n" + "\n".join(unused)
 
 
@@ -136,128 +135,6 @@ def test_language_setting(isolated_home):
     assert parse_config({"language": "ja"}).language == "ja"
     with pytest.raises(ConfigError):
         parse_config({"language": "ko"})
-
-
-def test_panel_texts_in_german():
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.sensors.demo import demo_snapshot
-    from libre_panel.theme.model import parse_theme
-
-    theme = parse_theme(
-        {
-            "format": "libre-panel-theme/1",
-            "name": "t",
-            "display": {"width": 200, "height": 40},
-            "widgets": [
-                {"type": "weather", "id": "w", "x": 0, "y": 0, "field": "description"},
-                {"type": "clock", "id": "c", "x": 0, "y": 20, "format": "%A"},
-            ],
-        }
-    )
-    snapshot = demo_snapshot()
-    snapshot.now = datetime(2026, 9, 27, 12, 0)
-    renderer = Renderer(theme)
-    texts = {}
-    original = renderer._text_widget
-
-    def spy(widget, text, color):
-        texts[widget["id"]] = text
-        return original(widget, text, color)
-
-    renderer._text_widget = spy
-    i18n.set_language("de")
-    renderer.render(snapshot)
-    assert texts == {"w": "Bedeckt", "c": "Sonntag"}
-    i18n.set_language("en")
-    renderer.render(snapshot)
-    assert texts == {"w": "Overcast", "c": "Sunday"}
-
-
-def test_a_clock_sets_its_date_in_capitals_in_the_language_of_the_panel():
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.sensors.demo import demo_snapshot
-    from libre_panel.theme.model import parse_theme
-
-    def clock(wid, **extra):
-        return {"type": "clock", "id": wid, "x": 0, "y": 0, "format": "%A · %B", **extra}
-
-    theme = parse_theme(
-        {
-            "format": "libre-panel-theme/1",
-            "name": "t",
-            "display": {"width": 200, "height": 40},
-            "widgets": [clock("plain"), clock("caps", uppercase=True)],
-        }
-    )
-    snapshot = demo_snapshot()
-    snapshot.now = datetime(2026, 9, 28, 12, 0)
-    renderer = Renderer(theme)
-    texts = {}
-    original = renderer._text_widget
-
-    def spy(widget, text, color):
-        texts[widget["id"]] = text
-        return original(widget, text, color)
-
-    renderer._text_widget = spy
-    try:
-        i18n.set_language("de")
-        renderer.render(snapshot)
-        assert texts == {"plain": "Montag · September", "caps": "MONTAG · SEPTEMBER"}
-        i18n.set_language("en")
-        renderer.render(snapshot)
-        assert texts == {"plain": "Monday · September", "caps": "MONDAY · SEPTEMBER"}
-    finally:
-        i18n.set_language("en")
-
-
-def test_editor_switches_language(isolated_home):
-    from test_editor_server import request
-
-    from libre_panel.editor.server import make_server
-
-    srv = make_server(port=0)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    try:
-        port = srv.server_address[1]
-        status, data = request(port, "GET", "/api/i18n")
-        assert status == 200 and data["language"] == "en" and data["setting"] == "auto"
-        assert "messages" not in data  # English needs no catalog
-
-        status, data = request(port, "POST", "/api/language", {"language": "de"})
-        assert status == 200 and data["language"] == "de"
-        assert data["messages"]["Save"] == "Speichern" and data["widgets"]["bar"] == "Balken"
-        assert load_config().language == "de"
-        status, specs = request(port, "GET", "/api/specs")
-        assert "CPU-Karte" in [p["name"] for p in specs["presets"]]
-
-        status, _ = request(port, "POST", "/api/language", {"language": "ko"})
-        assert status == 400
-        request(port, "POST", "/api/language", {"language": "en"})
-        assert i18n.language() == "en"
-    finally:
-        srv.shutdown()
-        srv.server_close()
-        srv.editor_state.close()
-
-
-def test_tray_menu_in_german(isolated_home):
-    import os
-
-    os.environ.setdefault("PYSTRAY_BACKEND", "dummy")
-    pystray = pytest.importorskip("pystray")
-    from test_service import write_config
-
-    from libre_panel.service import BackgroundApp
-    from libre_panel.tray import Tray
-
-    write_config(isolated_home)
-    i18n.set_language("de")
-    tray = Tray(BackgroundApp(port=0), pystray)
-    texts = [item.text for item in tray.build_menu() if item is not pystray.Menu.SEPARATOR]
-    assert "Libre Panel öffnen" in texts and "Gestalten" in texts and "Einstellungen" in texts
-    assert "Libre Panel beenden" in texts
-    assert texts[0] == "Libre Panel: angehalten"
 
 
 def test_editor_scripts_have_no_untranslated_texts():

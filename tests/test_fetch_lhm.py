@@ -14,15 +14,24 @@ from pathlib import Path
 
 import pytest
 
-from libre_panel.sensors import lhm_inprocess
-
 SCRIPT = Path(__file__).resolve().parent.parent / "packaging" / "windows" / "fetch_lhm.py"
 spec = importlib.util.spec_from_file_location("fetch_lhm", SCRIPT)
 fetch_lhm = importlib.util.module_from_spec(spec)
 sys.modules["fetch_lhm"] = fetch_lhm  # dataclasses look their module up
 spec.loader.exec_module(fetch_lhm)
-
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# the libraries the sensor service loads, in its order (sensorhost/src/Program.cs, Libraries.All)
+SENSOR_SERVICE = SCRIPT.parent.parent.parent / "sensorhost" / "src" / "Program.cs"
+
+
+def loaded_by_the_sensor_service():
+    source = SENSOR_SERVICE.read_text(encoding="utf-8")
+    main = re.search(r'const string Library = "([^"]+)"', source)[1]
+    listed = re.search(r"string\[\] All =\s*\[(.*?)\];", source, re.S)[1]
+    return [
+        main if name == "Library" else name.strip('"')
+        for name in re.findall(r'"[^"]+"|Library', listed)
+    ]
 
 
 def sha(data):
@@ -89,7 +98,7 @@ def run(tmp_path, folder, packages, libraries, texts, **options):
 
 def test_the_pinned_packages_are_what_the_program_loads():
     names = [library.dll.removesuffix(".dll") for library in fetch_lhm.LIBRARIES]
-    assert names == list(lhm_inprocess.LIBRARIES)  # the same libraries, in the same order
+    assert names == loaded_by_the_sensor_service()  # the same libraries, in the same order
     for library in fetch_lhm.LIBRARIES:
         assert SHA256.match(library.nupkg), library.package
         hashes = library.sha256 if isinstance(library.sha256, dict) else {"x64": library.sha256}
@@ -102,8 +111,6 @@ def test_the_pinned_packages_are_what_the_program_loads():
         assert "ref/" not in library.member  # the reference assembly has no code in it
     main = fetch_lhm.LIBRARIES[-1]
     assert main.package == "LibreHardwareMonitorLib" and set(main.sha256) == {"x64", "x86", "arm64"}
-    assert "runtimes/{arch}/lib/net472/" in main.member  # the .NET Framework build
-    assert len({library.package for library in fetch_lhm.LIBRARIES}) == len(fetch_lhm.LIBRARIES)
 
 
 def test_only_the_pinned_libraries_come_out_of_the_packages(tmp_path):

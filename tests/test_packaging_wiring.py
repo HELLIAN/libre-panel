@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -100,14 +101,9 @@ def test_the_downloads_carry_the_notice_that_names_their_sources():
     assert 'cp NOTICE.md "$app/licenses/"' in job(ci, "appimage")
 
 
-def test_the_spec_puts_the_fetched_folder_next_to_the_program_under_the_name_the_app_looks_for():
-    spec = read("packaging", "pyinstaller", "libre-panel.spec")
+def test_the_fetched_tools_go_next_to_the_program_under_the_name_the_app_looks_for():
     fetch_tools = load("fetch_tools_wiring", PACKAGING / "fetch_tools.py")
     assert fetch_tools.DEFAULT_FOLDER.name == "bundled-tools"
-    assert 'ROOT / "packaging" / "bundled-tools"' in spec
-    assert "from libre_panel.bundled import TOOLS_FOLDER" in spec
-    assert 'program_folder = Path(DISTPATH) / "libre-panel"' in spec  # the built folder
-    assert "copytree(tools, program_folder / TOOLS_FOLDER" in spec  # and next to the program
     check_tools = load("check_tools_wiring", PACKAGING / "check_tools.py")
     assert check_tools.TOOLS_FOLDER == bundled.TOOLS_FOLDER == "tools"
     # the setup clears the same folder on an update
@@ -186,11 +182,12 @@ def test_ci_runs_every_comparison_with_the_rust_crates_where_they_are_built():
 
 
 def test_ci_runs_every_test_that_needs_a_browser_where_there_is_one():
-    """Only CI's desktop job has Playwright and Chromium: elsewhere a test that needs them skips.
-    A file of such tests left out of its list would never run anywhere."""
+    """Only the browser step of CI's job rust has Playwright and Chromium: elsewhere a test that
+    needs them skips. A file of such tests left out of its list would never run anywhere."""
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    job = ci.split("\n  desktop:", 1)[1]
-    listed = set(re.findall(r"tests/[\w*]+\.py", job))
+    step = ci.split("- name: The app in a browser, on the Rust app's server (Linux)\n", 1)[1]
+    step = step.split("\n      - ", 1)[0]
+    listed = set(re.findall(r"tests/[\w*]+\.py", step))
     tests = ROOT / "tests"
     uses = re.compile(r"^(?:from|import) playwright|importorskip\(\s*\"playwright", re.M)
     needing = {
@@ -421,18 +418,6 @@ def test_the_release_builds_the_dotnet_sensor_service_and_the_spec_takes_it():
     assert "<Company>Libre Panel contributors</Company>" in project
 
 
-def test_the_programs_are_built_without_docstrings_and_their_help_does_not_need_one():
-    """Python's code in the downloads is compiled as by ``python -OO`` (each process holds less
-    of it): the command line's help then still says what Libre Panel is."""
-    spec = read("packaging", "pyinstaller", "libre-panel.spec")
-    assert "OPTIMIZE = 2" in spec
-    assert spec.count("optimize=OPTIMIZE") == 2  # (the programs, and the sensor service)
-    from libre_panel import cli
-
-    parser = cli.build_parser()
-    assert parser.description == cli.DESCRIPTION and "Libre Panel" in parser.description
-
-
 def test_an_install_gets_every_file_of_the_data_folder_where_both_apps_look(monkeypatch):
     """Libre Panel's files (the data folder) go whole into an install's share/libre-panel
     (setup.py), where src/libre_panel/datadir.py and rust/app/src/home.rs look for them; the
@@ -479,9 +464,7 @@ def _pure_wheel(folder):
                       "Version: 1.2.3\n")  # fmt: skip
         made.writestr(f"{info}/WHEEL", "Wheel-Version: 1.0\nGenerator: setuptools\n"
                       "Root-Is-Purelib: true\nTag: py3-none-any\n")  # fmt: skip
-        points = ("[console_scripts]\nlibre-panel = libre_panel.cli:main\n"
-                  "libre-panel-plugins = libre_panel.plugin_host:main\n\n[libre_panel.sensors]\n"
-                  "demo = libre_panel.sensors.demo:DemoProvider\n")  # fmt: skip
+        points = "[console_scripts]\nlibre-panel-plugins = libre_panel.plugin_host:main\n"
         made.writestr(f"{info}/entry_points.txt", points)
         made.writestr(f"{info}/RECORD", "")
     return wheel
@@ -550,9 +533,7 @@ def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
     assert modes[f"{data}/scripts/libre-panel"] == modes[f"{data}/scripts/tools/run.sh"] == 0o755
     assert modes[f"{data}/scripts/tools/licenses/x264.txt"] == 0o644
     points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
-    assert "libre_panel.cli:main" not in points and "libre_panel.launch" not in points
-    assert "libre-panel-plugins = libre_panel.plugin_host:main" in points
-    assert "demo = libre_panel.sensors.demo:DemoProvider" in points
+    assert points == "[console_scripts]\nlibre-panel-plugins = libre_panel.plugin_host:main\n"
     info = "libre_panel-1.2.3.dist-info"
     assert files[f"{info}/licenses/THIRD-PARTY-RUST.txt"] == b"MIT"
     assert files[f"{info}/licenses/x/a.txt"] == b"BSD"
@@ -580,8 +561,8 @@ def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
     assert modes[f"{data}/data/libre-panel/libre-panel.exe"] == 0o755
     assert modes[f"{data}/data/libre-panel/freetype.dll"] == 0o644
     points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
-    assert points.startswith("[console_scripts]\n" + platform_wheel.LAUNCHER + "\n")
-    assert "libre_panel.cli:main" not in points
+    assert points == ("[console_scripts]\n" + platform_wheel.LAUNCHER
+                      + "\nlibre-panel-plugins = libre_panel.plugin_host:main\n")  # fmt: skip
     from libre_panel import launch
 
     assert (launch.FOLDER, "libre-panel.exe") == ("libre-panel", windows.joinpath(
@@ -689,3 +670,45 @@ def test_ci_builds_and_tries_both_wheels_and_the_release_carries_them():
         assert f"name: {name}\n" in job(release, "github-release"), name
     assert "pypi" not in release.lower()
     assert "py3-none-win_amd64.whl" in job(release, "github-release")
+
+
+# -- Waveshare's udev rule ------------------------------------------------------------------------
+
+
+RULES = Path(__file__).parents[1] / "data/assets/60-libre-panel.rules"
+
+
+def test_the_udev_rule_gives_the_display_s_interfaces_to_cdc_acm(tmp_path):
+    """Units with the placeholder ids are taken by usbtouchscreen; once it has the display's
+    data interface (class 0a, which no touchscreen has), both go to cdc_acm. The rule's command
+    is run here as udev runs it (its %k, %% and $$ replaced), on a folder for /sys."""
+    text = RULES.read_text(encoding="utf-8")
+    line = next(line for line in text.splitlines() if "RUN+=" in line)
+    for part in ('DRIVER=="usbtouchscreen"', 'ATTRS{idVendor}=="1234"', 'ATTRS{idProduct}=="5678"',
+                 'ATTR{bInterfaceClass}=="0a"', 'ENV{DEVTYPE}=="usb_interface"'):  # fmt: skip
+        assert part in line
+    assert 'SUBSYSTEM=="tty", ATTRS{idVendor}=="1234", ATTRS{idProduct}=="5678"' in text
+    if sys.platform == "win32":
+        pytest.skip("runs a shell")
+    command = re.search(r'RUN\+="(.*)"\s*$', line).group(1)
+    replaced = re.sub(r"%k|%%|\$\$", lambda m: {"%k": "8-6.3:1.1", "%%": "%", "$$": "$"}[m[0]],
+                      command)  # fmt: skip
+    drivers = tmp_path / "drivers"
+    for name in ("usbtouchscreen", "cdc_acm"):
+        (drivers / name).mkdir(parents=True)
+    (drivers / "usbtouchscreen" / "8-6.3:1.0").write_text("")  # it has the control interface too
+    script = re.match(r"/bin/sh -c '(.*)'$", replaced).group(1)
+    # (each write to a file of /sys is one of its own: here they are kept one after the other)
+    script = script.replace("/sys/bus/usb/drivers", str(drivers)).replace("> ", ">> ")
+    subprocess.run(["/bin/sh", "-c", script], check=True)
+    assert (drivers / "usbtouchscreen" / "unbind").read_text() == "8-6.3:1.0" + "8-6.3:1.1"
+    assert (drivers / "cdc_acm" / "bind").read_text() == "8-6.3:1.0"
+
+
+# -- the mark of the internet ---------------------------------------------------------------------
+
+
+def test_the_dotnet_sensor_service_lets_dotnet_load_marked_libraries_too():
+    config = Path(__file__).resolve().parent.parent / "sensorhost" / "App.config"
+    node = ET.parse(config).getroot().find("runtime/loadFromRemoteSources")
+    assert node is not None and node.get("enabled") == "true"

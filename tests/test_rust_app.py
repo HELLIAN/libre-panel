@@ -40,13 +40,10 @@ from libre_panel.datadir import DATA
 from libre_panel.sensors.base import Reading
 
 BUILTIN_THEMES_DIR = DATA / "themes"
-# while the Python app is here: it is asked anew, and what it tells written down
-# (tests/harvest.py); else what it told is read (tests/golden/given)
-PYTHON = bool(os.environ.get("LP_GIVEN_OUT"))
 # a comparison of what this computer has (its parts, its programs, its rights): what was kept
 # is of CI's computers, and holds there
 this_computer = pytest.mark.skipif(
-    not PYTHON and os.environ.get("GITHUB_ACTIONS") != "true",
+    os.environ.get("GITHUB_ACTIONS") != "true",
     reason="what the Python app answered was kept on CI's computers",
 )
 # the services the Rust app has and the Python app never had (the light ring of Lian Li's
@@ -1446,24 +1443,17 @@ def test_a_config_that_is_wrong_is_said_in_config_py_s_words(tmp_path: Path) -> 
     assert "fps: must be between 1 and 60" in done.stderr
 
 
-def _python(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """cli.py run with its settings in ``home``."""
-    env = {**os.environ, "LIBRE_PANEL_HOME": str(home)}
-    command = [sys.executable, "-m", "libre_panel", *args]
-    return subprocess.run(
-        command, env=env, capture_output=True, encoding="utf-8", timeout=120, check=False
-    )
-
-
 def test_it_lists_what_it_knows_as_cli_py_lists_it(tmp_path: Path) -> None:
     """`themes` (each with where it comes from and where it is), `models` (the sizes, how far
-    the driver is, the protocol) and `config path` as cli.py prints them: the program listed
-    names alone. The MAJESTY 9.16" is in the catalog of both (issue #54)."""
+    the driver is, the protocol) and `config path` as cli.py printed them (kept: the folders
+    as where they are in the data folder): the program listed names alone. The MAJESTY 9.16"
+    is in the catalog of both (issue #54)."""
     themes = _run(tmp_path, "themes").stdout.splitlines()
     assert [line.split()[0] for line in themes] == sorted(
         p.name for p in BUILTIN_THEMES_DIR.iterdir() if (p / "theme.json").is_file()
     )
-    theirs = _python(tmp_path, "themes").stdout.splitlines()
+    folder_of = str(BUILTIN_THEMES_DIR) + os.sep
+    theirs = [line.replace("<data>/themes/", folder_of) for line in golden.told("themes")]
     assert len(themes) == len(theirs)
     for mine, their in zip(themes, theirs, strict=True):
         # (the id and where it comes from in columns as wide, and the folder the same one)
@@ -1472,13 +1462,12 @@ def test_it_lists_what_it_knows_as_cli_py_lists_it(tmp_path: Path) -> None:
         assert mine[: mine.index(folder)] == their[: their.index(their_folder)], mine
         assert Path(folder).samefile(their_folder) and Path(folder).name == name, mine
     where = Path(_run(tmp_path, "config", "path").stdout.strip())
-    assert where == Path(_python(tmp_path, "config", "path").stdout.strip())
-    assert where.name == "config.toml" and where.parent.samefile(tmp_path)
+    assert where.name == "config.toml" and where.parent.samefile(tmp_path)  # (as cli.py's)
     models = _run(tmp_path, "models").stdout.splitlines()
     assert models[0].split() == ["model", "panel", "landscape", "portrait", "driver", "protocol"]
     majesty = [line for line in models if line.startswith("majesty-9.16 ")]
     assert len(majesty) == 1 and "1920x462" in majesty[0]
-    assert models == _python(tmp_path, "models").stdout.splitlines()
+    assert models == golden.told("models")
 
 
 def test_config_init_writes_the_default_config_as_cli_py_does(tmp_path: Path) -> None:
@@ -2381,9 +2370,6 @@ def test_a_ups_is_asked_of_upsd(tmp_path: Path) -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         port = server.server_address[1]
-        # (what the Python app's source was given: tests/harvest.py's, while it is here)
-        options = {"host": "127.0.0.1", "port": port, "username": "panel",  # noqa: F841
-                   "password": "pw"}  # fmt: skip
 
         def said_goodbye() -> None:
             """Waits until the server has heard a talk to its end."""
@@ -2517,7 +2503,6 @@ def test_mqtt_messages_come_from_a_broker(tmp_path: Path) -> None:
         assert connect.endswith(text(b"panel") + text(b"pw")) and b"libre-panel-" in connect
         assert first == b"\x82\x00\x01" + text(b"home/+/temperature") + b"\x00"
         assert second == b"\x82\x00\x02" + text(b"zigbee2mqtt/#") + b"\x00"
-        units = {"home/+/temperature": "°C", "zigbee2mqtt/#": "W"}  # noqa: F841 (harvest.py's)
         wanted = _kept_readings(golden.told("wanted"))  # (of the messages, with the units)
         listed = [line for line in done.stdout.splitlines() if line.startswith("mqtt.")]
         ours = {line[:40].strip(): line[41:] for line in listed}

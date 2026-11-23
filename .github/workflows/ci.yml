@@ -45,7 +45,9 @@ jobs:
       - run: ruff format --check .
 
   test:
-    # Windows takes about 20 minutes for the suite, and a slow runner more
+    # The Python package (the plugin host and the plugin API, on every Python a pip or pipx
+    # install may give it) and the tests that need no build of Rust's (the others skip here
+    # and run in the job `rust`)
     if: ${{ !inputs.quick }}
     timeout-minutes: 50
     strategy:
@@ -59,7 +61,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -e ".[dev,usb,tray]"
+      - run: pip install -e ".[dev]"
       # (what fetch_tools.py downloaded in a run before: it takes a file kept there only where
       # it is the one it pins, else downloads it again; GitHub's release files answered 504
       # for longer than it asks again, and failed every job that downloads them)
@@ -95,18 +97,13 @@ jobs:
         if: failure()
         shell: bash
         run: cat "$RUNNER_TEMP/hang-traceback.txt" 2>/dev/null || true
-      - name: Render the built-in themes
-        run: |
-          libre-panel preview libre-default -o libre-default.png
-          libre-panel preview lumen -o lumen.png
 
   engine:
     # Libre Panel's own engine (engine/, Rust; docs/ROADMAP.md): built against libx264 (Ubuntu's
-    # package; on Windows MSYS2's, linked in), its own tests, and the app's tests of it
-    # (tests/test_native_engine.py: the YUV byte for byte yuv.py's, a panel through it, a new
-    # bit rate in the running stream; tests/test_engine_panel.py: the engine with a panel of its
-    # own, the simulated one behind a socket; tests/test_scene.py: frames of layers the engine
-    # composes, pixel for pixel the renderer's) with the engine it built, which they must find.
+    # package; on Windows MSYS2's, linked in), its own tests, and the tests of it as a program
+    # of its own (tests/test_engine_program.py: its tables, the YUV it makes, byte for byte as
+    # Pillow defines it) with the engine it built. What the Rust app makes of it is the job
+    # `rust`'s (tests/test_rust_app.py).
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -157,7 +154,7 @@ jobs:
           else
             echo "LIBRE_PANEL_ENGINE=$PWD/$built" >> "$GITHUB_ENV"
           fi
-      - run: pip install -e ".[dev,usb]"
+      - run: pip install -e ".[dev]"
       - name: The downloads a run before kept
         id: tools-cache
         uses: actions/cache/restore@v5
@@ -218,14 +215,8 @@ jobs:
             ${{ runner.temp }}/tools/SOURCES.txt
             ${{ runner.temp }}/tools/licenses
           retention-days: 7
-      - name: The app's tests of the engine
-        shell: bash
-        run: |
-          # (the runner's rights stand in as an ordinary user's, as conftest's not_elevated does)
-          python -c "from libre_panel import rights; rights.elevated = lambda: False
-          from libre_panel.devices.h264 import find_engine; assert find_engine(), 'no engine'"
-          pytest -q -rs tests/test_native_engine.py tests/test_engine_panel.py tests/test_yuv.py \
-            tests/test_scene.py tests/test_engine_program.py
+      - name: The tests of the engine as a program
+        run: pytest -q -rs tests/test_engine_program.py
 
   rust:
     # Libre Panel in Rust (docs/RUST.md): the workspace's crates, then their comparisons with
@@ -261,8 +252,9 @@ jobs:
           cargo test --release
           cargo build --release
       # (the Pillow they are compared with: docs/RUST.md; a new one changes nothing unseen)
-      # (pyusb for the simulated TURZX panel of tests/test_rust_app.py, which speaks its errors)
-      - run: pip install -e ".[dev,usb]" pillow==13.0.0
+      # (pyusb, in dev, for the simulated TURZX panel of tests/test_rust_app.py, which speaks
+      # its errors)
+      - run: pip install -e ".[dev]" pillow==13.0.0
       # Libre Panel's engine, which has the TURZX panels: with it the program in Rust is run
       # against the simulated panel (tests/test_rust_app.py: video, its bit rate, single
       # pictures, a hung decoder); without it those are skipped, as they are on Windows here,
@@ -421,7 +413,6 @@ jobs:
           python tests/frame_load.py --app "$app" --seconds 30
           python tests/frame_load.py --app "$app" --seconds 30 --demo
           if [ -f "$engine" ]; then
-            pip install -q pyusb pycryptodome
             python tests/frame_load.py --app "$app" --engine "$engine" --seconds 30 --demo
           else
             echo "no engine here: the frames through it are not measured"
@@ -434,7 +425,6 @@ jobs:
         if: ${{ !inputs.quick }}
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden  # (the answers, as golden.py keeps them)
-          LP_WITHOUT_APP: "1"  # (as once the Python app is gone: tests/without_app.py)
         run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_py.py tests/test_rust_pixels.py tests/test_rust_decode.py tests/test_rust_text.py tests/test_rust_theme.py tests/test_rust_modules.py tests/test_rust_render.py tests/test_rust_toasts.py tests/test_rust_transitions.py tests/test_rust_field.py tests/test_rust_morph.py tests/test_rust_alarm.py tests/test_rust_boot.py tests/test_rust_video.py tests/test_rust_devices.py tests/test_rust_serial_drivers.py tests/test_rust_usb_drivers.py tests/test_rust_config.py tests/test_rust_sensors.py tests/test_rust_services.py tests/test_branding.py tests/test_design_tool.py tests/test_compare_reference.py
       - name: The stacks of a comparison that hung
         if: failure()
@@ -447,8 +437,7 @@ jobs:
         if: ${{ !inputs.quick && !cancelled() }}
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden
-          # (what they take from the Python app is kept: tests/golden/given, given/win32)
-          LP_WITHOUT_APP: "1"
+          # (what they took from the Python app is kept: tests/golden/given, given/win32)
         run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_app.py tests/test_rust_plugins.py tests/test_community_theme.py tests/test_check_tools.py
       - name: The stacks of a comparison that hung
         if: failure()
@@ -461,17 +450,14 @@ jobs:
         if: runner.os == 'Linux' && !inputs.quick && !cancelled()
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden
-          LP_WITHOUT_APP: "1"
         run: python -m pytest -q -rfE --durations=20 tests/test_rust_server.py tests/test_rust_wayland.py
-      # the app's pages in a real browser on the Rust app's server, the Python app out of reach
-      # (as the job desktop runs them on the Python app's): what one of them cannot do here is
-      # skipped, each with its reason; and the README's pictures and clips, which the program
-      # and lp-check draw and run (tools/readme_media.py)
+      # the app's pages in a real browser on the Rust app's server: what one of them cannot do
+      # here is skipped, each with its reason; and the README's pictures and clips, which the
+      # program and lp-check draw and run (tools/readme_media.py)
       - name: The app in a browser, on the Rust app's server (Linux)
         if: runner.os == 'Linux' && !inputs.quick && !cancelled()
         env:
           LP_UI_SERVER: rust
-          LP_WITHOUT_APP: "1"
         run: |
           pip install -q playwright
           python -m playwright install --with-deps chromium
@@ -778,7 +764,7 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: The AppImage
         run: |
-          SOURCE="$PWD/dist/libre-panel-rust" APPRUN="$PWD/packaging/linux/AppRun-rust" \
+          SOURCE="$PWD/dist/libre-panel-rust" \
             packaging/linux/build_appimage.sh "$VERSION" "dist/Libre_Panel-$VERSION-rust-x86_64.AppImage"
       - name: Test the AppImage (headless and on an X11 tray)
         run: RUST=1 packaging/linux/test_appimage.sh "dist/Libre_Panel-$VERSION-rust-x86_64.AppImage"
@@ -787,7 +773,7 @@ jobs:
         # the program names Pillow's libraries in lib to itself); tried from where it is unpacked
         run: |
           mv dist/libre-panel-rust dist/libre-panel
-          cp packaging/linux/AppRun-rust dist/libre-panel/libre-panel.sh
+          cp packaging/linux/AppRun dist/libre-panel/libre-panel.sh
           chmod +x dist/libre-panel/libre-panel.sh
           cp LICENSE README.md NOTICE.md dist/libre-panel/
           tar -C dist -czf "dist/libre-panel-$VERSION-linux-x64.tar.gz" libre-panel
@@ -851,9 +837,9 @@ jobs:
   sensor-host:
     # The sensor service as a .NET program of its own (sensorhost/, C#; docs/ROADMAP.md): built
     # against LibreHardwareMonitor's libraries as the release fetches them, its own look at the
-    # hardware (--check), and the app's tests of it (tests/test_sensor_host.py): on the real pipe,
-    # with Libre Panel's own client, the answers, sensors, rights and limits of the Python service
-    # it is to replace, as a Windows service too, and what each of the two holds.
+    # hardware (--check), and the tests of it (tests/test_sensor_service_program.py): on the real
+    # pipe, held to what the Python service it replaced answered (its answers, rights and
+    # limits), as a Windows service too.
     timeout-minutes: 30
     runs-on: windows-latest
     steps:
@@ -861,7 +847,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev,lhm]"
+      - run: pip install -e ".[dev]"
       - name: LibreHardwareMonitor's libraries
         run: python packaging/windows/fetch_lhm.py
       - name: Build the sensor service
@@ -875,7 +861,7 @@ jobs:
           ls -la sensorhost/bin/Release sensorhost/bin/Release/lhm
           echo "LIBRE_PANEL_SENSOR_HOST=$(cygpath -w "$PWD/sensorhost/bin/Release/libre-panel-sensors.exe")" >> "$GITHUB_ENV"
       - name: It says who made it
-        # its version resource, as the release checks the Python programs' (release.yml)
+        # its version resource, as the other programs of the downloads have theirs
         shell: pwsh
         run: |
           $info = (Get-Item "sensorhost/bin/Release/libre-panel-sensors.exe").VersionInfo
@@ -887,18 +873,8 @@ jobs:
       - name: Its look at the hardware
         shell: bash
         run: sensorhost/bin/Release/libre-panel-sensors.exe --check
-      - name: The app's tests of it
-        env:
-          # (what it answered where the Python service answered the same, written down: what
-          # it is held to once the Python service is gone)
-          LP_SENSOR_SERVICE_OUT: ${{ runner.temp }}/sensor-service
-        run: pytest -q -rsP tests/test_sensor_host.py tests/test_sensor_service_program.py
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: sensor-service-answers
-          path: ${{ runner.temp }}/sensor-service
-          retention-days: 7
+      - name: The tests of it
+        run: pytest -q -rsP tests/test_sensor_service_program.py
       - name: Its log
         if: always()
         shell: bash
@@ -964,23 +940,3 @@ jobs:
           name: plugin-host-${{ matrix.name }}
           path: dist/plugin-host
           retention-days: 7
-
-  desktop:
-    # The app in a real browser (every test that needs one: the others skip them), the tray
-    # icon on a real X11 tray, and keyboard shortcuts pressed on an X server.
-    if: ${{ !inputs.quick }}
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: sudo apt-get update && sudo apt-get install -y xvfb stalonetray
-      - run: pip install -e ".[dev,tray]" playwright
-      - run: python -m playwright install --with-deps chromium
-      - name: The app in a browser, tray icon on X11
-        run: >-
-          pytest -q -rs tests/test_app_browser.py tests/test_app_ux_*.py
-          tests/test_sequence_browser.py tests/test_panel_files_browser.py
-          tests/test_tray.py tests/test_hotkeys.py

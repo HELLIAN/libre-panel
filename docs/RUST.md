@@ -8,7 +8,7 @@ the same, pixel for pixel.
 This file is the plan and its state. It is kept up to date with every step (the checklists
 below), so that the work can be picked up where it stands.
 
-## What it is made of today
+## What it was made of when the work began
 
 | Part | Language | Lines |
 |---|---|---|
@@ -17,6 +17,11 @@ below), so that the work can be picked up where it stands.
 | The app's pages | JavaScript, CSS | 22,000, 9,700 |
 | The sensor service on Windows (hosts LibreHardwareMonitor) | C# | 2,600 |
 | The engine (compositing, YUV, H.264, USB) | Rust | 11,400 |
+
+Since the Python app went (R12): the app 207,600 lines of Rust (`rust/`, its tests among them)
+and the engine 13,100; the plugin host and the plugin API 8,500 lines of Python, the tests
+beside the crates' own 51,800, the tools and the packaging scripts 9,100; the pages 22,400
+lines of JavaScript and 9,700 of CSS; the sensor service 2,600 of C#.
 
 ## What "all of it in Rust" means
 
@@ -2462,7 +2467,7 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
 - [x] the Linux AppImage of the Rust app (CI's job `appimage`, on the oldest Ubuntu offered):
       the programs, the app's files, ffmpeg and the engine in "tools", and Pillow's own
       FreeType, HarfBuzz, libjpeg and libwebp in "lib", named to the program by its AppRun
-      (packaging/linux/AppRun-rust; nothing in LD_LIBRARY_PATH, so the window and the tray
+      (packaging/linux/AppRun; nothing in LD_LIBRARY_PATH, so the window and the tray
       icon take the system's GTK); tried by test_appimage.sh as the release's (RUST=1). What
       the tray icon's program says goes into the app's log, as tray.py logs it
 - [x] the screen on Wayland (wayland.py, wayland_feed.py): the capture program
@@ -2472,7 +2477,8 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       connection handed to GStreamer as a file descriptor; GStreamer's pipeline as
       wayland_feed.py makes it, the session stopped as it ends or GStreamer ended as the
       desktop closes it; GNOME's monitors listed, the panel's own monitor offered where GNOME
-      or the portal is. The tests: against test_wayland.py's stand-ins on a bus of their own,
+      or the portal is. The tests (test_rust_wayland.py): against wayland_bus.py's stand-ins on
+      a bus of their own,
       the pipeline word for word, the calls and their options, the kept choice, a cancelled
       dialog, the monitors as the app lists them
 - [ ] the pages in Rust (WebAssembly), view by view, with the same HTML and CSS; the browser
@@ -2529,7 +2535,8 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       gives the panels their `away_brightness` where `dark_when_away` says so. On Linux
       logind says the same through `gdbus monitor` or `dbus-monitor`, with a delay lock
       (`systemd-inhibit`) the panel goes dark under before the computer sleeps. The tests: the
-      monitor's lines as test_logind.py hands them (Rust's own), and on Windows the session's
+      monitor's lines as the Python app's tests handed them (rust/app/src/logind.rs), and on
+      Windows the session's
       end sent to the running app's window (CI)
 - [x] the command line (cli.py): every command of the Python app (`plugins` with R10);
       `preview` draws a theme, by its name or its folder,
@@ -2681,10 +2688,15 @@ word of the app's language in one of its fonts, so a host that does not find the
         which the tests name with ``LP_NOW``: an answer is then the same whenever it is
         asked for. What runs by the clock (the panel's frames, a clip, a wait) stays on it
   - [x] the browser tests on the Rust app's server, the Python app out of reach
-        (``LP_UI_SERVER=rust LP_WITHOUT_APP=1``, CI's rust job on Linux): what a test asks of
+        (``LP_UI_SERVER=rust``, CI's rust job on Linux): what a test asks of
         the app it asks the running program (its tray's menu, its services, its readings, the
         files it writes), the panels on a bus of the test's own (``LP_TEST_BUS``). Skipped,
         each with its reason: the range's A/B on a panel in video mode and the graphics
         card's conversion (to do), Windows' autostart with administrator rights (no stand-in
         for the registry and the Task Scheduler yet)
-  - [ ] the Python app's own tests, tools and packaging go with it
+  - [x] the Python app goes: its modules, its own tests, its packaging (the PyInstaller build
+        of its programs, its AppImage entry), its commands and extras. What stays of Python
+        is the plugin host and the plugin API with what they stand on (tests/without_app.py,
+        which test_plugin_host.py holds the package to), the tests (the comparisons on kept
+        answers, the browser tests, the plugin host's), and the tools beside them. The tests
+        of what remains in those modules were kept, those of the Python app went with it

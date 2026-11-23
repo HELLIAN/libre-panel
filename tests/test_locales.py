@@ -4,9 +4,10 @@ each catalog complete and in step with the German one, which test_i18n holds to 
 import json
 import re
 from datetime import datetime
+from pathlib import Path
 
 import pytest
-from i18n_keys import all_messages, tables
+from i18n_keys import all_messages, known_texts, tables
 
 from libre_panel import i18n
 from libre_panel.i18n import format_date
@@ -26,8 +27,16 @@ def _english_after():
     i18n.set_language("en")
 
 
+def _rust_i18n() -> str:
+    """The Rust app's tables of the languages (lp-i18n), which the plugin host's i18n.py has too."""
+    root = Path(__file__).resolve().parents[1]
+    return (root / "rust" / "i18n" / "src" / "lib.rs").read_text(encoding="utf-8")
+
+
 def test_every_language_has_a_name_and_a_catalog():
     assert set(i18n.LANGUAGES) == {"en", "de", *LANGUAGES}
+    listed = re.search(r"LANGUAGES: &\[\(&str, &str\)\] = &\[(.*?)\];", _rust_i18n(), re.S)[1]
+    assert dict(re.findall(r'\("(\w+)", "([^"]+)"\)', listed)) == i18n.LANGUAGES
     files = sorted(path.stem for path in i18n.LOCALE_DIR.glob("*.json"))
     assert files == sorted(["de", *LANGUAGES])
 
@@ -36,7 +45,7 @@ def test_every_language_has_a_name_and_a_catalog():
 def test_every_text_is_translated_and_none_is_stale(language):
     messages = catalog(language)["messages"]
     missing = sorted(all_messages() - set(messages))
-    stale = sorted(set(messages) - all_messages())
+    stale = sorted(set(messages) - known_texts())
     assert missing == [], f"add these to locale/{language}.json:\n" + "\n".join(missing)
     assert stale == [], f"no longer used, remove from locale/{language}.json:\n" + "\n".join(stale)
 
@@ -109,14 +118,14 @@ def test_dates(language, expected):
 
 
 @pytest.mark.parametrize(
-    ("language", "text"),
-    [("fr", "26,7"), ("it", "26,7"), ("ru", "26,7"), ("ja", "26.7"), ("zh", "26.7")],
+    ("language", "comma"), [("fr", True), ("it", True), ("ru", True), ("ja", False), ("zh", False)]
 )
-def test_numbers_as_the_language_writes_them(language, text):
-    from libre_panel.services.cooling_text import num
-
-    i18n.set_language(language)
-    assert num(26.7, 1) == text
+def test_numbers_as_the_language_writes_them(language, comma):
+    """26,7 or 26.7: the plugin host's i18n.py and the Rust app's (lp-i18n, whose numbers the
+    cooling advice and the panel write) have the same languages of a decimal comma."""
+    listed = re.search(r"DECIMAL_COMMA: &\[&str\] = &\[(.*?)\];", _rust_i18n())[1]
+    assert set(re.findall(r'"(\w+)"', listed)) == i18n.DECIMAL_COMMA
+    assert (language in i18n.DECIMAL_COMMA) is comma
 
 
 class Strict(datetime):

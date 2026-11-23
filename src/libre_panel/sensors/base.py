@@ -168,41 +168,20 @@ class SensorProvider:
         pass
 
 
-# Built in; plugins bring more (``libre_panel.sensors``, see docs/PLUGINS.md).
-_BUILTIN_PROVIDERS = {
-    "psutil": "libre_panel.sensors.psutil_provider:PsutilProvider",
-    "linux": "libre_panel.sensors.linux:LinuxProvider",
-    "librehardwaremonitor": "libre_panel.sensors.librehardwaremonitor:LibreHardwareMonitorProvider",
-    "load": "libre_panel.sensors.load:LoadProvider",
-    "audio": "libre_panel.sensors.audio:AudioProvider",
-    "demo": "libre_panel.sensors.demo:DemoProvider",
-    "media": "libre_panel.sensors.media:MediaProvider",
-    "calendar": "libre_panel.sensors.calendar:CalendarProvider",
-    "homeassistant": "libre_panel.sensors.homeassistant:HomeAssistantProvider",
-    "mqtt": "libre_panel.sensors.mqtt:MqttProvider",
-    "sky": "libre_panel.sensors.sky:SkyProvider",
-    "presentmon": "libre_panel.sensors.presentmon:PresentMonProvider",
-    "hardware": "libre_panel.sensors.hardware:HardwareProvider",
-    "mangohud": "libre_panel.sensors.mangohud:MangoHudProvider",
-    "rtss": "libre_panel.sensors.rtss:RTSSProvider",
-    "hwinfo": "libre_panel.sensors.hwinfo:HWiNFOProvider",
-    "json": "libre_panel.sensors.json_source:JsonProvider",
-    "nut": "libre_panel.sensors.nut:NutProvider",
-    "dell": "libre_panel.sensors.dell:DellProvider",
-}
-
-
-def _load_object(spec: str) -> Any:
-    module_name, _, attr = spec.partition(":")
-    module = __import__(module_name, fromlist=[attr])
-    return getattr(module, attr)
+# Libre Panel's own sources (the Rust app's, rust/app/src/sensors.rs): a plugin cannot use
+# their names. Plugins bring more (``libre_panel.sensors``, see docs/PLUGINS.md).
+BUILT_IN_SOURCES = (
+    "psutil", "linux", "librehardwaremonitor", "load", "audio", "demo", "media", "calendar",
+    "homeassistant", "mqtt", "sky", "presentmon", "hardware", "mangohud", "rtss", "hwinfo",
+    "json", "nut", "dell",
+)  # fmt: skip
 
 
 def available_providers() -> dict[str, str]:
     """Sensor sources by name: where each comes from."""
     from libre_panel.plugins.loader import registry
 
-    found = dict.fromkeys(_BUILTIN_PROVIDERS, "built in")
+    found = dict.fromkeys(BUILT_IN_SOURCES, "built in")
     for name in registry().names("sensors"):
         found.setdefault(name, registry().parts["sensors"][name].source)
     return found
@@ -211,8 +190,8 @@ def available_providers() -> dict[str, str]:
 def create_provider(name: str, options: dict[str, Any] | None = None) -> SensorProvider:
     from libre_panel.plugins.loader import registry
 
-    if name in _BUILTIN_PROVIDERS:
-        return _load_object(_BUILTIN_PROVIDERS[name])(options)
+    if name in BUILT_IN_SOURCES:
+        raise ValueError(f"sensor provider {name!r} is Libre Panel's own: the app reads it")
     found = registry().parts.get("sensors", {}).get(name)
     if found is None:
         raise ValueError(

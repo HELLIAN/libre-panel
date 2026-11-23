@@ -6,11 +6,13 @@ keeps these modules (tests/without_app.py)."""
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
-from libre_panel.config import Config, ServicesConfig
-from libre_panel.plugins import PluginHost, ServiceManager, discover
+from libre_panel.config import Config, ServicesConfig, log_file
+from libre_panel.plugins import Delivery, PageContext, PluginHost, ServiceManager, discover
 from libre_panel.plugins.loader import API_VERSION, BUILT_IN_PARTS
 
 OWN_SERVICES = sorted(BUILT_IN_PARTS["services"])  # Libre Panel's own, no plugins
@@ -202,3 +204,55 @@ def test_page_context_finds_running_services(plugin_folder):
     assert plain.config_path == Path("/tmp/other.toml")
     manager.stop()
     host.close()
+
+
+# -- a page's context -----------------------------------------------------------------------------
+
+
+def test_a_page_context_has_the_app_follow_config_toml():
+    from types import SimpleNamespace
+
+    from libre_panel.plugins import PageContext
+
+    asked = []
+    PageContext(SimpleNamespace(follow_config=lambda: asked.append(1))).follow_config()
+    assert asked == [1]
+    PageContext().follow_config()  # a plain editor: no services, nothing to follow
+    PageContext(SimpleNamespace()).follow_config()  # an app that cannot be asked: no failure
+
+
+# -- what a page can tell -------------------------------------------------------------------------
+
+
+def test_page_context_knows_whether_the_background_app_serves_the_editor():
+    plain = PageContext(None)
+    assert plain.background is False and plain.shown_frame() is None
+    host = PluginHost()
+    picture = Image.new("RGB", (8, 4), "red")
+    host.shown = picture
+    context = PageContext(SimpleNamespace(plugin_host=host))
+    assert context.background is True and context.shown_frame() is picture
+    host.close()
+
+
+def test_the_log_tail_is_read_from_the_end_of_the_log(isolated_home):
+    context = PageContext(None)
+    assert context.log_tail() == []  # no log yet
+    path = log_file()
+    assert path == isolated_home / "logs" / "libre-panel.log"  # where the tray app writes it
+    path.parent.mkdir(parents=True)
+    path.write_text("".join(f"line {n}\n" for n in range(1, 5001)), encoding="utf-8")
+    assert context.log_tail(3) == ["line 4998", "line 4999", "line 5000"]
+    assert len(context.log_tail(40)) == 40 and len(context.log_tail(99999)) == 1000
+    assert context.log_tail(0) == ["line 5000"]  # at least one
+    path.write_text("one\ntwo\n", encoding="utf-8")
+    assert context.log_tail() == ["one", "two"]  # shorter than asked: all of it
+    path.write_text("".join(f"{n} {'x' * 3000}\n" for n in range(50)), encoding="utf-8")
+    assert [row.split()[0] for row in context.log_tail(3)] == ["47", "48", "49"]  # long lines
+    path.write_bytes(b"caf\xe9 \xff\nnext\n")  # not UTF-8: still readable
+    assert context.log_tail(2)[1] == "next" and len(context.log_tail(2)) == 2
+
+
+def test_a_delivery_is_true_when_the_message_will_show():
+    assert Delivery(True) and not Delivery(False, "theme")
+    assert Delivery(False, "screen").reason == "screen" and Delivery(True).reason == ""

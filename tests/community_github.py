@@ -77,12 +77,6 @@ def github(monkeypatch):
     threading.Thread(target=made.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{made.server_address[1]}"
     monkeypatch.setenv("LP_COMMUNITY_INDEX", f"{base}/main/community/themes/index.json")
-    try:  # (the Python app's, where it is there)
-        from libre_panel.editor import community
-    except ModuleNotFoundError:
-        pass
-    else:
-        monkeypatch.setattr(community, "INDEX_URL", f"{base}/main/community/themes/index.json")
     monkeypatch.setenv("no_proxy", "127.0.0.1")
     # (its folder in the zip has another name: the list's is the one it is installed under)
     theme = zipped({"north/theme.json": theme_json(name="Aurora"), "north/assets/back.png": png()})

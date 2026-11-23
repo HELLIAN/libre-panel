@@ -5,13 +5,9 @@ import tomllib
 from types import SimpleNamespace
 
 import pytest
-from test_default_theme_loop import demo_config, loop_for, step_until
-from test_editor_server import request, server  # noqa: F401 (a fixture)
 
-from libre_panel import app as app_module
 from libre_panel.config import (
     ConfigError,
-    ModeConfig,
     SequenceConfig,
     edit_config,
     load_config,
@@ -124,77 +120,7 @@ def test_the_app_writes_them_into_the_file_the_user_has(isolated_home):
 # -- on the panel ------------------------------------------------------------------------------
 
 
-def test_the_theme_a_service_or_a_mode_shows_goes_first():
-    config = demo_config(theme="slate", sequence=SequenceConfig(True, STEPS))
-    rotation = Rotation(lambda: 0.0)
-    nobody = SimpleNamespace(theme=None, mode=None)
-    assert app_module._theme_name(config, nobody, None, rotation) == "almanac"
-    assert app_module._theme_name(config, nobody, None, None) == "slate"
-    service = SimpleNamespace(theme="orbit", mode=None)
-    assert app_module._theme_name(config, service, None, rotation) == "orbit"
-    config.modes["game"] = ModeConfig(theme="pico")
-    game = SimpleNamespace(theme=None, mode="game")
-    assert app_module._theme_name(config, game, None, rotation) == "pico"
-    config.sequence.on = False
-    assert app_module._theme_name(config, nobody, None, rotation) == "slate"
-
-
-def test_the_panel_shows_the_screens_in_turn_on_its_clock(isolated_home):
-    steps = [Step("pico", 5), Step("orbit", 8)]
-    loop, clock = loop_for(demo_config(theme="slate", sequence=SequenceConfig(True, steps)))
-    try:
-        assert loop.status.theme == "pico"
-        loop.step(clock.now)
-        assert loop.status.sequence == {"index": 0, "theme": "pico", "left_s": 5.0}
-        clock.now += 4.8
-        loop.step(clock.now)
-        assert loop.status.theme == "pico"  # still its five seconds
-        assert step_until(loop, clock, lambda: loop.status.theme == "orbit")
-        assert loop.status.sequence["index"] == 1
-        clock.now += 7.5
-        assert step_until(loop, clock, lambda: loop.status.theme == "pico")  # from the top
-    finally:
-        loop.close()
-
-
 # -- in the app --------------------------------------------------------------------------------
-
-
-def test_the_app_reads_and_writes_the_screens_in_turn(server, isolated_home):  # noqa: F811
-    status, data = request(server, "GET", "/api/sequence")
-    assert status == 200 and data["on"] is True and data["steps"] == [] and data["now"] is None
-    assert data["shortest_s"] == SHORTEST_S
-    steps = [{"theme": "almanac", "seconds": 300}, {"theme": "nimbus", "seconds": 45}]
-    status, data = request(server, "POST", "/api/sequence", {"on": True, "steps": steps})
-    assert status == 200 and data["on"] is True and data["steps"] == steps
-    text = (isolated_home / "config.toml").read_text("utf-8")
-    assert 'theme = "almanac"\nminutes = 5' in text and 'theme = "nimbus"\nseconds = 45' in text
-    pages = request(server, "GET", "/api/pages")[1]
-    assert pages["pages"][0]["sequence"] is True
-    # one theme chosen on Start: the screens in turn stop, and are kept for later
-    status, _ = request(server, "POST", "/api/pages", {"page": "normal", "theme": "lumen"})
-    assert status == 200
-    config = load_config(isolated_home / "config.toml")
-    assert config.theme == "lumen" and not config.sequence.on and len(config.sequence.steps) == 2
-    # without steps they are off
-    status, data = request(server, "POST", "/api/sequence", {"on": True, "steps": []})
-    assert status == 200 and data["on"] is False and data["steps"] == []
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"steps": []},
-        {"on": "yes", "steps": []},
-        {"on": True, "steps": "almanac"},
-        {"on": True, "steps": ["almanac"]},
-        {"on": True, "steps": [{"theme": "almanac", "seconds": 2}]},
-        {"on": True, "steps": [{"theme": "no-such-theme", "seconds": 60}]},
-    ],
-)
-def test_the_app_refuses_steps_that_cannot_be_shown(server, isolated_home, body):  # noqa: F811
-    status, data = request(server, "POST", "/api/sequence", body)
-    assert status == 400, data
 
 
 def test_a_theme_chosen_in_the_tray_stops_the_screens_in_turn_and_keeps_them(isolated_home):

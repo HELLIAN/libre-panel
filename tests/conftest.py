@@ -7,16 +7,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
-import without_app
 
-without_app.take_away()  # (LP_WITHOUT_APP: as the tests run once the Python app is gone)
-
-if os.environ.get("LP_GIVEN_OUT"):  # (what the cases take from the Python app, written down)
-    import harvest
-
-    harvest.install()
-
-from libre_panel import i18n  # noqa: E402
+from libre_panel import i18n
 
 
 def pytest_runtest_logreport(report):
@@ -91,68 +83,12 @@ def _hang_guard():
         faulthandler.cancel_dump_traceback_later()
 
 
-@pytest.fixture
-def panel_writes(monkeypatch):
-    """Writing files to a panel switched on, as who looks into issue 52 switches it on. It is
-    off in this version (a clip filled a 9.2"'s folder, which holds its settings too, and it
-    has kept restarting since); what is sent once it is on again stays tested through this."""
-    from libre_panel.devices import panel_files
-
-    monkeypatch.setenv(panel_files.WRITES_ENV, panel_files.WRITES_WORD)
-
-
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
     """Every test gets its own config/user-themes directory."""
     home = tmp_path / "home"
     monkeypatch.setenv("LIBRE_PANEL_HOME", str(home))
-    yield home
-    choice = sys.modules.get("libre_panel.devices.card_choice")
-    if choice is not None:  # (a colour check in the background ends in the test that began it)
-        choice.forget(wait=30)
-
-
-@pytest.fixture(autouse=True)
-def editor_tokens(monkeypatch):
-    """The token of every editor server a test starts is kept by its port (editor_token.py),
-    for the clients of the tests to send: a server answers nothing without it. And the requests
-    that server is still answering when the test ends are answered before the next one starts."""
-    if without_app.ON:  # (the Python app's, gone there)
-        yield
-        return
-    import threading
-
-    import editor_token
-
-    from libre_panel.editor.server import EditorHandler, EditorServer
-
-    made, served = EditorServer.__init__, EditorHandler._serve
-    under_way, count = threading.Condition(), [0]
-
-    def init(self, *args, **kwargs):
-        made(self, *args, **kwargs)
-        editor_token.TOKENS[self.server_address[1]] = self.token
-
-    def serve(self, method):
-        with under_way:
-            count[0] += 1
-        try:
-            return served(self, method)
-        finally:
-            with under_way:
-                count[0] -= 1
-                under_way.notify_all()
-
-    monkeypatch.setattr(EditorServer, "__init__", init)
-    monkeypatch.setattr(EditorHandler, "_serve", serve)
-    yield
-    # A request that a closed browser left under way (the library's pictures are drawn one after
-    # another, a request each) goes on in its thread of the server, which shutting the server
-    # down does not wait for. It ends before the next test starts: it would draw with the
-    # renderer that test has put in place, and show up in what that test counts.
-    with under_way:
-        under_way.wait_for(lambda: count[0] == 0, timeout=120)
-    editor_token.TOKENS.clear()
+    return home
 
 
 @pytest.fixture(autouse=True)
@@ -164,10 +100,6 @@ def not_elevated(monkeypatch):
     from libre_panel import rights
 
     monkeypatch.setattr(rights, "elevated", lambda: False)
-    if not without_app.ON:
-        from libre_panel.editor import access
-
-        monkeypatch.setattr(access, "elevated", lambda: False)
 
 
 @pytest.fixture(autouse=True)
@@ -180,115 +112,6 @@ def no_installed_plugins(monkeypatch):
     loader.reset_registry()
     yield
     loader.reset_registry()
-
-
-@pytest.fixture(autouse=True)
-def no_machine_names(monkeypatch):
-    """What the computer running the tests is made of stays out of them (it differs from
-    machine to machine, and the names are its owner's): nothing is found, until a test
-    brings a computer of its own."""
-    if without_app.ON:  # (the Python app's, gone there)
-        return
-    from libre_panel.sensors import hardware
-
-    monkeypatch.setattr(hardware, "_found", None)  # what was asked before is not an answer
-    monkeypatch.setattr(hardware, "_scan_machine", lambda *args: hardware.Found())
-
-
-@pytest.fixture(autouse=True)
-def no_community_list(monkeypatch):
-    """The community's list of themes is never asked of GitHub: its address is one of this
-    computer where nothing answers, until a test serves a list of its own."""
-    if without_app.ON:  # (the Python app's, gone there)
-        return
-    from libre_panel.editor import community
-
-    monkeypatch.setattr(community, "INDEX_URL", "http://127.0.0.1:9/community/themes/index.json")
-
-
-@pytest.fixture(autouse=True)
-def no_usb_panel(monkeypatch):
-    """A panel plugged into the machine running the tests stays out of them: a config that
-    names no theme looks for one on the USB bus to pick the panel's own. Nothing is on the
-    bus, until a test says so."""
-    if without_app.ON:  # (the Python app's, gone there)
-        return
-    from libre_panel.devices import turzx_usb
-
-    monkeypatch.setattr(turzx_usb.UsbTransport, "present", staticmethod(lambda pid: False))
-
-
-@pytest.fixture(autouse=True)
-def no_linux_setup(monkeypatch):
-    """The one-click setup of Linux never touches the machine running the tests: it is not
-    asked about the board or the rights, and no test asks for an administrator's password.
-    A test brings a computer (``linux_setup.Facts``) and a stand-in for the rights."""
-    if without_app.ON:  # (the Python app's, gone there)
-        return
-    from libre_panel import linux_rights, linux_setup
-
-    def forbidden(argv):
-        raise AssertionError("a test asked for the administrator's rights")
-
-    class Untouchable:
-        """The computer a test runs on, which a test may not change (not even one that runs as
-        root, as CI containers do): the first thing a setup does to it fails the test."""
-
-        def __getattr__(self, name):
-            raise AssertionError(f"a test changed the machine it runs on ({name})")
-
-    monkeypatch.setattr(linux_setup, "gather", lambda *args, **kwargs: linux_setup.Facts())
-    monkeypatch.setattr(linux_setup, "RealSystem", Untouchable)
-    monkeypatch.setattr(linux_rights, "JOB", linux_rights.Job(runner=forbidden))
-    monkeypatch.setattr(linux_rights, "imports_isolated", lambda python: False)
-
-
-@pytest.fixture(autouse=True)
-def no_machine_sensors(monkeypatch):
-    """The Linux sensor source reads the folder a test lays out, not this machine's /sys."""
-    if without_app.ON:  # (the Python app's, gone there)
-        return
-    from libre_panel.sensors import linux
-
-    monkeypatch.setattr(linux, "ROOT", Path("/no/such/root"))
-
-
-class NoTasks:
-    """A Task Scheduler without tasks, for tests that do not bring their own."""
-
-    def exists(self, name):
-        return False
-
-    def query(self, name):
-        return None
-
-    def create(self, name, xml):
-        raise AssertionError("a test created a real scheduled task")
-
-    def delete(self, name):
-        pass
-
-
-@pytest.fixture(autouse=True)
-def no_scheduled_tasks(monkeypatch):
-    """The machine's own Task Scheduler stays out of the tests (it may hold the
-    elevated "Libre Panel" task)."""
-    if without_app.ON:  # (the Python app's, gone there)
-        return
-    from libre_panel import autostart
-
-    monkeypatch.setattr(autostart, "WindowsTasks", NoTasks)
-
-
-@pytest.fixture(autouse=True)
-def no_sensor_service(monkeypatch):
-    """The sensor service of the machine running the tests (a Windows PC with Libre Panel
-    installed) stays out of them: it is not installed, until a test says so."""
-    if without_app.ON:  # (the Python app's, gone there)
-        return
-    from libre_panel.sensors import lhm_service
-
-    monkeypatch.setattr(lhm_service, "registration", lambda name=None: None)
 
 
 @pytest.fixture(autouse=True)

@@ -890,10 +890,9 @@ place of the view until *Back* returns to it.
 Libre Panel brings two pages of its own, built in like its services (so they
 work in the downloads, and no plugin can use their names): **Control** (`control`)
 and **Autopilot** (`autopilot`), described in
-[Running in the background](BACKGROUND.md#the-control-and-autopilot-pages). They
-are written with the same API, from `libre_panel/pages/`, and a good model for
-a page of your own. Their routes are a JSON API that a screen of any design can
-call: [The console API](ARCHITECTURE.md#the-console-api).
+[Running in the background](BACKGROUND.md#the-control-and-autopilot-pages). Their routes
+are a JSON API that a screen of any design can call:
+[The console API](ARCHITECTURE.md#the-console-api).
 
 ```python
 from libre_panel.plugins import EditorPage

@@ -239,15 +239,10 @@ class Display:
         self.close()
 
 
-_BUILTIN_DRIVERS = {
-    "auto": "libre_panel.devices.auto:AutoDisplay",
-    "virtual": "libre_panel.devices.virtual:VirtualDisplay",
-    "turzx": "libre_panel.devices.turzx:TurzxDisplay",
-}
-
-
 def available_drivers() -> dict[str, str]:
-    found = dict(_BUILTIN_DRIVERS)
+    """The display drivers plugins bring (``libre_panel.devices``), by name; the app's own
+    (auto, virtual, turzx) are the Rust app's."""
+    found: dict[str, str] = {}
     for ep in entry_points(group="libre_panel.devices"):
         found[ep.name] = ep.value
     return found
