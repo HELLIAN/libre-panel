@@ -145,14 +145,17 @@ Every download is tested on its own system before it is attached:
 with two panels and look at what it did:
 
 ```bash
-python tools/soak.py --hours 24          # --video for the video mode (needs ffmpeg)
+python tools/soak.py --hours 24          # --video: the first panel in video mode (needs pyusb)
 ```
 
-It starts the background app in a settings folder of its own (two virtual 9.2" bars, Lumen and
-Lumen Companion, on the demo readings, with the notices, the timer and the power service), notes
-its memory, threads, open files and the panels' frame times every minute, and writes
-`soak/soak.md` with a chart: it passes when the memory grows by less than 5 MB an hour after
-the first ten minutes, the threads and the open files stay level and every panel kept showing.
+It starts the background app (the program built in `rust/`; `LIBRE_PANEL_PROGRAM` names
+another) in a settings folder of its own (two 9.2" bars, Lumen and Lumen Companion, on the demo
+readings, with the notices, the timer and the power service; virtual ones, or with `--video` the
+first a simulated TURZX whose video goes through the engine, every packet checked), notes its
+memory and its engine's, threads, open files and the panels' frame times every minute, and
+writes `soak/soak.md` with a chart: it passes when the memory of neither grows by 5 MB an hour
+or more after the first ten minutes, the threads and the open files stay level and every panel
+kept showing.
 
 How much two panels in video mode slow each other down (they share one interpreter):
 
