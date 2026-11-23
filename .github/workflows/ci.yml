@@ -884,7 +884,17 @@ jobs:
         shell: bash
         run: sensorhost/bin/Release/libre-panel-sensors.exe --check
       - name: The app's tests of it
+        env:
+          # (what it answered where the Python service answered the same, written down: what
+          # it is held to once the Python service is gone)
+          LP_SENSOR_SERVICE_OUT: ${{ runner.temp }}/sensor-service
         run: pytest -q -rsP tests/test_sensor_host.py
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: sensor-service-answers
+          path: ${{ runner.temp }}/sensor-service
+          retention-days: 7
       - name: Its log
         if: always()
         shell: bash

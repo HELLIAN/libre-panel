@@ -138,6 +138,17 @@ def pipe_dacl(name: str) -> str:
         kernel.CloseHandle(handle)
 
 
+def kept_out(name: str, answers: dict) -> None:
+    """What the .NET program answered where the Python service answered the same, written down
+    (LP_SENSOR_SERVICE_OUT: a folder; CI keeps it): the answers the service is held to once
+    the Python service is gone (tests/golden/given/win32/sensor_service.json)."""
+    folder = os.environ.get("LP_SENSOR_SERVICE_OUT")
+    if folder:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        file = Path(folder) / f"{name}.json"
+        file.write_text(json.dumps(answers, indent=1, ensure_ascii=False), encoding="utf-8")
+
+
 def started(command: list[str], out: Path) -> subprocess.Popen:
     with open(out, "w", encoding="utf-8") as sink:
         return subprocess.Popen(command, stdout=sink, stderr=subprocess.STDOUT)
@@ -273,19 +284,25 @@ class TestOnThePipe:
     def test_it_checks_a_request_as_the_python_service_does(self, host):
         python = core.Handler(None, version=__version__)
         link = connect()
+        kept = {"requests": [], "not_objects": [], "not_json": []}
         try:
             for message in REQUESTS:
                 body = json.dumps(message).encode()
-                assert raw(link, body) == python.answer(message), message
+                answer = raw(link, body)
+                assert answer == python.answer(message), message
+                kept["requests"].append([message, answer])
                 time.sleep(0.25)  # (within the limit of requests)
             for value in NOT_OBJECTS:
                 answer = raw(link, json.dumps(value).encode())
                 assert answer == protocol.error_answer("not a JSON object"), value
+                kept["not_objects"].append([value, answer])
                 time.sleep(0.25)
             for body in NOT_JSON:
                 answer = raw(link, body)
                 assert answer["ok"] is False and answer["error"].startswith("not JSON: "), body
+                kept["not_json"].append([body.decode("latin-1"), answer])
                 time.sleep(0.25)
+            kept_out("requests", kept)
             # and the connection goes on after all of them
             assert protocol.parse_hello(link.request(protocol.hello_request(), 5))
         finally:
@@ -337,6 +354,7 @@ class TestOnThePipe:
             server.stop()
         print("the pipe:", ours)
         assert ours == theirs and ours.startswith("D:P")
+        kept_out("pipe", {"dacl": ours})
 
     def test_a_second_one_does_not_join_the_name(self, host, tmp_path):
         out = tmp_path / "second.txt"
