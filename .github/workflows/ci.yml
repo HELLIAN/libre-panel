@@ -435,7 +435,7 @@ jobs:
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden  # (the answers, as golden.py keeps them)
           LP_WITHOUT_APP: "1"  # (as once the Python app is gone: tests/without_app.py)
-        run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_py.py tests/test_rust_pixels.py tests/test_rust_decode.py tests/test_rust_text.py tests/test_rust_theme.py tests/test_rust_modules.py tests/test_rust_render.py tests/test_rust_toasts.py tests/test_rust_transitions.py tests/test_rust_field.py tests/test_rust_morph.py tests/test_rust_alarm.py tests/test_rust_boot.py tests/test_rust_video.py tests/test_rust_devices.py tests/test_rust_serial_drivers.py tests/test_rust_usb_drivers.py tests/test_rust_config.py tests/test_rust_sensors.py tests/test_rust_services.py tests/test_branding.py
+        run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_py.py tests/test_rust_pixels.py tests/test_rust_decode.py tests/test_rust_text.py tests/test_rust_theme.py tests/test_rust_modules.py tests/test_rust_render.py tests/test_rust_toasts.py tests/test_rust_transitions.py tests/test_rust_field.py tests/test_rust_morph.py tests/test_rust_alarm.py tests/test_rust_boot.py tests/test_rust_video.py tests/test_rust_devices.py tests/test_rust_serial_drivers.py tests/test_rust_usb_drivers.py tests/test_rust_config.py tests/test_rust_sensors.py tests/test_rust_services.py tests/test_branding.py tests/test_design_tool.py
       - name: The stacks of a comparison that hung
         if: failure()
         shell: bash

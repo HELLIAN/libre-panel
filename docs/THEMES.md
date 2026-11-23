@@ -816,7 +816,7 @@ opacity*) holds for every theme and goes before the theme's. The editor's
 looks (Arctic, Libre, Neon, Graphite, Paper, Sunset, Mono, High Contrast) set
 palette and style in one go.
 
-**One design.** The looks are in `src/libre_panel/design.py`, and with them the
+**One design.** The looks are in `rust/theme/src/design.rs`, and with them the
 look each family of built-in themes wears and what it has of its own: Lumen,
 Encore, Almanac, Nimbus, Terra (its accent the blue of the sea), Libre Default,
 Column, Orbit, Slate and Pico wear Libre, the app's own colours; Arena, the round

@@ -12,7 +12,7 @@ companions in both directions), each made from that version:
 - its background: black, the light over it (the light is the ground: no picture, no
   gradient behind the cards); the light drifts while the switch "light_flows" is on and
   follows the load while "light_load" is (both on by default);
-- its cards a little more see-through, so the light shows through them (design.FAMILIES'
+- its cards a little more see-through, so the light shows through them (design.rs' FAMILIES,
   "<screen>-v2");
 - Encore v2: the light in its cover's colours while a track plays (render/cover.py's
   colours), in place of the cover blurred behind the whole screen;
@@ -30,11 +30,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # (tools/lp_check.py)
+from lp_check import design  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-from libre_panel.design import FAMILIES  # noqa: E402
-
 THEMES = ROOT / "data" / "themes"
 
 # each v2 screen: its light's look, the picture whose colours it takes ("" none), and the
@@ -82,7 +81,7 @@ def made(screen: str, data: dict[str, Any]) -> dict[str, Any]:
         field["colours"] = spec["colours"]
     out["background"] = {"color": "#000000", "field": field}
     if isinstance(out.get("style"), dict):
-        out["style"].update(FAMILIES[f"{screen}-v2"].cards)
+        out["style"].update(design()["families"][f"{screen}-v2"]["cards"])
     out["widgets"] = [w for w in out.get("widgets", []) if w.get("id") not in spec["without"]]
     out["switches"] = {**(out.get("switches") or {}), **json.loads(json.dumps(SWITCHES))}
     return out

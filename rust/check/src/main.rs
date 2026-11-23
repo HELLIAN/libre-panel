@@ -772,6 +772,21 @@ fn run(case: &Value) -> Result<Value, String> {
             let picture = lp_render::branding::mark(diameter, light).map_err(|e| e.0)?;
             json!({"image": value_of(&picture)})
         }
+        "design" => {
+            // design.py's looks, the names of SPUR II's for their roles, the families of the
+            // built-in themes and the cards where nothing says (tools/design.py)
+            let mut told = lp_py::Dict::default();
+            let looks = lp_theme::design::looks().clone();
+            told.insert("looks".into(), lp_py::Value::Dict(looks));
+            let aliases = lp_theme::design::aliases().clone();
+            told.insert("aliases".into(), lp_py::Value::Dict(aliases));
+            let families = lp_theme::design::families().clone();
+            told.insert("families".into(), lp_py::Value::Dict(families));
+            let defaults = lp_theme::model::style_defaults();
+            told.insert("style_defaults".into(), lp_py::Value::Dict(defaults));
+            let how = lp_py::json::Dumps::default();
+            json!({"design": lp_py::json::dumps(&lp_py::Value::Dict(told), &how)})
+        }
         "mark_svg" => json!({
             // the mark as the app's header and the website show it
             "svg": lp_render::branding::mark_svg(

@@ -1,12 +1,13 @@
-"""Write the design (src/libre_panel/design.py) into the built-in themes, or check them.
+"""Write the design (rust/theme/src/design.rs) into the built-in themes, or check them.
 
     python tools/design.py          # what differs from the design; exit 1 if anything does
     python tools/design.py --write  # make every built-in theme hold its family's look
 
-For each built-in theme, by the family its name begins with (``design.FAMILIES``):
+For each built-in theme, by the family its name begins with (design.rs' FAMILIES, as
+lp-check gives them: tools/lp_check.py):
 
 - every colour of its palette that the family's look has a role for (or a name of SPUR II's
-  for a role, ``design.ALIASES``) becomes the look's, with the family's own colours over it;
+  for a role, design.rs' ALIASES) becomes the look's, with the family's own colours over it;
   colours of other names are the theme's own and stay;
 - its ``style`` (where it has one: a theme without modules has none) becomes the family's
   cards;
@@ -24,11 +25,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # (tools/lp_check.py)
+from lp_check import design, family_of, family_palette, family_style  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-from libre_panel.design import ALIASES, STYLE_DEFAULTS, family_of  # noqa: E402
-
 THEMES = ROOT / "data" / "themes"
 
 
@@ -44,6 +44,7 @@ def designed(name: str, data: dict[str, Any]) -> tuple[dict[str, Any], list[str]
     if found is None:
         return data, [f"{name}: of no family in design.FAMILIES"]
     family_name, family = found
+    aliases, style_defaults = design()["aliases"], design()["style_defaults"]
     out = json.loads(json.dumps(data))
     changes: list[str] = []
     palette = out.get("palette") or {}
@@ -60,17 +61,17 @@ def designed(name: str, data: dict[str, Any]) -> tuple[dict[str, Any], list[str]
                 if isinstance(colour, str) and _same(colour, palette[ref]):
                     changes.append(f"{name}: background.gradient[{i}] {colour} -> @{ref}")
                     gradient[i] = "@" + ref
-    look = family.palette()
+    look = family_palette(family)
     for key, colour in palette.items():
-        role = key if key in look else ALIASES.get(key)
+        role = key if key in look else aliases.get(key)
         if role in look and not _same(colour, look[role]):
             changes.append(f"{name}: palette.{key} {colour} -> {look[role]} ({family_name})")
             palette[key] = look[role]
     style = out.get("style")
     if isinstance(style, dict):
-        cards = family.style()
+        cards = family_style(family)
         for key, value in cards.items():
-            if not _same({**STYLE_DEFAULTS, **style}[key], value):
+            if not _same({**style_defaults, **style}[key], value):
                 changes.append(f"{name}: style.{key} {style.get(key)} -> {value}")
                 style[key] = value
     return out, changes
