@@ -1405,3 +1405,152 @@ impl Source for Demo {
         1 // (always the same ones)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A source of the test's own: its readings, how it follows, what it overrides, and how
+    /// often it was read.
+    struct Fixed {
+        values: Vec<(&'static str, Value)>,
+        every: Every,
+        overrides: &'static [&'static str],
+        read: Arc<AtomicUsize>,
+    }
+
+    fn fixed(values: Vec<(&'static str, Value)>) -> Fixed {
+        Fixed {
+            values,
+            every: Every::No,
+            overrides: &[],
+            read: Arc::default(),
+        }
+    }
+
+    impl Source for Fixed {
+        fn name(&self) -> &'static str {
+            "fixed"
+        }
+        fn read(&mut self, out: &mut Readings) {
+            let n = self.read.fetch_add(1, Ordering::SeqCst);
+            for (key, value) in &self.values {
+                // (a number goes up by one with each read)
+                let value = match value {
+                    Value::Float(f) => Value::Float(f + n as f64),
+                    other => other.clone(),
+                };
+                out.insert(key.to_string(), Reading::of(value));
+            }
+        }
+        fn every_frame(&self) -> Every {
+            self.every
+        }
+        fn overrides(&self) -> &'static [&'static str] {
+            self.overrides
+        }
+    }
+
+    fn number(readings: &Readings, key: &str) -> Option<f64> {
+        match readings.get(key).map(|reading| &reading.value) {
+            Some(Value::Float(f)) => Some(*f),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_first_source_with_a_key_wins_unless_a_later_one_says_it_outright() {
+        let first = fixed(vec![("cpu.temp", Value::Float(50.0))]);
+        let mut second = fixed(vec![
+            ("cpu.temp", Value::Float(70.0)),
+            ("gpu.temp", Value::Float(40.0)),
+            ("cpu.name", Value::Str("Ryzen".into())),
+        ]); // fmt: skip
+        second.overrides = &["cpu.name"];
+        let third = Fixed {
+            overrides: &["cpu.name"],
+            ..fixed(vec![("cpu.name", Value::Str("My own".into()))])
+        };
+        let mut hub = Hub::new(vec![Box::new(first), Box::new(second), Box::new(third)]);
+        let shot = hub.snapshot(Moment::date(2026, 1, 1), false);
+        assert_eq!(number(&shot.readings, "cpu.temp"), Some(50.0));
+        assert_eq!(number(&shot.readings, "gpu.temp"), Some(40.0));
+        assert_eq!(shot.readings["cpu.name"].value, Value::Str("My own".into()));
+        let counts: Vec<usize> = hub.sources().iter().map(|(_, count, _)| *count).collect();
+        assert_eq!(counts, [1, 1, 1]);
+    }
+
+    #[test]
+    fn a_history_is_each_numbers_last_six_hundred_as_the_snapshots_saw_them() {
+        let source = fixed(vec![
+            ("cpu.load", Value::Float(0.0)),
+            ("cpu.name", Value::Str("x".into())),
+        ]);
+        let mut hub = Hub::new(vec![Box::new(source)]);
+        let mut shot = Snapshot::default();
+        for _ in 0..HISTORY_LENGTH + 5 {
+            shot = hub.snapshot(Moment::date(2026, 1, 1), false);
+        }
+        let series = &shot.history["cpu.load"];
+        assert_eq!(series.len(), HISTORY_LENGTH);
+        assert_eq!((series[0], series[HISTORY_LENGTH - 1]), (5.0, 604.0));
+        assert!(!shot.history.contains_key("cpu.name")); // (a text has none)
+    }
+
+    #[test]
+    fn sources_that_follow_on_every_frame_are_read_between_snapshots_for_their_own_keys() {
+        let slow = fixed(vec![("audio.volume", Value::Float(10.0))]);
+        let frame = Fixed {
+            every: Every::Frame,
+            ..fixed(vec![
+                ("audio.volume", Value::Float(90.0)),
+                ("audio.muted", Value::Float(0.0)),
+            ])
+        };
+        let video = Fixed {
+            every: Every::Video,
+            ..fixed(vec![("cpu.load", Value::Float(1.0))])
+        };
+        let mut hub = Hub::new(vec![Box::new(slow), Box::new(frame), Box::new(video)]);
+        assert!(hub.every_frame());
+        hub.snapshot(Moment::date(2026, 1, 1), false);
+        let between = hub.fresh(false);
+        // (the volume is the first source's: not taken from the one that follows)
+        assert_eq!(number(&between, "audio.volume"), None);
+        assert_eq!(number(&between, "audio.muted"), Some(1.0)); // (read again)
+        assert_eq!(number(&between, "cpu.load"), None); // (only in video mode)
+        assert_eq!(number(&hub.fresh(true), "cpu.load"), Some(2.0));
+        let still = fixed(vec![("cpu.load", Value::Float(1.0))]);
+        assert!(!Hub::new(vec![Box::new(still)]).every_frame());
+    }
+
+    #[test]
+    fn a_panel_beside_takes_what_was_read_last_where_it_is_new_enough() {
+        let source = fixed(vec![("cpu.load", Value::Float(0.0))]);
+        let read = source.read.clone();
+        let mut hub = Hub::new(vec![Box::new(source)]);
+        assert_eq!(hub.age(), None);
+        hub.snapshot(Moment::date(2026, 1, 1), false);
+        let (readings, _) = hub.shared(View::SHARE_S);
+        assert_eq!(number(&readings, "cpu.load"), Some(0.0));
+        assert_eq!(read.load(Ordering::SeqCst), 1); // (not read twice)
+        let (readings, _) = hub.shared(0.0);
+        assert_eq!(number(&readings, "cpu.load"), Some(1.0));
+        assert!(hub.age().is_some_and(|age| age < 1.0));
+    }
+
+    #[test]
+    fn what_each_panel_reads_is_wanted_until_its_loop_ends() {
+        let mut hub = Hub::new(Vec::new());
+        hub.want(0, ["cpu.*".to_string()]);
+        hub.want(2, ["gpu.temp".to_string()]);
+        let keys = |hub: &Hub| hub.wanted.keys().iter().cloned().collect::<Vec<_>>();
+        assert_eq!(keys(&hub), ["cpu.*", "gpu.temp"]);
+        hub.forget(2);
+        assert_eq!(keys(&hub), ["cpu.*"]);
+        // (a hub made anew, config.toml's sources changed, keeps what the loops read)
+        hub.replace(Hub::new(Vec::new()));
+        assert_eq!(keys(&hub), ["cpu.*"]);
+    }
+}
