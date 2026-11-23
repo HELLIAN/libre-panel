@@ -62,6 +62,19 @@ fn text(found: WinResult<HSTRING>) -> String {
     found.map(|text| text.to_string_lossy()).unwrap_or_default()
 }
 
+/// The managers this process has had, of which one is kept until the process ends.
+///
+/// Windows takes back the module that implements the media controls once nothing holds
+/// anything of it, and the reader holds nothing a minute after no theme asked what is playing
+/// (`media.rs` ends its thread and closes the backend). The ask that follows, when a theme
+/// wants what plays again, then hands back a pointer into the memory that module used to be
+/// in: the whole program died about a second after a game ended, on an indirect call through
+/// the vtable of the unloaded `Windows.Media.MediaControl.dll` (0.9.2 and 0.9.4, 0xc0000005 at
+/// +0xe4ca5b and +0xe505bb, and the log said nothing). Keeping one manager for the life of the
+/// process keeps that module in place, and a look after a rest answers from the manager it had
+/// rather than asking Windows for it again.
+static HELD: Mutex<Vec<Manager>> = Mutex::new(Vec::new());
+
 /// What is listened to of a session, to let go of it again.
 struct Listening {
     session: Session,
@@ -74,6 +87,8 @@ pub struct Controls {
     news: Arc<Mutex<News>>,
     manager: Option<Manager>,
     manager_token: Option<i64>,
+    /// the manager kept before can be asked again (false: it failed, ask Windows for a new one)
+    reuse: bool,
     /// every event could be subscribed
     manager_listens: bool,
     session_listens: bool,
@@ -100,6 +115,7 @@ impl Controls {
             news: Arc::new(Mutex::new(News::default())),
             manager: None,
             manager_token: None,
+            reuse: true,
             manager_listens: true,
             session_listens: true,
             session_id: None,
@@ -272,8 +288,29 @@ impl Controls {
         let manager = match &self.manager {
             Some(manager) => manager.clone(),
             None => {
-                let asked = Manager::RequestAsync().map_err(|why| why.message())?;
-                let manager = asked.get().map_err(|why| why.message())?;
+                // A manager this process already had, if it is still trusted: asking Windows
+                // for the media controls again is what went wrong after the module had gone.
+                let held = if self.reuse {
+                    HELD.lock().ok().and_then(|held| held.last().cloned())
+                } else {
+                    None
+                };
+                let manager = match held {
+                    Some(manager) => manager,
+                    None => {
+                        let asked = Manager::RequestAsync().map_err(|why| why.message())?;
+                        let manager = asked.get().map_err(|why| why.message())?;
+                        if let Ok(mut held) = HELD.lock() {
+                            held.push(manager.clone());
+                            // (the last few, so that one of them is always held: while one is
+                            // held Windows leaves the module where it is)
+                            while held.len() > 3 {
+                                held.remove(0);
+                            }
+                        }
+                        manager
+                    }
+                };
                 self.manager_token = manager
                     .CurrentSessionChanged(&self.handler(SESSION_CHANGED))
                     .ok();
@@ -374,7 +411,9 @@ impl Backend for Controls {
     fn poll(&mut self, want_cover: bool, now: &dyn Fn() -> f64) -> Result<Option<Track>, String> {
         let found = self.look(want_cover, now);
         if found.is_err() {
-            // the manager and the subscriptions may be unusable now: start anew
+            // the manager and the subscriptions may be unusable now: start anew, and ask
+            // Windows for a manager next time instead of the one that just failed
+            self.reuse = false;
             self.close();
         }
         found
