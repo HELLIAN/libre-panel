@@ -450,6 +450,22 @@ impl Display {
     }
 
     /// A display that writes its frames to `path` and nothing else.
+    /// A display of the tests' own driver.
+    #[cfg(test)]
+    pub(crate) fn of_driver(driver: Box<dyn Driver>) -> Display {
+        Display {
+            device: DeviceConfig::default(),
+            settings: PathBuf::new(),
+            panel: Panel::Other {
+                driver,
+                previous: None,
+            },
+            brightness: 60,
+            next_probe: 0.0,
+            notes: Vec::new(),
+        }
+    }
+
     pub fn file(device: &DeviceConfig, path: PathBuf) -> Display {
         Display {
             device: DeviceConfig {
@@ -833,6 +849,34 @@ impl Display {
     pub fn set_range(&mut self, range: Option<&str>) {
         if let Panel::Turzx(panel) = &mut self.panel {
             panel.set_range(range.map(str::to_string));
+        }
+    }
+
+    /// The kind of picture a frame goes to the panel as (the panel test's speed names it).
+    pub fn picture(&self) -> String {
+        match &self.panel {
+            Panel::Other { driver, .. } => driver.picture(),
+            _ => "RGB565".into(),
+        }
+    }
+
+    /// The layout of JPEG the panel is sent (another maker's screen that takes JPEG), None
+    /// for a panel that is sent no JPEG of a layout to choose.
+    pub fn jpeg_layout(&self) -> Option<String> {
+        match &self.panel {
+            Panel::Other { driver, .. } => driver.jpeg_layout(),
+            _ => None,
+        }
+    }
+
+    /// set_jpeg: the panel's pictures as JPEG of `layout` from now on, the next one whole.
+    pub fn set_jpeg(&mut self, layout: &str) -> Result<(), String> {
+        match &mut self.panel {
+            Panel::Other { driver, previous } => {
+                *previous = None;
+                driver.set_jpeg(layout).map_err(|e| e.0)
+            }
+            _ => Ok(()),
         }
     }
 
