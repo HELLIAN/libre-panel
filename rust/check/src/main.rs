@@ -772,6 +772,36 @@ fn run(case: &Value) -> Result<Value, String> {
             let picture = lp_render::branding::mark(diameter, light).map_err(|e| e.0)?;
             json!({"image": value_of(&picture)})
         }
+        "theme_grid" => {
+            // a theme's size, model and grid as the editor makes it (make_grid of its width,
+            // height, grid settings and model), of its JSON text; or why it is no theme
+            let env = lp_theme::Env {
+                fonts_dir: case["fonts_dir"].as_str().unwrap_or("").into(),
+            };
+            let data = match lp_py::json::loads(case["theme"].as_str().unwrap_or("")) {
+                Ok(data) => data,
+                Err(e) => return Ok(json!({"error": e.to_string()})),
+            };
+            let theme = match lp_theme::model::parse_theme(&data, None, &env) {
+                Ok(theme) => theme,
+                Err(e) => return Ok(json!({"error": e.msg})),
+            };
+            let int = |k: &str| match theme.grid.as_ref().and_then(|g| g.get(k)) {
+                Some(lp_py::Value::Int(n)) => i64::try_from(n).unwrap_or(0),
+                Some(lp_py::Value::Bool(b)) => i64::from(*b),
+                _ => 0,
+            };
+            let settings = lp_theme::grid::Settings {
+                columns: int("columns"),
+                rows: int("rows"),
+                gap: int("gap"),
+                margin: int("margin"),
+            };
+            let grid = lp_theme::grid::make_grid(theme.width, theme.height, settings, &theme.model);
+            json!({"width": theme.width, "height": theme.height, "model": theme.model,
+                "x": grid.x, "y": grid.y, "cell_w": grid.cell_w, "cell_h": grid.cell_h,
+                "gap": grid.gap, "columns": grid.columns, "rows": grid.rows})
+        }
         "demo_keys" => {
             // the keys of the demo's readings at a moment (sensors/demo.py's demo_snapshot)
             let utc = lp_py::zones::Zone::utc();

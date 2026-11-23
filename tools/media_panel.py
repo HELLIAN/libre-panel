@@ -20,7 +20,6 @@ panel shows them.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import shutil
 import tempfile
@@ -34,6 +33,7 @@ from unittest import mock
 
 import readme_images as images
 from media_encode import FrameSink, Recorded, Settings, fade_loop
+from media_themes import LAYOUTS, Grid, theme_data, theme_folder
 from PIL import Image, ImageChops
 
 from libre_panel import app, i18n
@@ -56,14 +56,12 @@ from libre_panel.sequence import Step
 from libre_panel.services.notices import Notices
 from libre_panel.theme.adapt import adapt_theme
 from libre_panel.theme.model import (
-    THEME_FORMAT,
     find_theme,
     load_theme,
     pair_version,
     parse_theme,
     save_theme,
 )
-from libre_panel.theme.modules import look_theme_parts, make_grid
 
 START = 1000.0  # the loop's clock at the first frame of a clip (the number is arbitrary)
 WARMUP_S = (
@@ -357,24 +355,6 @@ def workshop() -> Iterator[Path]:
             loader.reset_registry()
 
 
-def theme_folder(source: str) -> Path | None:
-    """``source`` as a folder with a theme in it (``theme.json``), if it is one."""
-    folder = Path(source)
-    return folder if (folder / "theme.json").is_file() else None
-
-
-def theme_data(source: str | dict[str, Any]) -> tuple[dict[str, Any], Path | None]:
-    """The data of a theme, and the folder its files are in (None: it has none). ``source`` is
-    theme data, one of the :data:`LAYOUTS`, a folder with a theme in it, or the id of a built-in
-    or user theme."""
-    if isinstance(source, dict):
-        return dict(source), None
-    if source in LAYOUTS:
-        return LAYOUTS[source](), None
-    folder = theme_folder(source) or find_theme(source)
-    return json.loads((folder / "theme.json").read_text(encoding="utf-8")), folder
-
-
 # -- the stage ----------------------------------------------------------------------------------
 
 
@@ -594,39 +574,6 @@ class Presenter:
 # -- layouts: Libre Panel's own look, made of modules ---------------------------------------------
 
 
-def module(kind: str, col: int, row: int, cols: int = 1, rows: int = 1, **options: Any) -> dict:
-    return {"module": kind, "col": col, "row": row, "cols": cols, "rows": rows, **options}
-
-
-def modules_theme(
-    look: str,
-    modules: list[dict],
-    refresh_ms: int = 500,
-    model: str = "turing-9.2-usb",
-) -> dict[str, Any]:
-    """A theme made of modules for a panel (the 9.2" bar unless ``model`` says another), in one
-    of the looks of the editor (the pictures of tools/readme_images.py are made the same way)."""
-    palette, style = look_theme_parts(look)
-    data: dict[str, Any] = {
-        "format": THEME_FORMAT,
-        "name": f"Clip layout ({look})",
-        "display": {"model": model, "orientation": "landscape"},
-        "palette": palette,
-        "style": style,
-        "background": {"color": palette["bg"]},
-        "refresh_ms": refresh_ms,
-        "animation": {"smoothing_ms": 500},
-        "widgets": [{"type": "module", "id": f"m{n}", **m} for n, m in enumerate(modules)],
-    }
-    return data
-
-
-# Themes a recipe may name besides the built-in ones: screens that Libre Panel's themes do not
-# have, made of modules in Libre Panel's own look (tools/media_app.py adds its own).
-# ``--theme clip=THEME`` puts any theme in a clip's place.
-LAYOUTS: dict[str, Callable[[], dict[str, Any]]] = {}
-
-
 # -- recipes ------------------------------------------------------------------------------------
 
 
@@ -644,8 +591,7 @@ class Focus:
 
     def box(self, data: dict[str, Any]) -> tuple[int, int, int, int] | None:
         """(x, y, width, height) in the panel's own pixels; None if the theme has none of them."""
-        theme = parse_theme(data)
-        grid = make_grid(theme.width, theme.height, theme.grid, theme.model)
+        theme = grid = Grid(data)
         found = []
         for widget in data.get("widgets", []):
             kind = widget.get("module") if widget.get("type") == "module" else widget.get("type")

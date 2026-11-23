@@ -20,26 +20,19 @@ import contextlib
 import io
 import json
 import math
-import os
 import shutil
 import tempfile
-import threading
 import urllib.parse
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from unittest import mock
 
 import media_samples
 import readme_images as images
 from media_encode import FrameSink, Recorded, Settings
-from media_panel import LAYOUTS, modules_theme, theme_data
+from media_themes import LAYOUTS, Grid, modules_theme, theme_data
 from PIL import Image
-
-from libre_panel.config import user_themes_dir
-from libre_panel.theme.model import parse_theme, save_theme
-from libre_panel.theme.modules import make_grid
 
 VIEWPORT = (1280, 720)  # the app in a window of a laptop: the library, the panel, the inspector
 DENSITY = 2.0  # pixels of the picture to a pixel of the page: text is drawn at twice the size ...
@@ -327,8 +320,7 @@ def room_for_two(data: dict[str, Any]) -> dict[str, Any]:
     goes if there is none."""
     modules = [w for w in data["widgets"] if w["type"] == "module"]
     while modules:
-        theme = parse_theme(data)
-        grid = make_grid(theme.width, theme.height, theme.grid, theme.model)
+        grid = Grid(data)
         taken = {
             (c, r)
             for w in modules
@@ -349,42 +341,23 @@ def room_for_two(data: dict[str, Any]) -> dict[str, Any]:
 def running(
     theme: dict[str, Any], folder: Path | None = None, language: str = "en"
 ) -> Iterator[str]:
-    """The editor's server on a port of its own, with ``theme`` (and the files in ``folder``)
-    in a home called LibrePanel; yields its address, with the access token the app takes."""
-    from libre_panel.config import set_config_value
-    from libre_panel.editor import access, drawings
-    from libre_panel.editor import server as editor
-    from libre_panel.plugins import loader
-    from libre_panel.sensors.demo import demo_snapshot
-
-    def preview(fixed_time: float | None = None, **kwargs: Any) -> Any:
-        return demo_snapshot(fixed_time or images.WHEN, **kwargs)  # the clock stands still
-
+    """Libre Panel's server (the program built in rust/: readme_images.rust_app) on a port of its
+    own, with ``theme`` (and the files in ``folder``) in a home called LibrePanel, the previews'
+    clock standing still at the moment of the README's pictures; yields its address, with the
+    access token the app takes."""
     with tempfile.TemporaryDirectory(prefix="readme-media-app-") as parent:
         home = Path(parent) / "LibrePanel"
-        home.mkdir()
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(mock.patch.dict(os.environ, {"LIBRE_PANEL_HOME": str(home)}))
-            stack.enter_context(mock.patch.object(loader, "_installed", lambda group: iter(())))
-            stack.enter_context(mock.patch.object(editor, "demo_snapshot", preview))
-            stack.enter_context(mock.patch.object(drawings, "demo_snapshot", preview))
-            loader.reset_registry()
-            if folder is not None:
-                shutil.copytree(folder, user_themes_dir() / THEME, dirs_exist_ok=True)
-            save_theme(THEME, theme)
-            set_config_value("theme", THEME)
-            set_config_value("language", language)
-            server = editor.make_server(port=0)
-            threading.Thread(target=server.serve_forever, daemon=True).start()
-            try:
-                yield access.with_token(
-                    f"http://127.0.0.1:{server.server_address[1]}/", server.token
-                )
-            finally:
-                server.shutdown()
-                server.server_close()
-                server.editor_state.close()
-                loader.reset_registry()
+        own = home / "themes" / THEME
+        if folder is not None:
+            shutil.copytree(folder, own, dirs_exist_ok=True)
+        own.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(theme, indent=2, ensure_ascii=False) + "\n"
+        (own / "theme.json").write_text(text, encoding="utf-8")
+        config = f"theme = {json.dumps(THEME)}\nlanguage = {json.dumps(language)}\n"
+        (home / "config.toml").write_text(config, encoding="utf-8")
+        # (the demo's readings alone: what the panel of a clip shows)
+        with images.rust_app(home, "editor", "--port", "0", extra=False) as address:
+            yield address
 
 
 # -- clips ------------------------------------------------------------------------------------

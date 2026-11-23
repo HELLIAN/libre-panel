@@ -748,10 +748,11 @@ NEUTRAL_MACHINE = {"cpu": "8-Core Processor", "adapters": [["Graphics Card", 8 *
 
 
 @contextlib.contextmanager
-def rust_app(home: Path, *command: str):
+def rust_app(home: Path, *command: str, extra: bool = True):
     """Libre Panel (the program built in rust/, tools/lp_check.py) run with ``command`` in the
-    settings folder ``home``, on the neutral computer: the address it says it runs at (with its
-    token after "#token="). It is stopped at the end."""
+    settings folder ``home``, on the neutral computer (``extra``: :data:`EXTRA` over the demo's
+    readings in its previews): the address it says it runs at (with its token after "#token=").
+    It is stopped at the end."""
     import signal
     import subprocess
 
@@ -765,10 +766,12 @@ def rust_app(home: Path, *command: str):
         **os.environ, **libraries(), **english,
         "LIBRE_PANEL_HOME": str(home), "LIBRE_PANEL_DATA": str(ROOT / "data"),
         "XDG_CONFIG_HOME": str(home / "xdg"), "LP_TEST_BUS": str(home / "bus"),
-        "LP_HARDWARE": str(home / "machine.json"), "LP_DEMO_READINGS": str(home / "readings.json"),
-        "LP_NOW": repr(WHEN), "LP_SETUP_SYSTEM": "other", "LP_LINUX_ROOT": "/no/such/root",
+        "LP_HARDWARE": str(home / "machine.json"), "LP_NOW": repr(WHEN),
+        "LP_SETUP_SYSTEM": "other", "LP_LINUX_ROOT": "/no/such/root",
         "LP_COMMUNITY_INDEX": "http://127.0.0.1:9/community/themes/index.json",
     }  # fmt: skip
+    if extra:
+        env["LP_DEMO_READINGS"] = str(home / "readings.json")
     process = subprocess.Popen([str(app_program()), *command], env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, encoding="utf-8")  # fmt: skip
     said = []
