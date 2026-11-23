@@ -914,23 +914,20 @@ def test_not_now_writes_no_name_and_the_question_is_not_asked_again(
 
 
 @pytest.mark.parametrize(
-    ("extra", "model", "ffmpeg"),
+    ("extra", "model"),
     [
-        pytest.param(f'[video]\nlocal_clip = "{CLIP}"\n', "turing-9.2-usb", True, id="clip-set"),
-        pytest.param("", "turing-9.2-usb", False, id="no-ffmpeg"),
-        pytest.param("", "turing-8.8-usb", True, id="not-proven"),
-        pytest.param("", None, True, id="no-panel"),
-        pytest.param('[video]\nmode = "off"\n', "turing-9.2-usb", True, id="mode-off"),
-        pytest.param('[video]\nmode = "on"\n', "turing-9.2-usb", True, id="mode-on"),
-        pytest.param("[video]\nclip_asked = true\n", "turing-9.2-usb", True, id="asked"),
-        pytest.param('[device]\ndriver = "virtual"\n', "turing-9.2-usb", True, id="no-hardware"),
+        pytest.param(f'[video]\nlocal_clip = "{CLIP}"\n', "turing-9.2-usb", id="clip-set"),
+        pytest.param("", "turing-8.8-usb", id="not-proven"),
+        pytest.param("", None, id="no-panel"),
+        pytest.param('[video]\nmode = "off"\n', "turing-9.2-usb", id="mode-off"),
+        pytest.param('[video]\nmode = "on"\n', "turing-9.2-usb", id="mode-on"),
+        pytest.param("[video]\nclip_asked = true\n", "turing-9.2-usb", id="asked"),
+        pytest.param('[device]\ndriver = "virtual"\n', "turing-9.2-usb", id="no-hardware"),
     ],
 )
 def test_start_does_not_ask_for_the_standby_clip_unless_it_is_all_that_is_missing(
-    app_url, isolated_home, monkeypatch, extra, model, ffmpeg
+    app_url, isolated_home, monkeypatch, extra, model
 ):
-    if not ffmpeg:  # (rust/devices/src/turzx.rs, video_gaps)
-        pytest.skip("the Rust app's engine encodes the video: it looks for no ffmpeg")
     panel_on_the_bus(monkeypatch, model)
     choose_theme(isolated_home)
     with isolated_home.joinpath("config.toml").open("a", encoding="utf-8") as config:
