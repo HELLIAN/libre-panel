@@ -736,6 +736,7 @@ mod tests {
     use crate::protocol::PROTOCOL;
     use lp_py::Dict;
     use std::net::TcpListener;
+    use std::sync::atomic::AtomicUsize;
 
     struct Fake {
         answers: Arc<AtomicBool>,
@@ -894,6 +895,121 @@ mod tests {
         let readings = provider.read();
         assert_eq!(value(&readings, "gpu.temp"), Some(54.0));
         assert_eq!(provider.status().mode, "webserver");
+        provider.close();
+    }
+
+    /// A web server as LibreHardwareMonitor's that answers while `answering` holds (else it
+    /// closes the connection at once), counting the requests; its port.
+    fn switched_web_server(answering: Arc<AtomicBool>, asked: Arc<AtomicUsize>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                asked.fetch_add(1, Ordering::SeqCst);
+                if !answering.load(Ordering::SeqCst) {
+                    continue; // (dropped: the connection closes unanswered)
+                }
+                let mut request = [0u8; 2048];
+                let _ = stream.read(&mut request);
+                let body = r#"{"Text":"Sensor","Children":[{"Text":"NVIDIA GeForce RTX 4080",
+                    "HardwareId":"/gpu-nvidia/0","Children":[{"Text":"GPU Core",
+                    "SensorId":"/gpu-nvidia/0/temperature/0","Type":"Temperature",
+                    "Value":"54,0 °C"}]}]}"#;
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+                let _ = stream.write_all(format!("{head}{body}").as_bytes());
+            }
+        });
+        port
+    }
+
+    fn web_options(port: u16, stale_seconds: f64) -> LhmOptions {
+        LhmOptions {
+            url: format!("http://127.0.0.1:{port}/data.json"),
+            poll_seconds: 0.1,
+            stale_seconds,
+            ..LhmOptions::default()
+        }
+    }
+
+    #[test]
+    fn a_silent_web_server_hides_the_readings_after_a_while_and_they_come_back() {
+        let (answering, asked) = (Arc::new(AtomicBool::new(true)), Arc::default());
+        let port = switched_web_server(answering.clone(), asked);
+        let answers = Arc::new(AtomicBool::new(false));
+        let options = web_options(port, 0.6);
+        let provider = Provider::new(options, Wanted::default(), system(false, &answers));
+        assert!(until(|| value(&provider.read(), "gpu.temp") == Some(54.0)));
+        answering.store(false, Ordering::SeqCst);
+        let silent = Instant::now();
+        assert!(until(|| provider.read().is_empty()));
+        let after = silent.elapsed().as_secs_f64();
+        assert!(
+            after >= 0.5,
+            "hidden after {after} s: a short silence keeps them"
+        );
+        let url = format!("http://127.0.0.1:{port}/data.json");
+        let notes = provider.notes();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        let hidden = format!("LibreHardwareMonitor has not answered at {url} for ");
+        assert!(notes[0].starts_with(&hidden), "{notes:?}");
+        assert!(
+            notes[0].ends_with("): its readings are hidden until it does"),
+            "{notes:?}"
+        );
+        answering.store(true, Ordering::SeqCst);
+        assert!(until(|| value(&provider.read(), "gpu.temp") == Some(54.0)));
+        let back = format!("LibreHardwareMonitor answers again at {url}: its readings are back");
+        assert_eq!(provider.notes(), [back]);
+        provider.close();
+    }
+
+    #[test]
+    fn zero_keeps_the_last_readings_however_long_it_is_silent() {
+        let (answering, asked) = (Arc::new(AtomicBool::new(true)), Arc::default());
+        let port = switched_web_server(answering.clone(), asked);
+        let answers = Arc::new(AtomicBool::new(false));
+        let provider = Provider::new(
+            web_options(port, 0.0),
+            Wanted::default(),
+            system(false, &answers),
+        );
+        assert!(until(|| value(&provider.read(), "gpu.temp") == Some(54.0)));
+        answering.store(false, Ordering::SeqCst);
+        let url = format!("http://127.0.0.1:{port}/data.json");
+        let unreachable = format!("LibreHardwareMonitor not reachable at {url}: ");
+        assert!(until(|| provider
+            .notes()
+            .iter()
+            .any(|line| line.starts_with(&unreachable))));
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(value(&provider.read(), "gpu.temp"), Some(54.0));
+        provider.close();
+    }
+
+    #[test]
+    fn a_web_server_that_never_answered_costs_one_quiet_line_and_is_asked_less_often() {
+        let (answering, asked) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let port = switched_web_server(answering, asked.clone());
+        let answers = Arc::new(AtomicBool::new(false));
+        let provider = Provider::new(
+            web_options(port, 5.0),
+            Wanted::default(),
+            system(false, &answers),
+        );
+        std::thread::sleep(Duration::from_millis(1600));
+        // (0.1 s apart, doubling: 0, 0.1, 0.3, 0.7, 1.5 s; not sixteen requests)
+        let count = asked.load(Ordering::SeqCst);
+        assert!((3..=6).contains(&count), "{count} requests");
+        let notes = provider.notes();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        let url = format!("http://127.0.0.1:{port}/data.json");
+        assert!(notes[0].starts_with(&format!("LibreHardwareMonitor does not answer at {url} (")));
+        assert!(notes[0].ends_with("run as administrator with Options -> Remote Web Server -> Run"));
+        assert!(provider.read().is_empty());
         provider.close();
     }
 

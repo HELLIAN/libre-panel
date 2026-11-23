@@ -746,4 +746,153 @@ mod tests {
         assert!(!found.is_some_and(|found| found.starts_with(&downloads)));
         std::fs::remove_dir_all(&folder).unwrap();
     }
+
+    /// A PresentMon of the test's own: a shell script in a folder of its own.
+    #[cfg(unix)]
+    fn script(name: &str, body: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = std::env::temp_dir().join(format!("lp-pm-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let program = folder.join("PresentMon");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ncd \"$(dirname \"$0\")\"\n{body}\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (folder, program)
+    }
+
+    #[cfg(unix)]
+    fn game() -> Wanted {
+        let wanted = Wanted::default();
+        wanted.set(["game.*".to_string()]);
+        wanted
+    }
+
+    #[cfg(unix)]
+    fn until(seconds: f64, mut done: impl FnMut() -> bool) -> bool {
+        let end = Instant::now() + Duration::from_secs_f64(seconds);
+        while !done() {
+            if Instant::now() > end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        true
+    }
+
+    #[cfg(unix)]
+    fn alive(folder: &Path) -> bool {
+        let pid = std::fs::read_to_string(folder.join("pid")).unwrap_or_default();
+        let pid = pid.trim();
+        !pid.is_empty()
+            && Command::new("kill")
+                .args(["-0", pid])
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn it_starts_when_somebody_reads_game_its_frames_become_readings_and_close_ends_it() {
+        let (folder, program) = script(
+            "frames",
+            r#"echo $$ > pid
+echo "Application,ProcessID,MsBetweenPresents,MsCPUBusy,MsCPUWait,MsGPUBusy,MsGPUWait"
+while :; do echo "Game.exe,12,16.6,5,1,9,0.5"; sleep 0.02; done"#,
+        );
+        let wanted = Wanted::default();
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), wanted.clone());
+        assert!(source.read().is_empty());
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!folder.join("pid").exists()); // (nobody reads game.*: not started)
+        wanted.set(["game.*".to_string()]);
+        assert!(until(10.0, || source.read().contains_key("game.fps")));
+        let readings = source.read();
+        let shown = lp_py::Value::Str("Game".into()); // (the program's name, as it is shown)
+        assert_eq!(readings["game.app"].value, shown);
+        assert!(alive(&folder));
+        source.close();
+        assert!(!alive(&folder));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_session_the_anti_cheat_refuses_is_said_once_and_tried_again_slowly() {
+        let (folder, program) = script(
+            "blocked",
+            r#"echo x >> tries
+echo "error: Access denied (0x5)" >&2
+exit 1"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        assert!(until(10.0, || source.blocked()));
+        let said = "PresentMon cannot start a session while a game with an anti-cheat runs; \
+                    it tries again until the game is over";
+        assert_eq!(source.problem().as_deref(), Some(said));
+        std::thread::sleep(Duration::from_secs(2));
+        assert_eq!(source.notes(), [said]);
+        let tries = std::fs::read_to_string(folder.join("tries")).unwrap();
+        assert_eq!(tries.lines().count(), 1); // (again only after BLOCKED_SECONDS)
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_that_cannot_run_without_rights_says_so_and_one_that_works_clears_it() {
+        let (folder, program) = script(
+            "rights",
+            r#"if [ ! -e tried ]; then
+  touch tried
+  echo "warning: PresentMon requires elevated privilege" >&2
+  echo "error: failed to start trace session" >&2
+  exit 1
+fi
+echo "Application,ProcessID,MsBetweenPresents"
+while :; do echo "Game.exe,12,16.6"; sleep 0.02; done"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        let rights = "PresentMon ended at once: it needs administrator rights or the \
+                      \"Performance Log Users\" group: error: failed to start trace session";
+        assert!(until(10.0, || source.problem().as_deref() == Some(rights)));
+        assert!(!source.blocked());
+        // (started again after RETRY_SECONDS, recording once steady)
+        assert!(until(15.0, || source.problem().is_none()));
+        assert_eq!(source.notes(), [rights, "PresentMon is recording"]);
+        assert!(until(5.0, || source.read().contains_key("game.fps")));
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_output_without_a_frame_time_ends_it_and_one_not_there_is_said() {
+        let (folder, program) = script(
+            "columns",
+            r#"echo $$ > pid
+echo "Application,ProcessID,Foo"
+exec sleep 30"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        let none = "PresentMon: no frame time column in ";
+        assert!(until(10.0, || source
+            .problem()
+            .is_some_and(|said| said.starts_with(none))));
+        assert!(until(10.0, || !alive(&folder)));
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+        let mut missing = PresentMonSource::new("/nowhere/PresentMon", game());
+        missing.read();
+        let said = "PresentMon not found: set path in [sensors.presentmon]";
+        assert!(until(10.0, || missing.problem().as_deref() == Some(said)));
+        missing.close();
+    }
 }
