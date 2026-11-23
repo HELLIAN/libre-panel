@@ -225,7 +225,7 @@ jobs:
           python -c "from libre_panel import rights; rights.elevated = lambda: False
           from libre_panel.devices.h264 import find_engine; assert find_engine(), 'no engine'"
           pytest -q -rs tests/test_native_engine.py tests/test_engine_panel.py tests/test_yuv.py \
-            tests/test_scene.py
+            tests/test_scene.py tests/test_engine_program.py
 
   rust:
     # Libre Panel in Rust (docs/RUST.md): the workspace's crates, then their comparisons with

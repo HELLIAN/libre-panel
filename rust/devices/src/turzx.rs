@@ -286,6 +286,30 @@ pub fn block_of(size: (i64, i64)) -> Option<i64> {
         .find(|block| size.0 % block == 0 && size.1 % block == 0)
 }
 
+/// engine_encoder: the encoder the engine is asked for, as video.engine_encoder says and the
+/// engine at hand can (its `capabilities`): "card" where it has the graphics card's encoders
+/// (else x264, which is said), "auto" on Windows where it proves the card with the panels,
+/// x264 otherwise; and the note to say.
+pub fn engine_encoder(
+    setting: &str,
+    capabilities: &str,
+    windows: bool,
+) -> (String, Option<String>) {
+    let (encoder, note) = match setting {
+        "card" if !capabilities.contains("cards") => (
+            "x264",
+            Some(
+                "video: this engine has no graphics card's encoder (one of before); x264 in the \
+                 engine encodes",
+            ),
+        ),
+        "card" => ("card", None),
+        "auto" if windows && capabilities.contains("proven") => ("auto", None),
+        _ => ("x264", None),
+    };
+    (encoder.to_string(), note.map(str::to_string))
+}
+
 /// engine_options: how the engine encodes frames of `size` into the panel's framebuffer, as
 /// h264.py's engine_options says it, at `rate` (Mbit/s) and with the stream's lead.
 /// `encoder`: "x264", "card" or "auto", as the engine at hand can.
@@ -818,20 +842,8 @@ impl TurzxVideo {
         }
         // (the graphics card's encoder where this engine has it; on Windows only)
         let can = capabilities(&setup.engine);
-        let encoder = match setup.video.engine_encoder.as_str() {
-            "card" if !can.contains("cards") => {
-                notes.push(
-                    "video: this engine has no graphics card's encoder (one of before); x264 \
-                     in the engine encodes"
-                        .to_string(),
-                );
-                "x264"
-            }
-            "card" => "card",
-            "auto" if cfg!(windows) && can.contains("proven") => "auto",
-            _ => "x264",
-        }
-        .to_string();
+        let (encoder, note) = engine_encoder(&setup.video.engine_encoder, &can, cfg!(windows));
+        notes.extend(note);
         let scenes = (setup.video.engine_layers && can.contains("scenes")).then(|| {
             crate::scene::SceneSender::with(can.contains("views"), can.contains("grown"))
                 .with_rings(can.contains("rings"))
@@ -1368,35 +1380,11 @@ impl TurzxVideo {
             }
             self.notes.push(said);
         }
-        if of("pictures") > 0.0 {
-            let late = of("late") as u64;
-            let mut said = format!(
-                "video: the engine sent {} pictures, {late} of them late",
-                of("pictures") as u64
-            );
-            if late > 0 && counted.contains_key("came_late") {
-                said += &format!(
-                    " ({} made after their time; the latest {:.0} ms past it)",
-                    of("came_late") as u64,
-                    of("late_most_ms")
-                );
-            }
+        if let Some(said) = lateness_said(&counted) {
             self.notes.push(said);
         }
-        if counted.contains_key("x264_ms") && of("frames") > 0.0 {
-            let encoder = if of("card") != 0.0 {
-                "the graphics card's encoder"
-            } else {
-                "x264"
-            };
-            self.notes.push(format!(
-                "video: the engine took {:.1} ms a frame: {:.1} composing it, {:.1} its YUV, \
-                 {:.1} {encoder}",
-                of("encode_ms"),
-                of("compose_ms"),
-                of("yuv_ms"),
-                of("x264_ms")
-            ));
+        if let Some(said) = encoding_said(&counted) {
+            self.notes.push(said);
         }
     }
 }
@@ -1703,6 +1691,52 @@ impl Turzx {
     }
 }
 
+/// encoding_said: what each frame took the engine on average (composing it from its layers,
+/// its YUV, x264 or the graphics card's encoder), as a run ends; None from an older engine,
+/// which counts none of it, or where it made no frame.
+fn encoding_said(counted: &std::collections::HashMap<String, f64>) -> Option<String> {
+    let of = |name: &str| counted.get(name).copied().unwrap_or(0.0);
+    if !counted.contains_key("x264_ms") || of("frames") <= 0.0 {
+        return None;
+    }
+    let encoder = if of("card") != 0.0 {
+        "the graphics card's encoder"
+    } else {
+        "x264"
+    };
+    Some(format!(
+        "video: the engine took {:.1} ms a frame: {:.1} composing it, {:.1} its YUV, \
+         {:.1} {encoder}",
+        of("encode_ms"),
+        of("compose_ms"),
+        of("yuv_ms"),
+        of("x264_ms")
+    ))
+}
+
+/// lateness_said: how many pictures the engine sent and how many of them late, and of those
+/// how many were made after their time (the frame or its encoding, not the sender) and the
+/// latest; an engine of before counts no causes. None where it sent none.
+fn lateness_said(counted: &std::collections::HashMap<String, f64>) -> Option<String> {
+    let of = |name: &str| counted.get(name).copied().unwrap_or(0.0).max(0.0);
+    if of("pictures") <= 0.0 {
+        return None;
+    }
+    let late = of("late") as u64;
+    let mut said = format!(
+        "video: the engine sent {} pictures, {late} of them late",
+        of("pictures") as u64
+    );
+    if late > 0 && counted.contains_key("came_late") {
+        said += &format!(
+            " ({} made after their time; the latest {:.0} ms past it)",
+            of("came_late") as u64,
+            of("late_most_ms")
+        );
+    }
+    Some(said)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1839,5 +1873,97 @@ mod tests {
             firmware_of(b"\x00\x00turzx_0001_0015\x00rest"),
             "turzx_0001_0015"
         );
+    }
+
+    #[test]
+    fn the_log_says_why_the_engines_pictures_went_late() {
+        // (as turzx_video.py's lateness_said said it)
+        let counted = |pairs: &[(&str, f64)]| -> std::collections::HashMap<String, f64> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+        };
+        let on_time = counted(&[
+            ("pictures", 9286.0),
+            ("late", 0.0),
+            ("came_late", 0.0),
+            ("late_most_ms", 0.0),
+        ]);
+        assert_eq!(
+            lateness_said(&on_time).as_deref(),
+            Some("video: the engine sent 9286 pictures, 0 of them late")
+        );
+        let late = counted(&[
+            ("pictures", 3080.0),
+            ("late", 1808.0),
+            ("came_late", 12.0),
+            ("late_most_ms", 12.6),
+        ]);
+        assert_eq!(
+            lateness_said(&late).as_deref(),
+            Some(
+                "video: the engine sent 3080 pictures, 1808 of them late (12 made after their \
+                 time; the latest 13 ms past it)"
+            )
+        );
+        let before = counted(&[("pictures", 3080.0), ("late", 1808.0)]);
+        assert_eq!(
+            lateness_said(&before).as_deref(),
+            Some("video: the engine sent 3080 pictures, 1808 of them late")
+        );
+        assert_eq!(lateness_said(&counted(&[])), None);
+    }
+
+    #[test]
+    fn the_log_says_where_the_engines_time_for_a_frame_goes() {
+        // (as turzx_video.py's encoding_said said it)
+        let counted = |pairs: &[(&str, f64)]| -> std::collections::HashMap<String, f64> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+        };
+        let base = [
+            ("frames", 868.0),
+            ("encode_ms", 7.401),
+            ("compose_ms", 1.715),
+            ("yuv_ms", 1.072),
+            ("x264_ms", 4.613),
+        ];
+        let x264 = "video: the engine took 7.4 ms a frame: 1.7 composing it, 1.1 its YUV, 4.6 x264";
+        assert_eq!(encoding_said(&counted(&base)).as_deref(), Some(x264));
+        assert_eq!(
+            encoding_said(&counted(&[("frames", 868.0), ("encode_ms", 7.4)])),
+            None
+        );
+        let mut none = counted(&base);
+        none.insert("frames".into(), 0.0);
+        assert_eq!(encoding_said(&none), None);
+        let mut card = counted(&base);
+        card.insert("card".into(), 1.0);
+        assert_eq!(
+            encoding_said(&card).as_deref(),
+            Some(
+                "video: the engine took 7.4 ms a frame: 1.7 composing it, 1.1 its YUV, 4.6 the \
+                 graphics card's encoder"
+            )
+        );
+        card.insert("card".into(), 0.0);
+        assert_eq!(encoding_said(&card).as_deref(), Some(x264));
+    }
+
+    #[test]
+    fn the_engines_encoder_is_the_cards_where_proven_on_windows_and_x264_elsewhere() {
+        // (as h264.py's engine_options chose it: "auto", the default, asks for the graphics
+        // card's encoder on Windows where the engine proves it; "x264" never passes it)
+        let proven = "x264 panel scenes cards proven";
+        assert_eq!(engine_encoder("auto", proven, true), ("auto".into(), None));
+        assert_eq!(engine_encoder("auto", proven, false), ("x264".into(), None));
+        assert_eq!(
+            engine_encoder("auto", "x264 panel cards", true),
+            ("x264".into(), None)
+        );
+        assert_eq!(engine_encoder("x264", proven, true), ("x264".into(), None));
+        assert_eq!(engine_encoder("card", proven, false), ("card".into(), None));
+        let (encoder, note) = engine_encoder("card", "x264 panel", true);
+        assert_eq!(encoder, "x264");
+        assert!(note
+            .unwrap()
+            .contains("no graphics card's encoder (one of before)"));
     }
 }

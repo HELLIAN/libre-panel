@@ -1178,6 +1178,39 @@ def test_frames_go_to_the_engine_as_their_layers_and_it_composes_them_as_the_app
 
 
 @draws
+@pytest.mark.parametrize(("theme", "turned"), [
+    ("terra", False), ("arena", False), ("encore", False), ("lumen-v2", False),
+    ("almanac", False), ("nimbus", False), ("lumen", True),
+])  # fmt: skip
+def test_the_engine_composes_each_theme_as_the_app_would(
+    rig: Rig, theme: str, turned: bool
+) -> None:
+    """Every frame the engine composed of a theme's layers is the frame composed of them here
+    (LP_SCENE_CHECK): Terra's turning globe the engine makes, Arena's rings, Encore's bars and
+    its cover, Lumen v2's fans and graphs it keeps and grows, Almanac's month, Nimbus's moon;
+    to the pixel, or within two levels in a few pixels where the engine lights a ring or a bar
+    itself. Upside down (Lumen) the frame of layers is turned too."""
+    config = VIDEO.replace('theme = "lumen"', f'theme = "{theme}"')
+    rig.config(config.replace("brightness = 70\n", "brightness = 70\nrotate = 180\n") if turned
+               else config)  # fmt: skip
+    done = rig.run("run", "--demo", "--frames", "60", LP_SCENE_CHECK="1")
+    assert done.returncode == 0, done.stderr
+    assert rig.sock.errors == []
+    assert "scene check: not composed here" not in done.stderr, done.stderr
+    assert "the engine gave no frame" not in done.stderr, done.stderr
+    summed = re.search(r"scene check: (\d+) of (\d+) frames the same as composed", done.stderr)
+    assert summed is not None and int(summed[2]) >= 40, done.stderr
+    close = 0
+    for line in done.stderr.splitlines():
+        if "scene check:" not in line or "frames the same as composed here" in line:
+            continue
+        apart = re.search(r"differs in (\d+) pixels by up to (\d+),", line)
+        assert apart is not None and int(apart[1]) <= 16 and int(apart[2]) <= 2, line
+        close += 1
+    assert int(summed[1]) + close == int(summed[2]), done.stderr
+
+
+@draws
 def test_the_bit_rate_auto_goes_on_where_the_last_run_got_to_and_follows_the_panel(
     rig: Rig,
 ) -> None:
@@ -1272,6 +1305,117 @@ def test_a_hung_decoder_restarts_the_panel_and_the_video_starts_again(rig: Rig) 
     assert "restarting the panel (1 of 3 in a row)" in text
     assert "the panel is back after its restart" in text
     assert fake.commands[-3:] == [123, 15, 102]  # (and the stop at its end, as ever)
+
+
+def test_an_engine_that_ends_unasked_is_met_by_a_new_one_and_the_video_goes_on(rig: Rig) -> None:
+    """The engine ends of itself (a crash): the next frame finds it gone, as a USB error is
+    found; the program opens the panel anew through a new engine, and the video starts
+    again."""
+    psutil = pytest.importorskip("psutil")
+    rig.config(VIDEO)
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    said = rig.home / "said.txt"
+
+    def engines() -> list[Any]:
+        return [child for child in psutil.Process(program.pid).children(recursive=True)
+                if child.name().startswith("libre-panel-engine")]  # fmt: skip
+
+    with said.open("w", encoding="utf-8") as out:
+        program = subprocess.Popen([str(_program()), "run", "--demo"], env=env, stderr=out)
+        try:
+            fake = rig.fake
+
+            def wait_for(what: Any, seconds: float) -> None:
+                end = time.monotonic() + seconds
+                while not what() and time.monotonic() < end and program.poll() is None:
+                    time.sleep(0.02)
+                assert what(), said.read_text(encoding="utf-8")
+
+            wait_for(lambda: fake.commands.count(121) >= 5, 30)
+            (first,) = engines()
+            first.kill()
+            wait_for(lambda: fake.commands.count(110) == 2, 60)  # (the video's start, anew)
+            before = fake.commands.count(121)
+            wait_for(lambda: fake.commands.count(121) >= before + 5, 30)
+            (second,) = engines()
+            assert second.pid != first.pid
+        finally:
+            program.send_signal(signal.SIGINT)
+            program.wait(30)
+    text = said.read_text(encoding="utf-8")
+    assert program.returncode == 0, text
+    assert "Libre Panel's engine stopped" in text, text
+    assert fake.commands[-3:] == [123, 15, 102]  # (the stop at its end, as ever)
+
+
+def test_a_write_the_panel_does_not_take_reconnects_through_a_new_engine(rig: Rig) -> None:
+    """One write the panel does not take (the USB link failed): the engine says so, the program
+    opens the panel anew through a new engine, starts the video in full, and counts the USB
+    error."""
+    psutil = pytest.importorskip("psutil")
+    rig.config(VIDEO)
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    said = rig.home / "said.txt"
+
+    def engines() -> list[Any]:
+        return [child for child in psutil.Process(program.pid).children(recursive=True)
+                if child.name().startswith("libre-panel-engine")]  # fmt: skip
+
+    with said.open("w", encoding="utf-8") as out:
+        program = subprocess.Popen([str(_program()), "run", "--demo"], env=env, stderr=out)
+        try:
+            fake = rig.fake
+
+            def wait_for(what: Any, seconds: float) -> None:
+                end = time.monotonic() + seconds
+                while not what() and time.monotonic() < end and program.poll() is None:
+                    time.sleep(0.02)
+                assert what(), said.read_text(encoding="utf-8")
+
+            wait_for(lambda: fake.commands.count(121) >= 5, 30)
+            (first,) = engines()
+            fake.fail_next_writes = 1
+            wait_for(lambda: fake.commands.count(110) == 2, 60)  # (a full start, anew)
+            before = fake.commands.count(121)
+            wait_for(lambda: fake.commands.count(121) >= before + 5, 30)
+            (second,) = engines()
+            assert second.pid != first.pid and not first.is_running()
+        finally:
+            program.send_signal(signal.SIGINT)
+            program.wait(30)
+    text = said.read_text(encoding="utf-8")
+    assert program.returncode == 0, text
+    assert fake.commands[-3:] == [123, 15, 102]
+
+
+def test_the_cards_encoder_where_it_cannot_start_leaves_the_stream_to_x264(rig: Rig) -> None:
+    """video.engine_encoder "card": the engine encodes with the graphics card's own encoder
+    where it opens (Windows' Media Foundation); where it cannot (not Windows here, or no such
+    encoder), x264 encodes the same stream, and the log says which as a note of the
+    engine's, no error."""
+    rig.config(VIDEO + 'engine_encoder = "card"\n')
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    said = rig.home / "said.txt"
+    with said.open("w", encoding="utf-8") as out:
+        program = subprocess.Popen([str(_program()), "run", "--demo"], env=env, stderr=out)
+        try:
+            end = time.monotonic() + 30
+            while rig.fake.commands.count(121) < 20 and time.monotonic() < end:
+                time.sleep(0.02)
+            assert rig.fake.commands.count(121) >= 20, said.read_text(encoding="utf-8")
+        finally:
+            program.send_signal(signal.SIGINT)
+            program.wait(30)
+    text = said.read_text(encoding="utf-8")
+    assert program.returncode == 0, text
+    notes = [line for line in text.splitlines() if "encoder" in line and "card" in line]
+    assert notes, text
+    if sys.platform != "win32":
+        assert any("x264 here" in line for line in notes), notes
+    assert "error" not in " ".join(notes).lower(), notes
 
 
 def test_a_config_that_is_wrong_is_said_in_config_py_s_words(tmp_path: Path) -> None:

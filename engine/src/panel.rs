@@ -107,6 +107,18 @@ struct Lateness {
     most: Duration,
 }
 
+impl Lateness {
+    /// A picture due at `due`, made at `ready`, sent `now`: late where it goes more than LATE
+    /// past its time, and then late as it came where it was made after its time.
+    fn tally(&mut self, due: Instant, ready: Instant, now: Instant) {
+        if now > due + LATE {
+            self.late += 1;
+            self.came_late += u64::from(ready > due);
+            self.most = self.most.max(now - due);
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     commands: VecDeque<Request>,
@@ -428,12 +440,7 @@ fn sender(shared: Arc<Shared>, mut transport: Transport, hang_blocks: usize) {
                     }
                 }
                 if let Some(due) = picture.due {
-                    let now = Instant::now();
-                    if now > due + LATE {
-                        paced.late += 1;
-                        paced.came_late += u64::from(picture.ready > due);
-                        paced.most = paced.most.max(now - due);
-                    }
+                    paced.tally(due, picture.ready, Instant::now());
                 }
                 video.block_size = picture.block;
                 match video.send(&mut transport, &picture.data) {
@@ -1014,4 +1021,82 @@ pub fn run(options: Options) -> Result<(), String> {
     shared.wake.notify_all();
     let _ = sending.join();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pictures_are_due_on_their_time_however_long_a_frame_took() {
+        // frames drawn for every 20 ms that reach the engine 3 to 15 ms after (a busy theme's
+        // drawing and the pipe): once the fastest has come, each is due its 20 ms after the one
+        // before, the lead after the fastest delay, and never before it came
+        let origin = Instant::now();
+        let lead = Duration::from_millis(40);
+        let mut pacer = Pacer::default();
+        let delays = [9, 3, 15, 7, 12, 4, 14, 8, 11, 6, 13, 5, 10, 15, 3];
+        let mut dues = Vec::new();
+        for (n, ms) in delays.iter().enumerate() {
+            let planned = n as f64 * 0.02;
+            let read = origin + Duration::from_secs_f64(planned + *ms as f64 / 1000.0);
+            let due = pacer.due(Some(planned), origin, read, lead).unwrap();
+            assert!(due >= read, "frame {n} due before it came");
+            dues.push(due);
+        }
+        for pair in dues[1..].windows(2) {
+            let apart = pair[1] - pair[0];
+            assert!(apart.abs_diff(Duration::from_millis(20)) < Duration::from_micros(10));
+        }
+        assert_eq!(pacer.due(None, origin, Instant::now(), lead), None); // (at once)
+    }
+
+    #[test]
+    fn a_picture_past_its_time_is_late_and_one_made_after_it_came_late() {
+        let due = Instant::now();
+        let ms = Duration::from_millis;
+        let mut paced = Lateness::default();
+        paced.tally(due, due - ms(5), due + ms(1)); // (within LATE: on time)
+        assert_eq!((paced.late, paced.came_late), (0, 0));
+        paced.tally(due, due - ms(5), due + ms(9)); // (the sender was late)
+        paced.tally(due, due + ms(3), due + ms(13)); // (made after its time)
+        assert_eq!((paced.late, paced.came_late, paced.most), (2, 1, ms(13)));
+    }
+
+    #[test]
+    fn a_picture_goes_on_its_time_and_a_command_before_it() {
+        let shared = Shared {
+            state: Mutex::new(State::default()),
+            wake: Condvar::new(),
+            out: Mutex::new(BufWriter::new(io::stdout())),
+        };
+        let start = Instant::now();
+        let due = start + Duration::from_millis(60);
+        shared.state().pictures.push_back(Picture {
+            stream: 0,
+            due: Some(due),
+            ready: start,
+            data: Vec::new(),
+            block: DEFAULT_BLOCK,
+        });
+        shared.state().commands.push_back(Request {
+            id: 1,
+            op: Op::Command,
+            cmd: 14,
+            echo: false,
+            timeout_ms: 100,
+            reply_ms: 0,
+            args: Vec::new(),
+            payload: Vec::new(),
+        });
+        assert!(matches!(next(&shared), Some(Job::Command(_))));
+        assert!(Instant::now() < due); // (at once, the picture not yet due)
+        assert!(matches!(next(&shared), Some(Job::Picture(_))));
+        let at = Instant::now();
+        assert!(at >= due, "the picture went {:?} early", due - at);
+        // (a busy runner may wake a timer late: not by the frames of a second)
+        assert!(at - due < Duration::from_millis(50), "{:?} late", at - due);
+        shared.state().closing = true;
+        assert!(next(&shared).is_none());
+    }
 }

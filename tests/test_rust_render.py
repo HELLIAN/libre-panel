@@ -6614,6 +6614,26 @@ def _video_graphs(tmp_path: Path, rng: random.Random, count: int, make: Any,
     return _compare_moving(cases)
 
 
+@pytest.mark.live  # (what is held is that both are drawn, not an answer of the Python app's)
+def test_a_graph_whose_clock_went_back_is_drawn_not_miles_wide() -> None:
+    """A clock that went back (a frame planned at an earlier time than the graph's newest
+    point: another clock, a warm-up's) drew the Python app's curve from a time long past: a
+    picture hundreds of millions of pixels wide, refused or taking gigabytes. Rust's graphs in
+    video mode draw both frames, and say nothing of a graph."""
+    given = _snapshot_given(_demo())
+    steps = [{"snapshot": given, "now": 50_000.0}, {"snapshot": given, "now": 1_000.0}]
+    case = {"folder": str(THEMES / "lumen"), "dither": False, "animate": True, "preview": False,
+            "continuous": True, "fps": 25.0, "steps": steps}  # fmt: skip
+    started = time.monotonic()
+    [got] = _moving([case])
+    assert "error" not in got, got
+    assert len(got["steps"]) == 2 and not [s for s in got["steps"] if "unported" in s]
+    for step in got["steps"]:
+        assert not [w for w in step.get("warnings", []) if "graph" in w], step["warnings"]
+        assert step["size"] == [1920, 480]
+    assert time.monotonic() - started < 60
+
+
 def test_graphs_in_video_mode_as_python_draws_them(tmp_path: Path) -> None:
     # (a panel that streams: each graph a window into a strip drawn ahead, scrolling on in
     # every frame, the strip grown from the one before where a reading came, its end drawn
