@@ -1,68 +1,50 @@
-"""Panel clips for tools/readme_media.py: the real main loop, on a clock of its own.
+"""Panel clips for tools/readme_media.py: Libre Panel's own main loop (``libre-panel clip``), on a
+clock of its own.
 
-A clip is the panel as it looks in video mode: ``MainLoop.step`` driven frame by frame at
-50 frames a second, with the demo source moving its values, a streaming display in memory and
-scripted events (a notice, a theme switch, a game that starts, a card that changes). Nothing
-here waits for the wall clock, so a clip is the same on every run, whatever the machine:
+A clip is the panel as it looks in video mode: the panel's loop driven frame by frame at 50 frames
+a second, with the demo's values moving, a panel that keeps each frame it is shown and scripted
+events (a notice, a theme switch, a game that starts, a card that changes). Nothing here waits for
+the wall clock, so a clip is the same on every run, whatever the machine:
 
-- the loop's clock is a number the recipe sets, and the demo's values follow it;
-- the time of day on the panel stands still (as in the pictures of tools/readme_images.py),
-  or, in a clip of a clock, runs with the loop's clock from that same moment;
-- the next theme is not warmed up in a thread, the pieces of a frame are not built in a helper
-  thread: when those finish depends on the machine. The pictures are the same either way.
+- the loop's clock is a number the recipe sets, frame by frame, and the demo's values follow it
+  (lp-check's ``clip_demo``);
+- the time of day on the panel stands still (as in the pictures of tools/readme_images.py), or,
+  in a clip of a clock, runs with the loop's clock from that same moment;
+- the loop makes a theme and the pieces of a frame in the frame that needs them, and the services
+  answer in the frame they are told something in: when a thread would have finished does not
+  come into it.
 
-Each recipe is a :class:`PanelClip`: how long it runs, and a function that sets the stage
-(themes, events, changes to the demo's values). Add one by adding it to ``CLIPS``. The
-panel's own start screen (``START_CLIPS``) is not the main loop: its pictures are shown as the
-panel shows them.
+Each recipe is a :class:`PanelClip`: how long it runs, and a function that sets the stage (themes,
+events, changes to the demo's values). Add one by adding it to ``CLIPS``. Several panels at once
+are a :class:`PanelsClip` (``PANELS_CLIPS``). The panel's own start screen (``START_CLIPS``) is
+not the main loop: its pictures are shown as the panel shows them. Nothing here runs the Python
+app: the program is the one tools/lp_check.py finds (``LIBRE_PANEL_PROGRAM``, else the one built
+in rust/).
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
+import math
 import os
 import shutil
+import struct
+import subprocess
 import tempfile
-import time as real_time
-from collections.abc import Callable, Iterator
+import threading
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
-from typing import Any
-from unittest import mock
+from typing import IO, Any
 
 import readme_images as images
+from lp_check import app_program, ask, libraries, typed
 from media_encode import FrameSink, Recorded, Settings, fade_loop
-from media_themes import LAYOUTS, Grid, theme_data, theme_folder
+from media_themes import LAYOUTS, Grid, find_theme, theme_data, theme_folder
 from PIL import Image, ImageChops
 
-from libre_panel import app, i18n
-from libre_panel.app import MainLoop
-from libre_panel.config import (
-    Config,
-    DeviceConfig,
-    ModeConfig,
-    SensorsConfig,
-    SequenceConfig,
-    user_themes_dir,
-)
-from libre_panel.devices.base import Display
-from libre_panel.plugins import PluginHost, loader
-from libre_panel.plugins.host import ServiceHost, apply_options
-from libre_panel.render.renderer import Renderer
-from libre_panel.sensors.base import Reading, SensorHub, SensorProvider, Snapshot
-from libre_panel.sensors.demo import DemoProvider, demo_history, demo_report
-from libre_panel.sequence import Step
-from libre_panel.services.notices import Notices
-from libre_panel.theme.adapt import adapt_theme
-from libre_panel.theme.model import (
-    find_theme,
-    load_theme,
-    pair_version,
-    parse_theme,
-    save_theme,
-)
-
+ROOT = Path(__file__).resolve().parent.parent
 START = 1000.0  # the loop's clock at the first frame of a clip (the number is arbitrary)
 WARMUP_S = (
     2.0  # frames drawn before the clip begins: the panel's own start (a sweep of light) is over
@@ -70,109 +52,90 @@ WARMUP_S = (
 PREFILL_S = 120.0  # how much history the graphs have when the clip begins ...
 PREFILL_MAX = 300  # ... in readings at most (a graph shows fewer, and a hub keeps 600)
 FADE_S = 0.5  # a clip's end is blended into its start over this long
+VOLUME_S = 30.0  # the volume (percent) when a clip begins
+# The steps of a clip's screens in turn are told in tenths of a second: config.toml has whole
+# seconds, at least five (the program takes them as tenths: its "pace").
+TURN_UNIT = 0.1
+DEMO_AT_ONCE = 64  # the demo's readings asked of lp-check for so many frames at a time
+DEFAULT_LOOK = "libre-panel"  # the panel's own look of its start screens (lp_render::boot)
+
+
+@dataclass
+class Reading:
+    """A reading as a source gives it."""
+
+    value: Any
+    unit: str = ""
+    label: str = ""
+
 
 Tweak = Callable[[dict[str, Reading], float], None]  # (readings, seconds into the clip)
 
 
-class Clock:
-    """The main loop's clock: the planned time of the frame being drawn."""
+def _plain(told: dict[str, Any]) -> Any:
+    """A value as lp-check tells it (tools/lp_check.py's ``typed``), as Python has it."""
+    ((kind, inner),) = told.items()
+    if kind == "f":
+        return struct.unpack(">d", bytes.fromhex(inner))[0]
+    if kind == "i":
+        return int(inner)
+    if kind == "l":
+        return [_plain(item) for item in inner]
+    if kind == "d":
+        return {key: _plain(item) for key, item in inner.items()}
+    return inner  # (a text, a bool or None)
+
+
+def _told(said: list[list[Any]]) -> dict[str, Reading]:
+    return {key: Reading(_plain(value), unit, label) for key, value, unit, label in said}
+
+
+def demo_report() -> dict[str, Reading]:
+    """The round report the memory service tells after a game, at the moment of the README's
+    pictures (made up, as the demo has it)."""
+    (said,) = ask([{"op": "clip_demo", "when": images.WHEN, "seconds": [], "period": None}])
+    return _told(said["report"])
+
+
+class Demo:
+    """The demo source on the clip's clock (lp-check's ``clip_demo``): its values move as real
+    ones do, and a recipe's tweaks change them. The demo's waves are shaped like a load (the shape
+    its static pictures have), not like a sine.
+
+    With a ``period`` (the length of a clip that loops) the waves have it too: the wave a period on
+    is blended in over the period, smoothly, so a value is the same when the clip ends as when it
+    begins, and so is every graph that has the clip's values in it."""
+
+    def __init__(self, tweaks: list[Tweak], period: float | None = None) -> None:
+        self.tweaks, self.period = tweaks, period
+
+    def read(self, seconds: Iterable[float]) -> Iterator[dict[str, Reading]]:
+        """The readings at each of ``seconds`` into the clip, in turn."""
+        seconds = list(seconds)
+        for at in range(0, len(seconds), DEMO_AT_ONCE):
+            part = seconds[at : at + DEMO_AT_ONCE]
+            (said,) = ask([{"op": "clip_demo", "when": images.WHEN, "seconds": part,
+                            "period": self.period}])  # fmt: skip
+            for s, frame in zip(part, said["frames"], strict=True):
+                readings = _told(frame)
+                for tweak in self.tweaks:
+                    tweak(readings, s)
+                yield readings
+
+
+class Speakers:
+    """The volume of the default output as the ``audio`` source reads it: on every frame, so a
+    bar on the panel follows the volume keys at once."""
 
     def __init__(self) -> None:
-        self.now = START
-
-    def __call__(self) -> float:
-        return self.now
-
-    @property
-    def seconds(self) -> float:
-        """Seconds into the clip (negative before it begins)."""
-        return self.now - START
-
-
-class Eye(Display):
-    """A video panel that looks at nothing: the loop's frames are taken from ``step``."""
-
-    streaming = True
-
-    def __init__(self, fps: int) -> None:
-        super().__init__(DeviceConfig())
-        self.stream_fps = fps
-
-    def describe(self) -> str:
-        return "clip recorder"
-
-    def show(self, frame: Image.Image, region: tuple[int, int, int, int] | None = None) -> None:
-        pass
-
-
-class Speakers(SensorProvider):
-    """The volume of the default output as the ``audio`` source reads it: on every frame, so
-    a bar on the panel follows the volume keys at once."""
-
-    name = "audio"
-    every_frame = True
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.percent = 30.0
+        self.percent = VOLUME_S
         self.muted = False
 
     def read(self) -> dict[str, Reading]:
         return {
-            "audio.volume": Reading(
-                "audio.volume", 0.0 if self.muted else self.percent, "%", "Volume"
-            ),
-            "audio.muted": Reading("audio.muted", 1 if self.muted else 0, "", "Muted"),
+            "audio.volume": Reading(0.0 if self.muted else float(self.percent), "%", "Volume"),
+            "audio.muted": Reading(1 if self.muted else 0, "", "Muted"),
         }
-
-
-class ClipDemo(DemoProvider):
-    """The demo source on the clip's clock: its values move as real ones do and a recipe's
-    tweaks change them. The demo's waves are shaped like a load (the shape its static pictures
-    have), not like a sine.
-
-    With a ``period`` (the length of a clip that loops) the waves have it too: the wave a period
-    on is blended in over the period, smoothly, so a value is the same when the clip ends as when
-    it begins, and so is every graph that has the clip's values in it.
-    """
-
-    def __init__(self, clock: Clock, tweaks: list[Tweak], period: float | None = None) -> None:
-        super().__init__({})
-        self.clock, self.tweaks, self.period = clock, tweaks, period
-
-    def read(self) -> dict[str, Reading]:
-        seconds = self.clock.seconds
-        self.fixed_time = images.WHEN + seconds
-        readings = super().read()
-        for key in _waves():
-            reading = readings.get(key)
-            if reading is None:
-                continue
-            value = self._wave(key, seconds)
-            readings[key] = replace(reading, value=value)
-            if reading.origin in readings:  # the copy under a friendlier name
-                readings[reading.origin] = replace(readings[reading.origin], value=value)
-        for tweak in self.tweaks:
-            tweak(readings, seconds)
-        return readings
-
-    def _wave(self, key: str, seconds: float) -> float:
-        if self.period is None:
-            return self._shape(key, seconds)
-        x = seconds % self.period
-        share = _smooth(x / self.period)
-        return (1 - share) * self._shape(key, x + self.period) + share * self._shape(key, x)
-
-    def _shape(self, key: str, seconds: float) -> float:
-        self.fixed_time = images.WHEN + seconds
-        return demo_history(self, key, 1)[0]
-
-
-def _waves() -> list[str]:
-    """The demo's readings that move (the others are constants)."""
-    from libre_panel.sensors.demo import _WAVES
-
-    return [key for key, (_label, _unit, _base, amplitude, _period) in _WAVES.items() if amplitude]
 
 
 # -- changes to the demo's values ---------------------------------------------------------------
@@ -265,7 +228,7 @@ def agents_story(steps: list[tuple[float, dict[str, dict[str, Any]]]]) -> Tweak:
                     readings.pop(key, None)
                     continue
                 old = readings.get(key)
-                readings[key] = replace(old, value=value) if old else Reading(key, value)
+                readings[key] = replace(old, value=value) if old else Reading(value)
 
     return tweak
 
@@ -273,121 +236,171 @@ def agents_story(steps: list[tuple[float, dict[str, dict[str, Any]]]]) -> Tweak:
 # -- what a clip is recorded in -----------------------------------------------------------------
 
 
-class _FrozenTime:
-    """``time`` as the main loop sees it: the time of day stands still."""
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(real_time, name)
-
-    def time(self) -> float:
-        return images.WHEN
-
-
-class _RunningTime(_FrozenTime):
-    """``time`` for a clip whose clock runs: the time of day goes on with the clip's own clock
-    (from the same moment, so a clip is still the same on every run)."""
-
-    def __init__(self, clock: Clock) -> None:
-        self.clock = clock
-
-    def time(self) -> float:
-        return images.WHEN + self.clock.seconds
-
-
-class _NoWarmup:
-    """A switch of theme happens in the frame it is asked for: the next theme is not built
-    in a thread beforehand (when it is done depends on the machine, and so would the frame
-    the switch comes in)."""
-
-    LIMIT_S = 120.0  # the first theme's preparation is waited for
-    busy = False
-
-    def ready(self, key: Any, now: float) -> bool:
-        return True
-
-    def start(self, key: Any, build: Callable[[], Any], now: float) -> None:
-        pass
-
-    def take(self, key: Any) -> None:
-        return None
-
-    def discard(self) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
-
-
-class _SyncRenderer(Renderer):
-    """A renderer that builds every piece in the frame that needs it. On a video panel a
-    changed piece is built in a helper thread while frames go on with the old one, and shows a
-    frame or two later; which frame depends on the machine."""
-
-    @property
-    def background_builds(self) -> bool:
-        return False
-
-    @background_builds.setter
-    def background_builds(self, value: bool) -> None:
-        pass
-
-
 @contextlib.contextmanager
 def workshop() -> Iterator[Path]:
     """What a clip is recorded in: a settings folder of its own (none of the user's themes or
-    config, no plugin installed on this machine: a mod would shadow what the clips show), time
-    that stands still, and pieces built where they are drawn. Yields the folder."""
-    language = i18n.language()
-    with (
-        tempfile.TemporaryDirectory(prefix="readme-media-home-") as home,
-        contextlib.ExitStack() as stack,
-    ):
-        stack.enter_context(mock.patch.dict(os.environ, {"LIBRE_PANEL_HOME": home}))
-        stack.enter_context(mock.patch.object(loader, "_installed", lambda group: iter(())))
-        stack.enter_context(mock.patch.object(app, "time", _FrozenTime()))
-        stack.enter_context(mock.patch.object(app, "_Warmup", _NoWarmup))
-        stack.enter_context(mock.patch.object(app, "Renderer", _SyncRenderer))
-        loader.reset_registry()
+    config, no plugin installed in it: a mod would shadow what the clips show). Yields it."""
+    with tempfile.TemporaryDirectory(prefix="readme-media-home-") as home:
+        folder = Path(home)
+        (folder / "bus").write_text("", encoding="utf-8")  # (the USB bus: nothing on it)
+        yield folder
+
+
+def _environment(home: Path) -> dict[str, str]:
+    """The program's environment: the settings folder ``home``, the data in this repository,
+    Pillow's libraries (the letters drawn as the downloads draw them), English, and nothing of
+    this computer's desktop or panels."""
+    english = {"LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}
+    env = {key: value for key, value in os.environ.items()
+           if key not in ("DISPLAY", "WAYLAND_DISPLAY")}  # fmt: skip
+    return {
+        **env, **libraries(), **english,
+        "LIBRE_PANEL_HOME": str(home), "LIBRE_PANEL_DATA": str(ROOT / "data"),
+        "XDG_CONFIG_HOME": str(home / "xdg"), "LP_TEST_BUS": str(home / "bus"),
+        "LP_LINUX_ROOT": "/no/such/root",
+    }  # fmt: skip
+
+
+class _Program:
+    """``libre-panel clip`` (with ``args``) in the settings folder ``home``: what it is fed goes
+    in from a thread of its own (so that neither pipe waits on the other), its pictures come out
+    here."""
+
+    def __init__(self, home: Path, args: list[str], feed: Iterable[str] = ()) -> None:
+        self.process = subprocess.Popen(
+            [str(app_program()), "clip", *args], env=_environment(home),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )  # fmt: skip
+        self.said: list[bytes] = []
+        self.failed: BaseException | None = None
+        assert self.process.stdin and self.process.stdout and self.process.stderr
+        self.out: IO[bytes] = self.process.stdout
+        threading.Thread(target=self.said.extend, args=(self.process.stderr,),
+                         daemon=True).start()  # fmt: skip
+        self.feeder = threading.Thread(target=self._feed, args=(feed,), daemon=True)
+        self.feeder.start()
+
+    def _feed(self, feed: Iterable[str]) -> None:
+        stdin = self.process.stdin
+        assert stdin is not None
         try:
-            yield Path(home)
-        finally:
-            i18n.set_language(language)
-            loader.reset_registry()
+            for line in feed:
+                stdin.write(line.encode("utf-8") + b"\n")
+            stdin.close()
+        except BrokenPipeError:
+            pass  # (the program ended: what it said tells why)
+        except BaseException as error:  # a recipe's mistake: told where the pictures stop
+            self.failed = error
+            with contextlib.suppress(OSError):
+                stdin.close()
+
+    def _gone(self) -> RuntimeError:
+        if self.failed is not None:
+            return RuntimeError(f"the clip's feed failed: {self.failed!r}")
+        self.process.wait(30)
+        said = b"".join(self.said).decode("utf-8", "replace").strip()
+        return RuntimeError(f"libre-panel clip ended ({self.process.returncode}): {said}")
+
+    def line(self) -> str:
+        """The next line it says."""
+        line = self.out.readline()
+        if not line:
+            raise self._gone()
+        return line.decode("utf-8").rstrip("\n")
+
+    def picture(self, line: str | None = None) -> Image.Image:
+        """The next picture (after ``line``, its header, where that was read already)."""
+        kind, width, height = (line if line is not None else self.line()).split()
+        if kind != "frame":
+            raise RuntimeError(f"libre-panel clip: a picture, not {line!r}")
+        size = (int(width), int(height))
+        data = self.out.read(size[0] * size[1] * 3)
+        if len(data) != size[0] * size[1] * 3:
+            raise self._gone()
+        return Image.frombytes("RGB", size, data)
+
+    def close(self) -> None:
+        self.feeder.join(60)
+        try:
+            code = self.process.wait(60)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            raise
+        if code != 0 or self.failed is not None:
+            raise self._gone()
+
+
+def _toml(value: Any) -> str:
+    """A value as config.toml writes it (texts as JSON's are TOML's too)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return repr(value)
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(_toml(item) for item in value) + "]"
+    return json.dumps(str(value))
+
+
+def adapted(data: dict[str, Any], factor: float) -> dict[str, Any]:
+    """A theme scaled to ``factor`` times its size, as Libre Panel adapts one (lp-check's
+    theme_adapt)."""
+    grid = Grid(data)
+    width = max(8, round(grid.width * factor))
+    height = max(8, round(grid.height * factor))
+    orientation = "landscape" if grid.width > grid.height else "portrait"
+    (said,) = ask([{
+        "op": "theme_adapt", "fonts_dir": str(ROOT / "data" / "fonts"),
+        "builtin": str(ROOT / "data" / "themes"),
+        "adapt": [{"data": json.dumps(data), "model": "custom", "orientation": orientation,
+                   "mode": "scale", "width": width, "height": height}],
+    }])  # fmt: skip
+    (made,) = said["adapt"]
+    if "dict" not in made:
+        raise ValueError(f"the theme was not scaled: {made.get('error')}")
+    return json.loads(made["dict"])
 
 
 # -- the stage ----------------------------------------------------------------------------------
 
 
 class Stage:
-    """The panel of one clip: the main loop and everything a recipe may do to it.
+    """The panel of one clip: what its main loop shows and everything a recipe may do to it.
 
     A recipe sets it up before the first frame (:meth:`theme`, :meth:`show`, :meth:`at`,
     :meth:`tweak`); :meth:`frames` then runs the loop and gives the pictures, one at a time.
     """
 
-    def __init__(self, settings: Settings, zoom: int = 1, period: float | None = None) -> None:
-        self.settings = settings
+    def __init__(
+        self, home: Path, settings: Settings, zoom: int = 1, period: float | None = None
+    ) -> None:
+        self.home, self.settings = home, settings
         self.period = period  # the clip's length, if it loops: its values are the same by then
         self.factor = settings.scale * zoom  # the panel's pixels, against its own size
-        self.clock = Clock()
-        self.host = PluginHost(clock=self.clock)
         self.speakers = Speakers()
-        self.loop: MainLoop | None = None
-        self.notices: Notices | None = None
         self.start = ""  # the theme the clip begins with
         self.modes: dict[str, str] = {}
+        self.pages: dict[str, str] = {}
+        self.turns: list[tuple[str, float]] = []
         self.transition = "fade"
+        self.leave_s: float | None = None
+        self.look = ""  # how the volume shows over every screen ("": as the theme's notices)
+        # the panels beside the first, of a clip of several (theme, where, the alarm's theme)
+        self.beside: list[tuple[str, tuple[int, int], str]] = []
+        self.at_mm = (0, 0)  # where the first stands, then
+        self.readings: dict[str, Reading] = {}  # what the sources gave for the last frame
         self._events: list[tuple[float, int, Callable[[Stage], None]]] = []
         self._tweaks: list[Tweak] = []
+        self._doing: list[list[Any]] = []
         self._made = 0
+        self._data: dict[str, dict[str, Any]] = {}
 
     # -- setting up
 
     def theme(self, source: str | dict[str, Any], name: str | None = None, **changes: Any) -> str:
-        """The id to show a theme by in this clip. ``source`` is the id of a built-in or a user
-        theme, a folder with a theme in it, one of the :data:`LAYOUTS`, or theme data;
-        ``changes`` replace keys of its data (``toast={...}``). It is scaled to the clip's pixels.
-        A theme that comes as it is, at its own size, is shown by its own id."""
+        """The id to show a theme by in this clip. ``source`` is the id of a built-in theme, a
+        folder with a theme in it, one of the :data:`LAYOUTS`, or theme data; ``changes`` replace
+        keys of its data (``toast={...}``). It is scaled to the clip's pixels. A built-in theme
+        that comes as it is, at its own size, is shown by its own id."""
         named = isinstance(source, str) and source not in LAYOUTS and theme_folder(source) is None
         if named and not changes and self.factor == 1:
             find_theme(source)  # (it is there: or this says it is not)
@@ -397,18 +410,16 @@ class Stage:
             name = name or source
         data.update(changes)
         if self.factor != 1:
-            theme = parse_theme(data)
-            size = (
-                max(8, round(theme.width * self.factor)),
-                max(8, round(theme.height * self.factor)),
-            )
-            data = adapt_theme(data, "custom", theme.orientation, "scale", *size)
+            data = adapted(data, self.factor)
         self._made += 1
         by_path = isinstance(source, str) and theme_folder(source) is not None
         name = name or (Path(source).name if by_path else f"clip-{self._made}")  # type: ignore[arg-type]
+        made = self.home / "themes" / name
         if folder is not None:  # a theme with files of its own: they come along
-            shutil.copytree(folder, user_themes_dir() / name, dirs_exist_ok=True)
-        save_theme(name, data)
+            shutil.copytree(folder, made, dirs_exist_ok=True)
+        made.mkdir(parents=True, exist_ok=True)
+        (made / "theme.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+        self._data[name] = data
         return name
 
     def show(
@@ -422,8 +433,8 @@ class Stage:
     ) -> None:
         """The theme the clip begins with, the themes of the modes (``{"game": theme}``), the
         transition config.toml names for a switch, screens in turn (theme, seconds), and the
-        pages the panel switches to by itself, switched on (``{"media": theme}``; music's
-        page stays ``leave_s`` after a track stops)."""
+        pages the panel switches to by itself, switched on (``{"media": theme}``; music's page
+        stays ``leave_s`` after a track stops)."""
         self.start, self.modes, self.transition = theme, dict(modes or {}), transition
         self.turns = list(turns or [])
         self.pages, self.leave_s = dict(pages or {}), leave_s
@@ -439,83 +450,140 @@ class Stage:
     # -- what a recipe does while the clip runs
 
     def turn_volume(self, percent: float) -> None:
-        """The volume key: the volume changes now, and the notices service tells it as the
-        app would (the volume's own band, in the theme's toast style)."""
+        """The volume key: the volume changes now, and the notices service tells it as it tells
+        a key pressed (the volume's own band, in the theme's toast style or in its own look)."""
         self.speakers.percent = percent
-        self._tell_volume()
 
-    def _tell_volume(self) -> None:
-        assert self.notices is not None
-        snapshot = Snapshot(readings=self.speakers.read())
-        self.notices.on_fresh(snapshot, frozenset({"audio.volume"}))
+    def volume_look(self, look: str) -> None:
+        """How the volume shows over every screen from now on (Look → Notices → Volume): config.toml
+        says it, and the panel reads it again."""
+        self.look = look
+        self._write_config()
+        self._doing.append(["config"])
+
+    def ask_theme(self, theme: str | None, by: str = "clip", transition: str | None = None,
+                  priority: int = 0) -> None:  # fmt: skip
+        """A service asks for ``theme`` (None: it asks for none any more)."""
+        self._doing.append(["theme", theme, by, transition, priority])
+
+    def set_mode(self, mode: str | None, by: str, transition: str | None = None,
+                 params: dict[str, Any] | None = None) -> None:  # fmt: skip
+        """A service sets the panel's mode (None: back to the normal one)."""
+        told = typed(params) if params is not None else None
+        self._doing.append(["mode", mode, by, transition, told])
+
+    def publish(self, key: str, value: Any, unit: str = "", label: str = "",
+                owner: str | None = None) -> None:  # fmt: skip
+        """A service publishes a reading."""
+        self._doing.append(["publish", key, typed(value), unit, label, owner])
+
+    def slot(self, seconds: float | None = None, way: str | None = None) -> None:
+        """The cards of the theme's first card slot: each ``seconds`` from now on (None: as they
+        are), changing ``way`` (a transition; None: as it is)."""
+        self._doing.append(["slot", seconds, way])
 
     def value(self, key: str, default: Any = None) -> Any:
-        """A reading as the last sample took it (the name the demo gives its game, say)."""
-        snapshot = self.loop.snapshot if self.loop is not None else None
-        found = snapshot.value(key) if snapshot is not None else None
-        return default if found is None else found
+        """A reading as the sources gave it for the last frame (the name the demo gives its
+        game, say)."""
+        found = self.readings.get(key)
+        return default if found is None or found.value is None else found.value
 
     # -- running
 
-    def _begin(self, at: float = START) -> MainLoop:
-        """The panel's main loop, its first frame due at ``at``, with the history its graphs
-        would have by then (read before the loop draws its first theme ahead, as the app does
-        with the readings it has)."""
-        config = Config(
-            theme=self.start,
-            language="en",
-            fps=self.settings.fps,
-            transition=self.transition,
-            sensors=SensorsConfig(providers=["demo"]),
-            modes={
-                **{name: ModeConfig(theme=theme) for name, theme in self.modes.items()},
-                **{name: ModeConfig(theme=theme, on=True) for name, theme in self.pages.items()},
-            },
-            sequence=SequenceConfig(True, [Step(theme, s) for theme, s in self.turns]),
-        )
-        hub = SensorHub([self.speakers, ClipDemo(self.clock, self._tweaks, self.period)])
-        every = (config.refresh_ms or load_theme(find_theme(self.start)).refresh_ms) / 1000
-        for k in range(
-            min(PREFILL_MAX, round(PREFILL_S / every)), 0, -1
-        ):  # what graphs drew so far
-            self.clock.now = at - k * every
-            hub.snapshot()
-        self.clock.now = at
-        loop = MainLoop(
-            config, host=self.host, hub=hub, display=Eye(self.settings.fps), clock=self.clock
-        )
-        if self.leave_s is not None:
-            loop.pages.leave_s = self.leave_s
-        options = apply_options(Notices.options, {"music": False, "restarted": False}, "notices")
-        self.notices = Notices(
-            ServiceHost(self.host, "notices"), options, clock=self.clock,
-            wall=lambda: datetime.fromtimestamp(images.WHEN),
-        )  # fmt: skip
-        self._tell_volume()  # the first value is no news: later ones are
-        return loop
+    def _refresh_s(self) -> float:
+        """How often the first theme's readings are taken, in seconds."""
+        data = self._data.get(self.start) or theme_data(self.start)[0]
+        return int(data.get("refresh_ms") or 1000) / 1000
 
-    def frames(self, seconds: float, warmup: float = WARMUP_S) -> Iterator[Image.Image]:
-        """The panel's frames for ``seconds``, after ``warmup`` seconds that are not given.
+    def _config(self) -> str:
+        """config.toml of the clip."""
+        s = self.settings
+        lines = [f"language = {_toml('en')}", f"theme = {_toml(self.start)}", f"fps = {s.fps}",
+                 f"transition = {_toml(self.transition)}", "", "[device]",
+                 'driver = "virtual"', 'model = "auto"']  # fmt: skip
+        if self.beside:
+            lines.append(f"at = {_toml(list(self.at_mm))}")
+        lines += ["", "[sensors]", "providers = []", "", "[services]", 'enabled = ["notices"]',
+                  "", "[services.notices]", "music = false", "restarted = false"]  # fmt: skip
+        if self.look:
+            lines.append(f"volume_look = {_toml(self.look)}")
+        for name, theme in self.modes.items():
+            lines += ["", f"[modes.{name}]", f"theme = {_toml(theme)}"]
+        for name, theme in self.pages.items():
+            lines += ["", f"[modes.{name}]", f"theme = {_toml(theme)}", "on = true"]
+        if self.turns:
+            lines += ["", "[sequence]", "on = true"]
+            for theme, seconds in self.turns:
+                lines += ["", "[[sequence.steps]]", f"theme = {_toml(theme)}",
+                          f"seconds = {round(seconds / TURN_UNIT)}"]  # fmt: skip
+        for theme, at, alarm in self.beside:
+            lines += ["", "[[panels]]", 'driver = "virtual"', 'model = "auto"',
+                      f"theme = {_toml(theme)}", f"at = {_toml(list(at))}"]  # fmt: skip
+            if alarm:
+                lines.append(f"alarm_theme = {_toml(alarm)}")
+        return "\n".join(lines) + "\n"
 
-        A frame is only good until the next is asked for (the renderer draws on it again):
-        take what you need before going on."""
+    def _write_config(self) -> None:
+        (self.home / "config.toml").write_text(self._config(), encoding="utf-8")
+
+    def _feed(self, prefill: list[float], drawn: list[int], clock_runs: bool) -> Iterator[str]:
+        """The lines the program is fed: the readings that fill the graphs' history, then each
+        frame's, with what happens just before it."""
         fps = self.settings.fps
-        self.loop = self._begin(START - round(warmup * fps) / fps)
         events = sorted(self._events)
         done = 0
-        try:
-            for n in range(-round(warmup * fps), round(seconds * fps)):
-                self.clock.now = START + n / fps
+        times = [*prefill, *(n / fps for n in drawn)]
+        demo = Demo(self._tweaks, self.period).read(times)
+        for k, readings in enumerate(demo):
+            line: dict[str, Any]
+            if k < len(prefill):
+                seconds, line = prefill[k], {"prefill": True}
+            else:
+                n = drawn[k - len(prefill)]
+                seconds, line = n / fps, {"show": n >= 0}
+                doing = self._doing = []
+                if k == len(prefill):  # (the first frame: the loop as the clip has it)
+                    doing.append(["pace", TURN_UNIT])
+                    if self.leave_s is not None:
+                        doing.append(["leave", self.leave_s])
                 while n >= 0 and done < len(events) and events[done][0] <= n / fps + 1e-9:
                     events[done][2](self)
                     done += 1
-                frame = self.loop.step(self.clock.now)
-                assert frame is not None  # the display is always there
+                line["do"] = doing
+            readings.update(self.speakers.read())
+            self.readings = readings
+            line["t"] = START + seconds
+            line["wall"] = images.WHEN + (seconds if clock_runs else 0.0)
+            line["readings"] = {key: [typed(r.value), r.unit, r.label]
+                                for key, r in readings.items()}  # fmt: skip
+            yield json.dumps(line)
+
+    def frames(
+        self, seconds: float, warmup: float = WARMUP_S, clock_runs: bool = False,
+        panels: str | None = None,
+    ) -> Iterator[Image.Image]:  # fmt: skip
+        """The panel's frames for ``seconds``, after ``warmup`` seconds that are not given (with
+        the history its graphs would have by then, taken before the loop draws its first frame,
+        as the app takes the readings it has). With ``panels`` (a model): the picture of all the
+        panels where they stand, each a panel of that model."""
+        fps = self.settings.fps
+        drawn = list(range(-round(warmup * fps), round(seconds * fps)))
+        every = self._refresh_s()
+        first = drawn[0] / fps
+        prefill = [first - k * every
+                   for k in range(min(PREFILL_MAX, round(PREFILL_S / every)), 0, -1)]  # fmt: skip
+        self._write_config()
+        program = _Program(self.home, ["--panels", panels] if panels else [],
+                           self._feed(prefill, drawn, clock_runs))  # fmt: skip
+        try:
+            for n in drawn:
                 if n >= 0:
-                    yield frame
+                    yield program.picture()
+            program.close()
         finally:
-            self.loop.close()
-            self.host.close()
+            if program.process.poll() is None:
+                program.process.kill()
+                program.process.wait()
 
 
 # -- the picture of a clip ----------------------------------------------------------------------
@@ -569,9 +637,6 @@ class Presenter:
         if self.box is not None:
             frame = frame.crop(self.box)
         return frame if self.bezel is None else self.bezel.frame(frame)
-
-
-# -- layouts: Libre Panel's own look, made of modules ---------------------------------------------
 
 
 # -- recipes ------------------------------------------------------------------------------------
@@ -658,14 +723,13 @@ def record(
     themes = themes or clip.themes
     if len(themes) != len(clip.themes):
         raise ValueError(f"{name} shows {len(clip.themes)} theme(s), not {len(themes)}")
-    with workshop(), contextlib.ExitStack() as stack:
-        box = clip.crop
-        if isinstance(box, Focus):
-            box = box.box(theme_data(themes[0])[0])
-        whole = box is None and clip.crop is not None  # a close-up of what the theme lacks
-        stage = Stage(settings, 1 if whole else clip.zoom, clip.seconds if clip.periodic else None)
-        if clip.clock_runs:
-            stack.enter_context(mock.patch.object(app, "time", _RunningTime(stage.clock)))
+    box = clip.crop
+    if isinstance(box, Focus):
+        box = box.box(theme_data(themes[0])[0])
+    whole = box is None and clip.crop is not None  # a close-up of what the theme lacks
+    with workshop() as home:
+        stage = Stage(home, settings, 1 if whole else clip.zoom,
+                      clip.seconds if clip.periodic else None)  # fmt: skip
         clip.setup(stage, themes)
         fps = settings.fps
         overlap = round(FADE_S * fps) if clip.loop == "fade" else 0
@@ -674,7 +738,7 @@ def record(
         present: Presenter | None = None
         crop = tuple(round(v * stage.factor) for v in box) if box else None
         bare = settings.bare or not clip.framed
-        for frame in stage.frames(total, clip.warmup):
+        for frame in stage.frames(total, clip.warmup, clip.clock_runs):
             if present is None:
                 present = Presenter(frame.size, crop, bare)  # type: ignore[arg-type]
             sink.add(present(frame))
@@ -726,7 +790,7 @@ def volume_looks(stage: Stage, themes: tuple[str, ...]) -> None:
     start = stage.speakers.percent
     for n, look in enumerate(VOLUME_LOOKS):
         begin = 0.5 + LOOK_EVERY_S * n
-        stage.at(begin - 0.1, lambda s, look=look: setattr(s.notices, "look", look))
+        stage.at(begin - 0.1, lambda s, look=look: s.volume_look(look))
         up = [(begin + 0.07 * k, start + 3 * (k + 1)) for k in range(6)]
         down = [(begin + 0.6 + 0.07 * k, start + 18 - 3 * (k + 1)) for k in range(4)]
         for at, percent in up + down:
@@ -771,9 +835,9 @@ def themes_tour(stage: Stage, themes: tuple[str, ...]) -> None:
 
 @dataclass(frozen=True)
 class StartClip:
-    """The panel's own screens (render/bootscreen.py): the boot logo of a panel (by its model's
-    id), then its standby clip, round and round, in the device frame; then the clips of the
-    other ``looks``, ``look_s`` each, one fading into the next."""
+    """The panel's own screens (lp_render::boot): the boot logo of a panel (by its model's id),
+    then its standby clip, round and round, in the device frame; then the clips of the other
+    ``looks``, ``look_s`` each, one fading into the next."""
 
     about: str
     themes: tuple[str, ...]  # the panel's model
@@ -789,6 +853,39 @@ class StartClip:
         return "panel"
 
 
+@contextlib.contextmanager
+def start_screens(
+    model: str, scale: float, looks: Iterable[str]
+) -> Iterator[tuple[int, list[str], Image.Image, Iterator[tuple[str, list[Image.Image]]]]]:
+    """The panel's own screens as the panel of ``model`` shows them, at ``scale`` (``libre-panel
+    clip --start``): the standby clips' pictures a second, every look there is (the panel's own
+    first), the boot logo, and each of ``looks`` with the pictures of its standby clip (one loop
+    of them, a look at a time)."""
+    looks = list(looks)
+    with workshop() as home:
+        program = _Program(home, ["--start", model, repr(scale), *looks])
+        try:
+            kind, rate = program.line().split()
+            every = program.line().split()
+            if kind != "rate" or every[0] != "looks":
+                raise RuntimeError(f"libre-panel clip --start: {kind} {every}")
+            logo = program.picture()
+
+            def clips() -> Iterator[tuple[str, list[Image.Image]]]:
+                for look in looks:
+                    kind, named, count = program.line().split()
+                    if (kind, named) != ("look", look):
+                        raise RuntimeError(f"libre-panel clip --start: {kind} {named}")
+                    yield look, [program.picture() for _ in range(int(count))]
+                program.close()
+
+            yield int(rate), every[1:], logo, clips()
+        finally:
+            if program.process.poll() is None:
+                program.process.kill()
+                program.process.wait()
+
+
 def record_start(
     name: str,
     clip: StartClip,
@@ -798,32 +895,25 @@ def record_start(
 ) -> Recorded:
     """The boot logo for ``logo_s``, then the standby clip at its own rate, as the panel shows
     them; then the other looks' clips."""
-    from libre_panel.devices.models import get_model
-    from libre_panel.render import bootscreen
-
-    model = get_model((themes or clip.themes)[0])
+    model = (themes or clip.themes)[0]
     scale = min(1.0, settings.scale)  # (drawn at the clip's size: quicker than made smaller)
-    logo = bootscreen.boot_logo(model, scale=scale)
-    size = logo.size
-    present = Presenter(size, None, settings.bare)
     fps = settings.fps
     sink = FrameSink(folder, fps)
-    shown = present(logo)
-    sink.add(shown, round(clip.logo_s * fps))
-    own = clip.seconds - clip.logo_s - len(clip.looks) * clip.look_s
-    parts = [(bootscreen.DEFAULT, own), *((look, clip.look_s) for look in clip.looks)]
-    fade = round(clip.fade_s * fps)
-    before: list[Image.Image] = []  # the last pictures of the look before, to fade from
-    for look, seconds in parts:
-        loop = bootscreen.standby_frames(model, design=look, scale=scale)
-        count = round(seconds * fps)
-        for n in range(count):
-            picture = loop[int(n / fps * bootscreen.CLIP_FPS) % len(loop)]
-            if n < fade and before:
-                picture = Image.blend(before[n], picture, (n + 1) / (fade + 1))
-            sink.add(present(picture))
-        ends = [loop[int((count + k) / fps * bootscreen.CLIP_FPS) % len(loop)] for k in range(fade)]
-        before = ends
+    with start_screens(model, scale, (DEFAULT_LOOK, *clip.looks)) as (rate, _every, logo, clips):
+        present = Presenter(logo.size, None, settings.bare)
+        sink.add(present(logo), round(clip.logo_s * fps))
+        own = clip.seconds - clip.logo_s - len(clip.looks) * clip.look_s
+        seconds = {DEFAULT_LOOK: own, **{look: clip.look_s for look in clip.looks}}
+        fade = round(clip.fade_s * fps)
+        before: list[Image.Image] = []  # the last pictures of the look before, to fade from
+        for look, loop in clips:
+            count = round(seconds[look] * fps)
+            for n in range(count):
+                picture = loop[int(n / fps * rate) % len(loop)]
+                if n < fade and before:
+                    picture = Image.blend(before[n], picture, (n + 1) / (fade + 1))
+                sink.add(present(picture))
+            before = [loop[int((count + k) / fps * rate) % len(loop)] for k in range(fade)]
     frames = sink.frames()
     return Recorded(frames, min(frames.count - 1, round(clip.poster * fps)))
 
@@ -847,10 +937,9 @@ def music_page(stage: Stage, themes: tuple[str, ...]) -> None:
 def round_report(stage: Stage, themes: tuple[str, ...]) -> None:
     home, report = (stage.theme(theme) for theme in themes)
     stage.show(home, transition="tube")
-    finished = demo_report(images.WHEN)  # the round that just ended, as the service tells it
+    finished = demo_report()  # the round that just ended, as the service tells it
     stage.tweak(lambda readings, seconds: readings.update(finished))
-    stage.at(1.0, lambda s: s.host.request_theme(report, by="memory", transition="tube",
-                                                 priority=10))  # fmt: skip
+    stage.at(1.0, lambda s: s.ask_theme(report, by="memory", transition="tube", priority=10))
 
 
 # One screen to the next, as an autopilot or a plugin switches them: a line ignites at
@@ -858,8 +947,8 @@ def round_report(stage: Stage, themes: tuple[str, ...]) -> None:
 def theme_tube(stage: Stage, themes: tuple[str, ...]) -> None:
     first, second = (stage.theme(theme) for theme in themes)
     stage.show(first, transition="tube")
-    stage.at(1.0, lambda s: s.host.request_theme(second, by="clip", transition="tube"))
-    stage.at(3.9, lambda s: s.host.request_theme(None, by="clip", transition="tube"))
+    stage.at(1.0, lambda s: s.ask_theme(second, by="clip", transition="tube"))
+    stage.at(3.9, lambda s: s.ask_theme(None, by="clip", transition="tube"))
 
 
 # A game starts and ends: the entrance closes the screen to a line, opens a band with the game's
@@ -871,8 +960,8 @@ def game_entrance(stage: Stage, themes: tuple[str, ...]) -> None:
     def play(stage: Stage, kind: str) -> None:
         # the name the demo gives its game; a logo too, if a source publishes one
         params = {"title": stage.value("game.app", "Starfall"), "kind": kind, "logo": "game.logo"}
-        stage.host.set_mode("game" if kind == "start" else None, by="game",
-                            transition=("entrance", params))  # fmt: skip
+        stage.set_mode("game" if kind == "start" else None, by="game", transition="entrance",
+                       params=params)  # fmt: skip
 
     stage.at(0.8, lambda s: play(s, "start"))
     stage.at(4.6, lambda s: play(s, "end"))
@@ -904,25 +993,9 @@ def card_turns(stage: Stage, themes: tuple[str, ...]) -> None:
         for w in data["widgets"]
     ]  # fmt: skip
     stage.show(stage.theme(themes[0], widgets=widgets))
-
-    def slot(s: Stage) -> Any:
-        assert s.loop is not None
-        found = list(s.loop.renderer._slots.values())
-        assert found, "the theme has no card slot"
-        return found[0]
-
-    def begin(s: Stage) -> None:  # (the cards' time, from now on)
-        box = slot(s)
-        box.turns = [CARD_TURN_S] * len(box.turns)
-        box.turn_at = s.clock.now
-        box.transition = CARD_WAYS[0]
-
-    def way(name: str) -> Callable[[Stage], None]:
-        return lambda s: setattr(slot(s), "transition", name)
-
-    stage.at(0.0, begin)
+    stage.at(0.0, lambda s: s.slot(CARD_TURN_S, CARD_WAYS[0]))  # (the cards' time, from now on)
     for n, name in enumerate(CARD_WAYS[1:], start=1):
-        stage.at(n * CARD_TURN_S + 0.3, way(name))
+        stage.at(n * CARD_TURN_S + 0.3, lambda s, name=name: s.slot(None, name))
 
 
 # AI activity on Lumen, without the AI screen: the weather, until Claude Code sets to work; then
@@ -1065,17 +1138,6 @@ CLIPS: dict[str, PanelClip] = {
 # -- several panels at once ---------------------------------------------------------------------
 
 
-class _ClipMonotonic(_FrozenTime):
-    """``time`` for the readings: how old they are is told on the clip's clock, so a panel beside
-    the first shares the first panel's readings at the same frames on every run."""
-
-    def __init__(self, clock: Clock) -> None:
-        self.clock = clock
-
-    def monotonic(self) -> float:
-        return self.clock.now
-
-
 GAP_MM = 30  # between two panels of a clip, as more-panels.png has them
 
 
@@ -1112,20 +1174,38 @@ def alarm_at(stage: Stage, start: float, end: float) -> None:
                       hold=end - start, fall=1.0))  # fmt: skip
 
     def say(on: int) -> Callable[[Stage], None]:
-        return lambda s: s.host.publish(Reading("alarm", on, "", "Alarm"), owner="notices")
+        return lambda s: s.publish("alarm", on, "", "Alarm", owner="notices")
 
     stage.at(start, say(1))
     stage.at(end, say(0))
+
+
+def pair_version(theme: str) -> str | None:
+    """The version of ``theme`` for a panel with a companion beside it, if it has one (lp-check's
+    module_parts, as the app finds it)."""
+    (said,) = ask([{"op": "module_parts", "layouts": [], "pairs": [theme],
+                    "builtin": str(ROOT / "data" / "themes"),
+                    "user": str(ROOT / "no-such-folder")}])  # fmt: skip
+    return said["pairs"][theme]
 
 
 # Two bars, one above the other: Lumen (its pair version), and Lumen Companion beside it. A burst
 # of work goes up on both at once, the same fans turning in step; then the processor gets too hot:
 # both edges pulse red, and the second shows High Contrast until it has cooled.
 def more_panels(stage: Stage, themes: tuple[str, ...]) -> None:
-    # as the app does while a companion runs beside it: the first panel's pair version
+    # as the app does while a companion runs beside it: the first panel's pair version (named
+    # here: a theme made smaller for the clip has a name of its own, which the app does not pair)
     stage.show(stage.theme(pair_version(themes[0]) or themes[0]))
     work_burst(stage, at=0.8)
     alarm_at(stage, 3.6, 6.8)
+
+
+def millimetres(model: str) -> tuple[float, float]:
+    """The size of ``model``'s picture in millimetres, landscape (as the app has it)."""
+    found = images.parts(((model, "landscape"),))["models"][model]
+    width, height = found["native"][1], found["native"][0]  # (the longer side across)
+    per = found["inch"] * 25.4 / math.hypot(width, height)
+    return width * per, height * per
 
 
 def record_panels(
@@ -1136,55 +1216,28 @@ def record_panels(
     themes: tuple[str, ...] | None = None,
 ) -> Recorded:
     """Run ``clip``'s panels in step, frame by frame, and keep their pictures in ``folder``."""
-    from libre_panel import arrangement
-    from libre_panel.devices.models import find_model
-    from libre_panel.sensors import base
-
     themes = themes or clip.themes
     if len(themes) != len(clip.themes):
         raise ValueError(f"{name} shows {len(clip.themes)} theme(s), not {len(themes)}")
-    w, h = arrangement.millimetres(find_model(clip.model))
-    with workshop(), contextlib.ExitStack() as stack:
-        stage = Stage(settings)
-        stack.enter_context(mock.patch.object(base, "time", _ClipMonotonic(stage.clock)))
+    w, h = millimetres(clip.model)
+
+    def where(place: tuple[int, int]) -> tuple[int, int]:  # (in whole millimetres)
+        return round(place[0] * (w + GAP_MM)), round(place[1] * (h + GAP_MM))
+
+    with workshop() as home:
+        stage = Stage(home, settings)
         clip.setup(stage, themes)
-        first = stage._begin(START - round(clip.warmup * settings.fps) / settings.fps)
-        stage.loop = first
-        beside = []
+        stage.at_mm = where(clip.places[0])
         for n, theme in enumerate(themes[1:]):
             alarm = clip.alarm[n] if n < len(clip.alarm) else ""
-            modes = {"alarm": ModeConfig(theme=stage.theme(alarm), on=True)} if alarm else {}
-            config = Config(theme=stage.theme(theme), language="en", fps=settings.fps,
-                            transition="fade", sensors=SensorsConfig(providers=["demo"]),
-                            modes=modes)  # fmt: skip
-            beside.append(MainLoop(
-                config, hub=base.HubView(first.hub), display=Eye(settings.fps),
-                clock=stage.clock, panel=n, mode_of=lambda: stage.host.mode, beats=first.beats,
-            ))  # fmt: skip
+            stage.beside.append((stage.theme(theme), where(clip.places[n + 1]),
+                                 stage.theme(alarm) if alarm else ""))  # fmt: skip
         fps = settings.fps
         overlap = round(FADE_S * fps) if clip.loop == "fade" else 0
         sink = FrameSink(folder, fps)
-        events = sorted(stage._events)
-        done = 0
-        try:
-            for n in range(-round(clip.warmup * fps), round((clip.seconds + overlap / fps) * fps)):
-                stage.clock.now = START + n / fps
-                while n >= 0 and done < len(events) and events[done][0] <= n / fps + 1e-9:
-                    events[done][2](stage)
-                    done += 1
-                frames = [loop.step(stage.clock.now) for loop in (first, *beside)]
-                if n < 0:
-                    continue
-                shown = [((c * (w + GAP_MM), r * (h + GAP_MM), w, h), frame.copy(), False, k + 1)
-                         for k, ((c, r), frame) in enumerate(zip(clip.places, frames,
-                                                                 strict=True))]  # fmt: skip
-                picture = arrangement.photo(shown)
-                assert picture is not None
-                sink.add(picture)
-        finally:
-            for loop in (first, *beside):
-                loop.close()
-            stage.host.close()
+        for picture in stage.frames(clip.seconds + overlap / fps, clip.warmup,
+                                    panels=clip.model):  # fmt: skip
+            sink.add(picture)
         recorded = sink.frames()
     if overlap:
         recorded = fade_loop(recorded, overlap)

@@ -22,7 +22,8 @@ is not on PyPI: pip and pipx install the release's wheel by its link.
 ```bash
 # 1. set the version in pyproject.toml (the one place it is set)
 # 2. CHANGELOG.md: a section "## 0.1.0 — <date>"
-# 3. the pictures and clips of this release (see below), looked at one by one
+# 3. the pictures and clips of this release (see below), looked at one by one; Libre Panel in
+#    Rust draws them (cargo build --release in rust/: lp-check and libre-panel)
 python tools/readme_images.py && python tools/readme_media.py && python tools/check_pages.py
 git add docs/images docs/media
 git commit -am "Release 0.1.0"
@@ -299,13 +300,13 @@ one.
 
 The GIFs of the README and of forum posts, and the small videos of the website, are made by
 `python tools/readme_media.py` into `docs/media` (`--list` says what there is). A clip is a
-recipe: the panel in video mode in `tools/media_panel.py` (the real main loop, frame by frame on a
-clock of its own, so a clip is the same on every run), the app in a browser in
-`tools/media_app.py`, or a scene drawn round them in `tools/media_scene.py`: the README's top (the
-website's headline over Lumen in video mode, in English and German) and the panel as a monitor of
-its own (the desktop's monitor, the panel below it, the app and the website in their windows). The
-Player's clip plays made-up videos, drawn frame by frame in `tools/media_samples.py`, so that
-nothing of anybody else's is in it. Each clip gives a GIF (960 px wide, 25 frames a second, under 4 MB, and
+recipe: the panel in video mode in `tools/media_panel.py` (Libre Panel's own main loop,
+`libre-panel clip`, frame by frame on a clock of its own, so a clip is the same on every run), the
+app in a browser in `tools/media_app.py`, or a scene drawn round them in `tools/media_scene.py`:
+the README's top (the website's headline over Lumen in video mode, in English and German) and the
+panel as a monitor of its own (the desktop's monitor, the panel below it, the app and the website in
+their windows). The Player's clip plays made-up videos, drawn frame by frame in
+`tools/media_samples.py`, so that nothing of anybody else's is in it. Each clip gives a GIF (960 px wide, 25 frames a second, under 4 MB, and
 the run stops if one cannot be made smaller than 8 MB, what a forum takes), an MP4 and a WebM
 for the website, and a poster. ffmpeg makes the videos and the best GIFs (without it Pillow writes
 the GIFs); the app's clips and the scenes need `pip install playwright` and `playwright install

@@ -1080,6 +1080,52 @@ fn plain(value: &lp_py::Value) -> Value {
     }
 }
 
+/// A value as lp-check takes a reading's (tools/lp_check.py's `typed`): its type said, a
+/// float by its bits.
+fn typed_out(value: &lp_py::Value) -> Value {
+    match value {
+        lp_py::Value::None => json!({"n": null}),
+        lp_py::Value::Bool(b) => json!({"b": b}),
+        lp_py::Value::Int(n) => json!({"i": n.to_string()}),
+        lp_py::Value::Float(f) => json!({"f": format!("{:016x}", f.to_bits())}),
+        lp_py::Value::Str(s) => json!({"s": s}),
+        lp_py::Value::List(items) => json!({"l": items.iter().map(typed_out).collect::<Vec<_>>()}),
+        lp_py::Value::Dict(items) => {
+            let items: serde_json::Map<String, Value> = items
+                .iter()
+                .map(|(k, v)| (k.clone(), typed_out(v)))
+                .collect();
+            json!({ "d": items })
+        }
+    }
+}
+
+/// clip_demo: the demo's readings at each of `seconds` after `when`, as a clip of the README
+/// has them (lp_services::demo::clip_readings, `period` its length if it loops), each
+/// `[key, typed value, unit, label]`; and the round report the memory service tells after a
+/// game at `when` (`report`).
+fn clip_demo(case: &Value) -> Result<Value, String> {
+    let utc = lp_py::zones::Zone::utc();
+    let zone = lp_py::zones::local().unwrap_or(&utc);
+    let when = case["when"].as_f64().unwrap_or(0.0);
+    let period = case["period"].as_f64();
+    let told = |readings: &lp_sensors::lhm::Readings| -> Vec<Value> {
+        (readings.iter())
+            .map(|(key, r)| json!([key, typed_out(&r.value), r.unit, r.label]))
+            .collect()
+    };
+    let frames: Vec<Value> = (case["seconds"].as_array().into_iter().flatten())
+        .map(|s| {
+            let s = s.as_f64().unwrap_or(0.0);
+            Value::Array(told(&lp_services::demo::clip_readings(
+                when, s, period, zone,
+            )))
+        })
+        .collect();
+    let report = lp_services::demo::demo_report(when, 7)?;
+    Ok(json!({"frames": frames, "report": told(&report)}))
+}
+
 /// weather: the forecast's address for each [latitude, longitude, imperial], the present
 /// weather and the forecast of each [answer, now] in the case's language, and what
 /// datetime.fromisoformat makes of each text.
@@ -3275,6 +3321,7 @@ pub fn run(op: &str, case: &Value) -> Result<Value, String> {
         "waveshare" => waveshare(case)?,
         "ports" => ports(case)?,
         "demo" => demo(case)?,
+        "clip_demo" => clip_demo(case)?,
         "autopilot" => autopilot(case)?,
         "mangohud" => mangohud(case)?,
         "media" => media(case),

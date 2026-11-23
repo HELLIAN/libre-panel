@@ -450,8 +450,7 @@ impl Display {
     }
 
     /// A display that writes its frames to `path` and nothing else.
-    /// A display of the tests' own driver.
-    #[cfg(test)]
+    /// A display of a driver of the app's own: a test's, a clip's recorder (clip.rs).
     pub(crate) fn of_driver(driver: Box<dyn Driver>) -> Display {
         Display {
             device: DeviceConfig::default(),

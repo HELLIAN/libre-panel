@@ -27,6 +27,13 @@ pub struct Company {
     also: Mutex<Option<Also>>,
 }
 
+/// Seconds since `began` on the clock the loops go by (a clip's where one runs them).
+pub fn since(began: Instant) -> f64 {
+    lp_render::clock::now()
+        .saturating_duration_since(began)
+        .as_secs_f64()
+}
+
 /// `<settings>/plugins-data`: where each service keeps its files (power's totals, the memory's
 /// database)
 pub const SERVICES_DATA: &str = "plugins-data";
@@ -36,8 +43,9 @@ impl Company {
     /// before any of them starts: a service reads what it kept as it starts (the power count
     /// its totals), and one that makes its file then (the memory) would fail without it.
     pub fn new(settings: &std::path::Path) -> Arc<Company> {
-        let began = Instant::now();
-        let host = PluginHost::new(Box::new(move || began.elapsed().as_secs_f64()));
+        // (the clock the services and the loops count by: a clip's where one runs them)
+        let began = lp_render::clock::now();
+        let host = PluginHost::new(Box::new(move || since(began)));
         host.set_data_dir(settings.join(SERVICES_DATA));
         let manager = Manager::new(&host, crate::services::parts());
         Arc::new(Company {

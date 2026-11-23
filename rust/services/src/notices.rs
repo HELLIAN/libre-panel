@@ -416,6 +416,20 @@ impl Core {
         out
     }
 
+    /// What the volume and the microphone are now, as known already: a service started
+    /// again (its options changed) tells the next change, rather than taking it for the first
+    /// value.
+    pub fn known(&mut self, snapshot: &Snapshot) -> Vec<Action> {
+        if let Some(volume) = number(Some(&snapshot.value("audio.volume"))) {
+            self.volume_seen = true;
+            self.volume = Some((volume, snapshot.value("audio.muted").truthy()));
+        }
+        if let Some(value) = number(Some(&snapshot.value(MIC_KEY))) {
+            self.mic = Some(value != 0.0);
+        }
+        Vec::new()
+    }
+
     /// The volume moved, or the track or its state changed, between two samples: tell it now,
     /// not with the next reading. (A track already told is not told again.)
     pub fn fresh(&mut self, snapshot: &Snapshot, keys: &BTreeSet<String>, now: f64) -> Vec<Action> {
@@ -677,7 +691,9 @@ impl Shared {
         if self.stopped.load(Ordering::Relaxed) {
             return;
         }
-        let now = self.began.elapsed().as_secs_f64();
+        let now = lp_render::clock::now()
+            .saturating_duration_since(self.began)
+            .as_secs_f64();
         let actions = match self.core.lock() {
             Ok(mut core) => look(&mut core, now),
             Err(_) => return,
@@ -699,9 +715,7 @@ impl Shared {
 
 /// The clock's hours and minutes now, as strftime("%H:%M") writes them.
 fn clock_now() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |since| since.as_secs_f64());
+    let now = lp_render::clock::wall();
     lp_py::zones::local()
         .and_then(|zone| lp_py::zones::fromtimestamp(zone, now))
         .map(|(wall, _)| format!("{:02}:{:02}", wall.hour, wall.minute))
@@ -739,7 +753,7 @@ pub fn part() -> Part {
                 shared: Arc::new(Shared {
                     core: Mutex::new(core),
                     host,
-                    began: Instant::now(),
+                    began: lp_render::clock::now(),
                     stopped: AtomicBool::new(false),
                 }),
             }))
@@ -761,6 +775,9 @@ impl Service for Notices {
         };
         let keys: Vec<&str> = wants.iter().map(String::as_str).collect();
         host.want(&keys);
+        if let Some(snapshot) = host.snapshot() {
+            self.shared.act(|core, _| core.known(&snapshot));
+        }
         let shared = Arc::clone(&self.shared);
         host.on(
             "sample",

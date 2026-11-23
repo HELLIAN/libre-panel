@@ -12,6 +12,7 @@ mod backup;
 mod beside;
 mod capture;
 mod client;
+mod clip;
 mod clock;
 mod colour_show;
 mod colours;
@@ -623,6 +624,8 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             std::process::exit(share::command(args, &home.places(), &env));
         }
         "tools" => std::process::exit(tools::command(args)?),
+        // (tools/media_panel.py's: the README's clips of the panels)
+        "clip" => std::process::exit(clip::command(args)?),
         "location" => std::process::exit(location_command(args)?),
         // (the app's own: its capture program on Wayland, wayland.rs)
         "wayland-feed" => std::process::exit(wayland_feed::run(args)),

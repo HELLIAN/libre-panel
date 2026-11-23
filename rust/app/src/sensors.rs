@@ -946,6 +946,13 @@ impl Hub {
         self.sources.push(source);
     }
 
+    /// A clip's: no source of this computer's (the clip brings its readings, and adds them).
+    pub fn bare(config: &lp_config::Config) -> Hub {
+        let mut hub = Hub::new(Vec::new());
+        hub.names.follow_config(config);
+        hub
+    }
+
     /// Whether any source wants to be read on every frame.
     pub fn every_frame(&self) -> bool {
         self.sources
@@ -971,7 +978,7 @@ impl Hub {
     pub fn age(&self) -> Option<f64> {
         self.taken
             .as_ref()
-            .map(|(at, _, _)| at.elapsed().as_secs_f64())
+            .map(|(at, _, _)| crate::company::since(*at))
     }
 
     /// shared: for another panel (`View`), the readings and pictures taken last where they
@@ -979,7 +986,7 @@ impl Hub {
     /// two panels that draw at the same pace.
     pub fn shared(&mut self, max_age: f64) -> (Readings, Images) {
         if let Some((at, readings, images)) = &self.taken {
-            if at.elapsed().as_secs_f64() < max_age {
+            if crate::company::since(*at) < max_age {
                 return (readings.clone(), images.clone());
             }
         }
@@ -1314,7 +1321,7 @@ impl Hub {
         let mut images = IndexMap::new();
         self.pictures.clear();
         self.refresh_images(&mut images, true, true);
-        self.taken = Some((Instant::now(), readings.clone(), images.clone()));
+        self.taken = Some((lp_render::clock::now(), readings.clone(), images.clone()));
         (readings, images)
     }
 }
@@ -1387,6 +1394,67 @@ impl View {
     }
 }
 
+/// The readings a clip gives (`libre-panel clip`): those it says for the frame; with `every`
+/// those of the volume, on every frame (as the audio source has them), else the rest, with the
+/// demo's pictures.
+pub struct Given {
+    readings: Arc<std::sync::Mutex<Readings>>,
+    every: bool,
+    images: IndexMap<String, lp_pixels::Image>,
+}
+
+/// the volume's readings: they follow on every frame
+const GIVEN_EVERY: [&str; 2] = ["audio.volume", "audio.muted"];
+
+impl Given {
+    pub fn new(
+        readings: Arc<std::sync::Mutex<Readings>>,
+        every: bool,
+        images: IndexMap<String, lp_pixels::Image>,
+    ) -> Given {
+        Given {
+            readings,
+            every,
+            images,
+        }
+    }
+}
+
+impl Source for Given {
+    fn name(&self) -> &'static str {
+        match self.every {
+            true => "audio",
+            false => "demo",
+        }
+    }
+
+    fn read(&mut self, out: &mut Readings) {
+        let Ok(readings) = self.readings.lock() else {
+            return;
+        };
+        for (key, reading) in readings.iter() {
+            if GIVEN_EVERY.contains(&key.as_str()) == self.every {
+                out.insert(key.clone(), reading.clone());
+            }
+        }
+    }
+
+    fn every_frame(&self) -> Every {
+        match self.every {
+            true => Every::Frame,
+            false => Every::No,
+        }
+    }
+
+    fn images(&self) -> IndexMap<String, lp_pixels::Image> {
+        self.images.clone()
+    }
+
+    fn images_state(&self) -> u64 {
+        1 // (always the same ones)
+    }
+}
+
 /// Readings made up of the time alone, for a look at a theme without a computer's own
 /// (`--demo`): the demo's (sensors/demo.py's DemoProvider, lp-services' demo), with its
 /// pictures: an album's cover, the player's icon and a game's logo.
@@ -1408,10 +1476,7 @@ impl Source for Demo {
 
     fn read(&mut self, out: &mut Readings) {
         // (where LP_NOW names a moment, the demo's readings stand still at it: crate::clock)
-        let t = crate::clock::named().unwrap_or_else(|| {
-            let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-            since.map_or(0.0, |since| since.as_secs_f64())
-        });
+        let t = crate::clock::named().unwrap_or_else(lp_render::clock::wall);
         let utc = lp_py::zones::Zone::utc();
         let zone = lp_py::zones::local().unwrap_or(&utc);
         out.extend(lp_services::demo::read(t, zone));

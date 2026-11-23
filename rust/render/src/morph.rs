@@ -418,7 +418,7 @@ impl Board {
 
     /// tell: panel `panel` says what its screens show at the switch `key`.
     pub fn tell(&self, key: &str, panel: i64, seen: Arc<Seen>) {
-        let now = Instant::now();
+        let now = crate::clock::now();
         let mut switches = self.switches();
         switches.retain(|_, s| now.duration_since(s.at).as_secs_f64() <= BOARD_KEEP_S);
         let switch = switches.entry(key.to_string()).or_insert_with(|| Switch {

@@ -371,6 +371,18 @@ pub(crate) struct Slot {
 }
 
 impl Slot {
+    /// A clip's (`libre-panel clip`): the cards take turns of `seconds` from `at` on, where it
+    /// says so, and go from one to the next the `way` it names.
+    pub(crate) fn clip(&mut self, seconds: Option<f64>, at: f64, way: Option<&str>) {
+        if let Some(seconds) = seconds {
+            self.turns = vec![seconds; self.turns.len()];
+            self.turn_at = Some(at);
+        }
+        if let Some(way) = way {
+            self.transition = way.to_string();
+        }
+    }
+
     /// Slot(renderer, module, cards, box): what it fails at, Python's renderer fails at as it is
     /// made (a number past a float's range, a palette's colour no colour).
     pub fn new(

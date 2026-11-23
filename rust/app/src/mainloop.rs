@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use indexmap::IndexMap;
 use lp_config::sequence::Rotation;
@@ -52,6 +52,8 @@ pub const LIVE_HOLD_S: f64 = 10.0;
 /// a panel beside the first takes its readings this long after the first panel took them, so
 /// that a value glides on both at once
 const IN_STEP_S: f64 = 0.1;
+/// how much sooner than due a frame still takes the readings
+const SAMPLE_SLACK_S: f64 = 1e-6;
 
 /// What `notify` is told of a message, kept where any thread may ask: whether the panel is
 /// connected, the kinds the theme switches off and those the screen shows itself.
@@ -127,6 +129,8 @@ pub struct Asked {
     pub port: Option<u16>,
     /// this driver instead of config.toml's `[device] driver` (`run --driver virtual`)
     pub driver: Option<String>,
+    /// a clip's (`libre-panel clip`): none of this computer's readings, the clip adds its own
+    pub clip: bool,
 }
 
 /// What a loop of a panel beside the first has of it: its place in `[[panels]]`, and the
@@ -232,6 +236,8 @@ pub struct MainLoop {
     on_bus: std::cell::Cell<Option<(Instant, Option<&'static PanelModel>)>>,
     /// the first panel's: the loops of the panels beside it
     more: Option<More>,
+    /// a clip's panels beside the first: their loops are the clip's, not threads of `more`
+    clip_beside: Vec<Arc<Mutex<RunStatus>>>,
     /// when a companion was last seen showing beside the first panel
     paired_at: Option<f64>,
     /// frame rate, drawing time, data rate, the video link, faults; and what the drivers
@@ -324,6 +330,8 @@ pub struct MainLoop {
     in_sequence: bool,
     /// the step of the screens in turn the theme was last taken from
     sequence_at: Option<(usize, String, f64)>,
+    /// the seconds of a step of the screens in turn, in seconds (a clip's are tenths)
+    sequence_unit: f64,
     /// counts the transitions (each breaks its old frame anew)
     blends: u64,
     connected: bool,
@@ -419,9 +427,7 @@ fn canvas_rects(
 
 /// Now on the wall clock, in seconds since 1970.
 fn wall_clock() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64())
+    lp_render::clock::wall()
 }
 
 /// _moment: when the change `key` (its occasion, and whether it leaves it) begins on every
@@ -450,11 +456,7 @@ fn scene_check() -> bool {
 /// The local time of now, and its fold.
 pub(crate) fn moment() -> (Moment, bool) {
     // (where LP_NOW names a moment, the time of day stands still at it: crate::clock)
-    let since = crate::clock::named().unwrap_or_else(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64())
-    });
+    let since = crate::clock::named().unwrap_or_else(lp_render::clock::wall);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     lp_py::zones::fromtimestamp(zone, since).unwrap_or((Moment::date(1970, 1, 1), false))
@@ -488,9 +490,14 @@ impl MainLoop {
             };
         }
         // (a source nobody brings is noted by the hub, and said with its first readings)
-        let (mut hub, _) = Hub::of(&config, asked.demo);
+        let mut hub = match asked.clip {
+            true => Hub::bare(&config),
+            false => Hub::of(&config, asked.demo).0,
+        };
         hub.add(Box::new(crate::sensors::Services(Arc::clone(&host))));
-        say(&format!("readings from: {}", hub.names().join(", ")));
+        if !asked.clip {
+            say(&format!("readings from: {}", hub.names().join(", ")));
+        }
         let judged: Arc<Mutex<Judged>> = Arc::default();
         let asks = Arc::clone(&judged);
         host.set_judge(Some(Box::new(move |toast| {
@@ -556,7 +563,7 @@ impl MainLoop {
             };
         }
         let began = company.began;
-        let host = PluginHost::new(Box::new(move || began.elapsed().as_secs_f64()));
+        let host = PluginHost::new(Box::new(move || crate::company::since(began)));
         let asked = Asked {
             theme: None,
             output: None,
@@ -598,8 +605,9 @@ impl MainLoop {
             view: None,
             beside: None,
             more: None,
+            clip_beside: Vec::new(),
             paired_at: None,
-            meter: crate::meter::Meter::new(began.elapsed().as_secs_f64(), &Default::default()),
+            meter: crate::meter::Meter::new(crate::company::since(began), &Default::default()),
             counted: Default::default(),
             panel: None,
             failures: 0,
@@ -651,6 +659,7 @@ impl MainLoop {
             occasion: "manual",
             in_sequence: false,
             sequence_at: None,
+            sequence_unit: 1.0,
             blends: 0,
             connected: false,
         }
@@ -669,9 +678,87 @@ impl MainLoop {
         self.beside.as_ref().map_or(0, |beside| beside.n + 1)
     }
 
+    // -- what `libre-panel clip` does with a loop (clip.rs) --------------------------------
+
+    /// The services' host of the loop.
+    pub(crate) fn host(&self) -> Arc<PluginHost> {
+        Arc::clone(&self.host)
+    }
+
+    pub(crate) fn company(&self) -> Arc<Company> {
+        Arc::clone(&self.company)
+    }
+
+    pub(crate) fn shared_hub(&self) -> Arc<Mutex<Hub>> {
+        Arc::clone(&self.hub)
+    }
+
+    pub(crate) fn status(&self) -> Arc<Mutex<RunStatus>> {
+        Arc::clone(&self.status)
+    }
+
+    /// The sources of a clip (`Asked::clip`): its own, beside the services'.
+    pub(crate) fn clip_sources(&self, given: Vec<Box<dyn crate::sensors::Source>>) {
+        if let Ok(mut hub) = self.hub.lock() {
+            for source in given {
+                hub.add(source);
+            }
+            say(&format!("readings from: {}", hub.names().join(", ")));
+        }
+    }
+
+    /// The panel the loop shows on, instead of looking for one.
+    pub(crate) fn set_display(&mut self, display: Display) {
+        self.panel = Some(display);
+    }
+
+    /// The sources read once into the graphs' history, without a frame.
+    pub(crate) fn prefill(&mut self) {
+        let (now, fold) = moment();
+        if let Ok(mut hub) = self.hub.lock() {
+            hub.snapshot(now, fold);
+        }
+    }
+
+    /// A clip's pages: none asks this computer how long it has been idle; music's stays
+    /// `leave_s` after a track stops (None: its usual time).
+    pub(crate) fn clip_pages(&mut self, leave_s: Option<f64>) {
+        self.pages.without_idle();
+        if let Some(leave_s) = leave_s {
+            self.pages.leave_s = leave_s;
+        }
+    }
+
+    /// A clip's screens in turn: config.toml's seconds of a step are `unit` seconds each
+    /// (0.1: tenths, for steps shorter than a step can be).
+    pub(crate) fn clip_pace(&mut self, unit: f64) {
+        if unit > 0.0 {
+            self.sequence_unit = unit;
+        }
+    }
+
+    /// A clip's panels beside the first (their statuses): the loops the clip runs itself.
+    pub(crate) fn clip_beside(&mut self, statuses: Vec<Arc<Mutex<RunStatus>>>) {
+        self.clip_beside = statuses;
+    }
+
+    /// config.toml read again in the next frame (a clip changed it), not at the next look.
+    pub(crate) fn clip_config(&mut self) {
+        self.watched = f64::NEG_INFINITY;
+    }
+
+    /// The cards of the first card slot on show take turns of `seconds` from now on (None: as
+    /// they do), `way` their transition (None: as it is).
+    pub(crate) fn clip_slot(&mut self, seconds: Option<f64>, way: Option<&str>) {
+        let now = self.clock();
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.clip_slot(seconds, now, way);
+        }
+    }
+
     /// The loop's clock: seconds since it began.
     fn clock(&self) -> f64 {
-        self.began.elapsed().as_secs_f64()
+        crate::company::since(self.began)
     }
 
     /// The app's language as config.toml sets it ("auto": the system's).
@@ -899,7 +986,8 @@ impl MainLoop {
                 if self.beside.is_none() {
                     // (the sources: the first panel's loop tells them, its config has the
                     // same readings)
-                    if fresh.sensors != self.config.sensors {
+                    // (a clip's are its own, whatever config.toml says)
+                    if fresh.sensors != self.config.sensors && !self.asked.clip {
                         let (mut hub, _) = Hub::of(&fresh, self.asked.demo);
                         hub.add(Box::new(crate::sensors::Services(Arc::clone(&self.host))));
                         self.hub().replace(hub);
@@ -1110,7 +1198,12 @@ impl MainLoop {
             .config
             .sequence
             .on
-            .then(|| self.rotation.at(&self.config.sequence.steps, now))
+            .then(|| {
+                (self.rotation).at(
+                    &self.config.sequence.steps,
+                    now * (1.0 / self.sequence_unit),
+                )
+            })
             .flatten()
         {
             self.in_sequence = true;
@@ -1188,10 +1281,12 @@ impl MainLoop {
     /// _pairing: for the first panel, whether a companion runs beside it, and PAIR_HOLD_S
     /// after the last one was seen, so that a reconnect does not switch back and forth.
     fn paired(&mut self, now: f64) -> bool {
-        let Some(more) = &self.more else {
-            return false;
+        let statuses = match &self.more {
+            Some(more) => more.statuses(),
+            None if !self.clip_beside.is_empty() => self.clip_beside.clone(),
+            None => return false,
         };
-        let showing = more.statuses().iter().any(|status| {
+        let showing = statuses.iter().any(|status| {
             status.lock().is_ok_and(|status| {
                 status.state == "showing" && versions::is_companion(&status.theme)
             })
@@ -1982,8 +2077,11 @@ impl MainLoop {
         drop(heading);
         let snapshotting = lp_render::prof::Span::new("snapshot");
         let mut sampled = false; // (fresh readings: Renderer.new_sample)
+
+        // (due within a microsecond: the clock's nanoseconds put a frame that is due a hair
+        // before it, and the readings a frame late every time)
         let snapshot = match self.snapshot.take() {
-            Some(mut last) if started < self.next_sample => {
+            Some(mut last) if started + SAMPLE_SLACK_S < self.next_sample => {
                 if self.hub().every_frame() {
                     // cheap sources follow on every frame, not only with the readings
                     let streams = self.panel.as_ref().is_some_and(|panel| panel.streams());

@@ -2267,6 +2267,14 @@ impl Renderer {
         None
     }
 
+    /// A clip's (`libre-panel clip`): the cards of the first card slot take turns of `seconds`
+    /// from `at` (the loop's clock) on, where it says so, and change the `way` it names.
+    pub fn clip_slot(&mut self, seconds: Option<f64>, at: f64, way: Option<&str>) {
+        if let Some(slot) = self.slots.values_mut().next() {
+            slot.clip(seconds, at, way);
+        }
+    }
+
     /// render: the frame (RGB) of `snapshot` at `now` (the clock the slots' rules keep their
     /// times by: render's own `now`, not the snapshot's moment), and the widgets' boxes;
     /// Unported where it holds what is not drawn here yet.

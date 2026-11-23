@@ -465,7 +465,8 @@ jobs:
         run: python -m pytest -q -rfE --durations=20 tests/test_rust_server.py tests/test_rust_wayland.py
       # the app's pages in a real browser on the Rust app's server, the Python app out of reach
       # (as the job desktop runs them on the Python app's): what one of them cannot do here is
-      # skipped, each with its reason
+      # skipped, each with its reason; and the README's pictures and clips, which the program
+      # and lp-check draw and run (tools/readme_media.py)
       - name: The app in a browser, on the Rust app's server (Linux)
         if: runner.os == 'Linux' && !inputs.quick && !cancelled()
         env:
@@ -474,7 +475,7 @@ jobs:
         run: |
           pip install -q playwright
           python -m playwright install --with-deps chromium
-          python -m pytest -q -rs tests/test_app_browser.py tests/test_app_ux_*.py tests/test_sequence_browser.py tests/test_panel_files_browser.py
+          python -m pytest -q -rs tests/test_app_browser.py tests/test_app_ux_*.py tests/test_sequence_browser.py tests/test_panel_files_browser.py tests/test_readme_media.py
       # lp-check's answers to the comparisons that passed, as tests/golden keeps them: what
       # the Python app answered, for the comparisons once it is gone (tests/golden.py)
       - name: The comparisons' answers
@@ -982,4 +983,4 @@ jobs:
         run: >-
           pytest -q -rs tests/test_app_browser.py tests/test_app_ux_*.py
           tests/test_sequence_browser.py tests/test_panel_files_browser.py
-          tests/test_readme_media.py tests/test_tray.py tests/test_hotkeys.py
+          tests/test_tray.py tests/test_hotkeys.py

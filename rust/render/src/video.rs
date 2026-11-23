@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -27,10 +27,10 @@ pub const AHEAD: usize = 3;
 pub const BEHIND_S: f64 = 0.5;
 pub const START_TIMEOUT_S: f64 = 10.0;
 
-/// time.monotonic(), as the feeds' own clock: seconds from the first time it is read.
+/// time.monotonic(), as the feeds' own clock: seconds from the first time it is read (a clip's
+/// seconds in a clip: crate::clock).
 pub fn monotonic() -> f64 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+    crate::clock::monotonic()
 }
 
 /// _filter: ffmpeg's filter that fits the video into w x h as the widget's `fit` says.

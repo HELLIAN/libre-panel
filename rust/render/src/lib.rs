@@ -11,6 +11,7 @@ mod bootlooks;
 pub mod branding;
 mod calendar;
 pub mod canvas;
+pub mod clock;
 pub mod compose;
 pub mod countdown;
 pub mod cover;
