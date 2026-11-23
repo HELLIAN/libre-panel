@@ -121,6 +121,14 @@ def servers(
     search_url = f"http://127.0.0.1:{search.server_address[1]}/search"
     # GitHub's answer on the releases, the same file for both (the update check's)
     releases = tmp_path / "releases.json"
+    # a stand-in of xdg-open for both, which shows the folders a test asks for: the same
+    # answer on every computer (one without xdg-open says it cannot), and nothing opened
+    if os.name != "nt":
+        stand_in = tmp_path / "bin"
+        stand_in.mkdir()
+        (stand_in / "xdg-open").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (stand_in / "xdg-open").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ.get('PATH', '')}")
     i18n.set_language("de")  # (the servers' language, for what the tests say in it)
     python: Any = None
     if PYTHON:
@@ -231,10 +239,11 @@ def test_the_apps_files_and_the_way_in_are_answered_as_server_py_answers(servers
     name of the server or page of another site; the token missing, wrong or in the wrong
     place; requests that are none, in http.server's words; the texts in the app's language
     and the state without a background app."""
-    font = next(DATA.joinpath("fonts").glob("*.ttf")).stem
-    module = next(path for path in DATA.joinpath("editor", "app").rglob("*.js"))
+    # (each the first by name: the folder's own order is another on another computer)
+    font = min(DATA.joinpath("fonts").glob("*.ttf")).stem
+    module = min(DATA.joinpath("editor", "app").rglob("*.js"))
     module = module.relative_to(DATA / "editor" / "app").as_posix()
-    old = next(DATA.joinpath("editor", "static").iterdir()).name
+    old = min(DATA.joinpath("editor", "static").iterdir()).name
     json = "Content-Type: application/json"
     requests: list[str | bytes] = [
         _get("/"), _get("/index.html"), _get("/index.html?x=1#y"), _get("//index.html"),
@@ -2950,10 +2959,24 @@ def test_the_hardware_settings_are_as_server_py_has_them(
         with (side / "config.toml").open("a", encoding="utf-8") as config:
             config.write('[hardware]\ncpu_name = "Mine"\n\n[[hardware.fans]]\n'
                          'sensor = "fan.lpc.fan_10"\nname = "Back"\n')  # fmt: skip
+
+    def same(theirs: Any, ours: Any, what: Any) -> None:
+        if PYTHON:  # (this computer's parts, found by both)
+            assert ours[2] == theirs[2], what
+            assert ours == theirs, what
+            return
+        # (what was kept is of CI's computer, whose parts are another's than this one's: the
+        # names as found are left out, the rest is the same)
+        assert ours[0] == theirs[0], what
+        unsized = [{k: v for k, v in side[1].items() if k != "Content-Length"}
+                   for side in (theirs, ours)]  # fmt: skip
+        assert unsized[1] == unsized[0], what
+        told = [_without_found(json.loads(side[2])) for side in (theirs, ours)]
+        assert told[1] == told[0], what
+
     for query in ("", "?refresh", "?refresh=1", "?refresh=0", "?refresh=false"):
         theirs, ours = ask(_get(f"/api/hardware{query}", WITH))
-        assert ours[2] == theirs[2], query
-        assert ours == theirs, query
+        same(theirs, ours, query)
     for payload in (
         {"cpu": "My  CPU\x07", "gpu": ""}, {"fans": {"fan.lpc.fan_2": "Intake"}},
         {"fan_looks": {" fan.lpc.fan_2 ": "libre"}, "fan_paints": {"gpu.fan": "own"}},
@@ -2964,9 +2987,18 @@ def test_the_hardware_settings_are_as_server_py_has_them(
         {"fans": {"fan.lpc.fan_3": "y" * 200}},
     ):  # fmt: skip
         theirs, ours = ask(_post("/api/hardware", payload))
-        assert ours == theirs, payload
+        same(theirs, ours, payload)
         configs = [(side / "config.toml").read_text("utf-8") for side in homes]
         assert configs[1] == configs[0], payload
+
+
+def _without_found(data: Any) -> Any:
+    """The hardware's answer without the parts' names as the computer it ran on found them."""
+    if isinstance(data, dict):
+        return {k: "<found>" if k == "detected" else _without_found(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_without_found(v) for v in data]
+    return data
 
 
 def test_the_history_is_as_server_py_has_it(servers: Any) -> None:
@@ -3332,8 +3364,17 @@ def test_the_start_screen_is_told_drawn_and_made_as_server_py_does(servers: Any)
         assert _frames_of(ours[2]) == _frames_of(theirs[2]), path
     if shutil.which("ffmpeg"):
         theirs, ours = ask(_get("/api/start-screen/file?model=turing-2.1-usb&what=clip", WITH))
-        assert ours[0] == theirs[0] and ours[1] == theirs[1]
-        assert ours[2] == theirs[2]
+        if PYTHON:  # (the same ffmpeg on the same computer: the same bytes)
+            assert ours[0] == theirs[0] and ours[1] == theirs[1]
+            assert ours[2] == theirs[2]
+        else:  # (kept of CI's ffmpeg and processor, whose bytes another's are not: an H.264
+            # stream of the same kind, near as large)
+            unsized = [{k: v for k, v in side[1].items() if k != "Content-Length"}
+                       for side in (ours, theirs)]  # fmt: skip
+            assert ours[0] == theirs[0] and unsized[0] == unsized[1]
+            size = server_tape.kept_size(theirs[2])
+            assert ours[2][:4] == b"\x00\x00\x00\x01", ours[2][:16]
+            assert abs(len(ours[2]) - size) <= size // 10, (len(ours[2]), size)
     for path in ("picture?model=nope", "picture?model=turing-9.2-usb&what=x",
                  "picture?model=turing-9.2-usb&design=nope", "file?what=clip"):  # fmt: skip
         theirs, ours = ask(_get(f"/api/start-screen/{path}", WITH))

@@ -6,8 +6,10 @@ asked as before, and what it answers is held against what was kept.
 
 What depends on the run is taken out of what is kept, and put back as the run has it: the
 server's settings folder and the test's own (each a word in angle brackets, by the way the
-path is spelled), the ports of the servers a test starts on this computer, the length of a
-body that holds such. A body or a file larger than WHOLE is kept as its digest. Where what the
+path is spelled), the app's data folder and the user's own (where the AI agents' settings
+are), the version that is built and the kernel's release (which a report names),
+the ports of the servers a test starts on this computer, the length of a body that holds
+such. A body or a file larger than WHOLE is kept as its digest. Where what the
 Rust app's server answers is the kept answer but for those, the answer played is that very
 one with the Python server's folder in place of its own, so that a test goes on reading it; where
 it is another, the kept one is played as far as it was kept (a digest stays a digest), and the
@@ -44,12 +46,23 @@ PORT = re.compile(
 
 
 class Places:
-    """What depends on the run in what a server says and writes: its settings folder ``home``
-    and the test's folder ``tmp``."""
+    """What depends on the run in what a server says and writes: its settings folder ``home``,
+    the test's folder ``tmp``, the app's data folder and the user's, the version and the
+    kernel's release."""
 
     def __init__(self, home: Path, tmp: Path) -> None:
-        found = []
-        for word, path in (("home", home), ("tmp", tmp)):
+        import platform
+
+        from libre_panel import __version__  # (the version that is built: pyproject.toml's)
+        from libre_panel.datadir import DATA  # (where the checkout is)
+
+        # (what a report names of the program and of the computer; a release as short as
+        # Windows' "11" is no word to look for)
+        found = [(text.encode("utf-8"), f"<{word}>".encode())
+                 for word, text in (("version", __version__), ("kernel", platform.release()))
+                 if len(text) > 4 and "." in text]  # fmt: skip
+        places = (("home", home), ("tmp", tmp), ("data", DATA), ("user", Path.home()))
+        for word, path in places:
             text, seen = str(path), set()
             spellings = {"": text, "/": text.replace("\\", "/"), "j": json.dumps(text)[1:-1],
                          "q": quote(text), "Q": quote(text, safe="")}  # fmt: skip
@@ -95,6 +108,12 @@ def kept(data: bytes, whole: bool = False) -> Any:
 def _same(form: Any, data: bytes) -> bool:
     """Whether plain ``data`` is what was kept as ``form``."""
     return kept(data, whole=isinstance(form, str) or "base64" in form) == form
+
+
+def kept_size(body: bytes) -> int:
+    """How large a played body was: itself, or as its digest says where only that was kept."""
+    found = re.fullmatch(rb"<kept: (\d+) bytes, sha256 [0-9a-f]+>", body)
+    return int(found.group(1)) if found else len(body)
 
 
 def _bytes(form: Any) -> bytes:
