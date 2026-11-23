@@ -219,7 +219,7 @@ anything does. A website cannot guess the token, and no other user of the PC has
   before. Open Libre Panel again; the window of the tray takes the new token by itself.
 - The browser, where no window can open, gets the address with the token as an argument. On
   Linux other users can read the arguments of your programs while they run, so on a PC that
-  several people use, prefer the window (pywebview, above) to the browser.
+  several people use, prefer the window (above) to the browser.
 
 Anything that runs as you can read the token and change `config.toml`; the token keeps out the
 programs of *other* users and of websites. That is why a Libre Panel that runs with the highest
