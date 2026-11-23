@@ -35,6 +35,8 @@ def tool():
     with pytest.MonkeyPatch.context() as patch:
         if not os.environ.get("LIBRE_PANEL_PROGRAM"):
             patch.setenv("LIBRE_PANEL_PROGRAM", str(program))
+        # (the themes and fonts of this checkout, wherever the program was built)
+        patch.setenv("LIBRE_PANEL_DATA", os.environ.get("LIBRE_PANEL_DATA") or str(ROOT / "data"))
         patch.syspath_prepend(str(ROOT / "tools"))
         import community_theme
 
@@ -254,6 +256,15 @@ def test_the_form_and_the_workflow_fit_the_tool(tool):
     flow = (ROOT / ".github/workflows/community-theme.yml").read_text(encoding="utf-8")
     check, add = flow.split("\n  add:\n")
     again, check = check.split("\n  check:\n")
+    again, program = again.split("\n  program:\n")
+    # Libre Panel is built from main in a job that sees nothing of the issue and may write
+    # nothing; both jobs after it take that program, never one the issue's job made
+    assert "permissions:\n      contents: read\n    outputs:" in program
+    assert "issue" not in program.split("steps:")[1] and ": write" not in program
+    assert "persist-credentials: false" in program
+    assert "cargo build --release --locked -p libre-panel" in program
+    assert "needs: program" in check and "needs: [program, check]" in add
+    assert "upload-artifact" not in add and "name: program" in check and "name: program" in add
     # what comes from the issue is looked into without rights; the job that writes adds data
     assert "permissions:\n      contents: read\n      issues: read\n    steps:" in check
     assert ": write" not in check
@@ -270,7 +281,7 @@ def test_the_form_and_the_workflow_fit_the_tool(tool):
     assert "checkout" not in again.split("\njobs:\n")[1]  # (it reads no file of the repository)
     assert "NUMBER: ${{ inputs.issue }}" in check
     assert "NUMBER: ${{ github.event.issue.number || inputs.issue }}" in add
-    assert "needs: check" in add and "contents: write" in add
+    assert "contents: write" in add
     # the issue's text reaches the steps only through the environment, never the script itself
     runs = re.findall(r"run: \|\n((?:          .*\n?)+)", flow)
     assert runs and not any("${{" in run for run in runs)
