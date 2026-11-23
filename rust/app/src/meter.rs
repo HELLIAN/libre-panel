@@ -197,3 +197,123 @@ impl Meter {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn number(stats: &Dict, key: &str) -> Option<f64> {
+        match stats.get(key) {
+            Some(Value::Float(f)) => Some(*f),
+            Some(Value::Int(n)) => lp_py::num::int_to_float(n).ok(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_meter_measures_rates_and_drawing_times_on_its_own_clock() {
+        let mut counted = Counted::default();
+        let mut meter = Meter::new(100.0, &counted);
+        assert!(meter.tick(100.5, 25, false, &counted).is_none()); // (not before its second)
+        for n in 1..=25 {
+            meter.drew(if n == 7 { 0.090 } else { 0.040 });
+        }
+        counted.follow(
+            Counters {
+                bytes: 250_000,
+                ..Counters::default()
+            },
+            0.0,
+        );
+        let stats = meter
+            .tick(101.0, 25, false, &counted)
+            .expect("a second has passed");
+        assert_eq!(number(&stats, "fps"), Some(25.0));
+        assert_eq!(number(&stats, "render_ms"), Some(40.0)); // (the median)
+        assert_eq!(number(&stats, "render_peak_ms"), Some(90.0));
+        assert_eq!(number(&stats, "kbps"), Some(250.0));
+        assert_eq!(
+            (number(&stats, "target_fps"), number(&stats, "uptime_s")),
+            (Some(25.0), Some(1.0))
+        );
+        // what nothing counted is unknown: no video link outside video mode
+        for key in [
+            "blocks_per_s",
+            "max_depth",
+            "bit_rate",
+            "encoder",
+            "waits",
+            "drops",
+        ] {
+            assert_eq!(stats.get(key), Some(&Value::None), "{key}");
+        }
+        let quiet = Meter::new(0.0, &Counted::default()).tick(1.0, 25, false, &Counted::default());
+        let quiet = quiet.unwrap();
+        assert_eq!(
+            (quiet.get("kbps"), quiet.get("render_ms")),
+            (Some(&Value::None), Some(&Value::None))
+        );
+    }
+
+    #[test]
+    fn the_meter_reads_the_video_link_and_the_faults_from_the_counters() {
+        let mut counted = Counted::default();
+        let mut meter = Meter::new(0.0, &counted);
+        let said = Counters {
+            bytes: 1000,
+            blocks: 50,
+            waits: 3,
+            drops: 1,
+            max_depth: 4,
+            usb_errors: 1,
+            panel_restarts: 1,
+            ..Counters::default()
+        }; // fmt: skip
+        counted.follow(said, 8.0);
+        // a replug makes the display anew: what it counted stays in the run's
+        counted.closed();
+        counted.follow(
+            Counters {
+                blocks: 25,
+                usb_errors: 1,
+                max_depth: 2,
+                ..Counters::default()
+            },
+            0.0,
+        );
+        let stats = meter.tick(1.0, 25, true, &counted).unwrap();
+        assert_eq!(number(&stats, "blocks_per_s"), Some(75.0));
+        assert_eq!(number(&stats, "max_depth"), Some(4.0));
+        assert_eq!(number(&stats, "bit_rate"), Some(8.0)); // (a cap of 0 keeps the one in force)
+        assert_eq!(
+            (number(&stats, "waits"), number(&stats, "drops")),
+            (Some(3.0), Some(1.0))
+        );
+        assert_eq!(number(&stats, "usb_errors"), Some(2.0));
+        assert_eq!(number(&stats, "panel_restarts"), Some(1.0));
+        assert_eq!(stats.get("streaming"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn the_meter_keeps_only_the_last_frames_and_seconds_and_a_stall_makes_no_burst() {
+        let counted = Counted::default();
+        let mut meter = Meter::new(0.0, &counted);
+        for second in 1..=20 {
+            let fps = if second <= 4 { 50 } else { 10 }; // (fast at first, then slow)
+            for _ in 0..fps {
+                meter.drew(if second <= 4 { 0.5 } else { 0.010 });
+            }
+            meter.tick(f64::from(second), 25, false, &counted).unwrap();
+        }
+        assert_eq!(meter.times.len(), FRAMES);
+        let stats = meter.tick(21.0, 25, false, &counted).unwrap();
+        // (the rate of the last five seconds; the drawing times of the last 120 frames)
+        assert_eq!(number(&stats, "fps"), Some(8.0)); // (40 frames in 5 s: none in the last)
+        assert_eq!(number(&stats, "render_ms"), Some(10.0));
+        assert_eq!(number(&stats, "render_peak_ms"), Some(10.0));
+        // a loop that stalled for a minute: one set of numbers, the next a second later
+        assert!(meter.tick(81.0, 25, false, &counted).is_some());
+        assert!(meter.tick(81.5, 25, false, &counted).is_none());
+        assert!(meter.tick(82.0, 25, false, &counted).is_some());
+    }
+}
