@@ -4,8 +4,9 @@
         [--time "2026-09-28 14:29:59"] [--place LAT,LON] [--layout basic|raqm] [--out DIR]
         [--tolerance 12] [--region NAME=x0,y0,x1,y1 ...] [--zoom 3]
 
-The theme is drawn once, as the panel would show it, at ``--time`` with the
-readings in ``--values`` and ``--place`` as the panel's place (the earth's). Into
+The theme (a built-in theme's name or a theme's folder) is drawn once by Libre Panel
+(lp-check, as tools/lp_check.py finds it), as the panel would show it, at ``--time`` with
+the readings in ``--values`` and ``--place`` as the panel's place (the earth's). Into
 ``--out`` (a new temporary folder if not given) go ``NAME-side.png``, the
 reference above the render, ``NAME-diff.png``, their difference made four
 times brighter, and for every region a crop of both enlarged ``--zoom``
@@ -15,7 +16,8 @@ the mean difference. The reference is only read, never copied.
 
 ``--layout basic`` (the default) lays text out as Pillow does without
 libraqm, as on Windows, where SPUR II drew its references: whole-pixel
-advances and no kerning. ``raqm`` keeps what this Pillow has.
+advances and no kerning (lp-check without FriBiDi). ``raqm`` keeps what this
+computer has.
 
 ``values.json``::
 
@@ -28,20 +30,20 @@ Readings by key, as a value or ``[value, unit]``; histories oldest first.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import os
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
-from libre_panel.render.renderer import Renderer  # noqa: E402
-from libre_panel.sensors.base import Reading, Snapshot  # noqa: E402
-from libre_panel.theme.model import find_theme, load_theme  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # (tools/lp_check.py)
+from lp_check import ROOT, program, typed  # noqa: E402
 
 # The bands of a 1920 x 480 screen in SPUR II's layout.
 BAR_REGIONS = {
@@ -51,33 +53,49 @@ BAR_REGIONS = {
 }
 
 
-def snapshot(values: dict, when: datetime) -> Snapshot:
+def snapshot(values: dict, when: datetime) -> dict:
+    """The readings and histories of ``values`` at ``when``, as lp-check takes a snapshot (a
+    reading's label its key)."""
     readings = {}
     for key, given in values.get("readings", {}).items():
         value, unit = given if isinstance(given, list) else (given, "")
-        readings[key] = Reading(key, value, unit, key)
-    history = {key: [float(v) for v in series] for key, series in values.get("history", {}).items()}
-    return Snapshot(readings=readings, history=history, now=when)
+        readings[key] = {"v": typed(value), "unit": unit, "label": key}
+    history = {key: [typed(float(v)) for v in series]
+               for key, series in values.get("history", {}).items()}  # fmt: skip
+    now = [when.year, when.month, when.day, when.hour, when.minute, when.second, when.microsecond]
+    return {"readings": readings, "history": history, "now": now}
+
+
+def theme_folder(theme: str) -> Path:
+    """A theme's folder, or a built-in theme's by its name."""
+    for folder in (Path(theme), ROOT / "data" / "themes" / theme):
+        if (folder / "theme.json").is_file():
+            return folder
+    sys.exit(f"no theme {theme}: neither a theme's folder nor a built-in theme's name")
 
 
 def render(theme_id: str, values: dict, when: datetime, place, layout: str = "") -> Image.Image:
-    """The theme's frame; ``layout`` "basic" lays its text out without libraqm."""
-    folder = Path(theme_id)
-    theme = load_theme(folder if (folder / "theme.json").is_file() else find_theme(theme_id))
-    truetype = ImageFont.truetype
-    if layout == "basic":  # for this frame only
-        basic = ImageFont.Layout.BASIC
-        ImageFont.truetype = lambda *a, **k: truetype(*a, **{"layout_engine": basic, **k})
-    renderer = Renderer(theme)
-    renderer.place = place
-    for warning in renderer.warnings + theme.warnings:
+    """The theme's frame as Libre Panel draws it; ``layout`` "basic" lays its text out without
+    libraqm (no FriBiDi for lp-check: the layout of a computer without it)."""
+    frame = {"folder": str(theme_folder(theme_id)), "snapshot": snapshot(values, when),
+             "now": 0.0, "bytes": True}  # fmt: skip
+    if place:
+        frame["place"] = list(place)
+    case = {"op": "render_frame", "fonts_dir": str(ROOT / "data" / "fonts"),
+            "locale": str(ROOT / "data" / "locale"), "frames": [frame]}  # fmt: skip
+    env = dict(os.environ)
+    if layout == "basic":
+        env["LP_LIBFRIBIDI"] = str(Path(tempfile.gettempdir()) / "no-fribidi")
+    done = subprocess.run([str(program())], input=json.dumps(case) + "\n", capture_output=True,
+                          encoding="utf-8", check=True, env=env)  # fmt: skip
+    (drawn,) = json.loads(done.stdout)["frames"]
+    if "error" in drawn or "frame" not in drawn:
+        sys.exit(f"{theme_id} is not drawn: {drawn.get('error') or drawn}")
+    for warning in drawn.get("warnings", []):
         print(f"warning: {warning}")
-    try:
-        frame, _ = renderer.render(snapshot(values, when), 0.0)
-    finally:
-        renderer.close()
-        ImageFont.truetype = truetype
-    return frame.convert("RGB")
+    image = drawn["frame"]
+    picture = Image.frombytes(image["mode"], tuple(image["size"]), base64.b64decode(image["data"]))
+    return picture.convert("RGB")
 
 
 def within(a: np.ndarray, b: np.ndarray, tolerance: int) -> tuple[float, float]:

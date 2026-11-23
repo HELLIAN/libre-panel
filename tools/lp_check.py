@@ -7,6 +7,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import struct
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,23 @@ def program() -> Path:
     if not built.is_file():
         raise SystemExit("needs lp-check: cargo build --release in rust/ (or LIBRE_PANEL_CHECK)")
     return built
+
+
+def typed(value: Any) -> dict[str, Any]:
+    """A value as lp-check takes a reading's: its type said, a float by its bits."""
+    if isinstance(value, bool):
+        return {"b": value}
+    if isinstance(value, float):
+        return {"f": struct.pack(">d", value).hex()}
+    if isinstance(value, int):
+        return {"i": str(value)}
+    if isinstance(value, str):
+        return {"s": value}
+    if isinstance(value, list):
+        return {"l": [typed(item) for item in value]}
+    if isinstance(value, dict):
+        return {"d": {str(key): typed(item) for key, item in value.items()}}
+    return {"n": None}
 
 
 def ask(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
