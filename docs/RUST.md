@@ -2706,13 +2706,14 @@ word of the app's language in one of its fonts, so a host that does not find the
   - [x] what the app tells of "now" takes its moment from one place (rust/app/src/clock.rs),
         which the tests name with ``LP_NOW``: an answer is then the same whenever it is
         asked for. What runs by the clock (the panel's frames, a clip, a wait) stays on it
-  - [x] the browser tests on the Rust app's server, the Python app out of reach
-        (``LP_UI_SERVER=rust``, CI's rust job on Linux): what a test asks of
-        the app it asks the running program (its tray's menu, its services, its readings, the
-        files it writes), the panels on a bus of the test's own (``LP_TEST_BUS``). Skipped,
-        each with its reason: the range's A/B on a panel in video mode and the graphics
-        card's conversion (to do), Windows' autostart with administrator rights (no stand-in
-        for the registry and the Task Scheduler yet)
+  - [x] the browser tests on the Rust app's server, the Python app out of reach (CI's rust
+        job on Linux): what a test asks of the app it asks the running program (its tray's
+        menu, its services, its readings, the files it writes), the panels on a bus of the
+        test's own (``LP_TEST_BUS``). The range's A/B runs on the simulated 9.2" showing the
+        engine's video (test_rust_app.py's rig), Windows' start with administrator rights on
+        the tests' stand-in for the registry and Task Scheduler (``LP_TEST_AUTOSTART``: the Run
+        value and the task as files). The graphics card's conversion went with the Python
+        app: the engine converts every video's colours itself (colours.rs)
   - [x] the Python app goes: its modules, its own tests, its packaging (the PyInstaller build
         of its programs, its AppImage entry), its commands and extras. What stays of Python
         is the plugin host and the plugin API with what they stand on (tests/without_app.py,

@@ -1228,11 +1228,27 @@ def test_auto_finds_the_panel_and_its_video_mode_with_no_model_named(rig: Rig) -
     assert done.stderr.count("local_clip is not set") == 1, done.stderr
 
 
+class _Api:
+    """A running app's API: ``api(method, path, body)`` asks it (the status line and the JSON);
+    ``url`` and ``token`` are where it is, for a browser."""
+
+    def __init__(self, port: int, token: str) -> None:
+        self.port, self.token, self.url = port, token, f"http://127.0.0.1:{port}/"
+
+    def __call__(self, method: str, path: str, body: Any = None) -> tuple[str, Any]:
+        text = "" if body is None else json.dumps(body)
+        request = (f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                   f"X-Libre-Panel: {self.token}\r\nContent-Type: application/json\r\n"
+                   f"Content-Length: {len(text.encode())}\r\n\r\n{text}")  # fmt: skip
+        status, _, answer = _asked(self.port, request.encode(), wait=60)
+        return status, json.loads(answer or b"null")
+
+
 @contextlib.contextmanager
-def _background(rig: Rig) -> Iterator[tuple[Any, list[str]]]:
-    """`libre-panel start` on the rig's settings: its app's API (``api(method, path, body)``:
-    the status line and the JSON) and what it says on its standard error, as it comes."""
-    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+def _background(rig: Rig, **more: str) -> Iterator[tuple[_Api, list[str]]]:
+    """`libre-panel start` on the rig's settings (``more``: its environment besides): its app's
+    API and what it says on its standard error, as it comes."""
+    env = {**os.environ, **more, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
            **_libraries(), **rig.env()}  # fmt: skip
     with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1243,17 +1259,8 @@ def _background(rig: Rig) -> Iterator[tuple[Any, list[str]]]:
         reading.start()
         address = program.stdout.readline().split(" running at ")[1].split()[0]
         port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
-
-        def api(method: str, path: str, body: Any = None) -> tuple[str, Any]:
-            text = "" if body is None else json.dumps(body)
-            request = (f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
-                       f"X-Libre-Panel: {token}\r\nContent-Type: application/json\r\n"
-                       f"Content-Length: {len(text.encode())}\r\n\r\n{text}")  # fmt: skip
-            status, _, answer = _asked(port, request.encode(), wait=60)
-            return status, json.loads(answer or b"null")
-
         try:
-            yield api, said
+            yield _Api(port, token), said
         finally:
             if os.name == "nt":
                 program.terminate()
@@ -1313,7 +1320,7 @@ def test_the_colour_check_shows_the_range_s_a_and_b_on_a_panel_showing_video(rig
 
 
 @draws
-def test_the_range_s_answer_for_a_panel_beside_the_first_is_its_own(rig: Rig) -> None:
+def test_the_colour_check_s_range_on_a_panel_beside_the_first_is_that_panel_s(rig: Rig) -> None:
     """The range's A/B on the second panel (the simulated 9.2" in [[panels]], the first a
     virtual one without video): the test picture goes to that panel only, and the answer is
     written as the page writes it, video_range in that panel's own table; [device] keeps

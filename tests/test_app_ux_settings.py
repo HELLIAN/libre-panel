@@ -2,6 +2,7 @@
 needs attention, the plain words of each section, the report of a panel and Status's line. In a
 real browser, as test_app_browser.py; skipped when Playwright or Chromium are missing."""
 
+import contextlib
 import json
 import os
 
@@ -897,15 +898,36 @@ def test_the_video_experiment_runs_every_step_by_itself_on_the_running_app(
 
 
 def colour_check_on(monkeypatch):
-    """Settings → Panel → Check the colours with this machine's ffmpeg and a 9.2" on the bus:
-    the app checks with the ffmpeg it finds."""
-    import shutil
-
+    """Settings → Panel → Check the colours with a 9.2" on the bus."""
     from test_app_browser import panel_on_the_bus
 
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("needs ffmpeg with libx264")
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
+
+
+@contextlib.contextmanager
+def panel_showing_video(home, config, panel=1):
+    """The Rust app in the background on ``config`` with the simulated 9.2" (test_rust_app.py's
+    Rig, behind the engine's test link) as panel ``panel``, once that shows the engine's
+    video: the address of the app and its API."""
+    from test_app_browser import AppUrl, _rust_env
+    from test_rust_app import Rig, _background, _until
+
+    home.mkdir(parents=True, exist_ok=True)
+    rig = Rig(home)
+    try:
+        rig.config(config)
+        # (the browser tests' own environment; the panel is the rig's, not one on a test bus)
+        env = {key: value for key, value in _rust_env().items()
+               if key not in ("LIBRE_PANEL_HOME", "LP_TEST_BUS")}  # fmt: skip
+        with _background(rig, **env) as (api, said):
+            check = f"/api/colour-check?panel={panel}"
+            assert _until(lambda: api("GET", check)[1]["video"]), said
+            url = AppUrl(api.url)
+            url.token = api.token
+            yield url, api
+            assert "panicked" not in "".join(said)
+    finally:
+        rig.close()
 
 
 def test_the_colour_check_measures_each_encoder_and_says_who_converts(
@@ -922,6 +944,85 @@ def test_the_colour_check_measures_each_encoder_and_says_who_converts(
         card.get_by_role("button", name="Check the colours").click()
         expect(card).to_contain_text("there is no graphics card's conversion to compare",
                                      timeout=30000)  # fmt: skip
+
+
+def test_the_range_s_a_and_b_on_a_panel_showing_video_and_its_answer(isolated_home):
+    """Panel 1, the simulated 9.2", shows the engine's video: no A/B of a card's conversion
+    (the processor converts either way); *Is black too light on the panel? Compare* shows the
+    test picture in limited (A) and full range (B) on it, one picture at a time, and *B looks
+    right* writes the panel's video_range, the picture ends and the card says the range set."""
+    from test_rust_app import VIDEO
+
+    with panel_showing_video(isolated_home, VIDEO) as (url, api):
+        with browser_page(url, "settings/panel/panel-colour-check") as page:
+            card = page.locator("#panel-colour-check")
+            expect(card.locator(".colour-now")).to_have_text(
+                "Panel 1 now: Libre Panel's engine, its colours converted on the processor"
+            )
+            expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
+            expect(card.locator(".colour-ab").first).to_contain_text(
+                "the processor converts for it either way, so A and B would be the same"
+            )
+            range_ = card.locator(".colour-range")
+            expect(range_).to_have_attribute("data-range", "full")  # (as a 9.2" shows video)
+            expect(range_.locator(".colour-range-now")).to_have_text(
+                "Panel 1 gets its video in full range (0-255). Automatic: as its model is known "
+                "to show video."
+            )
+            range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
+            expect(range_).to_contain_text("On panel 1: A: limited range (16-235)")
+            show = api("GET", "/api/colour-check?panel=1")[1]["show"]
+            assert (show["running"], show["panel"], show["kind"]) == (True, 1, "range")
+            range_.get_by_role("button", name="B looks right").click()
+            written = isolated_home / "config.toml"
+            waits_for(page, lambda: 'video_range = "full"' in written.read_text(encoding="utf-8"))
+            waits_for(
+                page, lambda: not api("GET", "/api/colour-check?panel=1")[1]["show"]["running"]
+            )
+            expect(range_.locator(".colour-range-now")).to_have_text(
+                "Panel 1 gets its video in full range (0-255). Set for this panel.", timeout=10000
+            )
+            expect(range_.get_by_role("button", name="B looks right")).to_have_count(0)
+
+
+def test_the_range_s_answer_for_a_panel_beside_the_first_is_its_own(isolated_home):
+    """Panel 2 chosen at the top, the simulated 9.2" in [[panels]] showing the engine's video
+    beside a first panel without video: the range's comparison on panel 2 only, and *A looks
+    right* writes its own video_range, in its [[panels]] table; the first panel's stays
+    automatic."""
+    config = ('[device]\ndriver = "virtual"\noutput = ""\n[video]\nfps = 25\n'
+              '[[panels]]\ntheme = "lumen"\ndriver = "turzx"\nmodel = "turing-9.2-usb"\n'
+              'video = { mode = "on", local_clip = "usr/data/clip.h264" }\n')  # fmt: skip
+    with panel_showing_video(isolated_home, config, panel=2) as (url, api):
+        with browser_page(url, "settings/panel/panel-colour-check") as page:
+            page.wait_for_function(
+                "(window.libre.store.get().settings?.config?.panels || []).length"
+            )
+            page.evaluate("() => { const s = window.libre.store;"
+                          " s.set({ prefs: { ...s.get().prefs, target: 2 } }); }")  # fmt: skip
+            card = page.locator("#panel-colour-check")
+            expect(card.locator(".colour-now")).to_have_text(
+                "Panel 2 now: Libre Panel's engine, its colours converted on the processor"
+            )
+            expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
+            range_ = card.locator(".colour-range")
+            range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
+            expect(range_).to_contain_text("On panel 2: A: limited range (16-235)")
+            assert api("GET", "/api/colour-check?panel=2")[1]["show"]["panel"] == 2
+            range_.get_by_role("button", name="A looks right").click()
+            written = isolated_home / "config.toml"
+            waits_for(
+                page, lambda: 'video_range = "limited"' in written.read_text(encoding="utf-8")
+            )
+            device, panels = written.read_text(encoding="utf-8").split("[[panels]]")
+            assert "video_range" not in device  # the first panel's: its own, automatic
+            assert 'video_range = "limited"' in panels
+            waits_for(
+                page, lambda: not api("GET", "/api/colour-check?panel=2")[1]["show"]["running"]
+            )
+            expect(range_.locator(".colour-range-now")).to_contain_text(
+                "Set for this panel.", timeout=10000
+            )
 
 
 def test_live_says_how_the_panel_runs_in_a_calm_sentence(app_url):  # noqa: F811

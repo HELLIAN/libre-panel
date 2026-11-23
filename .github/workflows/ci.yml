@@ -456,8 +456,6 @@ jobs:
       # program and lp-check draw and run (tools/readme_media.py)
       - name: The app in a browser, on the Rust app's server (Linux)
         if: runner.os == 'Linux' && !inputs.quick && !cancelled()
-        env:
-          LP_UI_SERVER: rust
         run: |
           pip install -q playwright
           python -m playwright install --with-deps chromium
