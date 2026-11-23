@@ -20,7 +20,7 @@ from typing import Any
 import golden
 import pytest
 from plugin_parts import SENSOR, SENSOR_PARTS, theme_data
-from test_rust_app import DATA, _libraries, _program, _run, python_s_services
+from test_rust_app import DATA, RUST_ONLY_SERVICES, _libraries, _program, _run, python_s_services
 
 # How long the first drawing, transition, toast style or page of a fresh plugin host may take:
 # on a Windows runner its first imports took over 30 seconds while it still loaded Python's
@@ -29,6 +29,15 @@ HOST_S = 300 if sys.platform == "win32" else 60
 HOST = {"LIBRE_PANEL_PLUGIN_HOST": sys.executable,
         "LIBRE_PANEL_PLUGIN_HOST_ARGS": "-m libre_panel.plugin_host",
         "LIBRE_PANEL_PLUGIN_TRACE": "1"}  # fmt: skip
+
+
+def _python_s_listing(text: str) -> str:
+    """`libre-panel plugins` as the Python app's said it: its own services, the Rust app's
+    alone left out (each listed, built in)."""
+    rows = text.splitlines(keepends=True)
+    own = [f"services   {name:<24} ok     built in\n" for name in RUST_ONLY_SERVICES]
+    assert all(row in rows for row in own), text
+    return "".join(row for row in rows if row not in own)
 
 
 def _plain(text: str, home: Path) -> str:
@@ -109,7 +118,8 @@ def test_the_plugins_are_listed_as_cli_py_lists_them(plugin_folder, isolated_hom
     # (what the Python app's `plugins` said of them, and how it ended)
     want = golden.told("listing")
     done = _run(isolated_home, "plugins", **HOST)
-    assert [done.returncode, _plain(done.stdout, isolated_home)] == want, done.stderr
+    listed = _python_s_listing(_plain(done.stdout, isolated_home))
+    assert [done.returncode, listed] == want, done.stderr
     assert want[0] == 1
     # the theme a plugin brings is one of the app's
     themes = _run(isolated_home, "themes", **HOST)
@@ -124,7 +134,8 @@ def test_without_plugins_no_host_is_started(isolated_home):
     want = golden.told("listing")  # (what the Python app's `plugins` said without any)
     # (a host that cannot start would be said)
     done = _run(isolated_home, "plugins", LIBRE_PANEL_PLUGIN_HOST="/nonexistent")
-    assert [done.returncode, _plain(done.stdout, isolated_home)] == want, done.stderr
+    listed = _python_s_listing(_plain(done.stdout, isolated_home))
+    assert [done.returncode, listed] == want, done.stderr
     assert want[0] == 0
 
 

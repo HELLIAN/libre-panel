@@ -53,8 +53,8 @@ BUILT_IN = "built in"  # the source of what Libre Panel brings itself
 # Libre Panel's own parts by kind (the Rust app's: rust/app/src/plugins.rs, BUILT_IN_PARTS):
 # a plugin cannot use their names.
 BUILT_IN_PARTS: dict[str, tuple[str, ...]] = {
-    "services": ("agents", "autopilot", "cooling", "devices", "downloads", "game", "memory",
-                 "notices", "power", "timer", "waveshare"),
+    "services": ("agents", "autopilot", "cooling", "devices", "downloads", "game", "lightring",
+                 "memory", "notices", "power", "timer", "waveshare"),
     "editor_pages": ("autopilot", "control"),
 }  # fmt: skip
 

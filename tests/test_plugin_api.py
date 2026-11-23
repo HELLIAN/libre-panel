@@ -4,6 +4,7 @@ the config and stopped without a trace, the types of their options, the themes t
 for by priority, and what a page of a plugin is told. Without the Python app: the plugin host
 keeps these modules (tests/without_app.py)."""
 
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -66,6 +67,24 @@ def test_plugins_for_another_api_are_refused(plugin_folder):
     registry = discover()
     assert registry.names("services") == OWN_SERVICES  # the plugin's are refused
     assert "written for plugin API 2" in registry.errors[0]
+
+
+def test_a_plugin_cannot_take_the_name_of_one_of_libre_panel_s_own(plugin_folder):
+    """The names of the Rust app's own services and pages are held for it (the light ring's
+    among them): a plugin that names one is refused, and the two lists are the same."""
+    plugin_folder(SERVICE, parts={"libre_panel.services": {"lightring": "Counter"}})
+    registry = discover()
+    assert registry.parts["services"]["lightring"].source == "built in"
+    assert (
+        "'lightring' from folder" in registry.errors[0]
+        and "already registered" in registry.errors[0]
+    )
+    rust = (Path(__file__).resolve().parents[1] / "rust" / "app" / "src" / "plugins.rs").read_text(
+        encoding="utf-8"
+    )
+    table = rust.split("pub const BUILT_IN_PARTS", 1)[1].split("];", 1)[0]
+    kinds = re.findall(r'\(\s*"(\w+)",\s*&\[(.*?)\]', table, re.S)
+    assert {kind: tuple(re.findall(r'"(\w+)"', names)) for kind, names in kinds} == BUILT_IN_PARTS
 
 
 def test_a_plugin_that_does_not_import_is_reported(plugin_folder):

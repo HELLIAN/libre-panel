@@ -56,6 +56,7 @@ pub const BUILT_IN_PARTS: [(&str, &[&str]); 2] = [
             "devices",
             "downloads",
             "game",
+            "lightring",
             "memory",
             "notices",
             "power",
