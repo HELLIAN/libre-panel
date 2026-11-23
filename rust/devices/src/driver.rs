@@ -18,6 +18,11 @@ pub trait Driver: Send {
     /// Push `frame` (RGB, the theme's size); `region` is the changed box, which drivers that
     /// update a part send alone.
     fn show(&mut self, frame: &Image, region: Option<Region>) -> Result<()>;
+    /// `frame` shown part by part (`parts`: the boxes that changed, a slow link's; None the
+    /// whole frame): each in turn, as show shows it.
+    fn show_parts(&mut self, frame: &Image, parts: &[Option<Region>]) -> Result<()> {
+        parts.iter().try_for_each(|part| self.show(frame, *part))
+    }
     /// 0-100; drivers without brightness control take it into the pixels or leave it.
     fn set_brightness(&mut self, percent: i64) -> Result<()>;
     fn counters(&self) -> Counters;

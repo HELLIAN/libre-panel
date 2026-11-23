@@ -45,6 +45,7 @@ GROUPS = {
     "toasts": "libre_panel.toasts",
     "editor_pages": "libre_panel.editor_pages",
     "sensors": "libre_panel.sensors",
+    "devices": "libre_panel.devices",  # display drivers
     "themes": "libre_panel.themes",  # a package whose folder holds theme folders
 }
 OWN_DISTRIBUTION = "libre-panel"  # its built-in sensors and drivers are no plugins
@@ -56,6 +57,7 @@ BUILT_IN_PARTS: dict[str, tuple[str, ...]] = {
     "services": ("agents", "autopilot", "cooling", "devices", "downloads", "game", "lightring",
                  "memory", "notices", "power", "timer", "waveshare"),
     "editor_pages": ("autopilot", "control"),
+    "devices": ("auto", "hongtai", "turzx", "virtual"),
 }  # fmt: skip
 
 
@@ -132,6 +134,7 @@ class Registry:
 
 
 def _base_class(kind: str) -> type:
+    from libre_panel.devices.base import Display
     from libre_panel.plugins.host import Service
     from libre_panel.plugins.pages import EditorPage
     from libre_panel.plugins.render import Screen, ToastStyle, Transition, WidgetType
@@ -139,7 +142,8 @@ def _base_class(kind: str) -> type:
 
     bases = {"services": Service, "screens": Screen, "widgets": WidgetType}
     drawn = {"transitions": Transition, "toasts": ToastStyle}
-    return {**bases, **drawn, "editor_pages": EditorPage, "sensors": SensorProvider}[kind]
+    sources = {"sensors": SensorProvider, "devices": Display}
+    return {**bases, **drawn, "editor_pages": EditorPage, **sources}[kind]
 
 
 def _theme_folder(found: Found) -> Path:

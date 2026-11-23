@@ -170,3 +170,66 @@ def test_the_drawing_s_colours_and_fonts_are_the_theme_s(renderer, tmp_path):
     fallback = renderer.font("../outside.ttf", 20)
     assert fallback.size == 20  # (the default font)
     assert any("outside.ttf" in said for said in renderer.warnings)
+
+
+KEEP = """
+from libre_panel.devices import Display, FrameError
+
+
+class Keep(Display):
+    name = "demo.keep"
+    api = 1
+
+    def open(self):
+        self.got, self.refuse, self.closed = [], False, False
+
+    def show(self, frame, region=None):
+        if self.refuse:
+            raise FrameError("demo: not this one")
+        self.got.append((frame, region))
+
+    def close(self):
+        self.closed = True
+"""
+
+
+def test_a_plugins_driver_is_handed_whole_frames_made_of_the_parts_the_app_sends(
+    plugin_folder, isolated_home
+):
+    """display.show: of a frame the app sends only the box that changed (``piece`` at ``at``),
+    or all of it; the host lays the box on a copy of the frame before and hands the driver the
+    whole frame, a new one each time, once for each part (as the Python app's loop handed it).
+    After a frame the driver could not show there is no frame before: a part is refused then
+    (the app sends a whole frame after it)."""
+    from libre_panel.devices import DeviceError
+    from libre_panel.plugin_host import Host
+
+    plugin_folder(KEEP, {"libre_panel.devices": {"demo.keep": "Keep"}})
+    host = Host(None, isolated_home / "plugins")  # type: ignore[arg-type]
+    ident = host.display_open({"driver": "demo.keep", "device": {"port": "COM3"}}, b"")["display"]
+    driver = host.displays[ident]
+    assert driver.config.port == "COM3"
+    red = Image.new("RGB", (8, 6), (200, 0, 0))
+    whole = {"display": ident, "size": [8, 6], "mode": "RGB"}
+    host.display_show({**whole, "regions": [None]}, red.tobytes())
+    blue = Image.new("RGB", (3, 2), (0, 0, 200))
+    part = {**whole, "at": [2, 1], "piece": [3, 2], "regions": [[2, 1, 4, 2], [4, 2, 5, 3]]}
+    told = host.display_show(part, blue.tobytes())
+    assert "skipped" not in told and told["describe"] == "demo.keep"
+    want = red.copy()
+    want.paste(blue, (2, 1))
+    assert [(frame.tobytes() == want.tobytes(), region) for frame, region in driver.got[1:]] == [
+        (True, (2, 1, 4, 2)),
+        (True, (4, 2, 5, 3)),
+    ]
+    assert driver.got[0][0].tobytes() == red.tobytes()  # (the frame before as it was)
+    assert driver.got[1][0] is driver.got[2][0] and driver.got[0][0] is not driver.got[1][0]
+    driver.refuse = True
+    assert host.display_show(part, blue.tobytes())["skipped"] == "demo: not this one"
+    driver.refuse = False
+    with pytest.raises(DeviceError):
+        host.display_show(part, blue.tobytes())
+    host.display_show({**whole, "regions": [[0, 0, 8, 6]]}, red.tobytes())
+    assert driver.got[-1] == (driver.got[-1][0], (0, 0, 8, 6))
+    host.display_close({"display": ident}, b"")
+    assert driver.closed and ident not in host.displays and ident not in host.frames

@@ -1,7 +1,7 @@
 """Plugins in the Rust app (rust/app's plugins, docs/RUST.md R10): the Python plugins run in a
 process of their own, the plugin host (src/libre_panel/plugin_host.py), which the Rust app
-starts where plugin folders are installed. What the app says of them and does with them,
-beside what the Python app says and does."""
+starts where plugins are installed (folders, or packages beside the host). What the app says
+of them and does with them, beside what the Python app says and does."""
 
 from __future__ import annotations
 
@@ -31,11 +31,16 @@ HOST = {"LIBRE_PANEL_PLUGIN_HOST": sys.executable,
         "LIBRE_PANEL_PLUGIN_TRACE": "1"}  # fmt: skip
 
 
+# the display drivers the app has itself, which plugins cannot name theirs (plugins.rs)
+OWN_DRIVERS = ("auto", "hongtai", "turzx", "virtual")
+
+
 def _python_s_listing(text: str) -> str:
     """`libre-panel plugins` as the Python app's said it: its own services, the Rust app's
-    alone left out (each listed, built in)."""
+    alone left out, and without its drivers (each listed, built in)."""
     rows = text.splitlines(keepends=True)
     own = [f"services   {name:<24} ok     built in\n" for name in RUST_ONLY_SERVICES]
+    own += [f"devices    {name:<24} ok     built in\n" for name in OWN_DRIVERS]
     assert all(row in rows for row in own), text
     return "".join(row for row in rows if row not in own)
 
@@ -239,6 +244,143 @@ def test_a_plugins_sensor_source_and_service_run_in_the_rust_app(plugin_folder, 
     assert "service 'demo': not installed" not in said
 
 
+DRIVER = """
+import json
+
+from libre_panel.devices import Display, FrameError
+
+
+class Panel(Display):
+    name = "demo.panel"
+    api = 1
+
+    def open(self):
+        self.shown = 0
+        self.said("open", self.config.brightness, self.config.port, self.config.output)
+
+    def said(self, *what):
+        with open(self.config.output + ".log", "a", encoding="utf-8") as log:
+            log.write(json.dumps(what) + "\\n")
+
+    def set_brightness(self, percent):
+        self.said("brightness", percent)
+
+    def describe(self):
+        return "the demo panel"
+
+    def show(self, frame, region=None):
+        self.shown += 1
+        if self.shown == 2:
+            raise FrameError("demo: not this one")
+        frame.save(self.config.output + ".png", "PNG")
+        self.counters.bytes += 3 * frame.width * frame.height
+        self.said("show", frame.mode, list(frame.size), region)
+
+    def close(self):
+        self.said("close")
+"""
+
+
+def test_a_plugins_display_driver_shows_the_rust_apps_frames(plugin_folder, isolated_home):
+    """A plugin's display driver (`[device] driver`) runs in the plugin host and is handed the
+    app's frames as the Python app's loop handed them: made with the panel's `[device]`,
+    opened, its brightness set, each frame that changed with the box that changed (the first
+    whole); a frame it cannot show (FrameError) is skipped and the panel kept, the next one
+    whole again; closed when the app ends. `libre-panel plugins` lists it, beside the app's own
+    drivers."""
+    plugin_folder(DRIVER, {"libre_panel.devices": {"demo.panel": "Panel"}})
+    listed = _run(isolated_home, "plugins", **HOST)
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    rows = [row.split() for row in listed.stdout.splitlines()]
+    assert ["devices", "demo.panel", "ok", "folder"] in [row[:4] for row in rows], listed.stdout
+    assert [["devices", name, "ok", "built", "in"] for name in OWN_DRIVERS] == [
+        row for row in rows if row[:1] == ["devices"] and row[-1] == "in"
+    ]
+    folder = isolated_home / "themes" / "red"
+    folder.mkdir(parents=True)
+    theme = {"format": "libre-panel-theme/1", "name": "red",
+             "display": {"width": 800, "height": 480}, "palette": {"bg": "#dc1e1e"},
+             "background": {"color": "@bg", "image": None}, "refresh_ms": 500,
+             "widgets": [{"type": "clock", "x": 20, "y": 20, "format": "%H:%M:%S",
+                          "font_size": 60, "color": "#ffffff"}]}  # fmt: skip
+    (folder / "theme.json").write_text(json.dumps(theme), encoding="utf-8")
+    output = isolated_home / "panel"
+    (isolated_home / "config.toml").write_text(
+        'theme = "red"\nfps = 10\n[device]\ndriver = "demo.panel"\nbrightness = 35\n'
+        f'port = "COM9"\noutput = {json.dumps(str(output))}\ndark_when_away = false\n',
+        encoding="utf-8",
+    )
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(isolated_home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **HOST}  # fmt: skip
+    log = Path(f"{output}.log")
+
+    def said() -> list[list[Any]]:
+        try:
+            return [json.loads(line) for line in log.read_text("utf-8").splitlines()]
+        except (OSError, ValueError):
+            return []
+
+    with subprocess.Popen([str(_program()), "run"], env=env, stderr=subprocess.PIPE,
+                          encoding="utf-8") as program:  # fmt: skip
+        err = _drain(program.stderr)
+        try:
+            until = time.monotonic() + HOST_S
+            while time.monotonic() < until and sum(s[0] == "show" for s in said()) < 3:
+                time.sleep(0.05)
+        finally:
+            words = _ended(program, err)
+    lines = said()
+    shows = [line for line in lines if line[0] == "show"]
+    assert len(shows) >= 3, words
+    assert lines[0] == ["open", 35, "COM9", str(output)], lines
+    assert ["brightness", 35] in lines, lines
+    whole = ["show", "RGB", [800, 480], [0, 0, 800, 480]]
+    assert shows[:2] == [whole, whole], lines  # (the second after the frame skipped)
+    assert all(show[:3] == whole[:3] for show in shows), lines
+    x0, y0, x1, y1 = shows[2][3]  # (the clock's seconds)
+    assert 0 <= x0 < x1 < 400 and 0 <= y0 < y1 < 200, lines
+    assert [line[0] for line in lines].count("open") == 1, lines  # (the skipped frame kept it)
+    from PIL import Image
+
+    with Image.open(f"{output}.png") as frame:
+        assert frame.convert("RGB").getpixel((400, 240)) == (220, 30, 30)
+    assert "frame skipped: its driver cannot show it: demo: not this one" in words, words
+    assert "the demo panel" in words, words
+    if os.name != "nt":  # (asked to end, not terminated)
+        assert lines[-1] == ["close"], lines
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the host is started through a shell script")
+def test_a_plugin_installed_with_pip_starts_the_host_without_a_folder(isolated_home, tmp_path):
+    """A plugin installed with pip (or `pipx inject`) into the environment of the plugin host
+    has no folder: the app finds its entry points in the environment's packages and starts the
+    host for it (and still none where nothing brings a plugin)."""
+    env_folder = tmp_path / "env"
+    site = env_folder / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}"
+    site = site / "site-packages"
+    (site / "lp_pip_demo").mkdir(parents=True)
+    (site / "lp_pip_demo" / "__init__.py").write_text(SERVICE, encoding="utf-8")
+    host = env_folder / "bin" / "python"
+    host.parent.mkdir(parents=True)
+    host.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    host.chmod(0o755)
+    path = os.pathsep.join([str(site), os.environ.get("PYTHONPATH", "")])
+    pip = {**HOST, "LIBRE_PANEL_PLUGIN_HOST": str(host), "PYTHONPATH": path}
+    nothing = _run(isolated_home, "plugins", **pip)
+    assert "no plugins installed" in nothing.stdout, nothing.stdout + nothing.stderr
+    assert "plugin host: start" not in nothing.stderr, nothing.stderr
+    meta = site / "lp_pip_demo-1.0.dist-info"
+    meta.mkdir()
+    (meta / "METADATA").write_text("Metadata-Version: 2.1\nName: lp-pip-demo\nVersion: 1.0\n",
+                                   encoding="utf-8")  # fmt: skip
+    (meta / "entry_points.txt").write_text("[libre_panel.services]\npipdemo = lp_pip_demo:Demo\n",
+                                           encoding="utf-8")  # fmt: skip
+    found = _run(isolated_home, "plugins", **pip)
+    rows = [row.split() for row in found.stdout.splitlines()]
+    assert ["services", "pipdemo", "ok", "package", "lp-pip-demo", "1.0"] in rows, found.stdout
+    assert found.returncode == 0, found.stdout + found.stderr
+
+
 def test_settings_list_the_plugins_as_settings_py_lists_them(plugin_folder, isolated_home):
     """Settings' catalog: the plugins' services (where each came from, why it does not load,
     the options it declares) among Libre Panel's own in their order, and their sensor sources
@@ -246,8 +388,9 @@ def test_settings_list_the_plugins_as_settings_py_lists_them(plugin_folder, isol
     from test_rust_app import _asked
 
     services = {"demo": "Demo", "aaa": "Missing"}
-    plugin_folder(SERVICE, {"libre_panel.sensors": {"demo.fans": "Fans"},
-                            "libre_panel.services": services})  # fmt: skip
+    plugin_folder(SERVICE + DRIVER, {"libre_panel.sensors": {"demo.fans": "Fans"},
+                                     "libre_panel.services": services,
+                                     "libre_panel.devices": {"demo.panel": "Panel"}})  # fmt: skip
     config = isolated_home / "config.toml"
     config.write_text("[sensors]\nproviders = []\n", encoding="utf-8")
     # (the catalog the Python app's settings.py made of them: its services and its sources)
@@ -275,6 +418,14 @@ def test_settings_list_the_plugins_as_settings_py_lists_them(plugin_folder, isol
         got = json.loads(_plain(json.dumps(told["catalog"]), isolated_home))
         assert python_s_services(got["services"]) == want["services"]
         assert got["providers"] == want["providers"]
+        # (the drivers to choose from: the app's, sorted with the plugin's among them)
+        assert got["drivers"] == ["auto", "demo.panel", "turzx", "virtual"]
+        status, _ = ask("POST", "/api/settings", json.dumps({"set": {"device.driver": "nope"}}))
+        assert status == "HTTP/1.0 400 Bad Request"
+        status, _ = ask("POST", "/api/settings",
+                        json.dumps({"set": {"device.driver": "demo.panel"}}))  # fmt: skip
+        assert status == "HTTP/1.0 200 OK", status
+        assert 'driver = "demo.panel"' in config.read_text("utf-8")
         status, _ = ask("POST", "/api/settings", json.dumps({"set": {"services.demo.color": 5}}))
         assert status == "HTTP/1.0 400 Bad Request"
         status, _ = ask("POST", "/api/settings",

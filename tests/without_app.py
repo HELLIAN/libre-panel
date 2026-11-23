@@ -5,7 +5,7 @@ reaches no more and that the package holds no more), and the Windows wheel's com
 KEPT = frozenset({
     "libre_panel", "libre_panel.accent", "libre_panel.bundled", "libre_panel.cards",
     "libre_panel.config", "libre_panel.datadir", "libre_panel.devices",
-    "libre_panel.devices.base",  # (only by the package's own names: the models load no driver)
+    "libre_panel.devices.base",  # (a plugin's display driver; the models load no driver)
     "libre_panel.devices.models", "libre_panel.fonts", "libre_panel.fonts.fallback",
     "libre_panel.hotkeys", "libre_panel.i18n", "libre_panel.plugin_host", "libre_panel.plugins",
     "libre_panel.plugins.drawing", "libre_panel.plugins.host", "libre_panel.plugins.loader",

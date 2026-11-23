@@ -20,10 +20,13 @@ whether it loads.
 
 In the Rust app (see [RUST.md](RUST.md)), plugins run in a program of their own, the
 plugin host (`plugin-host/libre-panel-plugins` beside the app, Python with Libre Panel's
-package), which the app starts only where plugin folders are installed. Every kind of part
-above works there as in the Python app, with the same API; what a plugin draws is drawn in
-the host and handed to the app as pixels, and the app gives a widget type's picture the
-widget's opacity, shadow and glow as it gives its own widgets theirs.
+package), which the app starts only where plugins are installed: a plugin folder, or a
+package installed with pip beside the host (the app reads the packages' entry points from
+their files; without plugins no Python runs). Every kind of part above works there as in the
+Python app, with the same API; what a plugin draws is drawn in the host and handed to the app
+as pixels, and the app gives a widget type's picture the widget's opacity, shadow and glow as
+it gives its own widgets theirs. A display driver gets the app's frames there (see *Display
+drivers*).
 
 ## Installing
 
@@ -979,6 +982,52 @@ None, so a page says what is missing instead of failing.
 | `log_tail(lines=40)` | the last lines of `logs/libre-panel.log`, the log the tray app writes (nothing for `libre-panel start`, which logs to its terminal) |
 | `config_path` | config.toml; change one setting with `libre_panel.config.set_config_value("modes.game.theme", ...)` (a boolean, number, string or list), a list of tables such as the autopilot's rules with `set_config_tables("services.autopilot.rules", [...])`, or several of either in one write with `edit_config(("value", name, value), ("tables", name, tables))`. They keep the rest of the file, comments included, check the result before writing it and refuse a layout they cannot edit |
 | `data_dir(name)` | a service's data folder |
+
+## Display drivers
+
+A display driver moves the app's frames to a kind of panel Libre Panel does not drive itself.
+It is a `Display` of `libre_panel.devices`, registered under `libre_panel.devices`;
+`[device] driver` (or that of a `[[panels]]` table) names it, and Settings → Panel offers it
+beside the app's own drivers (`auto`, `turzx`, `virtual`; their names and `hongtai` are taken).
+
+```python
+from libre_panel.devices import DeviceError, Display, FrameError
+
+
+class MyPanel(Display):
+    name = "myplugin.panel"
+    api = 1
+
+    def open(self):
+        """Connect; self.config is the panel's [device] (port, brightness, ...)."""
+
+    def show(self, frame, region=None):
+        """frame: a Pillow RGB picture of the theme's size; region: the box that changed,
+        (x0, y0, x1, y1), or None."""
+
+    def set_brightness(self, percent):
+        """0-100; a panel without a light of its own can dim the pixels (devices.dimmed)."""
+
+    def close(self):
+        """Let the panel go; safe to call twice."""
+```
+
+How the app drives it, its class says: by default it gets a frame when one changed, with the
+box that changed; `streaming = True` gets every frame whole, `stream_fps` a second while
+something on the panel moves and at least two a second while nothing does; `slow = True`
+(pixels over a slow link) gets the parts that changed one by one and keeps the motion calm
+with `[device] motion = "auto"`. A panel that wants a picture more often than that keeps
+showing the last one itself (`devices.KeepShowing`). A `FrameError` skips the frame and keeps the
+panel; a `DeviceError` (or any other error) closes it, and the app opens it again later, as it
+does its own panels. `describe()` says what the frames go to (the log, the editor), `model`,
+once the driver knows it, is the panel's model from the catalog (`libre-panel models`), and
+what the driver adds to `self.counters` (`bytes`, `usb_errors`, ...) shows in the panel's
+diagnostics. With `[device] dark_on_quit` its brightness goes to 0 when Libre Panel quits.
+
+The driver runs in the plugin host, each panel's on a thread of its own. Of each frame the app
+sends there only the box that changed (or all of it where the driver streams), through a pipe;
+the host lays it on the frame before and hands the driver whole frames, a new one each time.
+Nothing goes while no frame is to be sent.
 
 ## Modes
 

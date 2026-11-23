@@ -3,6 +3,8 @@
 A driver only moves pixels to hardware. It knows nothing about themes or
 sensors, which keeps adding a new panel family (TURZX revisions, other
 vendors) down to one small class registered under ``libre_panel.devices``.
+The Rust app's own drivers are its own (rust/devices); a plugin's runs in the
+plugin host, which hands it the app's frames (plugin_host.py, display.*).
 """
 
 from __future__ import annotations
@@ -11,7 +13,6 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib.metadata import entry_points
 from typing import Any
 
 from PIL import Image
@@ -237,26 +238,6 @@ class Display:
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
-
-
-def available_drivers() -> dict[str, str]:
-    """The display drivers plugins bring (``libre_panel.devices``), by name; the app's own
-    (auto, virtual, turzx) are the Rust app's."""
-    found: dict[str, str] = {}
-    for ep in entry_points(group="libre_panel.devices"):
-        found[ep.name] = ep.value
-    return found
-
-
-def create_display(config: DeviceConfig) -> Display:
-    drivers = available_drivers()
-    if config.driver not in drivers:
-        raise DeviceError(
-            f"unknown display driver {config.driver!r} (available: {', '.join(sorted(drivers))})"
-        )
-    module_name, _, attr = drivers[config.driver].partition(":")
-    module = __import__(module_name, fromlist=[attr])
-    return getattr(module, attr)(config)
 
 
 def list_usb_devices(

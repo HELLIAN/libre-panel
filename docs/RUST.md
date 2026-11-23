@@ -41,8 +41,9 @@ lines of JavaScript and 9,700 of CSS; the sensor service 2,600 of C#.
 - **LibreHardwareMonitor** (C#, a library of its own) is replaced by sensors read in Rust, chip
   family by chip family; until a family is read in Rust, the .NET service reads it, then goes.
 - **Python plugins run in a program of their own**, the plugin host (stage R10): Python with
-  Libre Panel's package, in the downloads beside the app, started only where plugin folders are
-  installed. Every kind of part works as in the Python app; the app and the host speak
+  Libre Panel's package, in the downloads beside the app, started only where plugins are
+  installed (a folder, or a package beside the host). Every kind of part works as in the
+  Python app, display drivers too; the app and the host speak
   through a pipe. The host loads of the package only the plugin API and what that stands on
   (tests/test_plugin_host.py names those modules): it draws with a small drawing of its own
   (plugins/drawing.py), not Python's renderer, and the app gives a widget type's piece its
@@ -2601,7 +2602,9 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
 The Python plugins run in the plugin host (src/libre_panel/plugin_host.py): Python with Libre
 Panel's package, a program of its own in the downloads (`plugin-host/libre-panel-plugins`,
 built by PyInstaller, on Windows with its loader compiled in CI), started by the app only
-where `<settings>/plugins/*/plugin.toml` exists, one for the process (rust/app's plugins).
+where `<settings>/plugins/*/plugin.toml` exists or a package installed beside the host (pip,
+`pipx inject`) declares an entry point of a plugin group, which the app reads from the
+packages' files, one for the process (rust/app's plugins).
 The app and the host speak through the host's standard input and output: each message a
 length and JSON, with raw pixels after it where it says so; the host's log lines go into the
 app's log. Libre Panel's own parts stay the app's (the host leaves the built-in ones out).
@@ -2635,6 +2638,22 @@ word of the app's language in one of its fonts, so a host that does not find the
       host's `need` during a request): the frame the panel shows (`context.shown`) and the
       toast on show (`context.toast`) while they draw; on their pages the panels' frames
       (`shown_frame`), snapshots, the sources, the services and notifications with pictures
+- [x] display drivers (`libre_panel.devices`): `[device] driver` naming a plugin's opens it
+      in the host with the panel's `[device]`, on a thread of the host's own for each panel; the
+      main loop hands it frames as it hands its own drivers theirs (the changed box, every
+      frame whole where it streams, the changed parts one by one over a slow link), a
+      FrameError skips the frame, any other error opens the panel again; Settings offers the
+      plugins' drivers with the app's, whose names they cannot take. Of a frame only the box
+      that changed goes through the pipe (the host lays it on the frame before; the driver
+      gets whole frames, as the Python app's loop gave them). Measured with Lumen (1920×480,
+      25 frames a second, the 4 cores of a test container) and a driver that does nothing:
+      the app 14 % of a core where it takes 8 to 10 % with the frames kept nowhere, the host
+      5 %; a driver that streams (every frame whole) 12 % and 8 %. On the way the box that
+      changed is found without a picture of the difference (byte blocks compared as memory)
+      and the frame before is kept shared, not copied: the serial panels' and the other
+      makers' USB screens' drivers gain it too
+- [x] packages installed with pip or `pipx inject` beside the host start it as plugin folders
+      do (their entry points read from the files, no Python started without one)
 - [x] in the downloads: CI builds the host on Windows and Linux, runs a plugin on it, and
       has the packaged app find it beside itself and run that plugin
 - [x] the pipe's cost, measured (1920×480 at 25 fps, a plugin's screen and a plugin's bar,

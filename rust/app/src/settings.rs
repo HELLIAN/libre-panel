@@ -794,6 +794,15 @@ impl Settings<'_> {
         ]))
     }
 
+    /// The display drivers to choose from: the app's and the plugins' (editor/settings.py's
+    /// available_drivers), sorted.
+    fn drivers(&self) -> Vec<String> {
+        let mut drivers: Vec<String> = DRIVERS.map(String::from).to_vec();
+        drivers.extend(crate::plugins::driver_names(&self.home.settings));
+        drivers.sort_unstable();
+        drivers
+    }
+
     fn catalog(&self) -> Value {
         let parts = crate::services::parts();
         let rank = |name: &str| {
@@ -875,7 +884,7 @@ impl Settings<'_> {
                 texts(&lp_config::default_providers(platform)),
             ),
             ("lhm_modes", texts(&LHM_MODES)),
-            ("drivers", texts(&DRIVERS)),
+            ("drivers", texts(&self.drivers())),
             ("services", Value::List(services)),
             ("transitions", Value::List(transitions)),
         ])
@@ -977,7 +986,11 @@ impl Settings<'_> {
             return check_switch(name, value);
         }
         if name == "panels" {
-            return Ok(Change::Tables(name.into(), check_panels(value, config)?));
+            let drivers = self.drivers();
+            return Ok(Change::Tables(
+                name.into(),
+                check_panels(value, config, &drivers)?,
+            ));
         }
         if name == JSON_SOURCES {
             return Ok(Change::Tables(
@@ -994,7 +1007,7 @@ impl Settings<'_> {
                 false => Err(bad(format!("{name}: cannot be taken out"))),
             };
         }
-        let Some(cleaned) = rule(name, name, value, config) else {
+        let Some(cleaned) = rule(name, name, value, config, &self.drivers()) else {
             return Err(bad(format!("unknown setting {}", repr(name))));
         };
         let cleaned = toml_of(&cleaned?).ok_or_else(unwritable)?;
@@ -2092,7 +2105,7 @@ fn panel_video(name: &str, value: &Value) -> Answer<Value> {
 /// `panels`: the panels beside this one, each a table of `theme`, `on` and the keys of
 /// `[device]`, as read() hands them; written as `[[panels]]` with what differs from the
 /// defaults.
-fn check_panels(value: &Value, config: &Config) -> Answer<Vec<Table>> {
+fn check_panels(value: &Value, config: &Config, drivers: &[String]) -> Answer<Vec<Table>> {
     let listed = match value {
         Value::List(listed) if listed.len() <= lp_config::MORE_PANELS => listed,
         _ => {
@@ -2139,7 +2152,7 @@ fn check_panels(value: &Value, config: &Config) -> Answer<Vec<Table>> {
                 "brightness_offset" => whole(&name, item, -50, 50)?,
                 "video" => panel_video(&name, item)?,
                 _ => match default.contains_key(key) {
-                    true => rule(&format!("device.{key}"), &name, item, config)
+                    true => rule(&format!("device.{key}"), &name, item, config, drivers)
                         .unwrap_or_else(|| Err(bad(format!("unknown setting {}", repr(&name)))))?,
                     false => return Err(bad(format!("unknown setting {}", repr(&name)))),
                 },
@@ -2432,7 +2445,14 @@ fn rule_random(name: &str, value: &Value) -> Answer<Value> {
 
 /// The rule of the setting `key`, applied to `value` (`name`: what an error calls it); None
 /// for a setting there is no rule for.
-fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<Value>> {
+/// `drivers`: the display drivers to choose from (the app's and the plugins').
+fn rule(
+    key: &str,
+    name: &str,
+    value: &Value,
+    config: &Config,
+    drivers: &[String],
+) -> Option<Answer<Value>> {
     use lp_config as c;
     let speeds: Vec<&str> = c::TRANSITION_SPEEDS
         .iter()
@@ -2447,7 +2467,7 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
                 "{name}: auto, or a model from: libre-panel models"
             ))),
         },
-        "device.driver" => choice(name, value, &DRIVERS),
+        "device.driver" => choice(name, value, drivers),
         "device.brightness" | "device.night_brightness" | "device.away_brightness" => {
             whole(name, value, 0, 100)
         }

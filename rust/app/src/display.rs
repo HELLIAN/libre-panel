@@ -1,7 +1,8 @@
 //! Where the frames go (devices/auto.py, devices/turzx.py's TurzxDisplay and
 //! devices/virtual.py): a TURZX USB panel, which Libre Panel's engine has, a panel of the
-//! Hongtai family or the MAJESTY on a serial port, or a PNG file, which stands in for a
-//! panel. With `driver = "auto"` a panel that is there is used, otherwise the frames go into
+//! Hongtai family or the MAJESTY on a serial port, a PNG file, which stands in for a
+//! panel, or the panel of a plugin's driver (in the plugin host: plugins.rs PluginDisplay).
+//! With `driver = "auto"` a panel that is there is used, otherwise the frames go into
 //! the PNG file while a panel is looked for, so that one plugged in later is picked up; a
 //! panel that was in use and is gone is not replaced by the file: it is waited for.
 
@@ -18,7 +19,8 @@ use lp_devices::serial::{ports, SerialPort};
 use lp_devices::turzx::{Setup, Turzx, Video};
 use lp_pixels::Image;
 
-/// The drivers this build has; config.toml's `driver` names one.
+/// The drivers this build has; config.toml's `driver` names one, or one a plugin brings.
+/// (A plugin cannot take these names: plugins.rs BUILT_IN_PARTS.)
 pub const DRIVERS: [&str; 4] = ["auto", "virtual", "turzx", "hongtai"];
 /// While frames go into the PNG file, a panel is looked for this often.
 const PROBE_S: f64 = 5.0;
@@ -37,7 +39,7 @@ enum Panel {
     /// a serial panel or another maker's USB screen, and the frame it was sent last
     Other {
         driver: Box<dyn Driver>,
-        previous: Option<Image>,
+        previous: Option<Rc<Image>>,
     },
 }
 
@@ -428,16 +430,23 @@ impl Display {
                     file()
                 }
             },
-            other => {
-                // (create_display's words)
-                let mut known = DRIVERS;
-                known.sort_unstable();
-                return Err(format!(
-                    "unknown display driver {} (available: {})",
-                    lp_py::repr(other),
-                    known.join(", ")
-                ));
-            }
+            other => match crate::plugins::PluginDisplay::open(settings, device) {
+                Some(opened) => Panel::Other {
+                    driver: Box::new(opened?),
+                    previous: None,
+                },
+                None => {
+                    // (create_display's words; a plugin's drivers among them)
+                    let mut known: Vec<String> = DRIVERS.map(String::from).to_vec();
+                    known.extend(crate::plugins::driver_names(settings));
+                    known.sort_unstable();
+                    return Err(format!(
+                        "unknown display driver {} (available: {})",
+                        lp_py::repr(other),
+                        known.join(", ")
+                    ));
+                }
+            },
         };
         Ok(Display {
             device: device.clone(),
@@ -623,23 +632,20 @@ impl Display {
                 let parts: Vec<Option<lp_devices::driver::Region>> = if driver.streaming() {
                     vec![None]
                 } else if driver.slow() {
-                    let parts = changed_regions(previous.as_ref(), &frame, 24, 4);
+                    let parts = changed_regions(previous.as_deref(), &frame, 24, 4);
                     if parts.is_empty() {
                         return Ok(found);
                     }
                     parts.into_iter().map(Some).collect()
                 } else {
-                    match changed_region(previous.as_ref(), &frame) {
+                    match changed_region(previous.as_deref(), &frame) {
                         Some(region) => vec![Some(region)],
                         None => return Ok(found),
                     }
                 };
-                let shown = parts
-                    .into_iter()
-                    .try_for_each(|part| driver.show(&frame, part))
-                    .map_err(failed);
+                let shown = driver.show_parts(&frame, &parts).map_err(failed);
                 *previous = match (&shown, driver.streaming()) {
-                    (Ok(()), false) => Some(Rc::unwrap_or_clone(frame)),
+                    (Ok(()), false) => Some(frame),
                     _ => None,
                 };
                 shown

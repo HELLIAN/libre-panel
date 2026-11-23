@@ -52,7 +52,9 @@ class Channel:
             message = {**message, "blob": len(blob)}
         body = json.dumps(message, ensure_ascii=False, allow_nan=False, default=str).encode()
         with self._lock:
-            self.writer.write(struct.pack("<I", len(body)) + body + blob)
+            self.writer.write(struct.pack("<I", len(body)) + body)
+            if blob:  # (as it is: a plugin's screen is megabytes, each frame)
+                self.writer.write(blob)
             self.writer.flush()
 
     def _exactly(self, size: int) -> bytes | None:
@@ -101,12 +103,19 @@ class Host:
                     "toast.open": self.toast_open, "toast.draw": self.toast_draw,
                     "toast.lifetime": self.toast_lifetime, "toast.hold": self.toast_hold,
                     "toast.rebind": self.toast_rebind, "toast.close": self.toast_close,
-                    "pages.list": self.pages_list, "page.handle": self.page_handle}  # fmt: skip
+                    "pages.list": self.pages_list, "page.handle": self.page_handle,
+                    "display.open": self.display_open, "display.show": self.display_show,
+                    "display.brightness": self.display_brightness,
+                    "display.jpeg": self.display_jpeg,
+                    "display.close": self.display_close}  # fmt: skip
         self.pages: dict[str, Any] = {}
         self.styles: dict[int, Any] = {}
         self.transitions: dict[int, list[Any]] = {}
         self.drawings: dict[int, _Drawing] = {}
         self._drawing_ids = iter(range(1, 1 << 62))
+        self.displays: dict[int, Any] = {}
+        self.frames: dict[int, Any] = {}  # (the frame each was shown last)
+        self._display_ids = iter(range(1, 1 << 62))
         self.config: Any = None
         self.sources: dict[str, Any] = {}
         self._calls: dict[int, tuple[threading.Event, list[Any]]] = {}
@@ -115,7 +124,6 @@ class Host:
         self.bridge: Bridge | None = None
         self.services: Any = None
         self._local = threading.local()  # the request each worker answers (ask_app's)
-        self.asked = 0
 
     # -- the messages ----------------------------------------------------------------------
 
@@ -169,6 +177,10 @@ class Host:
         page_worker = threading.Thread(target=self._work, args=(pages,), name="plugin-pages",
                                        daemon=True)  # fmt: skip
         page_worker.start()
+        # (a panel a plugin's driver drives on a thread of its own, as the Python app's loop
+        # drove it from its own: a slow link holds up neither the drawings nor another panel;
+        # its opening, which may wait for the panel, on one more)
+        lanes: dict[Any, queue.Queue[tuple[dict[str, Any], bytes] | None]] = {}
         while (received := self.channel.receive()) is not None:
             message, blob = received
             if "answer" in message:
@@ -180,23 +192,38 @@ class Host:
                         waiting[1][1] = blob
                     waiting[0].set()
                 continue
-            if str(message.get("op", "")).startswith(("page.", "pages.")):
+            op = str(message.get("op", ""))
+            if op.startswith(("page.", "pages.")):
                 pages.put((message, blob))
+            elif op.startswith("display."):
+                key = message.get("display")
+                lane = lanes.get(key)
+                if lane is None:
+                    lane = lanes[key] = queue.Queue()
+                    threading.Thread(target=self._work, args=(lane,), daemon=True,
+                                     name=f"plugin-display-{key or 'open'}").start()  # fmt: skip
+                lane.put((message, blob))
+                if op == "display.close" and key is not None:
+                    lane.put(None)
+                    del lanes[key]
             else:
                 requests.put((message, blob))
         requests.put(None)
         pages.put(None)
+        for lane in lanes.values():
+            lane.put(None)
         worker.join(10)
         page_worker.join(10)
         self.services_stop({}, b"")
         for source in list(self.sources.values()):
             _close(source)
+        for display in list(self.displays.values()):
+            _close(display)
 
     def _work(self, requests: Any) -> None:
         while (request := requests.get()) is not None:
             message, blob = request
             self._local.serving = message.get("id")
-            self.asked += 1  # (what was asked of the app for the request before goes)
             op = self.ops.get(message.get("op", ""))
             answer: dict[str, Any] = {"id": message.get("id")}
             out = b""
@@ -594,6 +621,93 @@ class Host:
             drawing.renderer.close()
         return {}
 
+    # -- display drivers -----------------------------------------------------------------
+
+    def display_open(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
+        """The plugin's display driver ``driver`` made for the panel of ``device`` (its table
+        as config.toml has it) and opened; its number and what the app's loop goes by."""
+        from libre_panel.config import _parse_device
+        from libre_panel.plugins.loader import PluginError
+
+        name = message["driver"]
+        cls = self.registry.get("devices", name)
+        if cls is None:
+            found = self.registry.parts.get("devices", {}).get(name)
+            raise PluginError(found.error if found else f"no display driver {name!r}")
+        display = cls(_parse_device(message.get("device") or {}, message.get("where", "device")))
+        try:
+            display.open()
+        except BaseException:
+            _close(display)
+            raise
+        ident = next(self._display_ids)
+        self.displays[ident] = display
+        layout = display.jpeg_layout
+        return {"display": ident, "streaming": bool(display.streaming),
+                "stream_fps": int(display.stream_fps or 0), "slow": bool(display.slow),
+                "picture": str(display.picture),
+                "jpeg_layout": None if layout is None else str(layout),
+                **_display_state(display)}  # fmt: skip
+
+    def display_show(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
+        """The frame sent shown, part by part (``regions``: the boxes that changed, or None
+        for the whole), each with the whole frame. The app sends of it only the box around
+        the parts (``piece`` at ``at``), laid on a copy of the frame before, or all of it; a
+        frame the driver cannot show (FrameError) is told as ``skipped``, the panel stays
+        open."""
+        from PIL import Image
+
+        from libre_panel.devices.base import DeviceError, FrameError
+
+        ident = message["display"]
+        display = self.displays[ident]
+        before = self.frames.pop(ident, None)
+        if message.get("at") is None:
+            frame = _frame_of(message, blob)
+        elif before is None or list(before.size) != list(message["size"]):
+            raise DeviceError("a part of a frame came without the frame before it")
+        else:
+            frame = before.copy()  # (the driver may hold on to the one before)
+            frame.paste(Image.frombytes("RGB", tuple(message["piece"]), blob),
+                        tuple(message["at"]))  # fmt: skip
+        for region in message.get("regions") or [None]:
+            try:
+                display.show(frame, tuple(region) if region else None)
+            except FrameError as exc:
+                return {"skipped": str(exc), **_display_state(display)}
+        self.frames[ident] = frame
+        return _display_state(display)
+
+    def display_brightness(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
+        self.displays[message["display"]].set_brightness(int(message["percent"]))
+        return {}
+
+    def display_jpeg(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
+        display = self.displays[message["display"]]
+        display.set_jpeg(str(message["layout"]))
+        layout = display.jpeg_layout
+        return {"jpeg_layout": None if layout is None else str(layout)}
+
+    def display_close(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
+        self.frames.pop(message["display"], None)
+        _close(self.displays.pop(message["display"], None))
+        return {}
+
+
+# what the app's Counters hold of a driver's (devices/base.py's Counters, rust devices/base.rs)
+_COUNTED = ("bytes", "usb_errors", "blocks", "waits", "drops", "max_depth", "slow_blocks",
+            "panel_restarts")  # fmt: skip
+
+
+def _display_state(display: Any) -> dict[str, Any]:
+    """What a plugin's driver says of itself after it opened and after each frame: what frames
+    go to, the panel it is (once it knows) and its counters."""
+    model = getattr(display, "model", None)
+    counters = getattr(display, "counters", None)
+    return {"describe": str(display.describe()),
+            "model": getattr(model, "id", None) if model is not None else None,
+            "counters": {key: int(getattr(counters, key, 0) or 0) for key in _COUNTED}}  # fmt: skip
+
 
 def _frame_of(told: Any, blob: bytes) -> Any:
     """A frame the app sent: its size and mode, its pixels; None for none."""
@@ -617,10 +731,13 @@ def _host_renderer(host: Host) -> type:
     from libre_panel.plugins.drawing import PluginRenderer
 
     def asked(renderer: Any, what: str, make: Any) -> Any:
+        # (kept for the request it was asked for: the requests a worker beside this one
+        # answers meanwhile, a panel's frames to a plugin's driver among them, leave it)
         kept = renderer.__dict__.setdefault("_asked", {})
-        if kept.get(what, (None,))[0] != host.asked:
+        serving = getattr(host._local, "serving", None)
+        if serving is None or kept.get(what, (None,))[0] != serving:
             value, blob = host.ask_app(what)
-            kept[what] = (host.asked, make(value, blob))
+            kept[what] = (serving, make(value, blob))
         return kept[what][1]
 
     class HostRenderer(PluginRenderer):
@@ -891,8 +1008,8 @@ def _close(source: Any) -> None:
         return
     try:
         source.close()
-    except Exception:  # a source's own problem: it is gone either way
-        log.exception("a plugin's sensor source failed while closing")
+    except Exception:  # its own problem: it is gone either way
+        log.exception("a plugin's %s failed while closing", type(source).__name__)
 
 
 def _reading(reading: Any) -> dict[str, Any]:
