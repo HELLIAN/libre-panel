@@ -1325,6 +1325,20 @@ pub fn elevation(
     terminal: bool,
     json_output: bool,
 ) -> Elevation {
+    let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
+    let graphical = set("DISPLAY") || set("WAYLAND_DISPLAY");
+    elevation_in(options, command, terminal, json_output, graphical, &which)
+}
+
+/// elevation on a desktop (`graphical`) or none, with the programs `which` finds.
+fn elevation_in(
+    options: Options,
+    command: Option<&[String]>,
+    terminal: bool,
+    json_output: bool,
+    graphical: bool,
+    which: &dyn Fn(&str) -> Option<String>,
+) -> Elevation {
     let text = terminal_command(options, command);
     let Some(command) = command else {
         return Elevation {
@@ -1335,8 +1349,6 @@ pub fn elevation(
     };
     let mut tail = command.to_vec();
     tail.extend(arguments(options, json_output, false));
-    let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
-    let graphical = set("DISPLAY") || set("WAYLAND_DISPLAY");
     let pkexec = which("pkexec");
     if let (Some(pkexec), true) = (&pkexec, graphical) {
         let mut argv = vec![pkexec.clone(), "--disable-internal-agent".into()];
@@ -1780,6 +1792,99 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn pkexec_asks_where_there_is_a_desktop_and_a_terminal_uses_sudo() {
+        let command = vec!["/opt/Libre Panel/libre-panel".to_string()];
+        let all = |name: &str| Some(format!("/usr/bin/{name}"));
+        let options = Options {
+            rapl: Some(true),
+            remove: false,
+        };
+        // (a desktop, X11 or Wayland: polkit's dialog, without pkexec's agent in a terminal)
+        let way = elevation_in(options, Some(&command), false, true, true, &all);
+        assert_eq!(way.method, "pkexec");
+        assert_eq!(
+            way.argv,
+            [
+                "/usr/bin/pkexec",
+                "--disable-internal-agent",
+                "/opt/Libre Panel/libre-panel",
+                "system-setup",
+                "--linux",
+                "--rapl",
+                "--json"
+            ]
+        ); // fmt: skip
+           // the command to type quotes a path with spaces
+        let typed = "sudo '/opt/Libre Panel/libre-panel' system-setup --linux --rapl";
+        assert_eq!(way.terminal, typed);
+        // without a desktop the app can only tell the command; a terminal asks with sudo
+        let way = elevation_in(options, Some(&command), false, true, false, &all);
+        assert_eq!((way.method, way.argv.len()), ("", 0));
+        let way = elevation_in(options, Some(&command), true, false, false, &all);
+        assert_eq!(way.method, "sudo");
+        assert_eq!(
+            way.argv[..2],
+            ["/usr/bin/sudo".to_string(), command[0].clone()]
+        );
+        let no_sudo = |name: &str| (name == "pkexec").then(|| "/usr/bin/pkexec".to_string());
+        let way = elevation_in(options, Some(&command), true, false, false, &no_sudo);
+        assert_eq!(
+            (way.method, way.argv[0].as_str()),
+            ("pkexec", "/usr/bin/pkexec")
+        );
+        // a desktop without pkexec: the command to type
+        let none = |_: &str| None;
+        let way = elevation_in(options, Some(&command), false, true, true, &none);
+        assert_eq!(way.method, "");
+        // no program root can run: only a command to type
+        let way = elevation_in(
+            Options {
+                rapl: None,
+                remove: true,
+            },
+            None,
+            true,
+            true,
+            true,
+            &all,
+        );
+        assert_eq!(
+            (way.method, way.terminal.as_str()),
+            ("", "sudo libre-panel system-setup --linux --remove")
+        );
+    }
+
+    #[test]
+    fn the_report_is_the_last_line_that_is_json_and_modprobe_s_answers_are_told_apart() {
+        let said = "loading nct6775\n{\"steps\": 1}\nnoise {\n{\"steps\": 2, \"ok\": true}\nbye\n";
+        let found = parse_result(said).unwrap();
+        assert_eq!(found.get("steps"), Some(&Value::int(2)));
+        assert!(parse_result("nothing\n{ not json").is_none());
+        assert_eq!(classify(0, ""), LOADED);
+        assert_eq!(
+            classify(
+                1,
+                "modprobe: ERROR: could not insert 'it87': No such device"
+            ),
+            ABSENT
+        );
+        assert_eq!(
+            classify(
+                1,
+                "ERROR: could not insert 'nct6775': Device or resource busy"
+            ),
+            BUSY
+        );
+        assert_eq!(
+            classify(1, "modprobe: FATAL: Module nct6687 not found in directory"),
+            MISSING
+        );
+        assert_eq!(classify(1, "something else"), FAILED);
+        assert_eq!(shlex_quote(""), "''");
+        assert_eq!(shlex_quote("it's"), "'it'\"'\"'s'");
     }
 
     #[test]
