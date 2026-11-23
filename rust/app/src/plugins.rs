@@ -259,6 +259,11 @@ impl PluginHost {
                 .to_string_lossy()
                 .into_owned(),
         );
+        // (where the app's clock began on the computer's: libre_panel.clock() counts from it)
+        if let Some(zero) = crate::company::clock_zero() {
+            args.push("--clock-zero".into());
+            args.push(format!("{zero}"));
+        }
         // (on Windows its three pipes the only handles it inherits: spawn.rs)
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         trace(|| format!("starting {} {}", program.display(), args.join(" ")));

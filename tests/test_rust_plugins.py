@@ -473,6 +473,66 @@ def test_a_plugins_screen_and_widget_type_are_drawn_as_the_python_app_draws_them
     assert done.returncode != 0
 
 
+CLOCKED = """
+import os
+
+import libre_panel
+from PIL import Image
+
+from libre_panel.plugins import Screen
+
+
+class Clocked(Screen):
+    name = "clocked"
+    api = 1
+
+    def __init__(self, context, options):
+        super().__init__(context, options)
+        self.moving = True
+        self._frame = Image.new("RGB", context.size, (0, 0, 0))
+
+    def render(self, snapshot, now):
+        with open(os.environ["LP_TEST_CLOCKS"], "a", encoding="utf-8") as kept:
+            kept.write(f"{now!r} {libre_panel.clock()!r}\\n")
+        return self._frame
+"""
+
+
+def test_a_plugins_now_is_on_the_clock_of_libre_panel_clock(plugin_folder, isolated_home):
+    """The ``now`` a plugin's screen is drawn with is a time on ``libre_panel.clock()``, as
+    PLUGINS.md promises (so that ``now - snapshot.state_stamp(key)`` is an age, and a time
+    the plugin took itself compares with it): in the plugin host that clock counts from where
+    the app's began, though they are two processes."""
+    plugin_folder(CLOCKED, {"libre_panel.screens": {"clocked": "Clocked"}})
+    data = theme_data({"name": "clocked", "options": {}}, [])
+    folder = isolated_home / "themes" / "clocked"
+    folder.mkdir(parents=True)
+    (folder / "theme.json").write_text(json.dumps(data), encoding="utf-8")
+    (isolated_home / "config.toml").write_text(
+        'theme = "clocked"\nfps = 10\n[device]\ndriver = "virtual"\noutput = "panel.png"\n',
+        encoding="utf-8",
+    )
+    clocks = isolated_home / "clocks.txt"
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(isolated_home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **HOST, "LP_TEST_CLOCKS": str(clocks)}  # fmt: skip
+    with subprocess.Popen([str(_program()), "run"], env=env, stderr=subprocess.PIPE,
+                          encoding="utf-8") as program:  # fmt: skip
+        err = _drain(program.stderr)
+        try:
+            until = time.monotonic() + HOST_S
+            while time.monotonic() < until and (
+                not clocks.exists() or len(clocks.read_text("utf-8").splitlines()) < 10
+            ):
+                time.sleep(0.05)
+        finally:
+            said = _ended(program, err)
+    pairs = [tuple(map(float, line.split())) for line in clocks.read_text("utf-8").splitlines()]
+    assert len(pairs) >= 10, said
+    # (a frame is drawn a little before its time: at most a few frames at 10 a second)
+    assert all(abs(now - clock) < 1.0 for now, clock in pairs), pairs
+    assert [now for now, _ in pairs] == sorted(now for now, _ in pairs)
+
+
 def test_the_editor_is_told_the_plugins_parts_as_drawings_py_tells_them(
     plugin_folder, isolated_home
 ):

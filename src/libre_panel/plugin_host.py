@@ -23,6 +23,8 @@ import traceback
 from pathlib import Path
 from typing import Any, BinaryIO
 
+import libre_panel
+
 log = logging.getLogger("libre_panel.plugin_host")
 
 
@@ -1142,7 +1144,11 @@ def Bridge(host: Host) -> Any:  # noqa: N802 (made as a class is)
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="libre-panel-plugins")
     parser.add_argument("--folder", type=Path, default=None, help="the plugin folders' folder")
+    parser.add_argument("--clock-zero", type=float, default=None,
+                        help="where the app's clock began on time.perf_counter's")  # fmt: skip
     args = parser.parse_args(argv)
+    if args.clock_zero is not None:  # (libre_panel.clock() is then the app's clock)
+        libre_panel.count_from(args.clock_zero)
     # (a program a plugin starts gets the system's libraries, not the download's: bundled.py)
     from libre_panel.bundled import system_libraries
 

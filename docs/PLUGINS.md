@@ -245,9 +245,11 @@ age = now - snapshot.state_stamp("myplugin.round")  # seconds since it was publi
   published, the state is `null` (`publish_state(key, None)`) or the text is
   no JSON. Every call parses the text again, so what you get is yours to
   change; read it once per frame.
-- The time stamp is on the main loop's clock, `libre_panel.clock()`
-  (`time.perf_counter()`), the clock of the `now` a screen is drawn with.
-  `PluginHost(clock=...)` sets the clock for tests.
+- The time stamp is on the main loop's clock, `libre_panel.clock()`, the
+  clock of the `now` a screen is drawn with: in the plugin host it is
+  `time.perf_counter()` counted from where the app's clock began, which the
+  app tells the host as it starts it. `PluginHost(clock=...)` sets the clock
+  for tests.
 - Only a dict, a list or `None` is a state; a number or a text goes through
   `publish`. A value that is not JSON raises `TypeError` in the service.
 - A state reaches the next frame, like a reading, and goes when the service
@@ -600,8 +602,9 @@ class Studio(Screen):
   service published (see *States*); `now` is the frame's time in seconds for animations
   (steady; in video mode the time the frame is planned for, so a frame that
   starts a little late does not make an animation stutter). It is a time on
-  `libre_panel.clock()` (`time.perf_counter`): compare with that clock, not
-  with `time.monotonic`. `snapshot.now` is the same moment as a wall-clock
+  `libre_panel.clock()` (`time.perf_counter`, counted from where the app's
+  clock began): compare with that clock, not with `time.perf_counter` itself
+  or `time.monotonic`. `snapshot.now` is the same moment as a wall-clock
   `datetime`, so a seconds clock ticks on the frame that is due.
 - `context` has `size`, `orientation`, `palette`, `model`,
   `hidden_edges()` (pixels the bezel hides, as data: nothing is cropped),
