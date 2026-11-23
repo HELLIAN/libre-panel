@@ -64,7 +64,13 @@ def app_url(request):
             config = home / "config.toml"
             text = config.read_text(encoding="utf-8") if config.is_file() else ""
             config.write_text(f'language = "{language}"\n' + text, encoding="utf-8")
-        yield from _rust_app_url()
+        # whether this is the version a person began with (news.json): the Python app's server
+        # starts with this fixture and works it out then, before the test chose a theme; the
+        # Rust app's starts with the first page, and is told what it was as of now
+        from libre_panel.config import theme_chosen
+
+        began = not theme_chosen(home / "config.toml")
+        yield from _rust_app_url(home if began else None)
         return
     srv = make_server(port=0)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -127,10 +133,17 @@ class _RustApp(AppUrl):
     server sees what a test changed in its process before it asks."""
 
     process = None
+    began_here = None  # (a settings folder whose person began with this version: app_url)
 
     @property
     def token(self):
         if self.process is None:
+            news = self.began_here and self.began_here / "news.json"
+            if news and news.parent.is_dir() and not news.exists():
+                from libre_panel import __version__
+
+                text = json.dumps({"first": __version__, "seen": ""})
+                news.write_text(text + "\n", encoding="utf-8")
             port = self.split(":")[2].split("/")[0]
             self.process, self.said = _started(["editor", "--port", port])
             self._token = self.said[0].split("#token=")[1].split()[0]
@@ -175,13 +188,14 @@ class _RustBackground:
             _stopped(self.process)
 
 
-def _rust_app_url():
+def _rust_app_url(began_here=None):
     import socket
 
     with socket.socket() as probe:  # (a port nothing has: the server takes it once it starts)
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     url = _RustApp(f"http://127.0.0.1:{port}/")
+    url.began_here = began_here
     try:
         yield url
     finally:
@@ -298,9 +312,13 @@ def background(isolated_home):
 
 
 def choose_theme(home, theme="libre-default"):
-    """A config.toml that names a theme: not a first start."""
+    """A config.toml that names a theme: not a first start. (The language stays where it was
+    written: the Rust app's server takes it from config.toml, app_url wrote it there.)"""
     home.mkdir(parents=True, exist_ok=True)
-    (home / "config.toml").write_text(f'theme = "{theme}"\n', encoding="utf-8")
+    config = home / "config.toml"
+    old = config.read_text(encoding="utf-8").splitlines() if config.is_file() else []
+    kept = "".join(f"{line}\n" for line in old if line.startswith("language = "))
+    config.write_text(f'{kept}theme = "{theme}"\n', encoding="utf-8")
 
 
 def theme_ids(page):
@@ -770,6 +788,8 @@ def test_start_does_not_ask_for_the_standby_clip_unless_it_is_all_that_is_missin
 ):
     from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
 
+    if RUST and not ffmpeg:  # (rust/devices/src/turzx.rs, video_gaps)
+        pytest.skip("the Rust app's engine encodes the video: it looks for no ffmpeg")
     panel_on_the_bus(monkeypatch, model)
     lacking_ffmpeg(monkeypatch, found=ffmpeg)
     choose_theme(isolated_home)
@@ -1423,7 +1443,8 @@ def test_live_says_whether_the_video_mode_is_on_or_what_it_lacks(
     missing = "Off for now. Missing: the name of the standby clip"
     tone, text, link = state(ffmpeg=False)
     assert (tone, link) == ("warn", ["Panel settings"])
-    assert text.startswith(f"{missing}, the video program ffmpeg.")
+    # (the Rust app's engine encodes the video: it looks for no ffmpeg; turzx.rs, video_gaps)
+    assert text.startswith(f"{missing}." if RUST else f"{missing}, the video program ffmpeg.")
     tone, text, link = state()
     assert tone == "warn" and text.startswith(f"{missing}.")
     with_clip = f'\n[video]\nlocal_clip = "{CLIP}"\n'

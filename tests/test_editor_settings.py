@@ -1084,6 +1084,17 @@ def plugged_in(monkeypatch, ports=(), usb=(), fail=""):
 
     monkeypatch.setattr(base, "list_serial_ports", lambda: list(ports))
     monkeypatch.setattr(base, "list_usb_devices", usb_devices)
+    if (bus := os.environ.get("LP_TEST_BUS")) and not fail:  # (the Rust app's bus, by model)
+        from libre_panel.devices.models import MODELS
+
+        by_ids = {(f"{m.usb_ids[0][0]:04x}", f"{m.usb_ids[0][1]:04x}"): m.id
+                  for m in MODELS if m.usb_ids}  # fmt: skip
+        file = Path(bus)
+        kept = [line for line in (file.read_text(encoding="utf-8").splitlines()
+                                  if file.is_file() else []) if "=" in line]  # fmt: skip
+        found = [by_ids.get((str(d["vid"]).lower(), str(d["pid"]).lower())) for d in usb]
+        lines = kept + [model for model in found if model]
+        file.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
 
 
 def test_the_report_lists_what_is_connected_without_serial_numbers(server, monkeypatch):

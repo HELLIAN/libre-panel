@@ -3,6 +3,7 @@ needs attention, the plain words of each section, the report of a panel and Stat
 real browser, as test_app_browser.py; skipped when Playwright or Chromium are missing."""
 
 import json
+import os
 
 import pytest
 
@@ -11,6 +12,7 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import expect  # noqa: E402
 from test_app_browser import (  # noqa: E402, F401
     PICTURE,
+    RUST,
     a_panel_app,
     app_answer,
     app_url,
@@ -1292,9 +1294,35 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.setattr(agents, "program", lambda name: "/bin/claude" if name == "claude" else None)
     monkeypatch.setattr(agents, "BOARD", agents.Board())  # (nothing heard from anyone yet)
+    if RUST:  # (the Rust app looks for the program on PATH as it starts, with the page)
+        programs = tmp_path / "bin"
+        programs.mkdir()
+        (programs / "claude").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (programs / "claude").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{programs}{os.pathsep}{os.environ.get('PATH', '')}")
     choose_theme(isolated_home, "lumen")
     set_config_value("services.enabled", ["agents"])
     settings = home / ".claude" / "settings.json"
+
+    def told(what, data):
+        """What Claude Code's hook (``what`` "hook") or status line ("status") tells the app:
+        the Rust app's server is sent it as the command written into its settings sends it."""
+        if not RUST:
+            if what == "hook":
+                agents.BOARD.hook("claude", data)
+            else:
+                agents.BOARD.status("claude", data)
+            return
+        import re
+        import urllib.request
+
+        key = re.search(r"key=([A-Za-z0-9_-]+)", settings.read_text(encoding="utf-8")).group(1)
+        address = f"{app_url}api/ai/{what}?agent=claude&key={key}"
+        sent = urllib.request.Request(address, data=json.dumps(data).encode("utf-8"),
+                                      headers={"Content-Type": "application/json"})  # fmt: skip
+        with urllib.request.urlopen(sent, timeout=10) as answered:
+            answered.read()
+
     with browser_page(app_url, "settings/services") as page:
         card = page.locator("[data-service='agents']")
         expect(card).to_contain_text("AI activity")
@@ -1313,7 +1341,7 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         expect(claude.locator(".settings-row-status")).to_have_text("Set up; no report from it yet")
         expect(claude.locator("[data-agents-waiting]")).to_contain_text("or the desktop app")
         expect(card.locator("[data-agent='cloud']")).to_have_count(0)  # (only the agents here)
-        agents.BOARD.hook("claude", {"hook_event_name": "SessionStart", "session_id": "s"})
+        told("hook", {"hook_event_name": "SessionStart", "session_id": "s"})
         expect(claude.locator(".settings-row-status")).to_contain_text(
             "its last report came", timeout=10_000
         )  # (the card asks again every few seconds)
@@ -1326,9 +1354,10 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         expect(usage).to_contain_text("asked every few minutes while a theme shows")
         expect(hint).to_contain_text("only while Claude Code runs in a terminal")
         expect(card.locator("[data-agent='codex'] [data-agents-usage]")).to_have_count(0)
-        agents.BOARD.usage_failed("claude", "too old", "old", "2.1.100")
-        expect(usage).to_contain_text("Claude Code 2.1.100 is too old", timeout=10_000)
-        agents.BOARD.status("claude", {"rate_limits": {"five_hour": {"used_percentage": 12}}})
+        if not RUST:  # (the Rust app asks the program itself: agents_usage.rs and its tests)
+            agents.BOARD.usage_failed("claude", "too old", "old", "2.1.100")
+            expect(usage).to_contain_text("Claude Code 2.1.100 is too old", timeout=10_000)
+        told("status", {"rate_limits": {"five_hour": {"used_percentage": 12}}})
         expect(usage).to_contain_text("from its status line", timeout=10_000)
         expect(hint).to_have_count(0)
         claude.get_by_role("button", name="Remove").click()
