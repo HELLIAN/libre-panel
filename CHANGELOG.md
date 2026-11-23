@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.5 — 2026-11-23
+
+Libre Panel on Windows no longer quits a second after a game ends.
+
+**Fixed**
+- **The crash after a game ends, on Windows.** The "what is playing" reader
+  used to end its thread a minute after nothing asked what is playing, and let
+  go of the Windows media controls answering it. Windows takes a module back
+  once nothing holds anything of it, and the next theme switch — the one a
+  second after `game over`, back to a theme that shows playback — asked for
+  the controls again through pointers into memory the module had already left:
+  the whole program died (0xc0000005), and the log said nothing. The reader
+  thread now lives for the life of the process, and the module the asks stand
+  on (`Windows.Media.MediaControl.dll`), with the proxy-stub modules its calls
+  go through (`OneCoreUAPCommonProxyStub.dll`, `wintypes.dll`), is held by the
+  process and never let go. Three four-minute games with three-minute rests,
+  the shape that killed 0.9.4 four times, now end with the panel back on its
+  normal theme and nothing lost.
+
 ## 0.9.4 — 2026-11-17
 
 Start screens are written to the panel again, on the 9.2" and the 12.3", into a room that is
