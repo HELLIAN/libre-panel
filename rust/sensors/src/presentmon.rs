@@ -73,11 +73,8 @@ pub fn target() -> Option<String> {
 }
 
 pub fn find_presentmon(path: &str, notes: &mut Vec<String>) -> Option<PathBuf> {
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|program| std::fs::canonicalize(program).ok())
-        .and_then(|program| Some(program.parent()?.to_path_buf()));
-    find_presentmon_beside(path, notes, beside)
+    // (the program's folder as a person writes it: on Windows not `\\?\C:\...`)
+    find_presentmon_beside(path, notes, lp_devices::rights::program_folder())
 }
 
 /// find_presentmon of a program in the folder `beside`.
