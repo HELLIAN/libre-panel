@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -95,6 +96,9 @@ def _rust_env():
     env.setdefault("LP_SETUP_SYSTEM", "other")
     env.setdefault("LP_LINUX_ROOT", "/no/such/root")
     env.setdefault("LP_TEST_RIGHTS", "user")  # (conftest.py's not_elevated)
+    # the video experiment's waits shortened, as its test shortens the Python app's
+    # (experiment.Experiment.scale)
+    env.setdefault("LP_EXPERIMENT_SCALE", "0.002")
     env.setdefault("XDG_CONFIG_HOME", str(Path(env["LIBRE_PANEL_HOME"]) / "xdg"))
     # the plugins installed in a test run in this Python's plugin host
     env.setdefault("LIBRE_PANEL_PLUGIN_HOST", sys.executable)
@@ -102,13 +106,13 @@ def _rust_env():
     return env
 
 
-def _started(command):
-    """The Rust app started with ``command`` and the line it says first; what it says from
-    then on is read as it says it (a pipe nobody reads stops the program once it is full) and
-    kept for a test that fails."""
+def _started(command, program=None):
+    """The Rust app started with ``command`` (``program``: another than the one built) and the
+    line it says first; what it says from then on is read as it says it (a pipe nobody reads
+    stops the program once it is full) and kept for a test that fails."""
     from test_rust_app import _program
 
-    process = subprocess.Popen([str(_program()), *command], env=_rust_env(),
+    process = subprocess.Popen([str(program or _program()), *command], env=_rust_env(),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                encoding="utf-8")  # fmt: skip
     said = [process.stdout.readline()]
@@ -134,6 +138,7 @@ class _RustApp(AppUrl):
 
     process = None
     began_here = None  # (a settings folder whose person began with this version: app_url)
+    program = None  # (another than the one built: as_download)
 
     @property
     def token(self):
@@ -145,7 +150,7 @@ class _RustApp(AppUrl):
                 text = json.dumps({"first": __version__, "seen": ""})
                 news.write_text(text + "\n", encoding="utf-8")
             port = self.split(":")[2].split("/")[0]
-            self.process, self.said = _started(["editor", "--port", port])
+            self.process, self.said = _started(["editor", "--port", port], self.program)
             self._token = self.said[0].split("#token=")[1].split()[0]
         return self._token
 
@@ -186,6 +191,26 @@ class _RustBackground:
     def quit(self):
         if self.process.poll() is None:
             _stopped(self.process)
+
+
+def as_download(url, folder):
+    """The Rust app's server of ``url`` started as a download has it (its program outside the
+    build's target folder, Libre Panel's engine in its tools folder beside it): the program
+    linked into ``folder`` (or copied), a stand-in engine beside it."""
+    from test_rust_app import _program
+
+    program = folder / _program().name
+    folder.joinpath("tools").mkdir(parents=True)
+    try:
+        os.link(_program(), program)
+    except OSError:
+        shutil.copy2(_program(), program)
+    engine = (
+        folder / "tools" / ("libre-panel-engine.exe" if os.name == "nt" else "libre-panel-engine")
+    )
+    engine.write_bytes(b"")
+    engine.chmod(0o755)
+    url.program = program
 
 
 def _rust_app_url(began_here=None):

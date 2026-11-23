@@ -836,9 +836,11 @@ def test_auto_shows_what_the_engine_does_where_the_download_carries_it(
     app_url,  # noqa: F811
     isolated_home,
     monkeypatch,
+    tmp_path,
 ):
     """Where the download carries Libre Panel's engine, "auto" (the default) encodes with it:
     its switches show with "auto" as with "native"."""
+    from test_app_browser import as_download
     from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
 
     from libre_panel.devices import h264
@@ -846,6 +848,8 @@ def test_auto_shows_what_the_engine_does_where_the_download_carries_it(
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
     monkeypatch.setattr(h264, "auto_engine", lambda: "/the/download/libre-panel-engine")
+    if RUST:  # (the Rust app's server started as a download has it)
+        as_download(app_url, tmp_path / "download")
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         expect(card.get_by_role("switch", name="The engine sends the pictures")).to_be_checked()
@@ -1001,6 +1005,10 @@ def test_the_colour_check_measures_each_encoder_and_says_who_converts(
         expect(card.locator("h2")).to_have_text("Check the colours")
         expect(card.get_by_role("button", name="Copy as text")).to_have_count(0)  # nothing yet
         card.get_by_role("button", name="Check the colours").click()
+        if RUST:  # (its engine makes the video: no graphics card's conversion; colours.rs)
+            expect(card).to_contain_text("there is no graphics card's conversion to compare",
+                                         timeout=30000)  # fmt: skip
+            return
         x264 = card.locator(".colour-encoder[data-encoder='libx264']")
         expect(x264).to_have_attribute("data-verdict", "identical", timeout=30000)
         expect(x264).to_contain_text("Identical")
@@ -1047,6 +1055,8 @@ def test_the_card_converts_where_the_check_found_it_identical_and_the_processor_
     card says the graphics card converts, checked identical on the day; checked again with
     BT.709 (as AMD's own converter made it), the processor converts and the card says why; a
     way video.pixels forces comes with the way back to the automatic choice."""
+    if RUST:
+        pytest.skip("the Rust app's engine converts every video's colours itself (colours.rs)")
     from libre_panel.config import edit_config
 
     command = card_s()
@@ -1092,6 +1102,9 @@ def test_the_colour_check_shows_its_picture_on_the_panel_and_the_range_s_answer_
     processor's says A and B with the seconds left, and Stop ends it; *Is black too light on the
     panel? Compare* shows limited (A) against full range (B), and *B looks right* writes the
     panel's video_range, the picture ends and the card says the range set."""
+    if RUST:  # (to do: the Rust app's background app with a panel showing video)
+        pytest.skip("the Rust app's server asks its background app which panels show video: "
+                    "none here, as the Python app's are made up in its process")  # fmt: skip
     from libre_panel import colour_show
 
     colour_check_on(monkeypatch, controls=panels_running("h264_amf"))
@@ -1128,6 +1141,9 @@ def test_the_range_s_answer_for_a_panel_beside_the_first_is_its_own(
     """Panel 2 chosen at the top, showing video with x264: no A/B of the card's conversion (the
     processor converts either way), the range's comparison on panel 2, and *A looks right*
     writes its own video_range, in its [[panels]] table; the first panel's stays automatic."""
+    if RUST:  # (to do: the Rust app's background app with a panel showing video)
+        pytest.skip("the Rust app's server asks its background app which panels show video: "
+                    "none here, as the Python app's are made up in its process")  # fmt: skip
     from libre_panel import colour_show
 
     isolated_home.mkdir(parents=True, exist_ok=True)
