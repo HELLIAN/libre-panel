@@ -765,6 +765,21 @@ fn run(case: &Value) -> Result<Value, String> {
                 lp_render::branding::logo(size, case["status"].as_str()).map_err(|e| e.0)?;
             json!({"image": value_of(&picture)})
         }
+        "mark" => {
+            // branding.mark(diameter, light): the mark alone, as the panel's screens take it
+            let diameter = case["diameter"].as_f64().unwrap_or(200.0);
+            let light = case["light"].as_f64().unwrap_or(1.0);
+            let picture = lp_render::branding::mark(diameter, light).map_err(|e| e.0)?;
+            json!({"image": value_of(&picture)})
+        }
+        "mark_svg" => json!({
+            // the mark as the app's header and the website show it
+            "svg": lp_render::branding::mark_svg(
+                case["box"].as_f64().unwrap_or(24.0),
+                case["margin"].as_f64().unwrap_or(0.7),
+            ),
+            "clearance": lp_render::branding::clearance(),
+        }),
         "linear_gradient" => json!({"image": value_of(&Image::linear_gradient())}),
         "radial_gradient" => json!({"image": value_of(&Image::radial_gradient())}),
         "open" => {

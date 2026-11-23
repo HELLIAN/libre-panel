@@ -1,8 +1,9 @@
 //! The Libre Panel mark, drawn in code (branding.py): a gauge's ring, open at the bottom, lit
 //! from the lower left over the top to the right and dark for its last part, round three bars
 //! that rise to the right, the last one lit: the mark alone, as the panel's own screens take it
-//! (render/boot.rs), and the app's icon with its glow and the tray's dot (`logo`); the SVG is
-//! still Python's.
+//! (render/boot.rs), the app's icon with its glow and the tray's dot (`logo`), and the SVG of
+//! the app's header and of the website (`mark_svg`). `packaging/make_icons.py` writes the
+//! static files (app icon, favicon, Windows .ico).
 
 use std::hint::black_box;
 
@@ -39,6 +40,71 @@ fn extent() -> f64 {
 fn lift() -> f64 {
     // (the C library's sine at run time, as Python's)
     (extent() - (black_box(OPEN_FROM).to_radians().sin() + STROKE / 2.0)) / 2.0
+}
+
+/// clearance: the least room between a bar and the ring's inner edge (in ring radii).
+pub fn clearance() -> f64 {
+    let inner = 1.0 - STROKE / 2.0;
+    let mut room = inner;
+    for (left, height) in BARS {
+        let top = BASE - height;
+        // (the centres of the roundings)
+        for x in [left + BAR_ROUND, left + BAR_W - BAR_ROUND] {
+            room = room.min(inner - ((x).hypot(top + BAR_ROUND) + BAR_ROUND));
+        }
+    }
+    room
+}
+
+/// mark_svg: the mark as SVG elements for a `side` x `side` viewBox: what the app's header
+/// (ui/icons.js, `logo`) and the website (`#i-logo`) show. Each element has its own colours
+/// and stroke, so it looks the same whatever the icon's own are.
+pub fn mark_svg(side: f64, margin: f64) -> String {
+    let radius = (side / 2.0 - margin) / extent();
+    let (cx, cy) = (side / 2.0, side / 2.0 + lift() * radius);
+    // (two places, without the zeros at the end: "{:.2f}".rstrip("0").rstrip("."))
+    let n = |v: f64| {
+        let text = format!("{v:.2}");
+        let text = text.trim_end_matches('0').trim_end_matches('.');
+        if text == "-0" {
+            "0".to_string()
+        } else {
+            text.to_string()
+        }
+    };
+    let hex = |[r, g, b]: [u8; 3]| format!("#{r:02x}{g:02x}{b:02x}");
+    let point = |angle: f64| {
+        let a = angle.to_radians();
+        format!("{} {}", n(cx + radius * a.cos()), n(cy + radius * a.sin()))
+    };
+    let arc = |start: f64, end: f64, colour: [u8; 3]| {
+        let large = u8::from(end - start > 180.0);
+        format!(
+            "<path d=\"M{}A{r} {r} 0 {large} 1 {}\" fill=\"none\" stroke=\"{}\" \
+             stroke-width=\"{}\" stroke-linecap=\"round\"/>",
+            point(start),
+            point(end),
+            hex(colour),
+            n(STROKE * radius),
+            r = n(radius),
+        )
+    };
+    let (accent, text) = (libre("accent"), libre("text"));
+    let mut parts = vec![arc(LIT_TO, OPEN_TO, TRACK), arc(OPEN_FROM, LIT_TO, accent)];
+    for (i, (left, height)) in BARS.into_iter().enumerate() {
+        let colour = if i == BARS.len() - 1 { accent } else { text };
+        parts.push(format!(
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" fill=\"{}\" \
+             stroke=\"none\"/>",
+            n(cx + left * radius),
+            n(cy + (BASE - height) * radius),
+            n(BAR_W * radius),
+            n(height * radius),
+            n(BAR_ROUND * radius),
+            hex(colour),
+        ));
+    }
+    parts.concat()
 }
 
 /// A colour of the Libre look (design.LOOKS' palette), as branding.py takes it.
