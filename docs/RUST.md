@@ -2673,12 +2673,18 @@ word of the app's language in one of its fonts, so a host that does not find the
   - [x] the running app and its plugins: what the Python app made of what a test gives the
         program, kept the same way; the weather and the calendars held against the crates'
         own readings
-  - [ ] the server (tests/test_rust_server.py): what editor/server.py answered each request
-        of a test and wrote into its settings folder, kept as a tape (tests/server_tape.py)
-        and played where the Python server was asked; CI still asks the Python app beside
-        it and writes the tape down (tests/harvest.py), until it is kept
+  - [x] the server (tests/test_rust_server.py): what editor/server.py answered each request
+        of a test and wrote into its settings folder, kept as a tape (tests/server_tape.py,
+        tests/golden/given/test_rust_server.json) and played where the Python server was
+        asked; CI runs it without the Python app
   - [x] what the app tells of "now" takes its moment from one place (rust/app/src/clock.rs),
         which the tests name with ``LP_NOW``: an answer is then the same whenever it is
         asked for. What runs by the clock (the panel's frames, a clip, a wait) stays on it
-  - [ ] the browser tests on the Rust app's server; the Python app's own tests, tools and
-        packaging go with it
+  - [x] the browser tests on the Rust app's server, the Python app out of reach
+        (``LP_UI_SERVER=rust LP_WITHOUT_APP=1``, CI's rust job on Linux): what a test asks of
+        the app it asks the running program (its tray's menu, its services, its readings, the
+        files it writes), the panels on a bus of the test's own (``LP_TEST_BUS``). Skipped,
+        each with its reason: the range's A/B on a panel in video mode and the graphics
+        card's conversion (to do), Windows' autostart with administrator rights (no stand-in
+        for the registry and the Task Scheduler yet)
+  - [ ] the Python app's own tests, tools and packaging go with it

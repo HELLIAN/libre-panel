@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -18,10 +19,6 @@ import pytest
 playwright = pytest.importorskip("playwright.sync_api")
 
 from playwright.sync_api import expect  # noqa: E402
-
-from libre_panel.editor import access  # noqa: E402
-from libre_panel.editor.server import make_server  # noqa: E402
-from libre_panel.theme.model import version_base  # noqa: E402
 
 # Every expectation of the browser tests (this file's and those that import from it) waits for what
 # it expects for 15 s instead of the 5 s Playwright gives it: a slow runner (Windows under load)
@@ -31,6 +28,44 @@ expect.set_options(timeout=15_000)
 
 
 RUST = os.environ.get("LP_UI_SERVER") == "rust"  # (the Rust app's server: app_url)
+
+
+def with_token(url, token):
+    """``url`` with the access ``token`` in its fragment, after the route if it has one, as the
+    window gives it to the page."""
+    return f"{url}{'&' if '#' in url else '#'}token={token}" if token else url
+
+
+def write_config(home, theme="libre-default", brightness=60, driver="virtual"):
+    """A config.toml with a panel that writes a PNG file (frame.png in ``home``)."""
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.toml").write_text(
+        f'theme = "{theme}"\nfps = 5\n\n[device]\ndriver = "{driver}"\n'
+        f'brightness = {brightness}\noutput = "{(home / "frame.png").as_posix()}"\n',
+        encoding="utf-8",
+    )
+
+
+def wait_for(predicate, timeout=30.0):
+    """Whether ``predicate()`` came true within ``timeout`` seconds (asked every 50 ms)."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def version_base(name):
+    """The theme ``name`` is a version of, as the name says: "lumen" for "lumen-vertical",
+    "lumen-1920x720" and "lumen-pair"; None for a theme that is no version."""
+    sized = re.match(r"^(.+)-(\d{2,5})x(\d{2,5})$", name)
+    if sized:
+        return sized[1]
+    for ending in ("-vertical", "-pair"):
+        if name.endswith(ending) and len(name) > len(ending):
+            return name[: -len(ending)]
+    return None
 
 
 class AppUrl(str):
@@ -44,8 +79,10 @@ class AppUrl(str):
 def no_setup_card(monkeypatch):
     """Settings and Start show the card of the Linux setup only in the tests that bring a Linux
     PC (``linux_pc``). The others see the app as on any other system, whatever this machine is:
-    one without polkit would add a note of its own to the page of the sensors."""
-    monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: False)
+    one without polkit would add a note of its own to the page of the sensors. (The Rust app is
+    told so by its environment: _rust_env.)"""
+    if not RUST:
+        monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: False)
 
 
 @pytest.fixture
@@ -73,6 +110,8 @@ def app_url(request):
         began = not theme_chosen(home / "config.toml")
         yield from _rust_app_url(home if began else None)
         return
+    from libre_panel.editor.server import make_server
+
     srv = make_server(port=0)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
@@ -96,6 +135,9 @@ def _rust_env():
     env.setdefault("LP_SETUP_SYSTEM", "other")
     env.setdefault("LP_LINUX_ROOT", "/no/such/root")
     env.setdefault("LP_TEST_RIGHTS", "user")  # (conftest.py's not_elevated)
+    # the USB bus and the serial ports as the test makes them up (panel_on_the_bus): nothing,
+    # until it plugs a panel in; never this computer's
+    env.setdefault("LP_TEST_BUS", str(_bus_file()))
     # the video experiment's waits shortened, as its test shortens the Python app's
     # (experiment.Experiment.scale)
     env.setdefault("LP_EXPERIMENT_SCALE", "0.002")
@@ -169,16 +211,21 @@ class _RustBackground:
         self.url.token = address.split("#token=")[1]
         self.panel = self
 
-    def _app(self, action=None, value=None):
+    def _asked(self, route, body=None):
         import urllib.request
 
-        body = None if action is None else json.dumps({"action": action, "value": value})
+        data = None if body is None else json.dumps(body).encode("utf-8")
         asked = urllib.request.Request(
-            f"{self.url}api/app", data=body and body.encode("utf-8"),
+            f"{self.url}{route}", data=data,
             headers={"Content-Type": "application/json", "X-Libre-Panel": self.url.token},
         )  # fmt: skip
         with urllib.request.urlopen(asked, timeout=30) as answer:
             return json.loads(answer.read())
+
+    def _app(self, action=None, value=None):
+        return self._asked(
+            "api/app", None if action is None else {"action": action, "value": value}
+        )
 
     def state(self):
         """The panel's state, as BackgroundApp.panel.state() gives it."""
@@ -188,9 +235,39 @@ class _RustBackground:
     def paused(self):
         return self.state()["state"] == "paused"
 
+    def frames(self):
+        """The frames the panel showed since its loop started (fewer again once it restarted)."""
+        return self.state().get("frames") or 0
+
+    def clip_question(self):
+        """Whether the tray's menu has the line that asks for the standby clip."""
+        return any(item.get("id") == "clip" for item in self._asked("api/tray")["menu"])
+
+    def services(self):
+        """Each service's state as the app's control page tells it: {name: state}."""
+        rows = self._asked("api/plugins/control/services")["services"]
+        return {row["name"]: row["state"] for row in rows}
+
+    def starts(self, name):
+        """How often the service ``name`` was started, as the app said each time."""
+        return sum(f"service '{name}' started" in line for line in list(self.said))
+
+    def reading(self, key):
+        """The value of the reading ``key`` the app has now (a service's), None without one."""
+        found = self._asked(f"api/readings?keys={key}").get("readings", {}).get(key)
+        return None if not found or found.get("sample") else found.get("value")
+
     def quit(self):
         if self.process.poll() is None:
             _stopped(self.process)
+
+    def ended(self, timeout=15.0):
+        """Whether the program ended (by itself: Quit) within ``timeout`` seconds."""
+        try:
+            self.process.wait(timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
 
 
 def as_download(url, folder):
@@ -225,6 +302,69 @@ def _rust_app_url(began_here=None):
         yield url
     finally:
         url.stop()
+
+
+def _bus_file():
+    """The Rust app's test bus (LP_TEST_BUS): app_url's, else beside the test's home."""
+    named = os.environ.get("LP_TEST_BUS")
+    return Path(named) if named else Path(os.environ["LIBRE_PANEL_HOME"]).parent / "bus"
+
+
+def panel_on_the_bus(monkeypatch, model_id=None, serial=None, **more):
+    """The panel on the USB bus as the test makes it up: the Rust app reads it from its test
+    bus (LP_TEST_BUS, by model: ``serial`` on a port); the Python app's finders are told so
+    (test_editor_settings.py)."""
+    if not RUST:
+        from test_editor_settings import panel_on_the_bus as python_s
+
+        return python_s(monkeypatch, model_id, serial, **more)
+    lines = [f"COM7={serial}"] if serial else [model_id] if model_id else []
+    _bus_file().write_text("".join(f"{line}\n" for line in lines),
+                                               encoding="utf-8")  # fmt: skip
+    return None
+
+
+def plugged_in(monkeypatch, ports=(), usb=(), fail=""):
+    """What the system lists as plugged in: the USB panels among ``usb`` join the Rust app's
+    test bus, by their model; the Python app is told all of it (test_editor_settings.py)."""
+    if not RUST:
+        from test_editor_settings import plugged_in as python_s
+
+        return python_s(monkeypatch, ports, usb, fail)
+    if fail:
+        return None
+    from libre_panel.devices.models import MODELS
+
+    by_ids = {(f"{m.usb_ids[0][0]:04x}", f"{m.usb_ids[0][1]:04x}"): m.id
+              for m in MODELS if m.usb_ids}  # fmt: skip
+    file = _bus_file()
+    kept = [line for line in (file.read_text(encoding="utf-8").splitlines()
+                              if file.is_file() else []) if "=" in line]  # fmt: skip
+    found = [by_ids.get((str(d["vid"]).lower(), str(d["pid"]).lower())) for d in usb]
+    lines = kept + [model for model in found if model]
+    file.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+    return None
+
+
+def lacking_ffmpeg(monkeypatch, found=False):
+    """The Python app finds no ffmpeg (or, with ``found``, one); the Rust app finds what this
+    computer has, and its tests ask what it found."""
+    if not RUST:
+        from test_editor_settings import lacking_ffmpeg as python_s
+
+        python_s(monkeypatch, found)
+
+
+def server_answer(url, route):
+    """What the app's server at ``url`` answers ``GET route`` (with its token): JSON as data,
+    else the bytes."""
+    import urllib.request
+
+    asked = urllib.request.Request(f"{url}{route}", headers={"X-Libre-Panel": url.token})
+    with urllib.request.urlopen(asked, timeout=30) as answer:
+        body = answer.read()
+        kind = answer.headers.get("Content-Type", "")
+    return json.loads(body) if kind.startswith("application/json") else body
 
 
 def server_language(url, language):
@@ -277,8 +417,12 @@ def browser_page(url, view="design", strict_csp=False, size=(1440, 900), routes=
         for pattern, handler in (routes or {}).items():  # stand-ins for the server's answers
             page.route(pattern, handler)
         # the token as the window brings it; a background app wrote it down for its user
-        token = getattr(url, "token", None) or access.read_token(str(url))
-        page.goto(access.with_token(f"{url}#/{view}", token))
+        token = getattr(url, "token", None)
+        if token is None and not RUST:
+            from libre_panel.editor import access
+
+            token = access.read_token(str(url))
+        page.goto(with_token(f"{url}#/{view}", token))
         page.wait_for_selector(".panel-canvas .preview" if view == "design" else ".view > *")
         page.wait_for_timeout(300)
         try:
@@ -318,22 +462,73 @@ PICTURE = ("&format=jpeg",)
 @pytest.fixture
 def background(isolated_home):
     """The background app with a panel that writes a PNG file, and the address of its app."""
-    from test_service import FakeRegistry, write_config
-
-    from libre_panel.autostart import Autostart
-    from libre_panel.service import BackgroundApp
-
     write_config(isolated_home)
     if RUST:
         app = _RustBackground()
         yield app, app.url
         app.quit()
         return
+    from test_service import FakeRegistry
+
+    from libre_panel.autostart import Autostart
+    from libre_panel.service import BackgroundApp
+
     app = BackgroundApp(port=0, autostart=Autostart("win32", registry=FakeRegistry()))
     url = app.start()
     yield app, url
     app.quit()
     app.shutdown()
+
+
+@contextlib.contextmanager
+def running_app(autostart=None, **more):
+    """The background app (the tray's) on the config.toml the test wrote, and the address of
+    its app: the Rust app's program, or the Python app's BackgroundApp (``autostart``: its own,
+    else Windows' with a registry of the test's; ``more``: BackgroundApp's)."""
+    if RUST:
+        app = _RustBackground()
+        try:
+            yield app, app.url
+        finally:
+            app.quit()
+        return
+    from test_service import FakeRegistry
+
+    from libre_panel.autostart import Autostart
+    from libre_panel.service import BackgroundApp
+
+    auto = autostart or Autostart("win32", registry=FakeRegistry())
+    app = BackgroundApp(port=0, autostart=auto, **more)
+    url = app.start()
+    try:
+        yield app, url
+    finally:
+        app.quit()
+        app.shutdown()
+
+
+def theme_dict(name="libre-default"):
+    """A built-in theme as its theme.json has it (Libre Default unless named)."""
+    from libre_panel.datadir import DATA
+
+    return json.loads((DATA / "themes" / name / "theme.json").read_text(encoding="utf-8"))
+
+
+class SavedTheme(dict):
+    """A theme's theme.json as the app wrote it; the keys the tests ask for as attributes."""
+
+    def __getattr__(self, name):
+        if name == "toast_anchor":
+            return self["toast"]["anchor"]
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def saved_theme(folder):
+    """The theme the app saved in ``folder``, as its theme.json says."""
+    return SavedTheme(json.loads((Path(folder) / "theme.json").read_text(encoding="utf-8")))
 
 
 def choose_theme(home, theme="libre-default"):
@@ -463,8 +658,6 @@ def a_panel_app(*args, **kwargs):
 
 
 def test_start_lists_the_themes_and_switches_the_panel(app_url, isolated_home):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
 
     choose_theme(isolated_home)
@@ -513,8 +706,6 @@ def test_start_has_a_gallery_of_every_theme(app_url, isolated_home):
 def test_start_begins_empty_or_with_a_file(app_url, isolated_home, tmp_path):
     import json
 
-    from test_editor_server import theme_dict
-
     choose_theme(isolated_home)
     with browser_page(app_url, "home/themes", allow=PICTURE) as page:
         page.wait_for_selector(".start-actions")
@@ -539,8 +730,6 @@ def test_start_begins_empty_or_with_a_file(app_url, isolated_home, tmp_path):
 
 
 def test_a_first_start_asks_how_it_should_look(app_url, isolated_home):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
 
     assert not (isolated_home / "config.toml").exists()
@@ -674,8 +863,6 @@ CLIP = "usr/data/standby.h264"
 
 def clip_ready(monkeypatch, model="turing-9.2-usb", ffmpeg=True):
     """A panel the video mode is proven on is on the bus, and ffmpeg is there."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
-
     panel_on_the_bus(monkeypatch, model)
     lacking_ffmpeg(monkeypatch, found=ffmpeg)
 
@@ -811,8 +998,6 @@ def test_not_now_writes_no_name_and_the_question_is_not_asked_again(
 def test_start_does_not_ask_for_the_standby_clip_unless_it_is_all_that_is_missing(
     app_url, isolated_home, monkeypatch, extra, model, ffmpeg
 ):
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
-
     if RUST and not ffmpeg:  # (rust/devices/src/turzx.rs, video_gaps)
         pytest.skip("the Rust app's engine encodes the video: it looks for no ffmpeg")
     panel_on_the_bus(monkeypatch, model)
@@ -865,18 +1050,14 @@ def test_the_question_about_the_standby_clip_is_asked_in_german_too(
 def test_a_running_panel_switches_by_itself_and_the_trays_line_goes(isolated_home, monkeypatch):
     """With the background app a name is taken in at once (the panel loop follows config.toml),
     so Start says so, and the line in the tray's menu is gone as soon as the question is."""
-    from test_editor_settings import lacking_ffmpeg
-    from test_service import FakeRegistry, wait_for
+    if not RUST:  # (no panel answers: the Rust app's bus is empty, as every test's)
+        from libre_panel.devices import turzx_usb
+        from libre_panel.devices.base import DeviceError
 
-    from libre_panel.autostart import Autostart
-    from libre_panel.devices import turzx_usb
-    from libre_panel.devices.base import DeviceError
-    from libre_panel.service import BackgroundApp
+        def no_panel(pid=None, beside=()):
+            raise DeviceError("no panel")
 
-    def no_panel(pid=None, beside=()):
-        raise DeviceError("no panel")
-
-    monkeypatch.setattr(turzx_usb.UsbTransport, "open", staticmethod(no_panel))
+        monkeypatch.setattr(turzx_usb.UsbTransport, "open", staticmethod(no_panel))
     lacking_ffmpeg(monkeypatch, found=True)
     isolated_home.mkdir(parents=True, exist_ok=True)
     (isolated_home / "config.toml").write_text(
@@ -884,10 +1065,8 @@ def test_a_running_panel_switches_by_itself_and_the_trays_line_goes(isolated_hom
         f'output = "{(isolated_home / "frame.png").as_posix()}"\n',
         encoding="utf-8",
     )
-    app = BackgroundApp(port=0, autostart=Autostart("win32", registry=FakeRegistry()))
-    url = app.start()
-    try:
-        assert app.clip_question() is True  # the tray shows its line
+    with running_app() as (app, url):
+        assert wait_for(app.clip_question)  # the tray shows its line
         with browser_page(url, "home", allow=PICTURE) as page:
             page.wait_for_selector(".start.launcher .clip-card")
             page.get_by_role("button", name="Turn on", exact=True).click()
@@ -897,9 +1076,6 @@ def test_a_running_panel_switches_by_itself_and_the_trays_line_goes(isolated_hom
             )
             expect(page.locator(".clip-card")).to_have_count(0)
         assert wait_for(lambda: app.clip_question() is False)
-    finally:
-        app.quit()
-        app.shutdown()
 
 
 def test_a_collection_waits_closed_at_the_end_of_the_gallery(app_url, isolated_home):
@@ -982,8 +1158,6 @@ def test_a_collection_does_not_lead_a_first_start_or_the_quick_list(app_url, iso
 
 
 def test_the_launcher_shows_and_controls_the_running_panel(background):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
 
     app, url = background
@@ -1328,8 +1502,6 @@ def test_live_values_are_drawn_again_only_where_the_picture_is_shown(app_url, pa
 
 
 def test_live_shows_the_panel_and_runs_its_services(background, isolated_home):
-    from test_service import wait_for
-
     from libre_panel.config import load_config, log_file
 
     app, url = background
@@ -1435,8 +1607,6 @@ def test_live_says_whether_the_video_mode_is_on_or_what_it_lacks(
     of a panel that is driven in video mode now."""
     import json
 
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
-
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
 
     def running(streaming):
@@ -1483,8 +1653,6 @@ def test_live_says_whether_the_video_mode_is_on_or_what_it_lacks(
 
 
 def test_live_without_the_panel_says_so_and_keeps_the_switches(app_url, isolated_home):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
 
     with browser_page(app_url, "live", allow=PICTURE) as page:
@@ -1576,8 +1744,6 @@ def test_the_new_views_speak_german(app_url, isolated_home):
 
 
 def test_start_look_and_live_have_their_commands(app_url, isolated_home):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
 
     choose_theme(isolated_home)
@@ -1670,8 +1836,6 @@ def test_a_plugins_page_in_the_app_has_the_token_too(app_url):
 
 
 def test_the_picture_of_a_plugins_page_is_asked_for_with_the_token(background):
-    from test_service import wait_for
-
     app, url = background
     assert wait_for(lambda: app.panel.state()["state"] == "showing")
     if not RUST:  # (the Rust app's page waits for its picture as it is)
@@ -2193,10 +2357,7 @@ def test_the_palette_gives_the_focus_back(page):
 
 
 def test_save_as_and_to_the_panel(page, isolated_home):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
-    from libre_panel.theme.model import load_theme
 
     js(page, "window.libre.doc.edit('t', (theme) => { theme.name = 'Mine'; })")
     page.keyboard.press("Control+s")  # a built-in theme: saved under a new name
@@ -2206,7 +2367,7 @@ def test_save_as_and_to_the_panel(page, isolated_home):
     dialog.locator("input").fill("mine")
     dialog.locator("button[type='submit']").click()
     page.wait_for_function("!window.libre.store.get().dirty")
-    assert load_theme(isolated_home / "themes" / "mine").name == "Mine"
+    assert saved_theme(isolated_home / "themes" / "mine").name == "Mine"
     assert page.locator(".unsaved").count() == 0
     page.locator(".btn-apply").click()
     # (the save's success toast may still be up: wait for the setting, not for a toast)
@@ -2447,14 +2608,14 @@ def test_start_shows_the_pages_the_first_steps_and_the_way_to_the_start_screen(
 def test_a_page_lists_the_screens_in_groups(app_url, isolated_home):
     """The screens made for the page first, then Libre Panel's own, yours, each collection and
     those made for another panel; two themes of one name are told apart, and none is twice."""
-    import json
 
     from libre_panel.config import set_config_value
-    from libre_panel.theme.model import find_theme, save_theme
+    from libre_panel.datadir import DATA
 
     set_config_value("theme", "lumen")  # a 9.2" bar
-    lumen = json.loads((find_theme("lumen") / "theme.json").read_text(encoding="utf-8"))
-    save_theme("my-lumen", lumen)  # a copy of yours with the same name
+    copy = isolated_home / "themes" / "my-lumen"  # a copy of yours with the same name
+    copy.mkdir(parents=True)
+    shutil.copy2(DATA / "themes" / "lumen" / "theme.json", copy / "theme.json")
     with browser_page(app_url) as page:
         page.locator(".rail-item", has_text="Pages").click()
         game = page.locator(".page-card[data-page='game'] .page-card-theme select")
@@ -2486,47 +2647,48 @@ def test_the_panel_chip_changes_the_panel(page):
 
 def test_the_running_panel_in_the_chip(isolated_home):
     """With the background app: its state in the chip, its controls in the popover."""
-    from test_service import FakeRegistry, wait_for, write_config
-
-    from libre_panel.autostart import Autostart
     from libre_panel.config import load_config
-    from libre_panel.service import BackgroundApp
 
     write_config(isolated_home)
-    registry = FakeRegistry()
-    app = BackgroundApp(port=0, autostart=Autostart("win32", registry=registry))
-    url = app.start()
-    try:
-        with browser_page(url) as page:
-            chip = page.locator(".panel-chip")
-            page.wait_for_function("document.querySelector('.panel-chip.showing') !== null")
-            assert "Showing" in chip.inner_text()
-            chip.click()
-            popover = page.locator(".popover")
-            state = popover.locator(".run-state").inner_text()
-            assert "Showing" in state and "libre-default" in state and "PNG file" in state
-            set_range(popover.locator(".slider input"), 30)
-            assert wait_for(lambda: load_config().device.brightness == 30)
-            popover.locator("[role='switch'][aria-label='Upside down']").click()
-            assert wait_for(lambda: load_config().device.rotate == 180)
-            popover.locator("[role='switch'][aria-label='Start with system']").click()
-            assert wait_for(lambda: "Libre Panel" in registry.values)
-            popover.locator(".btn", has_text="Pause panel").click()
-            assert wait_for(lambda: app.panel.paused)
-            page.wait_for_function("document.querySelector('.panel-chip.paused') !== null")
-            popover.locator(".btn", has_text="Resume panel").click()
-            assert wait_for(lambda: not app.panel.paused)
-            page.wait_for_function("document.querySelector('.panel-chip.showing') !== null")
-            page.keyboard.press("Escape")
-            expect(popover).to_have_count(0)
-            chip.click()
-            page.locator(".popover .btn", has_text="Quit Libre Panel").click()
-            page.locator(".dialog .btn-danger").click()  # asked first
-            assert app.quit_requested.wait(5)
-            page.wait_for_function("window.libre.store.get().app.quit === true")
-    finally:
-        app.quit()
-        app.shutdown()
+    autostart = None
+    if RUST:  # (the Rust app's start with the system, on Linux: a file of XDG's autostart)
+        started = Path(_rust_env()["XDG_CONFIG_HOME"]) / "autostart" / "libre-panel.desktop"
+        with_system = started.is_file
+    else:
+        from test_service import FakeRegistry
+
+        from libre_panel.autostart import Autostart
+
+        registry = FakeRegistry()
+        autostart = Autostart("win32", registry=registry)
+        with_system = lambda: "Libre Panel" in registry.values  # noqa: E731
+    with running_app(autostart) as (app, url), browser_page(url) as page:
+        chip = page.locator(".panel-chip")
+        page.wait_for_function("document.querySelector('.panel-chip.showing') !== null")
+        assert "Showing" in chip.inner_text()
+        chip.click()
+        popover = page.locator(".popover")
+        state = popover.locator(".run-state").inner_text()
+        assert "Showing" in state and "libre-default" in state and "PNG file" in state
+        set_range(popover.locator(".slider input"), 30)
+        assert wait_for(lambda: load_config().device.brightness == 30)
+        popover.locator("[role='switch'][aria-label='Upside down']").click()
+        assert wait_for(lambda: load_config().device.rotate == 180)
+        popover.locator("[role='switch'][aria-label='Start with system']").click()
+        assert wait_for(with_system)
+        popover.locator(".btn", has_text="Pause panel").click()
+        assert wait_for(lambda: app.panel.paused)
+        page.wait_for_function("document.querySelector('.panel-chip.paused') !== null")
+        popover.locator(".btn", has_text="Resume panel").click()
+        assert wait_for(lambda: not app.panel.paused)
+        page.wait_for_function("document.querySelector('.panel-chip.showing') !== null")
+        page.keyboard.press("Escape")
+        expect(popover).to_have_count(0)
+        chip.click()
+        page.locator(".popover .btn", has_text="Quit Libre Panel").click()
+        page.locator(".dialog .btn-danger").click()  # asked first
+        assert app.ended() if RUST else app.quit_requested.wait(5)
+        page.wait_for_function("window.libre.store.get().app.quit === true")
 
 
 def test_the_chip_has_the_panels_numbers_and_a_way_to_live(app_url):
@@ -2648,8 +2810,6 @@ def test_marquee_align_copy_paste_delete(page):
 
 
 def test_a_locked_layer_does_not_move_and_is_saved_locked(page, isolated_home):
-    from libre_panel.theme.model import load_theme
-
     page.locator(".rail-item", has_text="Layers").click()
     row = page.locator(".layer", has=page.locator('.layer-row[data-id="clock"]'))
     row.locator(".layer-flag[aria-label='Lock']").click()
@@ -2667,7 +2827,7 @@ def test_a_locked_layer_does_not_move_and_is_saved_locked(page, isolated_home):
     dialog.locator("input").fill("my-test")
     dialog.locator("button[type='submit']").click()
     page.wait_for_function("!window.libre.store.get().dirty")
-    saved = load_theme(isolated_home / "themes" / "my-test")
+    saved = saved_theme(isolated_home / "themes" / "my-test")
     assert next(w for w in saved.widgets if w["id"] == "clock")["locked"] is True
 
 
@@ -2732,8 +2892,6 @@ def test_a_portrait_panel_sits_in_its_frame(page):
     middle, as on its side, instead of growing to that line with the panel on its left."""
     import json
 
-    from test_editor_server import theme_dict
-
     theme = theme_dict()
     theme["display"] = {"model": "turing-9.2-usb", "orientation": "portrait"}
     theme["display"].update(width=480, height=1920)
@@ -2754,8 +2912,6 @@ def test_a_theme_that_is_opened_shows_no_picture_of_the_one_before(page):
     spinner at the new theme's size, with no boxes: it showed the old picture, whose boxes
     could be picked, at the old size."""
     import json
-
-    from test_editor_server import theme_dict
 
     held = []
     page.route("**/api/render", lambda route, request: held.append(route))  # not answered yet
@@ -2784,8 +2940,6 @@ def test_a_theme_that_is_opened_shows_no_picture_of_the_one_before(page):
 def test_a_widget_snaps_to_the_strip_the_frame_hides(page):
     """The edge of what the bezel hides is a guide like any box's edge."""
     import json
-
-    from test_editor_server import theme_dict
 
     theme = theme_dict()
     theme["display"] = {"model": "turing-9.2-usb", "orientation": "landscape"}
@@ -2825,8 +2979,6 @@ def test_snapping_can_be_to_a_single_pixel(page):
     """Snap offers 1 px beside off, 4, 8 and 16: a widget then moves in whole pixels where
     4 px puts it on a step of four."""
     import json
-
-    from test_editor_server import theme_dict
 
     theme = theme_dict()
     theme["widgets"] = [
@@ -2890,7 +3042,7 @@ def test_a_choice_that_none_of_the_options_has_is_still_in_the_tab_order(app_url
 @pytest.fixture
 def drawing_plugin(plugin_folder):
     """A plugin with a screen and a widget type, installed before the app starts."""
-    from test_plugins import DRAWING, DRAWING_PARTS
+    from plugin_parts import DRAWING, DRAWING_PARTS
 
     return plugin_folder(DRAWING, DRAWING_PARTS)
 
@@ -2918,7 +3070,7 @@ def test_a_plugins_widget_type_and_screen(drawing_plugin, page):
 
 @pytest.fixture
 def toast_plugin(plugin_folder):
-    from test_plugins import TOAST_PARTS, TOAST_STYLE
+    from plugin_parts import TOAST_PARTS, TOAST_STYLE
 
     return plugin_folder(TOAST_STYLE, TOAST_PARTS)
 
@@ -2926,8 +3078,6 @@ def toast_plugin(plugin_folder):
 def test_the_notice_settings_with_a_plugins_style(toast_plugin, page, isolated_home):
     """The theme's Messages: position, hidden kinds, the queue, and a plugin's style with its
     options, saved with the theme."""
-    from libre_panel.theme.model import load_theme
-
     page.locator(".details-button").click()
     page.locator("select[aria-label='position']").select_option("bottom-left")
     page.get_by_label("hidden kinds").fill("music, volume")
@@ -2948,7 +3098,7 @@ def test_the_notice_settings_with_a_plugins_style(toast_plugin, page, isolated_h
     dialog.locator("input").fill("my-test")
     dialog.locator("button[type='submit']").click()
     page.wait_for_function("!window.libre.store.get().dirty")
-    saved = load_theme(isolated_home / "themes" / "my-test")
+    saved = saved_theme(isolated_home / "themes" / "my-test")
     assert saved.toast["style"] == "demo.band" and saved.toast["options"] == {"height": 55}
     assert saved.toast_anchor == "bottom-left" and saved.toast["off"] == ["music", "volume"]
     assert saved.toast["queue"] is False
@@ -2956,7 +3106,7 @@ def test_the_notice_settings_with_a_plugins_style(toast_plugin, page, isolated_h
 
 @pytest.fixture
 def page_plugin(plugin_folder):
-    from test_plugins import PAGE, PAGE_FILES, PAGE_PARTS
+    from plugin_parts import PAGE, PAGE_FILES, PAGE_PARTS
 
     return plugin_folder(PAGE, PAGE_PARTS, files=PAGE_FILES)
 
@@ -3227,8 +3377,6 @@ def test_a_theme_without_a_grid_gets_a_fine_one_with_its_first_module(page):
     half the short side: a module from the library had four places there, whose corners the
     round panel cuts off (#33). The first module brings a fine grid instead, 48 cells along the
     short side a pixel apart within the panel's margins, as the server draws it."""
-    from libre_panel.theme.modules import make_grid
-
     js(page, "window.libre.doc.edit('grid', (theme) => { theme.widgets = []; delete theme.grid; })")
     page.wait_for_function(
         "window.libre.store.get().render.grid && !window.libre.doc.theme().grid"
@@ -3244,9 +3392,13 @@ def test_a_theme_without_a_grid_gets_a_fine_one_with_its_first_module(page):
     assert settings == fine["settings"] and settings["gap"] == 1 and settings["margin"] == 0
     assert min(settings["columns"], settings["rows"]) == 48
     assert settings["columns"] * settings["rows"] > 16 * auto["columns"] * auto["rows"]
-    # the server's grid is the one the editor placed the module on
-    width, height = js(page, "window.libre.store.get().render.size")
-    drawn = make_grid(width, height, settings, js(page, "window.libre.doc.theme().model")).to_dict()
+    # the server's grid (what it drew the theme on) is the one the editor placed the module on
+    page.wait_for_function(
+        "(({columns, rows}) => { const grid = window.libre.store.get().render.grid;"
+        " return grid && grid.columns === columns && grid.rows === rows; })"
+        f"({json.dumps(settings)})"
+    )
+    drawn = js(page, "window.libre.store.get().render.grid")
     for key in ("x", "y", "cell_w", "cell_h", "gap", "columns", "rows"):
         assert drawn[key] == pytest.approx(fine[key]), key
     added = js(page, "window.libre.doc.single()")
@@ -3518,8 +3670,6 @@ def test_a_time_modules_settings(page):
 
 def test_the_look_and_a_finish_are_saved_with_the_theme(app_url, isolated_home):
     """The grid set from its specs, a bar's finish; all of it in the file."""
-    from libre_panel.theme.model import load_theme
-
     with browser_page(app_url, "look") as page:
         page.wait_for_selector(".look-side .finish-tile")
         grid = page.locator(".look-block", has_text="Grid background")
@@ -3540,7 +3690,7 @@ def test_the_look_and_a_finish_are_saved_with_the_theme(app_url, isolated_home):
         dialog.locator("input").fill("my-test")
         dialog.locator("button[type='submit']").click()
         page.wait_for_function("!window.libre.store.get().dirty")
-        saved = load_theme(isolated_home / "themes" / "my-test")
+        saved = saved_theme(isolated_home / "themes" / "my-test")
         assert saved.look["grid"]["spacing"] == 10 and set(saved.look) == {"grid"}
         assert next(w for w in saved.widgets if w["id"] == bar)["finish"] == "lit"
         grid.locator("[role='switch']").first.click()  # switched off, the block is gone again
@@ -3550,23 +3700,25 @@ def test_the_look_and_a_finish_are_saved_with_the_theme(app_url, isolated_home):
 @pytest.fixture
 def console_app(isolated_home):
     """The background app with its panel and the notices service on, and the address of its app."""
-    from test_autostart import FakeTasks
-    from test_service import FakeRegistry, wait_for, write_config
-
-    from libre_panel.autostart import Autostart
-    from libre_panel.service import BackgroundApp
-
     write_config(isolated_home)
     config = isolated_home / "config.toml"
     config.write_text(config.read_text(encoding="utf-8") + '\n[services]\nenabled = ["notices"]\n')
-    app = BackgroundApp(
-        port=0, autostart=Autostart("win32", registry=FakeRegistry(), tasks=FakeTasks())
-    )
-    url = app.start()
-    assert wait_for(lambda: app.plugin_host.shown is not None and "notices" in app.services.running)
-    yield app, url
-    app.quit()
-    app.shutdown()
+    autostart = None
+    if not RUST:
+        from test_autostart import FakeTasks
+        from test_service import FakeRegistry
+
+        from libre_panel.autostart import Autostart
+
+        autostart = Autostart("win32", registry=FakeRegistry(), tasks=FakeTasks())
+    with running_app(autostart) as (app, url):
+        if RUST:
+            assert wait_for(lambda: app.services().get("notices") == "running")
+        else:
+            assert wait_for(
+                lambda: app.plugin_host.shown is not None and "notices" in app.services.running
+            )
+        yield app, url
 
 
 def open_plugin_page(page, title):
@@ -3577,8 +3729,6 @@ def open_plugin_page(page, title):
 
 
 def test_the_control_page_in_the_app(console_app):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
 
     app, url = console_app
@@ -3609,9 +3759,12 @@ def test_the_control_page_in_the_app(console_app):
         )
         assert load_config().theme == "orbit"
 
-        first = app.services.running["notices"][0]
+        first = app.starts("notices") if RUST else app.services.running["notices"][0]
         row.get_by_role("button", name="Restart").click()
-        assert wait_for(lambda: app.services.running["notices"][0] is not first)
+        if RUST:  # (it says so each time it starts one)
+            assert wait_for(lambda: app.starts("notices") > first)
+        else:
+            assert wait_for(lambda: app.services.running["notices"][0] is not first)
 
         frame.locator("#log-box summary").click()  # the log of this run (the tray writes it)
         frame.locator("#log-where").wait_for()
@@ -3621,8 +3774,6 @@ def test_the_control_page_in_the_app(console_app):
 
 
 def test_the_autopilot_page_in_the_app(console_app):
-    from test_service import wait_for
-
     from libre_panel.config import load_config
 
     app, url = console_app
@@ -3649,7 +3800,10 @@ def test_the_autopilot_page_in_the_app(console_app):
         rules = load_config().services.options["autopilot"]["rules"]
         assert rules == [{"name": "Quiet", "theme": "slate", "when": {"music": False}}]
         frame.locator("#dirty", has_text="unsaved").wait_for(state="hidden")
-        assert wait_for(lambda: "autopilot" in app.services.running, 15)
+        if RUST:
+            assert wait_for(lambda: app.services().get("autopilot") == "running", 15)
+        else:
+            assert wait_for(lambda: "autopilot" in app.services.running, 15)
         # the service runs: the page says what it does (and the rule holds: no music here)
         frame.locator("#now", has_text="Quiet").wait_for(timeout=20000)
         frame.locator("#signals .chip", has_text="No music").wait_for()
@@ -3818,8 +3972,6 @@ def settings_config():
 
 def waits_for(page, predicate, timeout=10.0):
     """Until the predicate holds (the app writes config.toml a moment after a click)."""
-    from test_service import wait_for
-
     assert wait_for(predicate, timeout), "config.toml did not change as expected"
 
 
@@ -3832,17 +3984,23 @@ def radio(page, group, name):
     return page.locator(f"[role='radiogroup'][aria-label='{group}'] [role='radio']", has_text=name)
 
 
+@contextlib.contextmanager
 def settings_app(isolated_home, autostart=None):
-    """The background app with a panel that writes a PNG file, as the tray runs it."""
+    """The background app with a panel that writes a PNG file, as the tray runs it, and the
+    address of its app (``autostart``: the Python app's own)."""
+    write_config(isolated_home)
+    if RUST:
+        with running_app() as running:
+            yield running
+        return
     from test_autostart import FakeTasks
-    from test_service import FakeRegistry, write_config
+    from test_service import FakeRegistry
 
     from libre_panel.autostart import Autostart
-    from libre_panel.service import BackgroundApp
 
-    write_config(isolated_home)
     auto = autostart or Autostart("win32", registry=FakeRegistry(), tasks=FakeTasks())
-    return BackgroundApp(port=0, autostart=auto, autostart_command=["/opt/libre-panel", "tray"])
+    with running_app(auto, autostart_command=["/opt/libre-panel", "tray"]) as running:
+        yield running
 
 
 def test_the_settings_open_under_the_strict_csp(app_url):
@@ -3857,8 +4015,6 @@ def test_the_settings_open_under_the_strict_csp(app_url):
 def test_settings_panel(app_url, isolated_home, monkeypatch):
     """The panel found, the video mode (and its clip name, written only when typed), the
     frame rate, brightness, upside down, another panel, and Advanced."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
-
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch)
     with browser_page(app_url, "settings/panel") as page:
@@ -3938,8 +4094,6 @@ def test_settings_panel(app_url, isolated_home, monkeypatch):
 
 
 def test_settings_panel_without_a_panel(app_url, monkeypatch):
-    from test_editor_settings import panel_on_the_bus
-
     panel_on_the_bus(monkeypatch)
     with browser_page(app_url, "settings/panel") as page:
         assert page.locator(".panel-found-name").inner_text() == "No panel found"
@@ -4048,11 +4202,7 @@ def test_settings_sensors_names_the_linux_source(app_url, isolated_home):
 
 def test_settings_sensors_of_the_running_app(isolated_home):
     """What each source reads right now, and starting the panel again for a change to take."""
-    from test_service import wait_for
-
-    app = settings_app(isolated_home)
-    url = app.start()
-    try:
+    with settings_app(isolated_home) as (app, url):
         assert wait_for(lambda: app.panel.state()["state"] == "showing")
         with browser_page(url, "settings/sensors") as page:
             row = page.locator(".source-row[data-source='psutil']")
@@ -4060,17 +4210,22 @@ def test_settings_sensors_of_the_running_app(isolated_home):
                 "document.querySelector(\"[data-source='psutil'] .status\") !== null"
             )
             assert "readings" in row.locator(".status").inner_text()
-            loop = app.panel.status
+            if RUST:  # (a loop started again counts its frames from none again)
+                assert wait_for(lambda: app.frames() >= 3)
+            else:
+                loop = app.panel.status
             page.locator(".source-row[data-source='audio'] [role='switch']").click()
             waits_for(page, lambda: "audio" not in settings_config().sensors.providers)
             note = page.locator(".note.warn")
             assert "after a restart of the panel" in note.inner_text()
+            seen = app.frames() if RUST else None
             note.get_by_role("button", name="Restart the panel").click()
-            assert wait_for(lambda: app.panel.status is not loop and app.panel.running)
+            if RUST:
+                assert wait_for(lambda: app.frames() < seen)
+                assert wait_for(lambda: app.panel.state()["state"] == "showing")
+            else:
+                assert wait_for(lambda: app.panel.status is not loop and app.panel.running)
             page.wait_for_function("document.querySelector('.note.warn') === null")
-    finally:
-        app.quit()
-        app.shutdown()
 
 
 def test_settings_services(app_url, isolated_home):
@@ -4144,58 +4299,73 @@ def test_the_game_screen_is_chosen_beside_game_mode(app_url, isolated_home):
 
 def test_settings_services_of_the_running_app(isolated_home):
     """Each service's state as the running app tells it, and Restart."""
-    from test_service import wait_for
 
-    app = settings_app(isolated_home)
-    url = app.start()
-    try:
+    def state(name):
+        return app.services().get(name) if RUST else app.services.state.get(name)
+
+    def started():  # (the Rust app says so each time it starts the service)
+        return app.starts("notices") if RUST else app.services.running["notices"][0]
+
+    def again(first):
+        return started() > first if RUST else started() is not first
+
+    with settings_app(isolated_home) as (app, url):
         assert wait_for(lambda: app.panel.state()["state"] == "showing")
         with browser_page(url, "settings/services") as page:
             notices = page.locator("[data-service='notices']")
             notices.get_by_role("switch", name="Notices", exact=True).click()
-            assert wait_for(lambda: app.services.state.get("notices") == "running")
+            assert wait_for(lambda: state("notices") == "running")
             page.wait_for_function(
                 "document.querySelector(\"[data-service='notices'] .status.ok\") !== null"
             )
             assert "Running" in notices.locator(".status").inner_text()
-            first = app.services.running["notices"][0]
+            first = started()
             notices.get_by_role("button", name="Restart").click()
-            assert wait_for(lambda: app.services.running["notices"][0] is not first)
+            assert wait_for(lambda: again(first))
             # an option changes: the service starts again by itself, with it
+            first = started()
             notices.locator(".settings-disclosure").click()
             notices.locator("[data-option='music'] [role='switch']").click()
-            assert wait_for(lambda: app.services.running["notices"][0].options["music"] is False)
+            options = lambda: settings_config().services.options.get("notices", {})  # noqa: E731
+            assert wait_for(lambda: options().get("music") is False)
+            if RUST:
+                assert wait_for(lambda: again(first))
+            else:
+                assert wait_for(
+                    lambda: app.services.running["notices"][0].options["music"] is False
+                )
             notices.get_by_role("switch", name="Notices", exact=True).click()
-            assert wait_for(lambda: "notices" not in app.services.running)
+            assert wait_for(lambda: state("notices") != "running")
             page.wait_for_function(
                 "document.querySelector(\"[data-service='notices'] .status\") === null"
             )
-    finally:
-        app.quit()
-        app.shutdown()
 
 
 def test_the_timer_is_started_and_set_back_from_its_card(isolated_home):
     """The timer's card has the buttons of its keyboard shortcuts while it runs."""
-    from test_service import wait_for
 
-    app = settings_app(isolated_home)
-    url = app.start()
-    try:
-        with browser_page(url, "settings/services") as page:
-            card = page.locator("[data-service='timer']")
-            expect(card).to_contain_text("Minutes counted down on the panel")
-            expect(card.locator(".timer-buttons")).to_have_count(0)  # off: no buttons
-            card.get_by_role("switch", name="Timer", exact=True).click()
+    def runs():  # (the Rust app's timer says so in its reading)
+        return (
+            app.reading("timer.running") == 1 if RUST else app.services.running["timer"][0].running
+        )
+
+    with settings_app(isolated_home) as (app, url), browser_page(url, "settings/services") as page:
+        card = page.locator("[data-service='timer']")
+        expect(card).to_contain_text("Minutes counted down on the panel")
+        expect(card.locator(".timer-buttons")).to_have_count(0)  # off: no buttons
+        card.get_by_role("switch", name="Timer", exact=True).click()
+        if RUST:
+            assert wait_for(lambda: app.services().get("timer") == "running")
+        else:
             assert wait_for(lambda: app.services.state.get("timer") == "running")
-            card.get_by_role("button", name="Start or pause").click()
-            assert wait_for(lambda: app.services.running["timer"][0].running)
-            card.get_by_role("button", name="Back to the start").click()
-            assert wait_for(lambda: not app.services.running["timer"][0].running)
+        card.get_by_role("button", name="Start or pause").click()
+        assert wait_for(runs)
+        card.get_by_role("button", name="Back to the start").click()
+        assert wait_for(lambda: not runs())
+        if RUST:
+            assert wait_for(lambda: app.reading("timer.text") == "25:00")
+        else:
             assert app.plugin_host.published()["timer.text"].value == "25:00"
-    finally:
-        app.quit()
-        app.shutdown()
 
 
 @pytest.fixture
@@ -4207,15 +4377,16 @@ def place_search(monkeypatch):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlsplit
 
-    from libre_panel.weather import open_meteo
-
     asked, answers = [], {}
 
     def geocode(name, count=5, language="en"):
         asked.append(name)
         return answers["found"](name)
 
-    monkeypatch.setattr(open_meteo, "geocode", geocode)
+    if not RUST:
+        from libre_panel.weather import open_meteo
+
+        monkeypatch.setattr(open_meteo, "geocode", geocode)
 
     class Search(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -4358,9 +4529,11 @@ def test_the_weather_from_openweathermap_with_a_key_of_one_s_own(app_url, isolat
 
 
 def test_settings_weather_search_fails_politely(place_search, app_url):
-    from libre_panel.weather import open_meteo
-
     def offline(name):
+        if RUST:  # (the test's search server answers 503: place_search)
+            raise OSError("timed out")
+        from libre_panel.weather import open_meteo
+
         raise open_meteo.WeatherError("timed out")
 
     place_search(offline)
@@ -4407,31 +4580,37 @@ def test_settings_start_and_language(app_url, isolated_home):
 
 def test_settings_start_with_the_system(isolated_home):
     """Starting with the system is what the command line's autostart does."""
-    from libre_panel.autostart import Autostart
+    if RUST:  # (the Rust app's, on Linux: a file of XDG's autostart)
+        if sys.platform != "linux":
+            pytest.skip("the start with the system of Linux")
+        autostart = None
+        started = Path(_rust_env()["XDG_CONFIG_HOME"]) / "autostart" / "libre-panel.desktop"
+        enabled = started.is_file
+    else:
+        from libre_panel.autostart import Autostart
 
-    home = isolated_home.parent / "linux-home"
-    autostart = Autostart("linux", home=home, environ={})
-    app = settings_app(isolated_home, autostart)
-    url = app.start()
-    try:
+        home = isolated_home.parent / "linux-home"
+        autostart = Autostart("linux", home=home, environ={})
+        enabled = autostart.is_enabled
+    with settings_app(isolated_home, autostart) as (_app, url):
         with browser_page(url, "settings/system") as page:
             toggle = page.get_by_role("switch", name="Start when you log in")
             assert toggle.get_attribute("aria-checked") == "false"
             assert page.get_by_role("switch", name="With administrator rights").count() == 0
             toggle.click()
-            waits_for(page, lambda: autostart.is_enabled())
+            waits_for(page, enabled)
             page.wait_for_function(
                 "document.querySelector(\"[aria-label='Start when you log in']\")"
                 ".getAttribute('aria-checked') === 'true'"
             )
             assert "libre-panel.desktop" in page.locator("#main").inner_text()
             toggle.click()
-            waits_for(page, lambda: not autostart.is_enabled())
-    finally:
-        app.quit()
-        app.shutdown()
+            waits_for(page, lambda: not enabled())
 
 
+@pytest.mark.skipif(
+    RUST, reason="Windows' registry and Task Scheduler: the Rust app has no stand-in for them"
+)
 def test_settings_the_highest_rights_only_when_asked_and_by_an_administrator(isolated_home):
     from test_autostart import FakeRegistry, FakeTasks
 
@@ -4441,9 +4620,7 @@ def test_settings_the_highest_rights_only_when_asked_and_by_an_administrator(iso
     autostart = Autostart(  # (the program settings_app gives its autostart command)
         "win32", registry=registry, tasks=tasks, admin=lambda: False, program="/opt/libre-panel"
     )
-    app = settings_app(isolated_home, autostart)
-    url = app.start()
-    try:
+    with settings_app(isolated_home, autostart) as (_app, url):
         with browser_page(url, "settings/system") as page:
             assert (
                 page.get_by_role("switch", name="Start with Windows").get_attribute("aria-checked")
@@ -4477,9 +4654,6 @@ def test_settings_the_highest_rights_only_when_asked_and_by_an_administrator(iso
                 "document.querySelector(\"[aria-label='With administrator rights']\")"
                 ".getAttribute('aria-checked') === 'true'"
             )
-    finally:
-        app.quit()
-        app.shutdown()
 
 
 @pytest.fixture
@@ -4487,14 +4661,13 @@ def opened_paths(monkeypatch, tmp_path):
     """What the app opened in the system's file manager, in order (``opened_paths()``): the
     Python app's through tray.open_path, the Rust app's through an xdg-open of the test's own,
     first on the PATH it starts with, which writes down what it is given."""
-    from pathlib import Path
-
-    from libre_panel import tray
-
     opened = []
-    monkeypatch.setattr(tray, "open_path", opened.append)
     record = tmp_path / "opened.txt"
-    if RUST:
+    if not RUST:
+        from libre_panel import tray
+
+        monkeypatch.setattr(tray, "open_path", opened.append)
+    else:
         folder = tmp_path / "programs"
         folder.mkdir()
         (folder / "xdg-open").write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$LP_TEST_OPENED"\n')
@@ -4904,19 +5077,25 @@ def _lay_out_a_linux_pc(root, facts):
         write("usr/lib/udev/rules.d/70-uaccess-panels.rules", rule)
 
 
+# the files Libre Panel's Linux setup puts in, and takes out again (linux_setup.rs, OWN_FILES)
+SETUP_FILES = (
+    "/etc/udev/rules.d/60-libre-panel.rules",
+    "/etc/udev/rules.d/60-libre-panel-rapl.rules",
+    "/etc/modules-load.d/libre-panel.conf",
+)
+
+
 @pytest.fixture
 def linux_pc(monkeypatch, tmp_path):
     """A Linux desktop with polkit, whose setup is not done: ``linux_pc(...)`` changes the facts
     and the answer; it gives the stand-in for pkexec."""
-    from libre_panel import linux_rights as rights
-    from libre_panel import linux_setup as setup
 
     def make(answer=None, method=True, **changes):
         facts = {
             "dmi": {"board_vendor": "ASUSTeK COMPUTER INC.", "chassis_type": "3"},
             "available": frozenset({"nct6775", "it87", "drivetemp"}),
             "tools": {"udevadm": "/usr/bin/udevadm", "chmod": "/usr/bin/chmod"},
-            "files": dict.fromkeys(setup.OWN_FILES),
+            "files": dict.fromkeys(SETUP_FILES),
             "panel": True,
             "panel_denied": True,
             "rapl": ("/sys/class/powercap/intel-rapl:0/energy_uj",),
@@ -4938,6 +5117,9 @@ def linux_pc(monkeypatch, tmp_path):
                 monkeypatch.delenv("DISPLAY", raising=False)
                 monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
             return pkexec
+        from libre_panel import linux_rights as rights
+        from libre_panel import linux_setup as setup
+
         computer = setup.Facts(**facts)
         monkeypatch.setattr(setup, "gather", lambda *args, **kwargs: computer)
         monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: True)
@@ -5023,7 +5205,8 @@ def test_start_stays_quiet_where_nothing_is_missing(app_url, isolated_home, linu
 
 def test_another_system_has_no_setup(app_url, isolated_home, linux_pc, monkeypatch):
     linux_pc()
-    monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: False)
+    if not RUST:
+        monkeypatch.setattr("libre_panel.linux_setup.supported", lambda: False)
     monkeypatch.setenv("LP_SETUP_SYSTEM", "other")  # (the Rust app's word for it)
     with start_with_setup(app_url, isolated_home) as page:
         page.wait_for_function(
@@ -5141,9 +5324,7 @@ def test_settings_sensors_has_the_setup_beside_the_sources(app_url, linux_pc):
 
 
 def test_what_the_setup_put_in_can_be_taken_out_again(app_url, linux_pc):
-    from libre_panel import linux_setup as setup
-
-    own = {path: "x\n" for path in setup.OWN_FILES}
+    own = {path: "x\n" for path in SETUP_FILES}
     pkexec = linux_pc(files=own, rule_elsewhere=True, dmi={}, rapl_closed=())
     with browser_page(app_url, "settings/sensors") as page:
         card = page.locator("#sensor-setup")
@@ -5451,19 +5632,16 @@ def test_an_accent_colour_of_one_s_own_for_every_screen(app_url, isolated_home):
 
 def test_a_backup_is_saved_and_restored_from_settings(app_url, isolated_home, tmp_path):
     """Settings → System → Backup: the file to keep, and one put back (after a question)."""
-    from libre_panel.backup import make_backup
-
     choose_theme(isolated_home)
     with isolated_home.joinpath("config.toml").open("a", encoding="utf-8") as config:
         config.write("\n[device]\nbrightness = 35\n")
     saved = tmp_path / "backup.zip"
-    saved.write_bytes(make_backup())
-    (isolated_home / "config.toml").write_text('theme = "slate"\n', encoding="utf-8")
     with browser_page(app_url, "settings/system") as page:
         card = page.locator("#system-backup")
-        assert "/api/backup/file" in card.get_by_role("link", name="Save a backup").get_attribute(
-            "href"
-        )
+        href = card.get_by_role("link", name="Save a backup").get_attribute("href")
+        assert "/api/backup/file" in href
+        saved.write_bytes(server_answer(app_url, href.lstrip("/")))  # the file it saves
+        (isolated_home / "config.toml").write_text('theme = "slate"\n', encoding="utf-8")
         card.locator("input[type=file]").set_input_files(str(saved))
         page.get_by_role("button", name="Restore", exact=True).click()
         waits_for(page, lambda: settings_config().device.brightness == 35)
@@ -5471,8 +5649,6 @@ def test_a_backup_is_saved_and_restored_from_settings(app_url, isolated_home, tm
 
 
 def test_a_scene_is_kept_put_on_and_taken_out_on_start(app_url, isolated_home, monkeypatch):
-    from libre_panel import scenes
-
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url, "home", allow=PICTURE) as page:
         card = page.locator(".scenes-card")
@@ -5485,7 +5661,7 @@ def test_a_scene_is_kept_put_on_and_taken_out_on_start(app_url, isolated_home, m
         waits_for(page, lambda: settings_config().scene == "")
         card.get_by_role("button", name="Remove the scene “Evening”?").click()
         page.get_by_role("button", name="Remove", exact=True).click()
-        waits_for(page, lambda: scenes.state()["scenes"] == [])
+        waits_for(page, lambda: server_answer(app_url, "api/scenes")["scenes"] == [])
 
 
 def test_a_panel_added_beside_lumen_shows_lumen_s_companion(app_url, isolated_home):

@@ -11,6 +11,7 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 
+from community_github import GitHub, github  # noqa: E402, F401
 from playwright.sync_api import expect  # noqa: E402
 from test_app_browser import (  # noqa: E402, F401
     PICTURE,
@@ -22,6 +23,7 @@ from test_app_browser import (  # noqa: E402, F401
     clip_ready,
     game_option,
     game_theme,
+    running_app,
     server_language,
     settings_config,
     shown_themes,
@@ -29,7 +31,6 @@ from test_app_browser import (  # noqa: E402, F401
     waits_for,
     windows_download,
 )
-from test_share import GitHub, github  # noqa: E402, F401
 
 from libre_panel import __version__  # noqa: E402
 
@@ -521,11 +522,6 @@ def test_start_shows_the_panel_the_header_chose_and_the_header_counts_every_pane
     """With three panels (the first and two beside it, PNG files here) the header offers
     Panel 1, 2 and 3, and Start's card shows the chosen one: its state, its theme, its
     picture; the first panel's controls (brightness, upside down) stay the first's."""
-    from test_service import FakeRegistry
-
-    from libre_panel.autostart import Autostart
-    from libre_panel.service import BackgroundApp
-
     isolated_home.mkdir(parents=True, exist_ok=True)
     out = isolated_home.as_posix()
     (isolated_home / "config.toml").write_text(
@@ -535,33 +531,27 @@ def test_start_shows_the_panel_the_header_chose_and_the_header_counts_every_pane
         f'\n[[panels]]\ndriver = "virtual"\ntheme = "slate"\noutput = "{out}/three.png"\n',
         encoding="utf-8",
     )
-    app = BackgroundApp(port=0, autostart=Autostart("win32", registry=FakeRegistry()))
-    url = app.start()
-    try:
-        with browser_page(url, "home", allow=PICTURE) as page:
-            switch = page.get_by_role("radiogroup", name=PANEL_SWITCH)
-            expect(switch.get_by_role("radio")).to_have_count(3)
-            page.wait_for_selector(".panel-card .state-dot.showing")
-            expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
-            expect(page.locator(".panel-card-brightness")).to_have_count(1)
-            switch.get_by_role("radio", name="Panel 2").click()
-            expect(page.locator(".panel-card h2")).to_contain_text("Pico", timeout=20000)
-            expect(page.locator(".panel-card-brightness")).to_have_count(0)
-            switch.get_by_role("radio", name="Panel 3").click()
-            expect(page.locator(".panel-card h2")).to_contain_text("Slate", timeout=20000)
-            switch.get_by_role("radio", name="Panel 1").click()
-            expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
-            # Status is about the panel the header chose: the first's numbers, the others' line
-            page.goto(f"{url}#/live")
-            page.wait_for_selector(".live-numbers")
-            switch.get_by_role("radio", name="Panel 2").click()
-            expect(page.locator(".live-state")).to_contain_text("Pico", timeout=20000)
-            expect(page.locator(".live-numbers")).to_have_count(0)
-            switch.get_by_role("radio", name="Panel 1").click()
-            page.wait_for_selector(".live-numbers")
-    finally:
-        app.quit()
-        app.shutdown()
+    with running_app() as (_app, url), browser_page(url, "home", allow=PICTURE) as page:
+        switch = page.get_by_role("radiogroup", name=PANEL_SWITCH)
+        expect(switch.get_by_role("radio")).to_have_count(3)
+        page.wait_for_selector(".panel-card .state-dot.showing")
+        expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
+        expect(page.locator(".panel-card-brightness")).to_have_count(1)
+        switch.get_by_role("radio", name="Panel 2").click()
+        expect(page.locator(".panel-card h2")).to_contain_text("Pico", timeout=20000)
+        expect(page.locator(".panel-card-brightness")).to_have_count(0)
+        switch.get_by_role("radio", name="Panel 3").click()
+        expect(page.locator(".panel-card h2")).to_contain_text("Slate", timeout=20000)
+        switch.get_by_role("radio", name="Panel 1").click()
+        expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
+        # Status is about the panel the header chose: the first's numbers, the others' line
+        page.goto(f"{url}#/live")
+        page.wait_for_selector(".live-numbers")
+        switch.get_by_role("radio", name="Panel 2").click()
+        expect(page.locator(".live-state")).to_contain_text("Pico", timeout=20000)
+        expect(page.locator(".live-numbers")).to_have_count(0)
+        switch.get_by_role("radio", name="Panel 1").click()
+        page.wait_for_selector(".live-numbers")
 
 
 # -- sharing a theme ---------------------------------------------------------------------------
@@ -767,7 +757,7 @@ def test_the_community_themes_follow_the_chosen_panel_and_one_of_yours_is_shared
     import hashlib
     from urllib.parse import parse_qs, urlsplit
 
-    from test_share import an_entry, png, theme_json, zipped
+    from community_github import an_entry, png, theme_json, zipped
 
     other = zipped({"wide/theme.json": theme_json(name="Wide", display={"model": "custom",
                     "width": 800, "height": 480}), "wide/assets/back.png": png()})  # fmt: skip

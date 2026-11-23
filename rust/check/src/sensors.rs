@@ -3263,6 +3263,13 @@ pub fn run(op: &str, case: &Value) -> Result<Value, String> {
         "game" => game(case)?,
         "downloads" => downloads(case)?,
         "memory" => memory(case)?,
+        // the tables of the memory's database and the columns of its minutes, for a test that
+        // makes one up as the app keeps it
+        "memory_schema" => json!({
+            "schema": lp_services::memory_store::schema(),
+            "means": lp_services::memory_store::MEANS,
+            "peaks": lp_services::memory_store::PEAKS,
+        }),
         "cooling" => cooling(case)?,
         "devices" => devices(case)?,
         "waveshare" => waveshare(case)?,

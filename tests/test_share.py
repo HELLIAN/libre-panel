@@ -6,11 +6,10 @@ import hashlib
 import http.client
 import io
 import json
-import threading
 import zipfile
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from community_github import GitHub, an_entry, github, png, theme_json, zipped  # noqa: F401
 from editor_token import token_of
 from PIL import Image
 from test_editor_server import request, server  # noqa: F401
@@ -21,31 +20,6 @@ from libre_panel.fonts import builtin_font_path
 from libre_panel.theme import share
 from libre_panel.theme.model import find_theme, load_theme, save_theme
 from libre_panel.theme.share import ShareError, export_theme, import_theme, referenced_files
-
-
-def png(colour="#22d3ee", size=(48, 32)):
-    buffer = io.BytesIO()
-    Image.new("RGB", size, colour).save(buffer, "PNG")
-    return buffer.getvalue()
-
-
-def zipped(files):
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, content in files.items():
-            archive.writestr(name, content)
-    return buffer.getvalue()
-
-
-def theme_json(**more):
-    data = {
-        "format": "libre-panel-theme/1",
-        "name": "Shared",
-        "display": {"model": "custom", "width": 480, "height": 320},
-        "background": {"color": "#000000", "image": "assets/back.png"},
-        "widgets": [],
-    }
-    return json.dumps({**data, **more})
 
 
 def names_in(data):
@@ -247,69 +221,9 @@ def test_a_theme_named_import_is_saved_as_any_other(server):  # noqa: F811
 # -- the community's themes ------------------------------------------------------------------
 
 
-class GitHub(BaseHTTPRequestHandler):
-    """The project's GitHub as the tests play it: ``files`` by their path, each request
-    counted in ``asked``."""
-
-    files: dict = {}
-    asked: list = []
-
-    def do_GET(self):  # noqa: N802 - the server's name
-        GitHub.asked.append(self.path)
-        found = GitHub.files.get(self.path)
-        if isinstance(found, tuple):  # (status, location): a redirect
-            self.send_response(found[0])
-            self.send_header("Location", found[1])
-            self.end_headers()
-            return
-        self.send_response(200 if found is not None else 404)
-        self.end_headers()
-        self.wfile.write(found or b"")
-
-    def log_message(self, *args):
-        pass
-
-
-def an_entry(name="Aurora", zip_path="aurora/aurora.zip", sha256="", **more):
-    return {"name": name, "author": "Someone", "description": "Northern lights.",
-            "sizes": ["480x320", "1920x480"], "preview": "aurora/preview.png", "zip": zip_path,
-            "sha256": sha256, **more}  # fmt: skip
-
-
-@pytest.fixture
-def github(monkeypatch):
-    """A list of one sound theme (and two that are not) beside a zip and a preview; the
-    app's list address points at it. Yields the files, which a test may change."""
-    made = ThreadingHTTPServer(("127.0.0.1", 0), GitHub)
-    threading.Thread(target=made.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{made.server_address[1]}"
-    monkeypatch.setattr(community, "INDEX_URL", f"{base}/main/community/themes/index.json")
-    monkeypatch.setenv("LP_COMMUNITY_INDEX", f"{base}/main/community/themes/index.json")
-    monkeypatch.setenv("no_proxy", "127.0.0.1")
-    # (its folder in the zip has another name: the list's is the one it is installed under)
-    theme = zipped({"north/theme.json": theme_json(name="Aurora"), "north/assets/back.png": png()})
-    index = {
-        "format": community.INDEX_FORMAT,
-        "themes": [
-            an_entry(sha256=hashlib.sha256(theme).hexdigest()),
-            an_entry(name="Elsewhere", zip_path="../../../other/repo/x.zip", sha256="0" * 64),
-            {"name": "Broken"},
-        ],
-    }
-    GitHub.files = {
-        "/main/community/themes/index.json": json.dumps(index).encode(),
-        "/main/community/themes/aurora/aurora.zip": theme,
-        "/main/community/themes/aurora/preview.png": png("#7c3aed"),
-    }
-    GitHub.asked = []
-    yield GitHub.files
-    made.shutdown()
-    made.server_close()
-
-
 def test_the_community_list_shows_its_sound_entries_and_their_pictures(
     server,  # noqa: F811
-    github,
+    github,  # noqa: F811
 ):
     status, answer = request(server, "GET", "/api/community/themes")
     assert status == 200 and answer["offline"] is False
@@ -347,7 +261,7 @@ def test_a_community_theme_is_installed_once_its_checksum_is_right(server, githu
 
 def test_a_community_theme_for_another_panel_is_adapted_and_can_be_seen_so_first(
     server,  # noqa: F811
-    github,
+    github,  # noqa: F811
 ):
     """How it looks on the chosen panel: drawn adapted, nothing installed; installed for that
     panel, it is adapted the same way (theme/adapt.py); made for it already, it stays as it is.
@@ -384,7 +298,7 @@ def test_a_download_that_is_not_the_listed_file_is_not_installed(server, github)
 
 def test_a_theme_made_for_another_panel_than_its_entry_says_is_not_installed(
     server,  # noqa: F811
-    github,
+    github,  # noqa: F811
 ):
     theme = zipped({"aurora/theme.json": theme_json(name="Aurora", display={"model": "custom",
                     "width": 800, "height": 480}), "aurora/assets/back.png": png()})  # fmt: skip
@@ -407,7 +321,7 @@ def test_offline_the_section_says_so_and_nothing_is_installed(server):  # noqa: 
     assert status == 400 and answer["error"] == "The community themes cannot be reached right now."
 
 
-def test_the_list_is_kept_an_hour_and_files_come_only_from_beside_it(github):
+def test_the_list_is_kept_an_hour_and_files_come_only_from_beside_it(github):  # noqa: F811
     now = [1000.0]
     kept = community.Community(clock=lambda: now[0])
     assert [theme["id"] for theme in kept.themes()["themes"]] == ["aurora"]

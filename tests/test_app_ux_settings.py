@@ -200,7 +200,7 @@ def test_the_overview_mends_what_it_can_with_one_click(
     """Settings opens on the overview: another panel than the one chosen is mended with one
     click, a theme that shows the weather leads to the place, and the count beside the overview
     says how much is left while another section is open."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
@@ -249,7 +249,7 @@ def test_the_overview_says_all_good_calmly_and_the_short_form_says_nothing(
     isolated_home,
     monkeypatch,
 ):
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
@@ -277,13 +277,15 @@ def test_a_panel_the_app_draws_on_is_connected_though_no_search_finds_it(
     """The JONSBO DS339 chosen by hand (a USB display chip no search finds) while the app's
     frames go to it: the overview and Settings → Panel say it is connected, nothing that it is
     not."""
-    from test_editor_settings import panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
-    from libre_panel.devices import usb_link
 
     panel_on_the_bus(monkeypatch)  # the search finds none
-    monkeypatch.setattr(usb_link, "present", lambda vendor, products: None)
+    if not RUST:  # (the Rust app's bus has nothing on it: panel_on_the_bus)
+        from libre_panel.devices import usb_link
+
+        monkeypatch.setattr(usb_link, "present", lambda vendor, products: None)
     set_config_value("device.model", "jonsbo-ds339")
 
     def driven(route, request):
@@ -321,7 +323,7 @@ def test_the_short_form_lists_what_needs_attention_with_its_clicks(
     monkeypatch,
 ):
     """For Start: what needs attention (no suggestions), each with its click."""
-    from test_editor_settings import panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     panel_on_the_bus(monkeypatch)  # none
     choose_theme(isolated_home, "nimbus")
@@ -365,7 +367,7 @@ def test_the_overview_speaks_german(app_url, isolated_home):  # noqa: F811
 def test_report_a_panel_is_three_steps_with_what_is_connected_listed(app_url, monkeypatch):  # noqa: F811
     """The app lists what is connected itself (no command to run for it), says how to run the
     doctor step by step, and the form opens with the list filled in."""
-    from test_editor_settings import panel_on_the_bus, plugged_in
+    from test_app_browser import panel_on_the_bus, plugged_in
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     plugged_in(monkeypatch, usb=[{"vid": "1cbe", "pid": "0092"}])
@@ -430,9 +432,9 @@ class InstallRoute:
     download would), and what a POST makes of it (``answers``: by its action)."""
 
     def __init__(self, **answers):
-        from libre_panel.editor.updates import IDLE
-
-        self.idle = {**IDLE}
+        # (the state before anything is fetched, as the app's install.rs says it)
+        self.idle = {"state": "idle", "version": "", "how": "", "file": "", "where": "",
+                     "done": 0, "total": 0, "checked": False, "error": ""}  # fmt: skip
         self.state, self.answers, self.posts = self.idle, answers, []
 
     def at(self, state, **more):
@@ -549,8 +551,7 @@ def test_smooth_motion_asks_for_the_clip_and_takes_the_panels_own_name_on_a_clic
     """Settings → Panel calls the video mode smooth motion; while it lacks the standby clip's
     name the row offers the one the panel's own app gives it (written only on the click), and
     once it is set the name is under Advanced, which an address opens."""
-    from test_app_browser import radio
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
@@ -597,8 +598,7 @@ def test_a_turzx_usb_panel_takes_its_stills_as_chosen_under_advanced(
     """Settings → Panel → Advanced: how a TURZX USB panel takes its stills, automatic (JPEG on
     the 5.2", which shows no PNG), PNG or JPEG, written on the click; a serial panel has no
     such row."""
-    from test_app_browser import radio
-    from test_editor_settings import panel_on_the_bus
+    from test_app_browser import panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-5.2-usb")
     with browser_page(app_url, "settings/panel/panel-advanced") as page:
@@ -681,7 +681,7 @@ def test_game_mode_and_more_leads_with_game_mode_and_the_place_comes_first(app_u
 
 
 def test_the_sections_speak_german(app_url, monkeypatch):  # noqa: F811
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
@@ -715,8 +715,7 @@ def test_a_udisp_display_has_its_frames_a_second_in_the_app(
     """Waveshare's USB display (#30) takes whole pictures at [video] fps: Settings → Panel
     offers them as for a TURZX panel in video mode, 60 the most, with a word of their own; and
     how much detail its JPEGs keep (#33)."""
-    from test_app_browser import radio
-    from test_editor_settings import panel_on_the_bus
+    from test_app_browser import panel_on_the_bus, radio
 
     from libre_panel.config import edit_config
 
@@ -741,7 +740,7 @@ def test_the_panel_s_fine_tuning_waits_folded_until_it_is_wanted(
     """Settings → Panel: the video experiment and the colour check are for trying things out and
     finding faults, not for setting a panel up, so they wait under one row; it opens on a
     click, and by itself where one of the experiment's settings is not the default."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
@@ -767,8 +766,7 @@ def test_the_video_experiment_writes_each_choice_at_once_and_leads_back(
     """Settings → Panel → Video experiment: the cap, the quality, the speed, the profile, the
     encoder and the keyframes, each written on the click; Status's tiles and the log's lines
     about the video under them; and a way back to what was measured, greyed while it holds."""
-    from test_app_browser import radio
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
@@ -807,7 +805,7 @@ def test_the_video_experiment_switches_what_the_engine_does(
     """With Libre Panel's engine as the encoder: whether it sends the pictures and whether it
     composes the frames too, each a switch (composing only while it sends), written on the
     click; back to the defaults turns both on again. Other encoders show neither."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
@@ -840,16 +838,16 @@ def test_auto_shows_what_the_engine_does_where_the_download_carries_it(
 ):
     """Where the download carries Libre Panel's engine, "auto" (the default) encodes with it:
     its switches show with "auto" as with "native"."""
-    from test_app_browser import as_download
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
-
-    from libre_panel.devices import h264
+    from test_app_browser import as_download, lacking_ffmpeg, panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
-    monkeypatch.setattr(h264, "auto_engine", lambda: "/the/download/libre-panel-engine")
     if RUST:  # (the Rust app's server started as a download has it)
         as_download(app_url, tmp_path / "download")
+    else:
+        from libre_panel.devices import h264
+
+        monkeypatch.setattr(h264, "auto_engine", lambda: "/the/download/libre-panel-engine")
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         expect(card.get_by_role("switch", name="The engine sends the pictures")).to_be_checked()
@@ -866,7 +864,7 @@ def test_the_video_experiment_chooses_the_engines_own_encoder(
     with the panels), x264 or the graphics card's encoder (Windows' Media Foundation), written
     on the click. Off Windows the choice shows only while the card's is set (from the file), to
     set x264 back; back to the defaults is auto again."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
@@ -899,12 +897,12 @@ def test_the_video_experiment_runs_every_step_by_itself_on_the_running_app(
     """With the background app: the run tries every step in turn (shortened here), a table
     says the outcome per step and panel (a PNG file takes no video), and the settings from
     before the run (quality 20) are back at the end."""
-    from test_app_browser import radio
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import lacking_ffmpeg, panel_on_the_bus, radio
 
-    from libre_panel.editor import experiment
+    if not RUST:  # (the Rust app's are shortened by its environment: LP_EXPERIMENT_SCALE)
+        from libre_panel.editor import experiment
 
-    monkeypatch.setattr(experiment.Experiment, "scale", 0.002)
+        monkeypatch.setattr(experiment.Experiment, "scale", 0.002)
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     lacking_ffmpeg(monkeypatch, found=True)
     _app, url = background
@@ -928,16 +926,19 @@ def colour_check_on(monkeypatch, works=lambda ffmpeg, encoder: False, command=No
     as ``command`` makes it, the running panels as ``controls`` has them (else the app's)."""
     import shutil
 
-    from test_editor_settings import panel_on_the_bus
-
-    from libre_panel.devices import h264
-    from libre_panel.editor import server
-    from libre_panel.editor.colours import ColourCheck
+    from test_app_browser import panel_on_the_bus
 
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         pytest.skip("needs ffmpeg with libx264")
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
+    if RUST:  # (the Rust app checks with the ffmpeg it finds, its graphics card's as they are)
+        assert command is None and controls is None
+        return
+    from libre_panel.devices import h264
+    from libre_panel.editor import server
+    from libre_panel.editor.colours import ColourCheck
+
     monkeypatch.setattr(h264, "find_ffmpeg", lambda configured="": ffmpeg)
     monkeypatch.setattr(h264, "encoder_works", works)
 
@@ -1273,7 +1274,11 @@ def test_a_late_read_of_the_settings_does_not_undo_a_click(app_url, isolated_hom
 
 
 def test_other_programs_get_a_key_and_an_address_once_it_is_switched_on(app_url, isolated_home):  # noqa: F811
-    from libre_panel import notify
+    def read_key():  # (the notify key the app keeps beside config.toml, in notify.json)
+        try:
+            return json.loads((isolated_home / "notify.json").read_text(encoding="utf-8"))["key"]
+        except OSError:
+            return ""
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url, "settings/services") as page:
@@ -1284,15 +1289,15 @@ def test_other_programs_get_a_key_and_an_address_once_it_is_switched_on(app_url,
         waits_for(page, lambda: settings_config().allow_notify is True)
         address = card.locator("[data-notify-address]")
         expect(address).to_contain_text("/api/notify?key=")
-        expect(address).to_contain_text(f"/api/notify?key={notify.read_key()}&text=")
+        expect(address).to_contain_text(f"/api/notify?key={read_key()}&text=")
         expect(card.locator("[data-notify-command]")).to_contain_text('notify "Render finished"')
         card.get_by_role("button", name="Try it").click()  # no background app: it says so
         expect(page.locator(".toast").last).to_contain_text("Not shown")
-        old = notify.read_key()
+        old = read_key()
         card.get_by_role("button", name="New key").click()
         page.locator(".dialog").get_by_role("button", name="New key").click()
         expect(address).not_to_contain_text(old)
-        assert notify.read_key() != old
+        assert read_key() != old
 
 
 def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
@@ -1301,24 +1306,40 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
     tmp_path,
     monkeypatch,
 ):
-    from libre_panel import agents
     from libre_panel.config import set_config_value
 
     home = tmp_path / "user"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    monkeypatch.setattr(agents, "program", lambda name: "/bin/claude" if name == "claude" else None)
-    monkeypatch.setattr(agents, "BOARD", agents.Board())  # (nothing heard from anyone yet)
     if RUST:  # (the Rust app looks for the program on PATH as it starts, with the page)
         programs = tmp_path / "bin"
         programs.mkdir()
         (programs / "claude").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         (programs / "claude").chmod(0o755)
         monkeypatch.setenv("PATH", f"{programs}{os.pathsep}{os.environ.get('PATH', '')}")
+    else:
+        from libre_panel import agents
+
+        monkeypatch.setattr(
+            agents, "program", lambda name: "/bin/claude" if name == "claude" else None
+        )
+        monkeypatch.setattr(agents, "BOARD", agents.Board())  # (nothing heard from anyone yet)
     choose_theme(isolated_home, "lumen")
     set_config_value("services.enabled", ["agents"])
     settings = home / ".claude" / "settings.json"
+
+    def written():  # (Claude Code's settings, as the app wrote them)
+        return json.loads(settings.read_text(encoding="utf-8")) if settings.is_file() else {}
+
+    def port_of(text):  # (the port Libre Panel's hooks call, in a text of the settings)
+        import re
+
+        found = re.search(r"127\.0\.0\.1:(\d+)/api/ai/", text)
+        return int(found.group(1)) if found else None
+
+    def port():
+        return port_of(json.dumps(written().get("hooks", {})))
 
     def told(what, data):
         """What Claude Code's hook (``what`` "hook") or status line ("status") tells the app:
@@ -1352,7 +1373,8 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         assert not settings.exists()  # not before it is confirmed
         page.locator(".dialog").get_by_role("button", name="Set up").click()
         expect(claude.get_by_role("button", name="Remove")).to_be_visible()
-        assert agents.installed(agents.read_settings(settings))["status_line"]
+        assert "/api/ai/" in written()["statusLine"]["command"]  # the status line is ours
+        plan = settings.read_text(encoding="utf-8")
         # set up, nothing heard yet: where it reports from
         expect(claude.locator(".settings-row-status")).to_have_text("Set up; no report from it yet")
         expect(claude.locator("[data-agents-waiting]")).to_contain_text("or the desktop app")
@@ -1378,9 +1400,11 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         expect(hint).to_have_count(0)
         claude.get_by_role("button", name="Remove").click()
         expect(claude).to_contain_text("Not set up yet")
-        assert agents.read_settings(settings) == {}
+        assert written() == {}
         # set up for the address Libre Panel had before its port was taken: set it up again
-        agents.write_settings(settings, agents.claude_plan({}, 1, agents.key(create=True), True))
+        settings.write_text(plan.replace(f"127.0.0.1:{port_of(plan)}/", "127.0.0.1:1/"),
+                            encoding="utf-8")  # fmt: skip
+        assert port() == 1
         page.reload()
         claude = page.locator("[data-service='agents'] [data-agent='claude']")
         expect(claude.locator(".settings-row-status")).to_have_text(
@@ -1389,7 +1413,7 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         claude.get_by_role("button", name="Set up again").click()
         page.locator(".dialog").get_by_role("button", name="Set up").click()
         expect(claude.get_by_role("button", name="Set up again")).to_have_count(0)
-        assert agents.installed(agents.read_settings(settings))["port"] != 1
+        assert port() not in (None, 1)
 
 
 def test_a_shortcut_is_set_by_pressing_the_keys_and_taken_away_again(app_url, isolated_home):  # noqa: F811

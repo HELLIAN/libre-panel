@@ -460,6 +460,18 @@ jobs:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden
           LP_WITHOUT_APP: "1"
         run: python -m pytest -q -rfE --durations=20 tests/test_rust_server.py tests/test_rust_wayland.py
+      # the app's pages in a real browser on the Rust app's server, the Python app out of reach
+      # (as the job desktop runs them on the Python app's): what one of them cannot do here is
+      # skipped, each with its reason
+      - name: The app in a browser, on the Rust app's server (Linux)
+        if: runner.os == 'Linux' && !inputs.quick && !cancelled()
+        env:
+          LP_UI_SERVER: rust
+          LP_WITHOUT_APP: "1"
+        run: |
+          pip install -q playwright
+          python -m playwright install --with-deps chromium
+          python -m pytest -q -rs tests/test_app_browser.py tests/test_app_ux_*.py tests/test_sequence_browser.py tests/test_panel_files_browser.py
       # lp-check's answers to the comparisons that passed, as tests/golden keeps them: what
       # the Python app answered, for the comparisons once it is gone (tests/golden.py)
       - name: The comparisons' answers

@@ -19,6 +19,7 @@ from test_app_browser import (  # noqa: E402, F401
     hidden_text,
     js,
     no_setup_card,
+    saved_theme,
     server_language,
     settings_config,
     waits_for,
@@ -427,8 +428,6 @@ def test_a_failure_says_what_happened_in_plain_words(app_url, isolated_home):  #
 def test_unsaved_changes_can_be_saved_before_another_theme_opens(app_url, isolated_home):  # noqa: F811
     """Opening another theme with unsaved changes offers to save them first (it was Discard or
     Cancel, and the work had to be saved by hand and the other theme opened again)."""
-    from libre_panel.theme.model import load_theme
-
     routes = a_bar(isolated_home)
     with browser_page(app_url, "design", routes=routes, allow=PICTURE) as page:
         js(page, "window.libre.doc.edit('t', (theme) => { theme.name = 'My Lumen'; })")
@@ -442,7 +441,7 @@ def test_unsaved_changes_can_be_saved_before_another_theme_opens(app_url, isolat
         dialog.locator("input").fill("my-lumen")  # Lumen is built in: it asks for a name
         dialog.locator("button[type='submit']").click()
         page.wait_for_function("window.libre.store.get().doc.id === 'encore'")
-        assert load_theme(isolated_home / "themes" / "my-lumen").name == "My Lumen"
+        assert saved_theme(isolated_home / "themes" / "my-lumen").name == "My Lumen"
         assert js(page, "window.libre.store.get().dirty") is False
         # Cancel in the name's dialog: nothing is saved, and the theme stays open
         js(page, "window.libre.doc.edit('t', (theme) => { theme.name = 'My Encore'; })")

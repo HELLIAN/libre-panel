@@ -14,6 +14,7 @@ from test_app_browser import (  # noqa: F401
     choose_theme,
     js,
     no_setup_card,
+    saved_theme,
     server_language,
     settings_config,
     waits_for,
@@ -186,7 +187,6 @@ def test_to_the_panel_says_when_the_panel_shows_what_is_edited(app_url, isolated
     Once it does, the button says "On the panel"; a change makes it ask again. A built-in theme
     says it is saved as one's own, and its copy is not a second "Lumen" in every list."""
     from libre_panel.config import load_config
-    from libre_panel.theme.model import load_theme
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url) as page:
@@ -204,7 +204,7 @@ def test_to_the_panel_says_when_the_panel_shows_what_is_edited(app_url, isolated
         dialog.locator("button[type='submit']").click()
         expect(apply).to_have_text("On the panel")
         assert load_config().theme == "lumen-mine"
-        assert load_theme(isolated_home / "themes" / "lumen-mine").name == "Lumen (mine)"
+        assert saved_theme(isolated_home / "themes" / "lumen-mine").name == "Lumen (mine)"
         expect(page.locator(".theme-name")).to_have_text("Lumen (mine)")
         # another theme, not on the panel: the button asks
         page.locator(".theme-name").click()
@@ -216,8 +216,6 @@ def test_to_the_panel_says_when_the_panel_shows_what_is_edited(app_url, isolated
 def test_unsaved_work_is_saved_with_one_click_before_another_theme_opens(app_url, isolated_home):  # noqa: F811
     """Opening another theme asked only to discard the work or to cancel; keeping it took a
     cancel, a save and the same way again. Save is the dialog's first choice now."""
-    from libre_panel.theme.model import load_theme
-
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url) as page:
         js(page, "window.libre.doc.edit('n', (theme) => { theme.description = 'mine now'; })")
@@ -230,7 +228,7 @@ def test_unsaved_work_is_saved_with_one_click_before_another_theme_opens(app_url
         dialog.get_by_role("button", name="Save").click()
         dialog.locator("button[type='submit']").click()  # built in: saved as one's own first
         page.wait_for_function("window.libre.store.get().doc.id === 'nimbus'")
-        assert load_theme(isolated_home / "themes" / "lumen-mine").description == "mine now"
+        assert saved_theme(isolated_home / "themes" / "lumen-mine").description == "mine now"
 
 
 def test_designs_pages_say_what_the_panel_shows_when_as_start_does(app_url, isolated_home):  # noqa: F811

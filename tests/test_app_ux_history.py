@@ -2,7 +2,10 @@
 then the course of a week of readings, what it came to and the games, and a round's report kept
 as a picture; skipped without Playwright or Chromium."""
 
+import functools
+import json
 import sqlite3
+import subprocess
 import time
 
 import pytest
@@ -20,9 +23,41 @@ from test_app_browser import (  # noqa: E402, F401
     settings_config,
     waits_for,
 )
-from test_history import minute, session  # noqa: E402
 
-from libre_panel.services.memory_store import SCHEMA  # noqa: E402
+
+@functools.cache
+def memory_tables():
+    """The tables of the memory's database and the columns of its minutes, as the app keeps
+    them (lp-check asks its Rust code)."""
+    from rust_check import find
+
+    exe = find()
+    if exe is None:
+        pytest.skip("needs lp-check (cargo build --release in rust/)")
+    done = subprocess.run([str(exe)], input='{"op": "memory_schema"}\n', capture_output=True,
+                          encoding="utf-8", timeout=60, check=True)  # fmt: skip
+    return json.loads(done.stdout)
+
+
+def minute(ts, cpu=50.0, gpu=60.0, game=None, peak=None):
+    """A row of ``minutes`` with the CPU and the GPU at ``cpu`` and ``gpu`` degrees and load."""
+    tables = memory_tables()
+    values = dict.fromkeys(tables["means"])
+    values.update(cpu_temp=cpu, gpu_temp=gpu, cpu_load=cpu, gpu_load=gpu, cpu_power=cpu * 2)
+    peaks = dict.fromkeys(tables["peaks"])
+    peaks.update(cpu_temp=peak or cpu, gpu_temp=gpu)
+    return [ts, 60, "game" if game else "normal", game, *values.values(), *peaks.values(),
+            None, None, 0, None, None]  # fmt: skip
+
+
+def session(started, game, seconds, fps, low, cpu_max=80.0, gpu_max=70.0):
+    """A round of ``game`` (a row of ``sessions``)."""
+    return {
+        "id": started * 1000, "game": game, "program": f"{game}.exe", "started": started,
+        "ended": started + seconds, "duration_s": seconds, "fps_s": seconds, "fps_mean": fps,
+        "fps_p01": low - 5, "fps_low_mean": low, "cpu_temp_max": cpu_max,
+        "gpu_temp_max": gpu_max, "closed": 1,
+    }  # fmt: skip
 
 
 def kept(home, days=3):
@@ -30,7 +65,7 @@ def kept(home, days=3):
     folder = home / "plugins-data" / "memory"
     folder.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(folder / "memory.db")
-    con.executescript(SCHEMA)
+    con.executescript(memory_tables()["schema"])
     now = int(time.time()) // 60 * 60
     rows = []
     for i in range(days * 1440):
@@ -121,16 +156,18 @@ def test_a_last_round_is_kept_as_a_picture_and_its_folder_opens(
     monkeypatch,
 ):
     from libre_panel.config import set_config_value
-    from libre_panel.services import downloads
 
     choose_theme(isolated_home, "lumen")
     set_config_value("services.enabled", ["memory"])
     kept(isolated_home, days=1)
     pictures = tmp_path / "Pictures"
-    monkeypatch.setattr(downloads, "pictures_folder", lambda: pictures)
     if RUST:  # (the Rust app's Pictures folder: the home's, where it has one)
         pictures.mkdir()
         monkeypatch.setenv("HOME", str(tmp_path))
+    else:
+        from libre_panel.services import downloads
+
+        monkeypatch.setattr(downloads, "pictures_folder", lambda: pictures)
     with browser_page(app_url, "live/history", allow=PICTURE) as page:
         rounds = page.locator(".history-round-list li")
         expect(rounds).to_have_count(1)
