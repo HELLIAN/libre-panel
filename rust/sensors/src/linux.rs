@@ -817,7 +817,8 @@ fn nvidia_main(out: &mut Readings, number: usize, values: &nvml::Values) {
     );
 }
 
-#[cfg(test)]
+// (folders laid out as Linux names them: "intel-rapl:0" is no name on Windows)
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
