@@ -112,6 +112,31 @@
 "93b9a4a216fc"
 ]
 ],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[America/St_Johns]": [
+[
+"93cedd73b039"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[Antarctica/Troll]": [
+[
+"4d687fa5fd83"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[Europe/Berlin]": [
+[
+"6eefc3b093ae"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[None]": [
+[
+"4171baf44b94"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[Pacific/Kiritimati]": [
+[
+"373f60f2f383"
+]
+],
 "test_the_volume_s_tools_are_read_as_audio_py_reads_them": [
 [
 "97e4808368c8"

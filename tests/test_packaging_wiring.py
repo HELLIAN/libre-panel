@@ -119,10 +119,10 @@ def test_the_names_the_app_looks_for_are_the_ones_the_table_installs(monkeypatch
     for platform, system in (("windows", "win32"), ("linux", "linux")):
         monkeypatch.setattr(sys, "platform", system)
         files = {tool.file for tool in fetch_tools.TOOLS if tool.platform == platform}
-        assert bundled.program_name("ffmpeg") in files
         if platform == "windows":
-            assert {bundled.program_name("PresentMon"), bundled.PAWNIO_SETUP} <= files
-            assert len(files) == 3  # and nothing else that the app does not know of
+            # (and nothing else that the app does not know of: rust/app's tools.rs, h264.rs,
+            # presentmon.rs and system_setup.rs look for these)
+            assert files == {"ffmpeg.exe", "PresentMon.exe", "PawnIO_setup.exe"}
         else:
             assert files == {"ffmpeg"}
 

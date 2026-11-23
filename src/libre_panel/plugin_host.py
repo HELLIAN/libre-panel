@@ -1143,6 +1143,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="libre-panel-plugins")
     parser.add_argument("--folder", type=Path, default=None, help="the plugin folders' folder")
     args = parser.parse_args(argv)
+    # (a program a plugin starts gets the system's libraries, not the download's: bundled.py)
+    from libre_panel.bundled import system_libraries
+
+    system_libraries()
     # (the messages own standard output: what plugins print goes to the log)
     channel = Channel(sys.stdin.buffer, sys.stdout.buffer)
     sys.stdout = sys.stderr

@@ -1,12 +1,8 @@
-"""What bundled.py knows of the programs a download carries (ffmpeg, PresentMon, PawnIO's
-installer): their names on each system, PawnIO's installer only as it was fetched, and the
-libraries a Linux download's programs get."""
+"""What bundled.py knows of the programs a download carries: the libraries a Linux download's
+programs get (the plugin host sets them first), and where its tools are."""
 
-import hashlib
-import importlib.util
 import shutil
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -35,44 +31,6 @@ def nothing_on_the_path(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
 
 
-def test_the_file_names_follow_the_system(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-    assert bundled.program_name("ffmpeg") == "ffmpeg.exe"
-    monkeypatch.setattr(sys, "platform", "linux")
-    assert bundled.program_name("ffmpeg") == "ffmpeg"
-
-
-def test_pawnios_installer_is_handed_out_only_as_it_was_fetched(tmp_path, monkeypatch):
-    """It is run with administrator rights from a folder the installing user may write to."""
-    program = release_build(tmp_path, monkeypatch, "win32")
-    assert bundled.pawnio_installer() is None  # not carried
-    setup = program / "tools" / bundled.PAWNIO_SETUP
-    setup.write_bytes(b"MZ another program")
-    assert bundled.pawnio_installer() is None  # replaced
-    setup.unlink()
-    setup.mkdir()
-    assert bundled.pawnio_installer() is None  # not a file
-    setup.rmdir()
-    monkeypatch.setattr(
-        bundled, "PAWNIO_SETUP_SHA256", hashlib.sha256(b"MZ the real one").hexdigest()
-    )
-    setup.write_bytes(b"MZ the real one")
-    assert bundled.pawnio_installer() == str(setup)
-    monkeypatch.delattr(sys, "frozen")
-    assert bundled.pawnio_installer() is None  # a pip install carries none
-
-
-def test_the_pin_the_app_checks_is_the_one_the_download_was_fetched_by():
-    spec = importlib.util.spec_from_file_location(
-        "fetch_tools_pin", Path(__file__).resolve().parent.parent / "packaging" / "fetch_tools.py"
-    )
-    fetch_tools = importlib.util.module_from_spec(spec)
-    sys.modules["fetch_tools_pin"] = fetch_tools
-    spec.loader.exec_module(fetch_tools)
-    pawnio = [tool for tool in fetch_tools.TOOLS if tool.file == bundled.PAWNIO_SETUP]
-    assert [tool.sha256 for tool in pawnio] == [bundled.PAWNIO_SETUP_SHA256]
-
-
 def test_the_system_s_programs_get_the_system_s_libraries_in_a_linux_download():
     """The AppImage's loader put its folder first in LD_LIBRARY_PATH; inherited, it made the
     system's /bin/sh take the bundle's older readline and stop, so the app never opened (#21).
@@ -92,3 +50,35 @@ def test_the_system_s_programs_get_the_system_s_libraries_in_a_linux_download():
     env = {}
     bundled.system_libraries(env, frozen=True, platform="linux")
     assert env == {}
+
+
+def test_the_plugin_host_gives_the_programs_it_starts_the_system_s_libraries(monkeypatch):
+    """A program a plugin starts in a Linux download (notify-send, xdg-open) gets the system's
+    libraries, as it did in the Python app: the plugin host sets them back before anything."""
+    import io
+
+    from libre_panel import plugin_host
+
+    called = []
+    monkeypatch.setattr(bundled, "system_libraries", lambda: called.append(True))
+    empty = type("Stream", (), {"buffer": io.BytesIO()})()
+    monkeypatch.setattr(sys, "stdin", empty)
+    monkeypatch.setattr(sys, "stdout", type("Stream", (), {"buffer": io.BytesIO()})())
+    monkeypatch.setattr(
+        plugin_host,
+        "Host",
+        lambda channel, folder: type("Host", (), {"serve": lambda self: called.append("served")})(),
+    )
+    assert plugin_host.main([]) == 0
+    assert called == [True, "served"]
+
+
+def test_a_download_s_tools_are_beside_its_program_and_in_its_bundle(tmp_path, monkeypatch):
+    """Where a download keeps its programs (rights.py trusts them): beside its program, then in
+    PyInstaller's own folder; none for a pip install or a checkout."""
+    program = release_build(tmp_path, monkeypatch)
+    assert bundled.tools_folders() == [program.resolve() / "tools"]
+    monkeypatch.setattr(sys, "_MEIPASS", str(program / "_internal"), raising=False)
+    assert bundled.tools_folders() == [program.resolve() / "tools", program / "_internal" / "tools"]
+    monkeypatch.setattr(sys, "frozen", False)
+    assert bundled.tools_folders() == []

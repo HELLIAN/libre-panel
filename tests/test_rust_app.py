@@ -1875,16 +1875,20 @@ def test_a_machine_laid_out_in_a_folder_is_read_as_the_python_source_reads_it(
 
 def test_the_sun_and_the_moon_are_always_there(tmp_path: Path) -> None:
     """The sky's source is on without being named: the moon everywhere, the sun for the
-    place `[weather]` has; the readings sensors/sky.py gives at that moment."""
-    from libre_panel.sensors import sky
-
+    place `[weather]` has; the readings the sky gives at that moment (lp-check's sky, which
+    test_rust_sensors.py holds to what sensors/sky.py gave)."""
     (tmp_path / "config.toml").write_text(
         '[sensors]\nproviders = ["nope"]\n[weather]\nlatitude = 52.52\nlongitude = 13.405\n',
         encoding="utf-8",
     )
-    before = sky.sky_readings(time.time(), 52.52, 13.405)
+
+    def sky_now() -> dict[str, list[Any]]:
+        [told] = run([{"op": "sky", "moments": [[time.time(), 52.52, 13.405]]}], checked=False)
+        return {key: rest for key, *rest in told["moments"][0]}
+
+    before = sky_now()
     done = _run(tmp_path, "sensors")
-    after = sky.sky_readings(time.time(), 52.52, 13.405)
+    after = sky_now()
     assert done.returncode == 0, done.stderr
     # (a value longer than its column, as "Waxing Crescent", moves the rest along: each line
     # ends in its unit and its label)
@@ -1892,11 +1896,12 @@ def test_the_sun_and_the_moon_are_always_there(tmp_path: Path) -> None:
             for line in done.stdout.splitlines() if line.startswith(("moon.", "sun."))}  # fmt: skip
     assert list(ours) == sorted(before) and {"sun.rise", "sun.set", "moon.phase"} <= set(ours)
     for key, rest in ours.items():
-        tail = f" {before[key].unit:<5} {before[key].label}"
+        _, unit, label = before[key]
+        tail = f" {unit:<5} {label}"
         assert rest.endswith(tail), (key, rest)
         value = rest[: -len(tail)].strip()
-        said = [f"{r.value:.2f}" if isinstance(r.value, float) else str(r.value)
-                for r in (before[key], after[key])]  # fmt: skip
+        said = [f"{v:.2f}" if isinstance(v, float) else str(v)
+                for v, *_ in (before[key], after[key])]  # fmt: skip
         if key != "sun.elevation":  # (it moves by the second)
             assert value in said, key
 

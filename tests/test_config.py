@@ -1,6 +1,5 @@
 import json
 import tomllib
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,13 +10,11 @@ from libre_panel.config import (
     Config,
     ConfigError,
     DeviceConfig,
-    brightness_now,
     card_choice,
     config_dir,
     default_providers,
     hardware_name,
     load_config,
-    night_now,
     parse_config,
     write_default_config,
 )
@@ -164,7 +161,7 @@ def test_every_setting_of_the_video_is_read_from_the_file():
 def test_the_standby_clip_is_asked_for_until_it_is_answered(isolated_home):
     """``clip_asked`` is a note of the app's (it asked, and was answered either way), not a
     setting of the panel: it is false until the app writes it, and the template only mentions it."""
-    from libre_panel.config import DeviceConfig, edit_config
+    from libre_panel.config import edit_config
 
     assert load_config().device.video.clip_asked is False
     assert parse_config(tomllib.loads(DEFAULT_CONFIG_TOML)).device.video.clip_asked is False
@@ -704,22 +701,6 @@ def test_the_setting_is_read_and_on_unless_turned_off():
 # -- night (device.night) -------------------------------------------------------------------------
 
 
-def at(hour, minute=0):
-    return datetime(2026, 10, 20, hour, minute)
-
-
-def test_a_night_over_midnight_and_one_within_the_day():
-    over = DeviceConfig(night=True, night_from="22:00", night_to="07:00", brightness=60,
-                        night_brightness=5)  # fmt: skip
-    assert [night_now(over, at(h)) for h in (21, 22, 0, 6)] == [False, True, True, True]
-    assert not night_now(over, at(7)) and night_now(over, at(6, 59))
-    assert brightness_now(over, at(23)) == 5 and brightness_now(over, at(12)) == 60
-    day = DeviceConfig(night=True, night_from="13:00", night_to="14:30")  # an afternoon nap
-    assert night_now(day, at(14, 29)) and not night_now(day, at(14, 30))
-    assert not night_now(DeviceConfig(night=False), at(23))  # off
-    assert not night_now(DeviceConfig(night=True, night_from="22:00", night_to="22:00"), at(22))
-
-
 def test_the_settings_are_read_and_checked():
     device = parse_config({}).device
     assert (device.night, device.night_from, device.night_to, device.night_brightness) == (
@@ -733,31 +714,11 @@ def test_the_settings_are_read_and_checked():
             parse_config({"device": bad})
 
 
-def test_the_night_may_go_from_sunset_to_sunrise_at_the_weather_s_place():
-    """At 52° north in October the sun sets near 18:00 and rises near 7:40 (local time of
-    the test's machine: the place is on its meridian, so a clock in UTC finds the same)."""
-    from libre_panel.sensors.sky import sun_times
-
+def test_the_night_may_go_from_sunset_to_sunrise():
+    """(When those are, the app's night.rs works out at the weather's place.)"""
     device = parse_config({"device": {"night": True, "night_from": " Sunset ",
                                       "night_to": "sunrise"}}).device  # fmt: skip
     assert (device.night_from, device.night_to) == ("sunset", "sunrise")
-    place = (52.0, 0.0)
-    times = sun_times(at(12).date(), *place)
-    sunset, sunrise = (datetime.fromtimestamp(times[k]) for k in ("set", "rise"))
-    before, after = sunset.replace(second=0) - timedelta(minutes=2), sunset + timedelta(minutes=2)
-    assert not night_now(device, before, place) and night_now(device, after, place)
-    assert night_now(device, sunrise - timedelta(minutes=2), place)
-    assert not night_now(device, sunrise + timedelta(minutes=2), place)
-    # without a place: from 19:00 to 7:00
-    assert night_now(device, at(19, 1)) and not night_now(device, at(18, 59))
-    assert night_now(device, at(6, 59)) and not night_now(device, at(7, 1))
-    # the polar night: night all day; the midnight sun: never
-    december, june = datetime(2026, 12, 21, 12), datetime(2026, 6, 21, 0, 30)
-    assert night_now(device, december, (78.0, 15.0))
-    assert not night_now(device, june, (78.0, 15.0))
-    # only where it is asked for: times of day stay times of day
-    plain = DeviceConfig(night=True, night_from="22:00", night_to="07:00")
-    assert night_now(plain, at(23), (78.0, 15.0)) and not night_now(plain, at(12), (78.0, 15.0))
 
 
 # -- the earth as a card --------------------------------------------------------------------------
@@ -1020,3 +981,11 @@ def test_builtin_theme_files_are_plain_json():
     root = Path(__file__).resolve().parents[1] / "data" / "themes"
     for file in root.glob("*/theme.json"):
         json.loads(file.read_text(encoding="utf-8"))
+
+
+def test_the_accent_setting_is_read_and_checked():
+    assert parse_config({}).accent == "" and parse_config({"accent": "system"}).accent == "system"
+    assert parse_config({"accent": " #E0457B "}).accent == "#E0457B"
+    for bad in ("red", "#12345", 3):
+        with pytest.raises(ConfigError):
+            parse_config({"accent": bad})

@@ -19,13 +19,15 @@ import time
 import tomllib
 import unicodedata
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from libre_panel.sequence import Step, StepError, parse_steps
 
 log = logging.getLogger(__name__)
+
+ACCENT_SYSTEM = "system"  # config.toml's accent: Windows' accent colour
+ACCENT_HEX = re.compile(r"#[0-9a-fA-F]{6}")  # ... or one of the person's ("#E0457B")
 
 CONFIG_FILENAME = "config.toml"
 # The theme of every panel but the bars, and what ``Config.theme`` is where nothing better is
@@ -262,7 +264,7 @@ def time_of_day(text: str) -> int | None:
 
 
 # The night may begin at sunset and end at sunrise (night_from, night_to) at the weather's
-# place; without one at these times
+# place; without one at these times (the app's night.rs)
 SUN_TIMES = {"sunset": "19:00", "sunrise": "07:00"}
 
 
@@ -274,57 +276,6 @@ def night_time(text: str) -> str | None:
         return word
     minutes = time_of_day(text)
     return None if minutes is None else "{:02d}:{:02d}".format(*divmod(minutes, 60))
-
-
-def night_now(
-    device: DeviceConfig, now: datetime | None = None, place: tuple[float, float] | None = None
-) -> bool:
-    """Whether it is night for the panel (``[device] night``, from ``night_from`` to
-    ``night_to``; a night that goes over midnight too). Sunset and sunrise are those of
-    ``place`` (latitude, longitude) on that day; in a polar night it is night all day, under
-    the midnight sun never."""
-    if not device.night:
-        return False
-    now = now or datetime.now()
-    sun = None
-    if place is not None and {device.night_from, device.night_to} & set(SUN_TIMES):
-        from libre_panel.sensors.sky import sun_times
-
-        sun = sun_times(now.date(), *place)
-        if sun["always"] is not None:
-            return sun["always"] == "night"
-
-    def minute(text: str) -> int | None:
-        if text in SUN_TIMES:
-            if sun is None:
-                return time_of_day(SUN_TIMES[text])
-            at = datetime.fromtimestamp(sun["set" if text == "sunset" else "rise"])
-            return at.hour * 60 + at.minute
-        return time_of_day(text)
-
-    start, end = minute(device.night_from), minute(device.night_to)
-    if start is None or end is None or start == end:
-        return False
-    minute_now = now.hour * 60 + now.minute
-    return start <= minute_now < end if start < end else minute_now >= start or minute_now < end
-
-
-def brightness_now(
-    device: DeviceConfig,
-    now: datetime | None = None,
-    away: bool | None = None,
-    place: tuple[float, float] | None = None,
-) -> int:
-    """The brightness the panel shows now: while the person is away (``away``; None: as
-    presence.py has it) the one for then, at night the night's (its sunset and sunrise at
-    ``place``), else its own."""
-    if away is None:
-        from libre_panel import presence
-
-        away = presence.away()
-    if away and device.dark_when_away:
-        return device.away_brightness
-    return device.night_brightness if night_now(device, now, place) else device.brightness
 
 
 def default_providers(platform: str | None = None) -> list[str]:
@@ -578,13 +529,13 @@ class DeviceConfig:
     jpeg_quality: int = 90
     dark_on_quit: bool = False  # a black picture and its light off when Libre Panel quits
     dark_on_sleep: bool = True  # so too while the computer sleeps (Windows), lit when it wakes
-    # a brightness of its own at night (night_now): from night_from to night_to, over midnight
-    # too, "HH:MM"; 0 is dark
+    # a brightness of its own at night (the app's night.rs): from night_from to night_to, over
+    # midnight too, "HH:MM"; 0 is dark
     night: bool = False
     night_from: str = "22:00"
     night_to: str = "07:00"
     night_brightness: int = 10
-    # while the person is away (the computer locked, its monitor off: presence.py), this
+    # while the person is away (the computer locked, its monitor off: the app's presence.rs), this
     # brightness; 0 is dark
     dark_when_away: bool = True
     away_brightness: int = 0
@@ -816,8 +767,8 @@ class Config:
     # goes to the next ("light", "fade", "slide", "rise", "wipe", "cut", "random")
     card_order: str = "first"
     card_transition: str = "light"
-    # an accent colour for every theme instead of its own (accent.py): "" the themes' own,
-    # "system" Windows', or "#RRGGBB"
+    # an accent colour for every theme instead of its own (the app's accent.rs): "" the themes'
+    # own, ACCENT_SYSTEM Windows', or "#RRGGBB"
     accent: str = ""
     # how much of the background the cards of every theme cover, in per cent (40 to 100; 0: as
     # each theme has them): the module cards' surface and the frames in a theme's surface colour
@@ -1080,10 +1031,8 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
                     raise ConfigError(f"{key}: must be one of {', '.join(allowed)}")
                 setattr(cfg, key, value)
     if "accent" in data:
-        from libre_panel.accent import HEX, SYSTEM
-
         cfg.accent = _expect(data["accent"], str, "accent").strip()
-        if cfg.accent and cfg.accent != SYSTEM and not HEX.fullmatch(cfg.accent):
+        if cfg.accent and cfg.accent != ACCENT_SYSTEM and not ACCENT_HEX.fullmatch(cfg.accent):
             raise ConfigError('accent: "system", a colour such as "#E0457B", or empty')
     if "card_opacity" in data:
         cfg.card_opacity = _expect(data["card_opacity"], int, "card_opacity")
