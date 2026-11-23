@@ -1228,6 +1228,133 @@ def test_auto_finds_the_panel_and_its_video_mode_with_no_model_named(rig: Rig) -
     assert done.stderr.count("local_clip is not set") == 1, done.stderr
 
 
+@contextlib.contextmanager
+def _background(rig: Rig) -> Iterator[tuple[Any, list[str]]]:
+    """`libre-panel start` on the rig's settings: its app's API (``api(method, path, body)``:
+    the status line and the JSON) and what it says on its standard error, as it comes."""
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          encoding="utf-8") as program:  # fmt: skip
+        assert program.stdout is not None and program.stderr is not None
+        said: list[str] = []
+        reading = threading.Thread(target=lambda: said.extend(program.stderr), daemon=True)
+        reading.start()
+        address = program.stdout.readline().split(" running at ")[1].split()[0]
+        port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
+
+        def api(method: str, path: str, body: Any = None) -> tuple[str, Any]:
+            text = "" if body is None else json.dumps(body)
+            request = (f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                       f"X-Libre-Panel: {token}\r\nContent-Type: application/json\r\n"
+                       f"Content-Length: {len(text.encode())}\r\n\r\n{text}")  # fmt: skip
+            status, _, answer = _asked(port, request.encode(), wait=60)
+            return status, json.loads(answer or b"null")
+
+        try:
+            yield api, said
+        finally:
+            if os.name == "nt":
+                program.terminate()
+            else:
+                program.send_signal(signal.SIGINT)
+            program.wait(timeout=30)
+            reading.join(10)
+
+
+def _until(done: Any, seconds: float = 60.0) -> Any:
+    """``done()`` once it is true, waited for up to ``seconds``; its last answer otherwise."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if answer := done():
+            return answer
+        time.sleep(0.2)
+    return done()
+
+
+@draws
+def test_the_colour_check_shows_the_range_s_a_and_b_on_a_panel_showing_video(rig: Rig) -> None:
+    """Settings → Panel → Check the colours on a panel that shows video (the simulated 9.2", its
+    video made by the engine): no A/B of the card's conversion, the processor converts either
+    way; *Is black too light on the panel? Compare* shows the test picture with limited range
+    (A) and full range (B) in turn, the engine's video in each, one picture at a time; the
+    answer goes into the panel's video_range, and Stop ends the picture."""
+    rig.config(VIDEO)
+    with _background(rig) as (api, said):
+        check = "/api/colour-check?panel=1"
+        state = _until(lambda: (told := api("GET", check)[1])["video"] and told)
+        assert state, said
+        assert (state["app"], state["ab"], state["in_use"]) == (True, "x264", {
+            "encoder": "native", "feed": "boxes", "card": False, "running": True})  # fmt: skip
+        status, told = api("POST", "/api/colour-check", {"action": "show", "panel": 1})
+        refused = {"error": "panel 1 runs native: the processor converts"}
+        assert (status, told) == ("HTTP/1.0 409 Conflict", refused)
+        status, told = api("POST", "/api/colour-check", {"action": "range", "panel": 1})
+        assert status == "HTTP/1.0 200 OK", told
+        show = told["show"]
+        assert (show["running"], show["panel"], show["kind"], show["letter"], show["value"]) == (
+            True, 1, "range", "A", "limited")  # fmt: skip
+        assert _until(lambda: api("GET", check)[1]["show"]["letter"] == "B", 10)
+        assert api("GET", check)[1]["show"]["value"] == "full"
+        status, told = api("POST", "/api/colour-check", {"action": "range", "panel": 1})
+        assert (status, told) == ("HTTP/1.0 409 Conflict",
+                                  {"error": "a panel shows the test picture already"})  # fmt: skip
+        # (the engine's video in each range, while the picture is on the panel)
+        assert _until(lambda: any("limited range" in line for line in said), 20), said
+        # *B looks right*
+        status, _ = api("POST", "/api/settings", {"set": {"device.video_range": "full"}})
+        assert status == "HTTP/1.0 200 OK"
+        api("POST", "/api/colour-check", {"action": "stop", "panel": 1})
+        show = _until(lambda: (s := api("GET", check)[1]["show"])["ended"] and s, 10)
+        assert (show["running"], show["panel"], show["ended"]) == (False, None, "stopped"), show
+    assert 'video_range = "full"' in (rig.home / "config.toml").read_text(encoding="utf-8")
+    assert "panicked" not in "".join(said)
+
+
+@draws
+def test_the_range_s_answer_for_a_panel_beside_the_first_is_its_own(rig: Rig) -> None:
+    """The range's A/B on the second panel (the simulated 9.2" in [[panels]], the first a
+    virtual one without video): the test picture goes to that panel only, and the answer is
+    written as the page writes it, video_range in that panel's own table; [device] keeps
+    "auto", and the panel's video is made again in the range chosen."""
+    rig.config('theme = "slate"\n[device]\ndriver = "virtual"\noutput = ""\n'
+               '[video]\nfps = 25\ndevice_fps = 30\n'
+               '[[panels]]\ntheme = "lumen"\ndriver = "turzx"\nmodel = "turing-9.2-usb"\n'
+               'video = { mode = "on", local_clip = "usr/data/clip.h264" }\n')  # fmt: skip
+    with _background(rig) as (api, said):
+        check = "/api/colour-check?panel=2"
+        state = _until(lambda: (told := api("GET", check)[1])["video"] and told)
+        assert state, said
+        assert (state["panel"], state["ab"], state["in_use"]["running"]) == (2, "x264", True)
+        first = api("GET", "/api/colour-check?panel=1")[1]
+        assert (first["panel"], first["video"], first["ab"]) == (1, False, "video")
+        status, told = api("POST", "/api/colour-check", {"action": "range", "panel": 2})
+        assert status == "HTTP/1.0 200 OK", told
+        show = told["show"]
+        assert (show["panel"], show["of"], show["kind"], show["letter"], show["value"]) == (
+            2, 2, "range", "A", "limited")  # fmt: skip
+        assert _until(lambda: api("GET", check)[1]["show"]["letter"] == "B", 10)
+        assert _until(lambda: any("panel 2: video: encoding with the engine, profile high, "
+                                  "limited range" in line for line in said), 20), said  # fmt: skip
+        # *A looks right*: the page's change, its [[panels]] table with the panel's answer
+        panels = api("GET", "/api/settings")[1]["config"]["panels"]
+        panels[0]["video_range"] = "limited"
+        status, _ = api("POST", "/api/settings", {"set": {"panels": panels}})
+        assert status == "HTTP/1.0 200 OK"
+        api("POST", "/api/colour-check", {"action": "stop", "panel": 2})
+        show = _until(lambda: (s := api("GET", check)[1]["show"])["ended"] and s, 10)
+        assert (show["running"], show["ended"]) == (False, "stopped"), show
+        state = _until(lambda: (told := api("GET", check)[1])["video"]
+                       and told["choice"]["range"] == "limited" and told, 30)  # fmt: skip
+        assert state and state["choice"]["full"] is False, state
+        assert api("GET", "/api/colour-check?panel=1")[1]["choice"]["range"] == "auto"
+    written = (rig.home / "config.toml").read_text(encoding="utf-8")
+    device, panel = written.split("[[panels]]")
+    assert "video_range" not in device and 'video_range = "limited"' in panel, written
+    assert "panicked" not in "".join(said)
+
+
 @draws
 def test_the_bit_rate_auto_goes_on_where_the_last_run_got_to_and_follows_the_panel(
     rig: Rig,
