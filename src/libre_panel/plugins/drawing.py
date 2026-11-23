@@ -1,7 +1,7 @@
 """What the plugin host draws the plugins' widget types and screens with for the Rust app
 (plugin_host.py), and what their RenderContext reads: the theme as the app tells it (its
 size, palette, font, model, folder and screen), its fonts and colours, the frame's timing and
-the frame shown, as Python's renderer (render/renderer.py) gave them, without that renderer.
+the frame shown, as the Python app's renderer gave them, without that renderer.
 A widget type's piece goes as it drew it: the widget's effects (its opacity, shadow and glow)
 are the app's, as on its own widgets (lp-render's Renderer::effects, _effects' twin)."""
 
@@ -48,7 +48,7 @@ class PluginTheme:
 
 def theme_file(root: Path, rel: str) -> Path:
     """The theme's file ``rel`` (a font of its own), refused outside its folder as
-    theme/model.py's resolve_asset refuses it."""
+    rust/theme/src/model.rs's resolve_asset refuses it."""
     if not rel or not isinstance(rel, str):
         raise ValueError("empty asset path")
     if Path(rel).is_absolute() or PureWindowsPath(rel).drive or rel.startswith(("/", "\\")):

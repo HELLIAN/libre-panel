@@ -1,7 +1,7 @@
 """The kinds of module a theme can have, and the cards of its card slots: their names, the
 order and the change a slot shows them in, and how a line names one (a slot's ``items``,
-config.toml's ``cards``: ``forecast for 5m``). Kept apart from theme/modules.py, which builds
-the modules, for what reads config.toml without building any (the plugin host)."""
+config.toml's ``cards``: ``forecast for 5m``), for what reads config.toml without building
+any module (the plugin host); the Rust app builds them (rust/theme/src/modules)."""
 
 from __future__ import annotations
 

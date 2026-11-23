@@ -1,5 +1,5 @@
 """The colour a cover carries: what a card's frame takes on while a track plays; and its
-colours, the light of a light field in a cover's colours takes (render/field.py's TINTED).
+colours, the light of a light field in a cover's colours takes (rust/render/src/field.rs's TINTED).
 
 Not the average (every cover averages to a brownish grey): the picture is reduced to a few
 colours and the one that joins how much of it there is with how colourful it is wins, so a

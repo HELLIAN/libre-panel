@@ -720,12 +720,12 @@ MODELS: tuple[PanelModel, ...] = (
         "usb-udisp",
         shape="round",
         usb_ids=((0x303A, 0x2986), (0x303A, 0x2987)),
-        # (its product string says 480x480: devices/udisp.py takes the model by that)
+        # (its product string says 480x480: rust/devices/src/udisp.rs takes the model by that)
         notes="Waveshare's round USB Monitor with the card image that makes it a USB display",
     ),
 )
 
-# Families with a driver (devices/turzx.py lists them); the rest is planned.
+# Families with a driver (the Rust app's, rust/devices); the rest is planned.
 _DRIVER_STATUS = {
     protocol: "unverified"
     for protocol in (

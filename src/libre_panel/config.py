@@ -30,9 +30,9 @@ ACCENT_HEX = re.compile(r"#[0-9a-fA-F]{6}")  # ... or one of the person's ("#E04
 
 CONFIG_FILENAME = "config.toml"
 # The theme of every panel but the bars, and what ``Config.theme`` is where nothing better is
-# known (libre_panel.theme.defaults has the panel's own default).
+# known (rust/theme/src/defaults.rs has the panel's own default).
 DEFAULT_THEME = "libre-default"
-# The looks of the weather symbols and the moon (render/symbols.py, render/moon.py): the first,
+# The looks of the weather symbols and the moon (rust/render's symbols.rs and moon.rs): the first,
 # and the second with more to them
 SYMBOL_PACKS = ("classic", "vivid")
 # How much moves on the panel (app.calm): calm where the panel is slow, full, or calm everywhere
@@ -376,11 +376,11 @@ ENCODERS = ("auto", "libx264", "native", "h264_nvenc", "h264_amf", "h264_qsv")
 # on the processor; "card" the graphics card's whichever it is, through Windows' Media
 # Foundation (engine/src/mf.rs), x264 where that cannot start. The cards' are Windows' only.
 ENGINE_ENCODERS = ("auto", "x264", "card")
-# Who turns the frames into YUV (video.pixels): "auto" the graphics card where the colour check
-# found it converting as the processor does on this PC (card_choice.py), else ffmpeg on the
-# processor, the frames four bytes a pixel as Pillow keeps them (rgb0); "card" the card (h264's
-# CARD_ENCODERS; the others as the processor); "rgb" the processor, fed three bytes a pixel
-# (rgb24), the way of before. Inside, the processor's way of "auto" is "processor".
+# Who turned the frames into YUV in the Python app (video.pixels): "auto" the graphics card
+# where the colour check found it converting as the processor does on this PC, else ffmpeg on
+# the processor, the frames four bytes a pixel (rgb0); "card" the card; "rgb" the processor, fed
+# three bytes a pixel (rgb24). The Rust app's engine converts every video's colours itself
+# (rust/app/src/colours.rs), and keeps the key as it is set.
 PIXELS = ("auto", "rgb", "card")
 
 
@@ -417,20 +417,15 @@ class VideoConfig:
     profile: str = "auto"  # "auto" | "baseline" | "main" | "high"
     # "auto" | "native" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv"
     encoder: str = "auto"
-    # How the frames reach ffmpeg and who converts their colours: "auto" four bytes a pixel as
-    # they are drawn (rgb0), converted on the graphics card where a colour check found the card
-    # converting as the processor does (devices/card_choice.py), else by ffmpeg on the processor
-    # (BT.601); "rgb" the processor always, the way of before (rgb24); "card" the card always
-    # (AMD's, NVIDIA's and Intel's encoders; the colour check measured AMD's shifting the
-    # colours when left to itself)
+    # How the frames reached ffmpeg in the Python app and who converted their colours (PIXELS);
+    # the Rust app's engine converts them itself
     pixels: str = "auto"  # "auto" | "rgb" | "card"
     # Where the engine encodes ("auto" with the download's engine, or "native"): it has the
-    # panel and sends it the pictures, each on its time (devices/engine.py), with nothing of
-    # Python's between a frame and the panel; false: Libre Panel sends them as for the other
-    # encoders (the engine only encodes)
+    # panel and sends it the pictures, each on its time (rust/devices/src/engine.rs); false:
+    # Libre Panel sends them as for the other encoders (the engine only encodes)
     engine_sends: bool = True
     # With the engine sending (engine_sends): it also composes the frames from the layers Libre
-    # Panel draws, each sent to it once (render/scene.py: stage 2), where nothing else is drawn
+    # Panel draws, each sent to it once (rust/render/src/scene.rs), where nothing else is drawn
     # over the frame (a transition, the alarm's edge; a message in the built-in card or a look
     # of the volume is one more layer); false: Libre Panel composes every frame
     engine_layers: bool = True
@@ -527,7 +522,7 @@ class HardwareConfig:
     memory_name: str = ""
     # the fans' own names, by the key of the sensor that measures each ([[hardware.fans]])
     fans: dict[str, str] = field(default_factory=dict)
-    # how the fans turn on the panel (render/fan_looks.py): a look and colours for all ("":
+    # how the fans turn on the panel (rust/render/src/fan_looks.rs): a look and colours for all ("":
     # the default), and for some fans by their sensor ([[hardware.fans]] look, paint)
     fan_look: str = ""
     fan_paint: str = ""
@@ -567,8 +562,9 @@ class ModeConfig:
     minutes: float | None = None
 
 
-# Where a switch of the screen comes from ([transitions], app.py works it out): a game, music, the
-# PC at rest, the screens in turn, the autopilot, the round report, or a theme or scene chosen
+# Where a switch of the screen comes from ([transitions], rust/app/src/switch.rs works it
+# out): a game, music, the PC at rest, the screens in turn, the autopilot, the round report, or
+# a theme or scene chosen
 TRANSITION_OCCASIONS = ("game", "media", "idle", "sequence", "autopilot", "report", "manual")
 # each occasion's own at first; "" is what the service asks for (the game's entrance with its
 # logo, the autopilot's and the round report's tube), else the default
@@ -592,7 +588,7 @@ class TransitionsConfig:
     """How the panel goes from one screen to the next ([transitions]): the default, how fast,
     each occasion's own (TRANSITION_OCCASIONS; "" the default), what "random" picks from, and
     whether a slide, the wipe and the line of light go over all the panels as one where they
-    all change at once (``canvas``: render/canvas.py)."""
+    all change at once (``canvas``: rust/render/src/canvas.rs)."""
 
     default: str = "fade"
     speed: str = "normal"
@@ -601,7 +597,7 @@ class TransitionsConfig:
     random: list[str] = field(default_factory=lambda: list(RANDOM_TRANSITIONS))
 
 
-# The light that moves over a panel that moves ([shine], render/shine.py), each kind of it
+# The light that moves over a panel that moves ([shine], rust/render/src/shine.rs), each kind of it
 SHINE_KINDS = ("rings", "graphs", "music", "downloads", "sun")
 
 
@@ -703,7 +699,7 @@ class Config:
     transitions: TransitionsConfig = field(default_factory=TransitionsConfig)
     shine: ShineConfig = field(default_factory=ShineConfig)  # [shine]: the light that moves
     check_updates: bool | None = None  # a look for a newer version once a day; None: not asked
-    allow_notify: bool = False  # other programs may show a notice (notify.py)
+    allow_notify: bool = False  # other programs may show a notice (rust/app/src/notify.rs)
     tray_icon: bool = False  # its icon in the notification area (the tray), with its menu
     device: DeviceConfig = field(default_factory=DeviceConfig)
     sensors: SensorsConfig = field(default_factory=SensorsConfig)
@@ -741,8 +737,8 @@ class Config:
     # scrolling on (Settings → Panel → Graphs): a video panel then gets fewer frames (a graph
     # with its own fine course, Arena's frame rate, scrolls on)
     graph_steps: bool = False
-    # one picture across all panels that are placed (arrangement.py): a file in the settings
-    # folder (or a path of its own); "" none
+    # one picture across all panels that are placed (rust/app/src/arrangement.rs): a file in
+    # the settings folder (or a path of its own); "" none
     across: str = ""
     # the person's choice of the themes' switches (Theme.switches; Look shows them): for every
     # theme ([switches] frames = false, kept under "*") and by theme, all its versions
@@ -873,7 +869,7 @@ def hardware_name(value: Any, name: str) -> str:
     return text
 
 
-# The looks of a fan's rotor (render/fan_looks.py has them) and the colours it may take
+# The looks of a fan's rotor (rust/render/src/fan_looks.rs has them) and the colours it may take
 FAN_LOOKS = ("noctua-g2", "noctua-a12x25", "noctua-a14", "libre")
 FAN_PAINTS = ("theme", "own")
 

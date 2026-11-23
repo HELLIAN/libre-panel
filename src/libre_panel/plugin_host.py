@@ -271,7 +271,7 @@ class Host:
         return {"parts": parts, "errors": list(self.registry.errors)}
 
     def catalog(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
-        """What Settings lists of the plugins (editor/settings.py's _catalog): each service with
+        """What Settings lists of the plugins (rust/app/src/settings.rs shows it): each service with
         where it came from, why it does not load and the options it declares; each sensor
         source with where it came from."""
         from libre_panel.plugins.host import declared_options
@@ -408,7 +408,7 @@ class Host:
         return {"parts": parts}
 
     def specs(self, message: dict[str, Any], blob: bytes) -> dict[str, Any]:
-        """What the editor shows of the plugins' parts (drawings.py's plugin_specs, without
+        """What the editor shows of the plugins' parts (rust/app/src/drawings.rs shows them, without
         Libre Panel's own toast styles, which the Rust app tells itself): their widget types
         with their fields and names, the building blocks they bring, their screens and toast
         styles, named in the app's language."""

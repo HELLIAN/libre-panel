@@ -61,9 +61,9 @@ BUILT_IN_PARTS: dict[str, tuple[str, ...]] = {
 }  # fmt: skip
 
 
-# The kinds of field a plugin's widget type, screen or toast style declares (theme/model.py's,
-# whose editor forms show them): these, each with "?" for one that may be empty, and
-# "enum:a|b|c".
+# The kinds of field a plugin's widget type, screen or toast style declares (those of
+# rust/theme/src/model.rs, whose editor forms show them): these, each with "?" for one that may
+# be empty, and "enum:a|b|c".
 FIELD_KINDS = frozenset({
     "int", "number", "bool", "color", "icon", "rules",
     "string", "text", "sensor", "format", "font", "asset",

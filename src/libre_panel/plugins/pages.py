@@ -5,7 +5,7 @@ The page's files (``index.html``, scripts, styles) are served from
 ``/static/editor.css`` and import ``/static/kit.js`` to look and work like
 the editor. The editor listens on 127.0.0.1 only, and a request to a page's API (GET as much as
 POST) needs the secret token of the run in the ``X-Libre-Panel`` header, as everywhere in the
-editor (``editor/access.py``): ``kit.js`` sends it.
+editor (``rust/app/src/access.rs``): ``kit.js`` sends it.
 """
 
 from __future__ import annotations
@@ -101,7 +101,8 @@ class PageContext:
         """True when Libre Panel runs with administrator rights (root on Linux). A request
         cannot be told from the person's, and what it asks for is done with those rights: a page
         then leaves what names a program, a library or a file to config.toml, as the app's own
-        settings do (``editor/settings.py``), and does not start or write what a request names."""
+        settings do (``rust/app/src/settings.rs``), and does not start or write what a request
+        names."""
         from libre_panel import rights
 
         return rights.elevated()
