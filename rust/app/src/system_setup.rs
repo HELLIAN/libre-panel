@@ -1604,6 +1604,534 @@ pub mod win {
 mod tests {
     use super::*;
 
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    /// Windows as the tests make it up: the service sc.exe keeps, the codes its commands end
+    /// with, PawnIO, the group and who is signed in; every command it is given.
+    #[derive(Default)]
+    struct Fake {
+        root: PathBuf,
+        service: RefCell<Option<ServiceInfo>>,
+        runs: RefCell<Vec<Vec<String>>>,
+        /// the code a command ends with ("start", "PawnIO_setup.exe" ...), where not 0
+        codes: HashMap<&'static str, i64>,
+        /// the state a started service is in
+        started: &'static str,
+        pawnio: RefCell<Option<String>>,
+        members: RefCell<Vec<String>>,
+        added: RefCell<Vec<String>>,
+        session: Option<String>,
+        _gone: Gone,
+    }
+
+    impl Fake {
+        fn new(name: &str) -> Fake {
+            let root = std::env::temp_dir().join(format!("lp-setup-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            Fake {
+                root: root.clone(),
+                _gone: Gone(root),
+                started: "running",
+                ..Fake::default()
+            }
+        }
+
+        fn running(self, pid: u32) -> Fake {
+            *self.service.borrow_mut() = Some(ServiceInfo {
+                state: "running".into(),
+                pid,
+                program: String::new(),
+            });
+            self
+        }
+
+        fn target(&self) -> PathBuf {
+            self.root.join("Libre Panel").join(FOLDER)
+        }
+
+        /// The verbs of the commands run, as "sc create", "icacls", "PawnIO_setup.exe -install"
+        fn verbs(&self) -> Vec<String> {
+            self.runs
+                .borrow()
+                .iter()
+                .map(|args| {
+                    let program = Path::new(&args[0]).file_name().unwrap().to_string_lossy();
+                    match program.as_ref() {
+                        "sc.exe" => format!("sc {}", args[1]),
+                        "icacls.exe" => "icacls".into(),
+                        other => format!("{other} {}", args[1..].join(" ")),
+                    }
+                })
+                .collect()
+        }
+
+        fn code(&self, what: &str) -> i64 {
+            self.codes.get(what).copied().unwrap_or(0)
+        }
+    }
+
+    /// The test's folder, gone with it.
+    #[derive(Default)]
+    struct Gone(PathBuf);
+
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    impl System for Fake {
+        fn program_files(&self) -> Result<PathBuf, SetupError> {
+            Ok(self.root.clone())
+        }
+        fn tool(&self, name: &str) -> String {
+            name.to_string()
+        }
+        fn service(&self) -> Option<ServiceInfo> {
+            self.service.borrow().clone()
+        }
+        fn run(&self, args: &[String], _timeout: f64) -> i64 {
+            self.runs.borrow_mut().push(args.to_vec());
+            let mut service = self.service.borrow_mut();
+            if args[0].ends_with(PAWNIO_SETUP) {
+                let code = self.code(PAWNIO_SETUP);
+                if code == 0 || code == RESTART_NEEDED {
+                    *self.pawnio.borrow_mut() = Some("2.2.0".into());
+                }
+                return code;
+            }
+            if args[0] != "sc.exe" {
+                return 0; // (icacls)
+            }
+            let verb = args[1].as_str();
+            if self.code(verb) != 0 {
+                return self.code(verb);
+            }
+            match verb {
+                "create" if service.is_some() => SC_EXISTS,
+                "create" | "config" => {
+                    let program = args[4].clone();
+                    let state = service
+                        .as_ref()
+                        .map_or("stopped".into(), |s| s.state.clone());
+                    let pid = service.as_ref().map_or(0, |s| s.pid);
+                    *service = Some(ServiceInfo {
+                        state,
+                        pid,
+                        program,
+                    });
+                    0
+                }
+                "start" => match service.as_mut() {
+                    Some(info) if info.state == "running" => SC_RUNNING,
+                    Some(info) => {
+                        info.state = self.started.into();
+                        info.pid = 4242;
+                        0
+                    }
+                    None => SC_MISSING,
+                },
+                "stop" => match service.as_mut() {
+                    Some(info) if info.state == "stopped" => SC_NOT_STARTED,
+                    Some(info) => {
+                        info.state = "stopped".into();
+                        0
+                    }
+                    None => SC_MISSING,
+                },
+                "delete" => {
+                    *service = None;
+                    0
+                }
+                _ => 0,
+            }
+        }
+        fn pawnio_version(&self) -> Option<String> {
+            self.pawnio.borrow().clone()
+        }
+        fn group_add(&self, _group: &str, member: &str) -> Result<bool, SetupError> {
+            let mut members = self.members.borrow_mut();
+            if members.iter().any(|m| m == member) {
+                return Ok(false);
+            }
+            members.push(member.to_string());
+            Ok(true)
+        }
+        fn group_remove(&self, _group: &str, member: &str) -> Result<bool, SetupError> {
+            let mut members = self.members.borrow_mut();
+            let before = members.len();
+            members.retain(|m| m != member);
+            Ok(members.len() != before)
+        }
+        fn group_members(&self, _group: &str) -> Result<Vec<String>, SetupError> {
+            Ok(self.members.borrow().clone())
+        }
+        fn session_user(&self) -> Option<String> {
+            self.session.clone()
+        }
+        fn added(&self) -> Vec<String> {
+            self.added.borrow().clone()
+        }
+        fn set_added(&self, sids: &[String]) -> Result<(), SetupError> {
+            *self.added.borrow_mut() = sids.to_vec();
+            Ok(())
+        }
+        fn alive(&self, _pid: u32) -> bool {
+            false
+        }
+        fn sleep(&self, _seconds: f64) {}
+    }
+
+    /// The service's files as a download carries them.
+    fn download(fake: &Fake) -> PathBuf {
+        let source = fake.root.join("download").join(FOLDER);
+        std::fs::create_dir_all(source.join("lhm")).unwrap();
+        std::fs::write(source.join(SERVICE_EXE), b"MZ").unwrap();
+        std::fs::write(
+            source.join("lhm").join("LibreHardwareMonitorLib.dll"),
+            b"MZ",
+        )
+        .unwrap();
+        source
+    }
+
+    fn service_only(source: Option<&Path>) -> Asked<'_> {
+        Asked {
+            service: true,
+            source,
+            ..Asked::default()
+        }
+    }
+
+    #[test]
+    fn the_service_is_copied_where_only_administrators_write_registered_and_started() {
+        let fake = Fake::new("copied");
+        let source = download(&fake);
+        let out = apply(&fake, &service_only(Some(&source)));
+        let target = fake.target();
+        assert!(!out.failed, "{:?}", out.lines);
+        assert!(target
+            .join("lhm")
+            .join("LibreHardwareMonitorLib.dll")
+            .is_file());
+        let copied = format!("copied the sensor service to {}", target.display());
+        assert_eq!(
+            out.lines,
+            [
+                copied.as_str(),
+                "registered the sensor service",
+                "the sensor service runs"
+            ]
+        );
+        assert_eq!(
+            fake.verbs(),
+            [
+                "icacls",
+                "sc create",
+                "sc description",
+                "sc failure",
+                "sc failureflag",
+                "sc sdset",
+                "sc start"
+            ]
+        ); // fmt: skip
+        let runs = fake.runs.borrow();
+        // (the path quoted inside the value: no part of it is ever read as a program)
+        let program = format!("\"{}\"", target.join(SERVICE_EXE).display());
+        assert_eq!(runs[1][3..5], ["binPath=".to_string(), program]);
+        assert_eq!(
+            runs[1][5..9],
+            strings(&["start=", "delayed-auto", "obj=", "LocalSystem"])
+        );
+        assert!(runs[0].contains(&"/inheritance:r".to_string()));
+        assert!(runs[0].iter().any(|arg| arg == "*S-1-5-32-545:(OI)(CI)RX"));
+        assert_eq!(
+            runs[3][3..],
+            strings(&["reset=", "86400", "actions=", RESTARTS])
+        );
+        assert_eq!(runs[5][3], SERVICE_SDDL);
+    }
+
+    #[test]
+    fn set_up_again_it_is_brought_up_to_date_and_from_its_own_place_nothing_is_copied() {
+        let fake = Fake::new("again").running(77);
+        let source = download(&fake);
+        let out = apply(&fake, &service_only(Some(&source)));
+        assert!(!out.failed, "{:?}", out.lines);
+        // (stopped and its process gone before its files are replaced)
+        assert_eq!(fake.verbs()[..3], ["sc stop", "icacls", "sc config"]);
+        assert_eq!(out.lines[0], "stopped the sensor service");
+        assert!(out
+            .lines
+            .contains(&"updated the sensor service".to_string()));
+        // where the setup put it under Program Files: nothing is copied
+        fake.runs.borrow_mut().clear();
+        let target = fake.target();
+        let out = apply(&fake, &service_only(Some(&target)));
+        assert!(!out.failed && !out.lines.iter().any(|line| line.starts_with("copied")));
+        assert_eq!(fake.verbs()[0], "icacls");
+        // a pip install has no service to set up
+        let bare = Fake::new("bare");
+        let out = apply(&bare, &service_only(None));
+        assert!(
+            out.failed && out.lines[0].contains("is not part of this program"),
+            "{:?}",
+            out.lines
+        );
+    }
+
+    #[test]
+    fn a_service_that_does_not_start_or_stays_starting_is_said() {
+        let mut fake = Fake::new("start");
+        fake.codes.insert("start", 1053);
+        let source = download(&fake);
+        let out = apply(&fake, &service_only(Some(&source)));
+        let said = "error: the sensor service: the sensor service did not start (sc.exe: 1053)";
+        assert!(
+            out.failed && out.lines.last().map(String::as_str) == Some(said),
+            "{:?}",
+            out.lines
+        );
+        let mut fake = Fake::new("pending");
+        fake.started = "start_pending";
+        let source = download(&fake);
+        let out = apply(&fake, &service_only(Some(&source)));
+        let log = fake.target().join("logs");
+        let said = format!(
+            "error: the sensor service: the sensor service did not start in time; \
+                            its log: {}",
+            log.display()
+        ); // fmt: skip
+        assert_eq!(out.lines.last(), Some(&said));
+    }
+
+    #[test]
+    fn removing_it_stops_and_deletes_it_and_its_files_but_not_the_setups() {
+        let fake = Fake::new("remove").running(5);
+        let source = download(&fake);
+        copy_tree(&source, &fake.target()).unwrap();
+        let out = apply(
+            &fake,
+            &Asked {
+                service: true,
+                remove: true,
+                ..Asked::default()
+            },
+        );
+        assert!(!out.failed, "{:?}", out.lines);
+        assert_eq!(fake.verbs(), ["sc stop", "sc delete"]);
+        assert!(fake.service().is_none() && !fake.target().exists());
+        let removed = format!("removed {}", fake.target().display());
+        assert_eq!(
+            out.lines,
+            [
+                "stopped the sensor service",
+                "removed the sensor service",
+                &removed
+            ]
+        );
+        // the files of the setup are left to its uninstaller
+        let fake = Fake::new("owned");
+        copy_tree(&source, &fake.target()).unwrap();
+        std::fs::write(fake.target().parent().unwrap().join("unins000.exe"), b"").unwrap();
+        let out = apply(
+            &fake,
+            &Asked {
+                service: true,
+                remove: true,
+                ..Asked::default()
+            },
+        );
+        assert!(!out.failed && out.lines.is_empty() && fake.target().exists());
+    }
+
+    #[test]
+    fn pawnio_is_installed_silently_and_a_version_2_is_left_as_it_is() {
+        let installer = Path::new("C:/download/tools").join(PAWNIO_SETUP);
+        let asked = Asked {
+            pawnio: true,
+            installer: Some(&installer),
+            ..Asked::default()
+        };
+        let fake = Fake::new("pawnio");
+        let out = apply(&fake, &asked);
+        assert_eq!(
+            (out.lines.as_slice(), out.pawnio_installed),
+            (&["installed PawnIO".to_string()][..], true)
+        );
+        assert_eq!(fake.verbs(), ["PawnIO_setup.exe -install -silent"]);
+        for (version, runs) in [("2.0.1", 0), ("", 0), ("1.5", 1)] {
+            let fake = Fake::new("versions");
+            *fake.pawnio.borrow_mut() = Some(version.into());
+            let out = apply(&fake, &asked);
+            assert_eq!(fake.runs.borrow().len(), runs, "{version}: {:?}", out.lines);
+        }
+        let mut restart = Fake::new("restart");
+        restart.codes.insert(PAWNIO_SETUP, RESTART_NEEDED);
+        let out = apply(&restart, &asked);
+        assert_eq!(
+            out.lines,
+            ["installed PawnIO: Windows needs a restart to finish"]
+        );
+        assert!(!out.failed);
+        let mut failing = Fake::new("failing");
+        failing.codes.insert(PAWNIO_SETUP, 1);
+        let out = apply(&failing, &asked);
+        assert_eq!(
+            out.lines,
+            ["error: PawnIO: PawnIO's installer ended with 1"]
+        );
+        let out = apply(
+            &Fake::new("none"),
+            &Asked {
+                pawnio: true,
+                ..Asked::default()
+            },
+        );
+        assert!(out.failed && out.lines[0].ends_with("install PawnIO from https://pawnio.eu"));
+        // removing never takes PawnIO away
+        let fake = Fake::new("stays");
+        let out = apply(
+            &fake,
+            &Asked {
+                pawnio: true,
+                remove: true,
+                ..Asked::default()
+            },
+        );
+        assert!(fake.runs.borrow().is_empty() && out.lines[0].starts_with("PawnIO stays"));
+    }
+
+    #[test]
+    fn pawnio_comes_first_and_a_running_service_starts_again_to_see_it() {
+        let fake = Fake::new("first").running(9);
+        let source = download(&fake);
+        copy_tree(&source, &fake.target()).unwrap();
+        let installer = Path::new("C:/tools").join(PAWNIO_SETUP);
+        let target = fake.target();
+        let asked = Asked {
+            pawnio: true,
+            service: true,
+            source: Some(&target),
+            installer: Some(&installer),
+            ..Asked::default()
+        }; // fmt: skip
+        let out = apply(&fake, &asked);
+        assert!(!out.failed, "{:?}", out.lines);
+        assert_eq!(
+            fake.verbs(),
+            [
+                "PawnIO_setup.exe -install -silent",
+                "icacls",
+                "sc config",
+                "sc description",
+                "sc failure",
+                "sc failureflag",
+                "sc sdset",
+                "sc stop",
+                "sc start"
+            ]
+        ); // fmt: skip
+    }
+
+    #[test]
+    fn the_person_signed_in_joins_performance_log_users_once_and_only_that_is_taken_back() {
+        let mut fake = Fake::new("group");
+        fake.session = Some("S-1-5-21-1".into());
+        fake.members.borrow_mut().push("S-1-5-21-9".into()); // (in it before)
+        let join = Asked {
+            perf_log_users: true,
+            ..Asked::default()
+        };
+        let out = apply(&fake, &join);
+        assert_eq!(
+            out.lines,
+            ["joined Performance Log Users: game frame rates count from the next sign-in"]
+        );
+        assert_eq!(fake.added(), ["S-1-5-21-1"]);
+        assert_eq!(
+            apply(&fake, &join).lines,
+            ["already in Performance Log Users"]
+        );
+        let named = Asked {
+            perf_log_users: true,
+            user: Some("S-1-5-21-2"),
+            ..Asked::default()
+        };
+        assert!(!apply(&fake, &named).failed);
+        assert_eq!(fake.added(), ["S-1-5-21-1", "S-1-5-21-2"]);
+        let leave = Asked {
+            perf_log_users: true,
+            remove: true,
+            ..Asked::default()
+        };
+        let out = apply(&fake, &leave);
+        assert_eq!(
+            out.lines,
+            ["left Performance Log Users", "left Performance Log Users"]
+        );
+        assert_eq!(*fake.members.borrow(), ["S-1-5-21-9"]); // (whoever was in it before stays)
+        assert!(fake.added().is_empty());
+        let out = apply(&Fake::new("nobody"), &join);
+        let said = "error: Performance Log Users: could not tell who is signed in: give --user-sid";
+        assert_eq!(out.lines, [said]);
+    }
+
+    #[test]
+    fn a_step_that_fails_does_not_keep_the_others_from_running() {
+        let mut fake = Fake::new("steps");
+        fake.session = Some("S-1-5-21-1".into());
+        let asked = Asked {
+            pawnio: true,
+            perf_log_users: true,
+            ..Asked::default()
+        };
+        let out = apply(&fake, &asked);
+        assert!(out.failed);
+        assert!(
+            out.lines[0].starts_with("error: PawnIO:"),
+            "{:?}",
+            out.lines
+        );
+        assert!(out.lines[1].starts_with("joined Performance Log Users"));
+    }
+
+    #[test]
+    fn the_command_wants_an_administrator_and_to_be_told_what_and_takes_only_a_sid() {
+        let fake = Fake::new("command");
+        let mut options = Options {
+            service: true,
+            ..Options::default()
+        };
+        assert_eq!(run_command(&mut options, &fake, false), EXIT_NOT_ADMIN);
+        assert_eq!(
+            run_command(&mut Options::default(), &fake, true),
+            EXIT_FAILED
+        );
+        let mut options = Options {
+            perf_log_users: true,
+            user_sid: Some("me".into()),
+            ..Options::default()
+        }; // fmt: skip
+        assert_eq!(run_command(&mut options, &fake, true), EXIT_FAILED);
+        assert!(fake.runs.borrow().is_empty());
+        // --remove alone: the service
+        let mut options = Options {
+            remove: true,
+            ..Options::default()
+        };
+        assert_eq!(run_command(&mut options, &fake.running(3), true), 0);
+        // the status needs no rights
+        let fake = Fake::new("status");
+        let mut options = Options {
+            status: true,
+            ..Options::default()
+        };
+        assert_eq!(run_command(&mut options, &fake, false), 0);
+    }
+
     fn digest(data: &[u8]) -> String {
         Sha256::digest(data)
             .iter()
