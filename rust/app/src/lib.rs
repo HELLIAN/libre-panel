@@ -610,6 +610,13 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
         "devices" => devices_command(),
         "start-screen" => std::process::exit(start_screen_command(args)?),
         "udev-rules" => print!("{}", linux_setup::udev_rules_text()),
+        "share" => {
+            let home = Home::find()?;
+            let env = lp_theme::Env {
+                fonts_dir: home.fonts(),
+            };
+            std::process::exit(share::command(args, &home.places(), &env));
+        }
         "location" => std::process::exit(location_command(args)?),
         // (the app's own: its capture program on Wayland, wayland.rs)
         "wayland-feed" => std::process::exit(wayland_feed::run(args)),

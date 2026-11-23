@@ -2,6 +2,8 @@
 # puts the theme among the community themes (community/themes). What comes from the issue is
 # looked into only in the first job, which may write nothing; the second takes what it left,
 # checks it again as data and opens the pull request. A person looks at it before it is merged.
+# Libre Panel itself (rust/) checks and draws: built from main first, in a job of its own
+# that sees nothing of the issue, and given to the other two with main's themes and fonts.
 # Needs Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
 #
 # Every such pull request adds its entry at the end of the list (community/themes/index.json), so
@@ -53,11 +55,45 @@ jobs:
               fi
             done
 
-  check:
+  program:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issues' && github.event.issue.state == 'open' &&
       (contains(github.event.issue.labels.*.name, 'community theme') || startsWith(github.event.issue.title, 'Theme:')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.main.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+      - id: main
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+          key: cargo-registry-${{ hashFiles('rust/Cargo.lock') }}
+      # (libdbus, which the program speaks to Wayland's screen cast through; it builds against it)
+      - name: Build Libre Panel
+        working-directory: rust
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libdbus-1-dev pkg-config
+          cargo build --release --locked -p libre-panel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: program
+          path: rust/target/release/libre-panel
+          retention-days: 1
+
+  check:
+    needs: program
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -66,12 +102,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ needs.program.outputs.commit }}
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install .
+      - uses: actions/download-artifact@v4
+        with:
+          name: program
+          path: ${{ runner.temp }}/program
+      - name: Libre Panel with main's themes and fonts
+        run: |
+          chmod +x "$RUNNER_TEMP/program/libre-panel"
+          echo "LIBRE_PANEL_PROGRAM=$RUNNER_TEMP/program/libre-panel" >> "$GITHUB_ENV"
+          echo "LIBRE_PANEL_DATA=$GITHUB_WORKSPACE/data" >> "$GITHUB_ENV"
       - name: The issue's text and who opened it
         env:
           GH_TOKEN: ${{ github.token }}
@@ -102,7 +146,7 @@ jobs:
           retention-days: 3
 
   add:
-    needs: check
+    needs: [program, check]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -116,7 +160,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install .
+      # (the program of the job that saw nothing of the issue; what `check` left is data)
+      - uses: actions/download-artifact@v4
+        with:
+          name: program
+          path: ${{ runner.temp }}/program
+      - name: Libre Panel with main's themes and fonts
+        run: |
+          chmod +x "$RUNNER_TEMP/program/libre-panel"
+          echo "LIBRE_PANEL_PROGRAM=$RUNNER_TEMP/program/libre-panel" >> "$GITHUB_ENV"
+          echo "LIBRE_PANEL_DATA=$GITHUB_WORKSPACE/data" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
           name: checked

@@ -867,6 +867,148 @@ pub fn rewritten(
     Ok(zip.finish())
 }
 
+/// command: `libre-panel share`, what a shared theme is as Libre Panel checks it, for the
+/// tools that look at one from outside the app (tools/community_theme.py):
+/// `inspect ZIP` (its name, maker, licence and size, as JSON), `retitle ZIP OUT [--name N]
+/// [--author A] [--description D]`, `import ZIP FOLDER` (put in FOLDER: its id), `entry FILE`
+/// (how many entries of a community list the app reads) and `limits`. What is refused is said
+/// on the standard error, as the app says it, with exit code 1.
+pub fn command(args: &[String], places: &Places, env: &Env) -> i32 {
+    let refused = |why: Refused| {
+        let text = match why {
+            Refused::Share(text)
+            | Refused::Theme(text)
+            | Refused::Os(text)
+            | Refused::Failed(text) => text,
+        };
+        eprintln!("{text}");
+        1
+    };
+    let read = |path: &str| std::fs::read(path).map_err(|e| Refused::Os(format!("{path}: {e}")));
+    let dumps = lp_py::json::Dumps {
+        ensure_ascii: false,
+        ..Default::default()
+    };
+    match args {
+        [what, zip] if what == "inspect" => {
+            let data = match read(zip) {
+                Ok(data) => data,
+                Err(why) => return refused(why),
+            };
+            let shown = (|| {
+                let place = Place::new().map_err(|e| Refused::Os(e.to_string()))?;
+                let done = import_theme(&data, &place.0, places, env, "", "")?;
+                let theme = lp_theme::model::load_theme(&place.0.join(&done.id), env)
+                    .map_err(|e| Refused::Theme(e.msg))?;
+                let mut told = lp_py::Dict::default();
+                told.insert("name".into(), Value::Str(theme.name));
+                told.insert(
+                    "size".into(),
+                    Value::List(vec![Value::int(theme.width), Value::int(theme.height)]),
+                );
+                told.insert("author".into(), Value::Str(theme.author));
+                told.insert("license".into(), Value::Str(theme.license));
+                Ok(Value::Dict(told))
+            })();
+            match shown {
+                Ok(told) => {
+                    println!("{}", lp_py::json::dumps(&told, &dumps));
+                    0
+                }
+                Err(why) => refused(why),
+            }
+        }
+        [what, zip, out, rest @ ..] if what == "retitle" => {
+            let mut given: Vec<(String, String)> = Vec::new();
+            let mut options = rest.iter();
+            while let Some(option) = options.next() {
+                let key = match option.as_str() {
+                    "--name" => "name",
+                    "--author" => "author",
+                    "--description" => "description",
+                    other => {
+                        eprintln!("unrecognized arguments: {other}");
+                        return 2;
+                    }
+                };
+                let Some(value) = options.next() else {
+                    eprintln!("argument {option}: expected one argument");
+                    return 2;
+                };
+                if !value.is_empty() {
+                    given.push((key.into(), value.clone()));
+                }
+            }
+            let data = match read(zip) {
+                Ok(data) => data,
+                Err(why) => return refused(why),
+            };
+            let written = rewritten(&data, |raw| {
+                let Value::Dict(mut raw) = raw else {
+                    return Err("theme.json is no object".into());
+                };
+                for (key, value) in given {
+                    raw.insert(key, Value::Str(value));
+                }
+                Ok(Value::Dict(raw))
+            });
+            match written.and_then(|bytes| {
+                std::fs::write(out, bytes).map_err(|e| Refused::Os(format!("{out}: {e}")))
+            }) {
+                Ok(()) => 0,
+                Err(why) => refused(why),
+            }
+        }
+        [what, zip, folder] if what == "import" => {
+            let data = match read(zip) {
+                Ok(data) => data,
+                Err(why) => return refused(why),
+            };
+            let folder = Path::new(folder);
+            if let Err(why) = std::fs::create_dir_all(folder) {
+                return refused(Refused::Os(why.to_string()));
+            }
+            match import_theme(&data, folder, places, env, "", "") {
+                Ok(done) => {
+                    println!("{}", done.id);
+                    0
+                }
+                Err(why) => refused(why),
+            }
+        }
+        [what, file] if what == "entry" => {
+            let data = match read(file) {
+                Ok(data) => data,
+                Err(why) => return refused(why),
+            };
+            match crate::community::readable(&data) {
+                Ok(count) => {
+                    println!("{count}");
+                    0
+                }
+                Err(why) => refused(Refused::Share(why)),
+            }
+        }
+        [what] if what == "limits" => {
+            let mut told = lp_py::Dict::default();
+            told.insert("max_zip".into(), Value::int(MAX_ZIP as i64));
+            for (name, most) in crate::community::LIMITS {
+                told.insert(name.into(), Value::int(most as i64));
+            }
+            told.insert("format".into(), Value::from(crate::community::FORMAT));
+            println!("{}", lp_py::json::dumps(&Value::Dict(told), &dumps));
+            0
+        }
+        _ => {
+            eprintln!(
+                "usage: libre-panel share inspect ZIP | retitle ZIP OUT [--name N] [--author A] \
+                 [--description D] | import ZIP FOLDER | entry FILE | limits"
+            );
+            2
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

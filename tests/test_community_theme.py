@@ -4,6 +4,7 @@ checked where nothing can be written, then added as data."""
 import hashlib
 import io
 import json
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -11,15 +12,29 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from libre_panel.editor.community import parse_index
-
 ROOT = Path(__file__).resolve().parent.parent
 URL = "https://github.com/user-attachments/files/12345/glow.zip"
 
 
+def listed(tool, index: bytes) -> list[dict]:
+    """The entries of a list the app reads (`libre-panel share entry` counts them), each with
+    its id (its folder)."""
+    entries = json.loads(index)["themes"]
+    assert tool._readable(json.loads(index)) == len(entries)  # (as the app reads it)
+    return [{**entry, "id": entry["zip"].split("/")[0]} for entry in entries]
+
+
 @pytest.fixture(scope="module")
 def tool():
+    from rust_check import find
+
+    check = find()
+    program = check and check.with_name("libre-panel.exe" if os.name == "nt" else "libre-panel")
+    if not os.environ.get("LIBRE_PANEL_PROGRAM") and not (program and program.is_file()):
+        pytest.skip("needs the libre-panel program (rust/ built)")
     with pytest.MonkeyPatch.context() as patch:
+        if not os.environ.get("LIBRE_PANEL_PROGRAM"):
+            patch.setenv("LIBRE_PANEL_PROGRAM", str(program))
         patch.syspath_prepend(str(ROOT / "tools"))
         import community_theme
 
@@ -112,14 +127,12 @@ def test_a_shared_theme_is_installed_under_the_name_and_maker_its_entry_shows(to
     """A theme made from another one (here a copy of a built-in theme, renamed in the editor):
     the zip in the list carries the form's name, maker and description, its first maker kept
     as whom it is after; every other file as it was."""
-    from libre_panel.theme.share import inspect_shared
-
     data = theme_zip("Libre Default (mine)")
     checked = tool.check(issue(name="All in", author="Varulf", description="All at a glance."),
                          "someone", tmp_path / "checked", get=lambda url, limit: data)  # fmt: skip
     assert checked["name"] == "All in" and checked["author"] == "Varulf, after In the theme"
     shared = (tmp_path / "checked/theme.zip").read_bytes()
-    assert inspect_shared(shared)["name"] == "All in"
+    assert tool.inspect_shared(shared)["name"] == "All in"
     with zipfile.ZipFile(io.BytesIO(shared)) as archive, zipfile.ZipFile(io.BytesIO(data)) as was:
         assert archive.namelist() == was.namelist()
         theme = json.loads(archive.read("glow/theme.json"))
@@ -166,7 +179,7 @@ def test_a_checked_theme_goes_beside_the_list_under_a_name_of_its_own(tool, tmp_
     entry = tool.add(checked, 12, root)
     assert entry["id"] == "glow" and entry["zip"] == "glow/glow.zip"
     index = (root / "community/themes/index.json").read_bytes()
-    assert [e["id"] for e in parse_index(index)] == ["glow"]  # as the app reads it
+    assert [e["id"] for e in listed(tool, index)] == ["glow"]  # as the app reads it
     assert (root / "community/themes/glow/glow.zip").read_bytes() == (
         checked / "theme.zip"
     ).read_bytes()
@@ -202,9 +215,9 @@ def test_a_new_version_of_a_listed_theme_takes_its_place(tool, tmp_path):
     entry = tool.add(newer, 22, root)
     assert entry["id"] == "glow" and entry["zip"] == "glow/glow.zip"
     assert entry["replaced"] == {"name": "Glow", "author": "In the theme", "sizes": ["480x320"]}
-    listed = parse_index((root / "community/themes/index.json").read_bytes())
-    assert [(e["id"], e["name"]) for e in listed] == [("glow", "Glow 2"), ("dusk", "Dusk")]
-    assert listed[0]["sha256"] == hashlib.sha256((newer / "theme.zip").read_bytes()).hexdigest()
+    entries = listed(tool, (root / "community/themes/index.json").read_bytes())
+    assert [(e["id"], e["name"]) for e in entries] == [("glow", "Glow 2"), ("dusk", "Dusk")]
+    assert entries[0]["sha256"] == hashlib.sha256((newer / "theme.zip").read_bytes()).hexdigest()
     folder = root / "community/themes/glow"
     assert sorted(p.name for p in folder.iterdir()) == ["glow.zip", "preview.png"]
     assert (folder / "glow.zip").read_bytes() == (newer / "theme.zip").read_bytes()
@@ -223,7 +236,7 @@ def test_a_new_version_of_a_listed_theme_takes_its_place(tool, tmp_path):
                       str(root), "--pull-request", str(pr), "--refusal", str(refusal)])  # fmt: skip
     assert code == 0 and not refusal.exists()
     assert pr.read_text("utf-8").startswith("A new version of the community theme **Dusk**")
-    assert len(parse_index((root / "community/themes/index.json").read_bytes())) == 2
+    assert len(listed(tool, (root / "community/themes/index.json").read_bytes())) == 2
     # a name the list does not have: kept out, and nothing changed
     before = (root / "community/themes/index.json").read_bytes()
     tool.check(issue(name="Noon", replaces="Midday"), "maker", tmp_path / "noon",

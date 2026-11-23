@@ -440,13 +440,15 @@ jobs:
         if: failure()
         shell: bash
         run: cat "$RUNNER_TEMP/hang-traceback.txt" 2>/dev/null || true
+      # (and the community's shared themes, which tools/community_theme.py checks with the
+      # program: `libre-panel share`)
       - name: The running app and its plugins against what the Python app answered
         if: ${{ !inputs.quick && !cancelled() }}
         env:
           LP_GOLDEN_OUT: ${{ runner.temp }}/golden
           # (what they take from the Python app is kept: tests/golden/given, given/win32)
           LP_WITHOUT_APP: "1"
-        run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_app.py tests/test_rust_plugins.py
+        run: python -u -X faulthandler -m pytest -v -rfE --durations=20 tests/test_rust_app.py tests/test_rust_plugins.py tests/test_community_theme.py
       - name: The stacks of a comparison that hung
         if: failure()
         shell: bash
