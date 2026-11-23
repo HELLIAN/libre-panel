@@ -160,11 +160,10 @@ port = ""                      # serial panels: found by their USB ids; only if 
 providers = ["load", "audio", "linux", "psutil"]
 
 [sensors.librehardwaremonitor]
-# mode = "auto"                # "auto", "service", "inprocess" (inside Libre Panel), "webserver"
-# dll_dir = ""                 # pip install: the folder with LibreHardwareMonitor's libraries
+# mode = "auto"                # "auto", "service", "webserver"
 # poll_seconds = 1             # how often it is read
 url = "http://127.0.0.1:8085/data.json"   # the web server (mode "webserver", and "auto"
-                               # where it cannot be read inside Libre Panel)
+                               # while the sensor service is not there or does not answer)
 # stale_seconds = 5            # no answer for this long: its readings are hidden
                                # ("--" on the panel); 0 keeps the last ones
 # gpu = "RTX 4070"             # with several graphics cards: the one whose name has this
@@ -897,9 +896,8 @@ only while a theme or a service reads it:
   (Spotify, browsers, media players). Windows reports a new track, a pause or
   another player at once, so the panel follows without delay; a look every
   five seconds is only the safety net, and the position moves on by itself in
-  between. The cover is read when the track changes. The installer brings what
-  it needs; a Python install takes the `media` extra in its install line (as
-  [MQTT](#more-sensor-sources) does below).
+  between. The cover is read when the track changes. Libre Panel has it
+  built in, a pip install too.
 - Linux: any MPRIS player (Spotify, browsers, media players) through `playerctl`, asked
   once a second; where it is not installed, straight from the session's D-Bus with systemd's
   `busctl` (the player that plays, else one that is paused).
@@ -947,13 +945,7 @@ poll_seconds = 10
 ```
 
 **MQTT** (`mqtt.*`): what your devices publish. A JSON object is taken apart into one
-reading per field. The downloads have it built in. A Python install takes the `mqtt`
-extra in its install line, from GitHub: Libre Panel is not on PyPI, where
-`pip install "libre-panel[mqtt]"` would look for it.
-
-```
-pipx install --force "libre-panel[usb,serial,tray,mqtt] @ git+https://github.com/syntensa/libre-panel"
-```
+reading per field. Libre Panel has it built in, a pip install too.
 
 ```toml
 [sensors]
@@ -2153,8 +2145,8 @@ Only while Libre Panel runs with administrator rights does it pass over one that
 programs without those rights may change it (outside Program Files and Windows): it then
 takes the one in this folder or on the `PATH` that is safe, and Settings → Overview says so.
 Without them Libre Panel looks in this folder first, then on the `PATH`. It never looks in
-your Downloads folder. A pip install has no such folder: install ffmpeg yourself, and
-PresentMon if you want game frame rates.
+your Downloads folder. A pip install's `tools` holds Libre Panel's engine alone: install
+ffmpeg yourself, and PresentMon if you want game frame rates.
 
 ## Windows sensors (GPU, power, fans)
 
@@ -2168,10 +2160,14 @@ one of three ways, chosen by `mode` under `[sensors.librehardwaremonitor]`:
 
 | `mode` | |
 |---|---|
-| `"auto"` (default) | through the sensor service where it is installed; else inside Libre Panel where that is possible, else through the web server of a LibreHardwareMonitor that you run yourself. A service that does not answer for 20 seconds is replaced by the others until it answers again, and a service installed while Libre Panel runs takes over |
+| `"auto"` (default) | through the sensor service where it is installed, else through the web server of a LibreHardwareMonitor that you run yourself. A service that does not answer for 20 seconds is replaced by the web server until it answers again, and a service installed while Libre Panel runs takes over |
 | `"service"` | the sensor service only |
-| `"inprocess"` | inside Libre Panel only. Where that is not possible, the log says why and those readings show "--" |
 | `"webserver"` | the web server only, as Libre Panel 0.4 did |
+
+Up to 0.9.4 Libre Panel could also load LibreHardwareMonitor itself (`mode = "inprocess"`,
+with pythonnet and `dll_dir`); it no longer does: the sensor service runs it, with the rights
+its sensors need, and Libre Panel needs none. A file that still says `"inprocess"` gets the
+readings of neither, and the tray and the Control page say so: set `"auto"`.
 
 ### Through the sensor service: every sensor, Libre Panel without administrator rights
 
@@ -2198,84 +2194,30 @@ libre-panel sensors --check-service                             # does it answer
 says what the service may and may not do, and why other users of the PC can only read
 readings through it.
 
-### Inside Libre Panel: no extra program
+### Without the sensor service
 
-Without the sensor service (not set up yet, a pip install, or `mode = "inprocess"`) Libre
-Panel reads LibreHardwareMonitor itself. **The Windows downloads** (setup and zip) carry
-LibreHardwareMonitor's library.
-Nothing else is to be installed or started, and no web server turned on. Libre
-Panel loads the library with [pythonnet](https://pythonnet.github.io/) on the
-.NET Framework that Windows has (4.7.2 or later; Windows 10 from version 1803 and
-Windows 11 have it) and reads it in the background once a second
-(`poll_seconds`). Only the parts of your computer that the theme on the panel
-shows are asked, so a theme with just a clock costs next to nothing.
+Not set up yet (or removed), Libre Panel asks the web server of a LibreHardwareMonitor that
+you run yourself ([below](#through-the-web-server-of-librehardwaremonitor)); without one the
+readings it would give show "--", never 0, and everything else works as it does.
+`libre-panel sensors` and `libre-panel doctor` say what is missing, and the tray (a line
+under its status line, and its tooltip) and the Control page say it too, in a sentence in
+your language, for as long as it is the case.
 
-What it needs:
-
-| Reading | Needs |
-|---|---|
-| everything of the graphics card (temperature, load, power, clock, fan, memory), the loads of CPU and memory, memory use, network | nothing |
-| **CPU temperature, power and clock**, RAM temperature (`mem.temp`; DDR4 and DDR5), **the fans on the mainboard** | Libre Panel runs **as administrator**, and the **PawnIO** driver is installed |
-
-PawnIO is the small signed driver that LibreHardwareMonitor uses to talk to the
-chips on the mainboard and in the CPU. It is a separate program, not part of
-Libre Panel: install it once from [pawnio.eu](https://pawnio.eu) (version 2 or
-newer; installing a driver takes administrator rights). Windows starts programs
-without those rights, so Libre Panel has to be told to start with them:
-
-```
-libre-panel autostart enable --elevated      # in a terminal opened as administrator
-```
-
-([Running in the background](BACKGROUND.md#windows-starting-with-the-highest-rights)
-says what that does and when it is safe.) Without the rights or the driver these
-readings show "--", never 0, and everything else works as it does. In that case
-Libre Panel asks a LibreHardwareMonitor web server (below) once at the start: if
-yours runs as administrator, its readings fill in what is missing.
-
-Drive temperatures (`temp.nvme.*` and the like) are not read inside Libre Panel;
-the sensor service and the web server have them.
-
-`libre-panel sensors` and `libre-panel doctor` say which of the two is missing.
-`libre-panel sensors --check-lhm` only tests that the library loads and opens.
-The tray (a line under its status line, and its tooltip) and the Control page say
-it too, in a sentence in your language, for as long as it is the case.
+The processor's temperature, power and clock, the memory's temperature and the mainboard's
+fans need the **PawnIO** driver, the small signed driver through which LibreHardwareMonitor
+talks to those chips. The Windows downloads carry its installer (`--pawnio` above); a pip
+install does not: install it from [pawnio.eu](https://pawnio.eu) (version 2 or newer).
 
 ### With pip
 
-A pip install has no library in it. Install the extra, which brings pythonnet,
-and fetch the libraries (they are not part of Libre Panel; the script downloads
-them from NuGet and checks them against fixed checksums):
-
-```
-pipx install --force "libre-panel[usb,serial,tray,lhm] @ git+https://github.com/syntensa/libre-panel"
-python fetch_lhm.py "C:\Program Files\lhm-libs"      # in a terminal opened as administrator
-```
-
-`fetch_lhm.py` is in the repository under
-[`packaging/windows`](https://github.com/syntensa/libre-panel/tree/main/packaging/windows);
-it needs nothing but Python. Then name the folder:
-
-```toml
-[sensors.librehardwaremonitor]
-dll_dir = "C:\\Program Files\\lhm-libs"
-```
-
-A 32-bit Python needs `--arch x86`. `dll_dir` can also be the folder of an
-unpacked [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases)
-download (0.9.6 or a 0.9.7 build), which holds the same libraries.
-
-Libre Panel loads these libraries with the rights it has itself, and for the CPU's
-temperatures that means administrator rights. So keep them where only administrators can change
-them, under *Program Files* as above: every user of the PC may change a folder made directly
-under `C:\` unless you take their rights away, and a library of their own in it would run as
-administrator. The app does not change `dll_dir` while it runs as administrator.
+The release's wheel for Windows carries the sensor service as the downloads do: set it up
+once with `libre-panel system-setup --service --pawnio` in a terminal opened as
+administrator (PawnIO from [pawnio.eu](https://pawnio.eu) first: a pip install has no
+installer of it).
 
 ### Through the web server of LibreHardwareMonitor
 
-Used where Libre Panel cannot read the library itself (pythonnet or the library
-is missing, or the .NET Framework would not start, e.g. because another program
-already started pythonnet on another runtime), and always with
+Used while the sensor service is not installed or does not answer, and always with
 `mode = "webserver"`:
 
 1. Install LibreHardwareMonitor and run it **as administrator** (CPU
