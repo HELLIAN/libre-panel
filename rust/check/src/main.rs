@@ -4128,6 +4128,19 @@ fn run(case: &Value) -> Result<Value, String> {
                 .collect();
             json!({"cases": cases, "auto": auto, "parts": parts})
         }
+        "i18n_texts" => {
+            // what Libre Panel shows in the person's language that comes from a table of its own,
+            // not from a text its code hands to t (tests/i18n_keys.py)
+            let models = lp_devices::models::MODELS.iter();
+            json!({
+                "weather": lp_sensors::weather::WMO.iter().map(|(_, text)| *text).collect::<Vec<_>>(),
+                "moon": lp_sensors::sky::MOON_PHASES,
+                "battery": lp_sensors::BATTERY_STATES,
+                "media": lp_sensors::media::MEDIA_STATES,
+                "notes": models.clone().map(|m| m.notes).filter(|n| !n.is_empty()).collect::<Vec<_>>(),
+                "limits": models.map(|m| m.limits).filter(|l| !l.is_empty()).collect::<Vec<_>>(),
+            })
+        }
         "theme_tables" => {
             // the tables, as JSON text, for the comparison with Python's
             use lp_py::{Dict, Value};

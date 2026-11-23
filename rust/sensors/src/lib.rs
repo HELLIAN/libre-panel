@@ -41,3 +41,7 @@ pub mod topology;
 pub mod weather;
 #[cfg(windows)]
 pub mod winlink;
+
+/// battery.state: on battery, charging or charged, shown in the person's language
+/// (lp_render::metric translates it)
+pub const BATTERY_STATES: [&str; 3] = ["On battery", "Charging", "Charged"];

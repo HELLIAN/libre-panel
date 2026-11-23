@@ -50,8 +50,9 @@ const RAIN_STEPS: i64 = 8;
 /// a step with at least this much precipitation is rain
 const RAIN_MM: f64 = 0.1;
 
-/// The WMO's weather interpretation codes as Open-Meteo uses them.
-const WMO: [(i64, &str); 28] = [
+/// The WMO's weather interpretation codes as Open-Meteo uses them (`weather.description`,
+/// shown in the person's language: lp_render::metric translates it).
+pub const WMO: [(i64, &str); 28] = [
     (0, "Clear sky"),
     (1, "Mainly clear"),
     (2, "Partly cloudy"),
