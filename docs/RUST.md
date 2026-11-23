@@ -19,7 +19,7 @@ below), so that the work can be picked up where it stands.
 | The engine (compositing, YUV, H.264, USB) | Rust | 11,400 |
 
 Since the Python app went (R12): the app 207,600 lines of Rust (`rust/`, its tests among them)
-and the engine 13,100; the plugin host and the plugin API 8,500 lines of Python, the tests
+and the engine 13,100; the plugin host and the plugin API 8,200 lines of Python, the tests
 beside the crates' own 51,800, the tools and the packaging scripts 9,100; the pages 22,400
 lines of JavaScript and 9,700 of CSS; the sensor service 2,600 of C#.
 
