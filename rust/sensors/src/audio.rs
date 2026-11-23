@@ -193,6 +193,11 @@ impl Commands {
             .into_iter()
             .filter_map(|tool| Some((which(tool.name())?, tool)))
             .collect();
+        Commands::of(tools, mic)
+    }
+
+    /// The tools found, in the order they are asked: wpctl (PipeWire) before pactl.
+    fn of(tools: Vec<(PathBuf, Tool)>, mic: bool) -> Result<Commands, String> {
         if tools.is_empty() {
             return Err("needs wpctl or pactl".into());
         }
@@ -670,7 +675,12 @@ struct Shared {
     changed: Condvar,
     notes: Mutex<Vec<String>>,
     wanted: Wanted,
+    /// makes the way to read the volume (`open_way`; the tests give their own)
+    opener: Opener,
 }
+
+/// A new way to read the volume (or the microphone), as `open_way` makes it.
+type Opener = fn(Publish, bool) -> Result<Box<dyn Way>, String>;
 
 fn reading(value: Value, unit: &str, label: &str) -> Reading {
     Reading {
@@ -766,7 +776,7 @@ fn run_thread(shared: &Arc<Shared>) {
         if shared.wants("audio.mic") {
             // one look at the microphone, while its readings are wanted
             if mic.is_none() && now >= mic_retry {
-                mic = open_way(publisher(true), true).ok();
+                mic = (shared.opener)(publisher(true), true).ok();
                 if mic.is_none() {
                     mic_retry = now + Duration::from_secs_f64(RETRY_SECONDS);
                 }
@@ -776,7 +786,7 @@ fn run_thread(shared: &Arc<Shared>) {
             }
         }
         let Some(way) = source.as_mut() else {
-            match open_way(publisher(false), false) {
+            match (shared.opener)(publisher(false), false) {
                 Ok(way) => {
                     device_at = now + Duration::from_secs_f64(DEVICE_CHECK_SECONDS);
                     // how it comes in, at the start
@@ -843,6 +853,10 @@ pub struct AudioSource {
 
 impl AudioSource {
     pub fn new(wanted: Wanted) -> AudioSource {
+        AudioSource::opened_by(wanted, open_way)
+    }
+
+    fn opened_by(wanted: Wanted, opener: Opener) -> AudioSource {
         AudioSource {
             shared: Arc::new(Shared {
                 held: Mutex::new(Held::default()),
@@ -850,6 +864,7 @@ impl AudioSource {
                 changed: Condvar::new(),
                 notes: Mutex::new(Vec::new()),
                 wanted,
+                opener,
             }),
             thread: None,
         }
@@ -914,5 +929,161 @@ impl AudioSource {
 impl Drop for AudioSource {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A way that gives `states` in turn (None: a read that fails), then the last again.
+    struct Scripted(Vec<Option<(f64, bool)>>, usize);
+
+    impl Way for Scripted {
+        fn events(&self) -> bool {
+            false
+        }
+        fn interval(&self) -> f64 {
+            0.02
+        }
+        fn sample(&mut self) -> Option<(f64, bool)> {
+            let state = self.0[self.1.min(self.0.len() - 1)];
+            self.1 += 1;
+            state
+        }
+        fn check_device(&mut self) -> bool {
+            false
+        }
+    }
+
+    fn until(source: &mut AudioSource, done: impl Fn(&Readings) -> bool) -> Readings {
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            let readings = source.read();
+            if done(&readings) || Instant::now() > end {
+                return readings;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn volume(readings: &Readings) -> Option<f64> {
+        match readings.get("audio.volume").map(|reading| &reading.value) {
+            Some(Value::Float(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_volume_is_0_while_muted_and_reads_that_fail_do_not_stop_the_thread() {
+        fn scripted(_: Publish, mic: bool) -> Result<Box<dyn Way>, String> {
+            let states = vec![
+                Some((37.25, false)),
+                None,
+                None,
+                Some((37.25, true)),
+                None,
+                Some((80.0, false)),
+            ]; // fmt: skip
+            match mic {
+                false => Ok(Box::new(Scripted(states, 0))),
+                true => Err("no microphone".into()),
+            }
+        }
+        let wanted = Wanted::default();
+        let mut source = AudioSource::opened_by(wanted.clone(), scripted);
+        assert!(source.read().is_empty()); // (no theme shows it: nothing is read)
+        wanted.set(["audio.volume".to_string()]);
+        let first = until(&mut source, |readings| volume(readings).is_some());
+        assert_eq!(volume(&first), Some(37.2)); // (to a tenth, as round() does: half to even)
+        let muted = until(&mut source, |readings| volume(readings) == Some(0.0));
+        assert_eq!(muted["audio.muted"].value, Value::int(1));
+        let back = until(&mut source, |readings| volume(readings) == Some(80.0));
+        assert_eq!(back["audio.muted"].value, Value::int(0));
+        assert_eq!(source.notes(), ["audio: the volume is read by polling"]);
+        source.close();
+        assert!(source.read().is_empty());
+    }
+
+    #[test]
+    fn no_way_to_read_the_volume_gives_no_readings_and_one_warning() {
+        fn none(_: Publish, _: bool) -> Result<Box<dyn Way>, String> {
+            Err("needs wpctl or pactl".into())
+        }
+        let wanted = Wanted::default();
+        wanted.set(["audio.volume".to_string()]);
+        let mut source = AudioSource::opened_by(wanted, none);
+        let end = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < end {
+            assert!(source.read().is_empty());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let said = ["audio: the volume cannot be read: needs wpctl or pactl"];
+        assert_eq!(source.notes(), said);
+        source.close();
+    }
+
+    #[cfg(unix)]
+    fn tool(folder: &Path, name: &str, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = folder.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_tool_that_answers_is_asked_and_one_that_keeps_failing_less_often() {
+        let folder = std::env::temp_dir().join(format!("lp-audio-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let wpctl = tool(&folder, "wpctl", "exit 1");
+        let pactl = tool(
+            &folder,
+            "pactl",
+            r#"case "$1" in
+  get-sink-volume) echo "Volume: front-left: 24248 /  37% / -26.45 dB,   front-right: 24248 /  37%";;
+  get-sink-mute) exit 1;;
+  get-source-mute) echo "Mute: yes";;
+  get-source-volume) echo "Volume: mono: 6554 / 10% / -60.00 dB";;
+  *) exit 2;;
+esac"#,
+        );
+        let tools = vec![(wpctl.clone(), Tool::Wpctl), (pactl.clone(), Tool::Pactl)];
+        let mut commands = Commands::of(tools.clone(), false).unwrap();
+        // (no answer about the mute: not muted)
+        assert_eq!(commands.sample(), Some((37.0, false)));
+        assert!(commands.tools[0].1 == Tool::Pactl); // (the one that answers is asked first)
+        let mut mic = Commands::of(tools, true).unwrap();
+        assert_eq!(mic.sample(), Some((10.0, true)));
+        // PipeWire's own, with the microphone's source
+        let wpctl = tool(
+            &folder,
+            "wpctl",
+            r#"[ "$2" = "@DEFAULT_AUDIO_SOURCE@" ] && echo "Volume: 0.20" || echo "Volume: 0.45 [MUTED]""#,
+        );
+        let mut piped = Commands::of(vec![(wpctl.clone(), Tool::Wpctl)], false).unwrap();
+        assert_eq!(piped.sample(), Some((45.0, true)));
+        let mut piped = Commands::of(vec![(wpctl, Tool::Wpctl)], true).unwrap();
+        assert_eq!(piped.sample(), Some((20.0, false)));
+        // one that keeps failing is asked less often; one that hangs gives nothing
+        let broken = tool(&folder, "broken", "exit 3");
+        let mut failing = Commands::of(vec![(broken, Tool::Pactl)], false).unwrap();
+        for _ in 0..FAILURES_BEFORE_SLOW {
+            assert_eq!(failing.interval(), LINUX_POLL_SECONDS);
+            assert_eq!(failing.sample(), None);
+        }
+        assert_eq!(failing.interval(), SLOW_POLL_SECONDS);
+        let hangs = tool(&folder, "hangs", "exec sleep 30");
+        let began = Instant::now();
+        assert_eq!(
+            Commands::of(vec![(hangs, Tool::Wpctl)], false)
+                .unwrap()
+                .sample(),
+            None
+        );
+        assert!(began.elapsed().as_secs_f64() < COMMAND_TIMEOUT + 1.0);
+        assert!(Commands::of(Vec::new(), false).is_err()); // (without the tools, no source)
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

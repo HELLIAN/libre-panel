@@ -124,13 +124,18 @@ pub fn bundled_service() -> Option<PathBuf> {
 /// pawnio_installer: PawnIO's installer as the download carries it, in `tools`, and only the
 /// file that was fetched (its SHA-256): it runs with administrator rights.
 pub fn pawnio_installer() -> Option<PathBuf> {
-    let path = program_folder()?.join("tools").join(PAWNIO_SETUP);
+    pawnio_installer_in(&program_folder()?, PAWNIO_SETUP_SHA256)
+}
+
+/// pawnio_installer of a program in `folder`, the installer pinned to `pin`.
+fn pawnio_installer_in(folder: &Path, pin: &str) -> Option<PathBuf> {
+    let path = folder.join("tools").join(PAWNIO_SETUP);
     let data = std::fs::read(&path).ok()?;
     let digest: String = Sha256::digest(&data)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    (digest == PAWNIO_SETUP_SHA256).then_some(path)
+    (digest == pin).then_some(path)
 }
 
 /// cli_program: the download's command-line program, which the question for rights starts.
@@ -1592,5 +1597,52 @@ pub mod win {
         _timeout: Option<f64>,
     ) -> Result<i64, Elevated> {
         Err(Elevated::Failed("only on Windows".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn digest(data: &[u8]) -> String {
+        Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn pawnio_s_installer_is_handed_out_only_as_it_was_fetched() {
+        // (it is run with administrator rights from a folder the installing user may write to)
+        let folder = std::env::temp_dir().join(format!("lp-pawnio-{}", std::process::id()));
+        std::fs::create_dir_all(folder.join("tools")).unwrap();
+        let pin = digest(b"MZ the real one");
+        assert_eq!(pawnio_installer_in(&folder, &pin), None); // not carried
+        let setup = folder.join("tools").join(PAWNIO_SETUP);
+        std::fs::write(&setup, b"MZ another program").unwrap();
+        assert_eq!(pawnio_installer_in(&folder, &pin), None); // replaced
+        std::fs::remove_file(&setup).unwrap();
+        std::fs::create_dir(&setup).unwrap();
+        assert_eq!(pawnio_installer_in(&folder, &pin), None); // not a file
+        std::fs::remove_dir(&setup).unwrap();
+        std::fs::write(&setup, b"MZ the real one").unwrap();
+        assert_eq!(pawnio_installer_in(&folder, &pin), Some(setup));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_pin_checked_is_the_one_the_download_was_fetched_by() {
+        // packaging/fetch_tools.py fetches PawnIO_setup.exe by its SHA-256
+        let fetch = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/fetch_tools.py"),
+        )
+        .unwrap();
+        let after = &fetch[fetch.find(&format!("\"{PAWNIO_SETUP}\",")).unwrap()..];
+        let pinned: Vec<&str> = after
+            .split('"')
+            .filter(|part| part.len() == 64 && part.bytes().all(|b| b.is_ascii_hexdigit()))
+            .take(1)
+            .collect();
+        assert_eq!(pinned, [PAWNIO_SETUP_SHA256]);
     }
 }

@@ -80,6 +80,15 @@ fn program_name(name: &str) -> String {
 /// safe place (rights.rs): a configured one elsewhere is passed over for the others. The
 /// error says why there is none, as Python's DeviceError says it.
 pub fn find_ffmpeg(configured: &str) -> Result<PathBuf, String> {
+    let beside = std::env::current_exe()
+        .ok()
+        .map(|program| std::fs::canonicalize(&program).unwrap_or(program))
+        .and_then(|program| program.parent().map(Path::to_path_buf));
+    find_ffmpeg_beside(configured, beside)
+}
+
+/// find_ffmpeg of a program in the folder `beside`.
+fn find_ffmpeg_beside(configured: &str, beside: Option<PathBuf>) -> Result<PathBuf, String> {
     let exe = program_name("ffmpeg");
     let mut held_back = false;
     if !configured.is_empty() {
@@ -95,10 +104,6 @@ pub fn find_ffmpeg(configured: &str) -> Result<PathBuf, String> {
         }
         held_back = true;
     }
-    let beside = std::env::current_exe()
-        .ok()
-        .map(|program| std::fs::canonicalize(&program).unwrap_or(program))
-        .and_then(|program| program.parent().map(Path::to_path_buf));
     if let Some(own) = beside
         .as_ref()
         .map(|folder| folder.join("tools").join(&exe))
@@ -156,5 +161,44 @@ mod tests {
         let kinds: Vec<u8> = nal_units(&stream).iter().map(|(_, k)| *k).collect();
         assert_eq!(kinds, [7, 8, 5, 1]);
         assert_eq!(slice_count(&stream), 2);
+    }
+
+    #[test]
+    fn the_ffmpeg_a_download_carries_comes_first_and_a_named_one_before_it() {
+        // (as bundled.py found the programs of a download: its tools folder before PATH, the
+        // one config.toml names before both, and a folder of that name is no program)
+        let folder = std::env::temp_dir().join(format!("lp-ffmpeg-{}", std::process::id()));
+        let tools = folder.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let carried = tools.join(program_name("ffmpeg"));
+        std::fs::write(&carried, b"").unwrap();
+        let named = folder.join("my-ffmpeg");
+        std::fs::write(&named, b"").unwrap();
+        assert_eq!(
+            find_ffmpeg_beside("", Some(folder.clone())),
+            Ok(carried.clone())
+        );
+        let named_text = named.to_str().unwrap();
+        // (with the highest rights, as on a Windows runner, one from a folder others may change
+        // is held back for the next)
+        let first = if crate::rights::safe_place(&named) {
+            named.clone()
+        } else {
+            carried.clone()
+        };
+        assert_eq!(
+            find_ffmpeg_beside(named_text, Some(folder.clone())),
+            Ok(first)
+        );
+        let gone = folder.join("gone");
+        let said = find_ffmpeg_beside(gone.to_str().unwrap(), Some(folder.clone())).unwrap_err();
+        assert!(
+            said.contains("ffmpeg not found at") && said.contains("gone"),
+            "{said}"
+        );
+        std::fs::remove_file(&carried).unwrap();
+        std::fs::create_dir(&carried).unwrap(); // (a folder in place of the program)
+        assert_ne!(find_ffmpeg_beside("", Some(folder.clone())), Ok(carried));
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

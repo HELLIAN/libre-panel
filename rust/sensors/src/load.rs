@@ -652,7 +652,12 @@ struct Shared {
     wanted: Wanted,
     /// a part of the name of the graphics card to measure (Linux)
     prefer: String,
+    /// makes a key's sampler (`open`; the tests give their own)
+    opener: Opener,
 }
+
+/// A new sampler for a key and the card preferred, as `open` makes it.
+type Opener = fn(&str, &str) -> Result<Option<Box<dyn Sampler>>, String>;
 
 impl Shared {
     /// Whether a theme on show reads `key`'s readings (the cores' with their threads').
@@ -745,7 +750,7 @@ fn run(shared: &Shared) {
                 continue;
             }
             let Some(sampler) = samplers.get_mut(key) else {
-                match open(key, &shared.prefer) {
+                match (shared.opener)(key, &shared.prefer) {
                     // (it has nothing to compare with yet)
                     Ok(Some(sampler)) => {
                         samplers.insert(key, sampler);
@@ -806,6 +811,10 @@ impl LoadSource {
     /// The card the `gpu.*` readings come from is the one `[sensors.linux] gpu` (or, as
     /// everywhere, `[sensors.librehardwaremonitor] gpu`) names; the load is that card's.
     pub fn of_card(wanted: Wanted, prefer: &str) -> LoadSource {
+        LoadSource::opened_by(wanted, prefer, open)
+    }
+
+    fn opened_by(wanted: Wanted, prefer: &str, opener: Opener) -> LoadSource {
         LoadSource {
             shared: Arc::new(Shared {
                 values: Mutex::new(IndexMap::new()),
@@ -814,6 +823,7 @@ impl LoadSource {
                 notes: Mutex::new(Vec::new()),
                 wanted,
                 prefer: prefer.to_string(),
+                opener,
             }),
             thread: None,
         }
@@ -920,5 +930,141 @@ mod tests {
         assert!(!source.read().contains_key("cpu.core.1.load"));
         source.close();
         assert!(source.read().is_empty());
+    }
+
+    /// Reads `source` until `done` holds of what it gives, at most ten seconds.
+    fn until(source: &mut LoadSource, done: impl Fn(&Readings) -> bool) -> Readings {
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            let readings = source.read();
+            if done(&readings) || Instant::now() > end {
+                return readings;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn load(readings: &Readings, key: &str) -> Option<f64> {
+        match readings.get(key).map(|reading| &reading.value) {
+            Some(Value::Float(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// 140, nothing, -3, 50, again and again.
+    struct Unruly(usize);
+
+    impl Sampler for Unruly {
+        fn read(&mut self) -> Option<Sample> {
+            self.0 += 1;
+            [Some(140.0), None, Some(-3.0), Some(50.0)][self.0 % 4].map(Sample::One)
+        }
+    }
+
+    #[test]
+    fn values_are_kept_to_the_range_and_samples_that_fail_do_not_stop_the_thread() {
+        fn unruly(_: &str, _: &str) -> Result<Option<Box<dyn Sampler>>, String> {
+            Ok(Some(Box::new(Unruly(0))))
+        }
+        let wanted = Wanted::default();
+        wanted.set(["gpu.load".to_string()]);
+        let mut source = LoadSource::opened_by(wanted, "", unruly);
+        let mut seen = Vec::new();
+        let end = Instant::now() + Duration::from_secs(10);
+        while seen.len() < 3 && Instant::now() < end {
+            if let Some(value) = load(&source.read(), "gpu.load") {
+                if seen.last() != Some(&value) {
+                    seen.push(value);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        seen.sort_by(f64::total_cmp);
+        seen.dedup();
+        assert_eq!(seen, [0.0, 50.0, 100.0]);
+        assert_eq!(source.read()["gpu.load"].label, "GPU load");
+        source.close();
+    }
+
+    static OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    #[test]
+    fn a_sampler_that_cannot_be_made_is_said_once_and_tried_again_only_now_and_then() {
+        fn missing(_: &str, _: &str) -> Result<Option<Box<dyn Sampler>>, String> {
+            OPENED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("no counters".into())
+        }
+        let wanted = Wanted::default();
+        wanted.set(["gpu.load".to_string()]);
+        let mut source = LoadSource::opened_by(wanted, "", missing);
+        let end = Instant::now() + Duration::from_millis(600); // (six rounds)
+        while Instant::now() < end {
+            assert!(source.read().is_empty()); // (no value, not a 0)
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(OPENED.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let said = ["load: no GPU load from the performance counters (no counters)"];
+        assert_eq!(source.notes(), said);
+        assert!(source.notes().is_empty());
+        source.close();
+    }
+
+    /// 42 once, then nothing: a sampler that hangs.
+    struct Once(bool);
+
+    impl Sampler for Once {
+        fn read(&mut self) -> Option<Sample> {
+            let first = !self.0;
+            self.0 = true;
+            first.then_some(Sample::One(42.0))
+        }
+    }
+
+    #[test]
+    fn old_readings_are_dropped_not_shown_frozen() {
+        fn once(_: &str, _: &str) -> Result<Option<Box<dyn Sampler>>, String> {
+            Ok(Some(Box::new(Once(false))))
+        }
+        let wanted = Wanted::default();
+        wanted.set(["cpu.load".to_string()]);
+        let mut source = LoadSource::opened_by(wanted, "", once);
+        let got = until(&mut source, |readings| readings.contains_key("cpu.load"));
+        assert_eq!(load(&got, "cpu.load"), Some(42.0));
+        let gone = until(&mut source, |readings| !readings.contains_key("cpu.load"));
+        assert!(gone.is_empty());
+        source.close();
+    }
+
+    #[test]
+    fn the_card_s_load_is_its_driver_s_and_a_card_asleep_is_not_asked() {
+        let root = std::env::temp_dir().join(format!("lp-gpu-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let card = |number: u32, vendor: &str, driver: &str, busy: Option<&str>| {
+            let device = root.join(format!("sys/class/drm/card{number}/device"));
+            std::fs::create_dir_all(device.join("power")).unwrap();
+            std::fs::write(device.join("vendor"), format!("{vendor}\n")).unwrap();
+            std::fs::write(device.join("device"), "0x744c\n").unwrap();
+            let slot = format!("0000:0{}:00.0", number + 1);
+            let uevent = format!("DRIVER={driver}\nPCI_SLOT_NAME={slot}\n");
+            std::fs::write(device.join("uevent"), uevent).unwrap();
+            std::fs::write(device.join("power/runtime_status"), "active\n").unwrap();
+            if let Some(busy) = busy {
+                std::fs::write(device.join("gpu_busy_percent"), busy).unwrap();
+            }
+            device
+        };
+        let none = || None;
+        assert!(linux_gpu(&root, &[], "", none).is_none()); // (no card)
+        card(0, "0x8086", "i915", None);
+        assert!(linux_gpu(&root, &[], "", none).is_none()); // (Intel's tells no load)
+        let amd = card(1, "0x1002", "amdgpu", Some("37\n"));
+        // (the card with the most memory of its own is "the" card)
+        std::fs::write(amd.join("mem_info_vram_total"), "8589934592\n").unwrap();
+        let sampler = linux_gpu(&root, &[], "radeon", none).expect("the AMD card");
+        assert_eq!(sampler.load(), Some(37.0));
+        std::fs::write(amd.join("power/runtime_status"), "suspended\n").unwrap();
+        assert_eq!(sampler.load(), None); // (asking would switch it on)
+        assert!(linux_gpu(&root, &[], "", none).is_none());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

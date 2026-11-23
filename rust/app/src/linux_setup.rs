@@ -1386,7 +1386,12 @@ const APP_MARKS: [&str; 6] = ["_PYI_", "PYI_", "APPDIR", "APPIMAGE", "ARGV0", "O
 /// clean_environment: the environment pkexec is started in: none of what the bundle put
 /// there for its own libraries.
 pub fn clean_environment() -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> = std::env::vars()
+    cleaned(std::env::vars())
+}
+
+/// clean_environment of the environment `vars`.
+fn cleaned(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = vars
         .filter(|(key, _)| {
             !STRIPPED.contains(&key.as_str())
                 && !APP_MARKS.iter().any(|mark| key.starts_with(mark))
@@ -1763,5 +1768,41 @@ pub fn run_cli(args: &CliOptions) -> u8 {
         0
     } else {
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn the_system_s_programs_get_the_system_s_libraries() {
+        // (an AppImage's loader put its folder first in LD_LIBRARY_PATH; inherited, it made the
+        // system's /bin/sh take the bundle's older readline and stop: the path from before, or
+        // none, and nothing the bundle set for itself)
+        let given = env(&[
+            ("LD_LIBRARY_PATH", "/tmp/_MEI/lib:/opt/mine"),
+            ("LD_LIBRARY_PATH_ORIG", "/opt/mine"),
+            ("PATH", "/usr/bin"),
+            ("APPDIR", "/tmp/.mount"),
+            ("PYTHONPATH", "/x"),
+            ("_PYI_APPLICATION_HOME_DIR", "/tmp/_MEI"),
+        ]);
+        assert_eq!(
+            cleaned(given.into_iter()),
+            env(&[("PATH", "/usr/bin"), ("LD_LIBRARY_PATH", "/opt/mine")])
+        );
+        let given = env(&[("LD_LIBRARY_PATH", "/tmp/_MEI/lib"), ("PATH", "/usr/bin")]);
+        assert_eq!(cleaned(given.into_iter()), env(&[("PATH", "/usr/bin")]));
+        let given = env(&[("LD_LIBRARY_PATH_ORIG", ""), ("HOME", "/home/a")]);
+        assert_eq!(cleaned(given.into_iter()), env(&[("HOME", "/home/a")]));
+        assert_eq!(cleaned(Vec::new().into_iter()), Vec::new());
     }
 }

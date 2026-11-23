@@ -69,15 +69,6 @@ pub fn package_counters(root: &Path) -> Vec<Counter> {
     }
 }
 
-/// Whether the counters are there but this user may not read them (the kernel's way of
-/// keeping the side channel shut).
-pub fn unreadable(counters: &[Counter]) -> bool {
-    !counters.is_empty()
-        && !counters
-            .iter()
-            .any(|counter| std::fs::File::open(&counter.path).is_ok())
-}
-
 /// Watts from counters of microjoules, asked now and then. The first call has nothing to
 /// compare with and gives None; a counter that cannot be read leaves the sum out (None).
 #[derive(Clone, Debug)]

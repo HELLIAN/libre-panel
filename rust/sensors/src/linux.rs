@@ -816,3 +816,95 @@ fn nvidia_main(out: &mut Readings, number: usize, values: &nvml::Values) {
         "GPU memory clock",
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn machine(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("lp-linux-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sys/class/hwmon")).unwrap();
+        root
+    }
+
+    fn chip(root: &Path, number: u32, name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let folder = root.join(format!("sys/class/hwmon/hwmon{number}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("name"), format!("{name}\n")).unwrap();
+        for (file, text) in files {
+            std::fs::write(folder.join(file), format!("{text}\n")).unwrap();
+        }
+        folder
+    }
+
+    fn value(readings: &Readings, key: &str) -> Option<f64> {
+        match readings.get(key).map(|reading| &reading.value) {
+            Some(Value::Float(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    fn source(root: &Path, wanted: &[&str]) -> LinuxSource {
+        let keys = Wanted::default();
+        keys.set(wanted.iter().map(|key| key.to_string()));
+        LinuxSource::at(root, "", "off", keys, Box::new(|| None), Box::new(Vec::new))
+    }
+
+    #[test]
+    fn a_chip_that_goes_takes_its_readings_with_it_at_the_next_scan() {
+        let root = machine("gone");
+        let folder = chip(
+            &root,
+            0,
+            "k10temp",
+            &[("temp1_input", "49125"), ("temp1_label", "Tctl")],
+        );
+        let mut linux = source(&root, &[]);
+        assert_eq!(value(&linux.read_at(0.0), "cpu.temp"), Some(49.125));
+        std::fs::remove_dir_all(&folder).unwrap();
+        // (until the rescan it is a reading that cannot be read: left out, not an error)
+        assert!(!linux.read_at(1.0).contains_key("cpu.temp"));
+        let later = linux.read_at(RESCAN_SECONDS + 1.0);
+        assert!(!later.contains_key("cpu.temp") && !later.contains_key("temp.k10temp.tctl"));
+        assert_eq!(linux.status().chips, 0);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn counters_that_cannot_be_read_give_no_power_and_no_error() {
+        // (energy_uj is root's alone on newer kernels; here a folder in its place)
+        let root = machine("rapl");
+        let zone = root.join("sys/class/powercap/intel-rapl:0");
+        std::fs::create_dir_all(zone.join("energy_uj")).unwrap();
+        std::fs::write(zone.join("name"), "package-0\n").unwrap();
+        let mut linux = source(&root, &[]);
+        for now in [0.0, 1.0, 2.0, 3.0] {
+            assert!(!linux.read_at(now).contains_key("cpu.power"));
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_slow_reading_that_is_too_old_is_dropped() {
+        let root = machine("slow");
+        chip(
+            &root,
+            0,
+            "nvme",
+            &[("temp1_input", "38850"), ("temp1_label", "Composite")],
+        );
+        let mut linux = source(&root, &[]);
+        let first = linux.read_at(0.0); // (the thread's first pass is waited for)
+        let key = first
+            .keys()
+            .find(|key| key.starts_with("temp.nvme"))
+            .cloned();
+        let key = key.expect("the drive's temperature");
+        assert_eq!(value(&first, &key), Some(38.85));
+        assert!(linux.read_at(SLOW_FRESH - 1.0).contains_key(&key));
+        assert!(!linux.read_at(SLOW_FRESH + 2.0).contains_key(&key)); // (its thread hangs)
+        linux.close();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}

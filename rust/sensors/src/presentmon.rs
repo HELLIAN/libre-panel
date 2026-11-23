@@ -73,6 +73,19 @@ pub fn target() -> Option<String> {
 }
 
 pub fn find_presentmon(path: &str, notes: &mut Vec<String>) -> Option<PathBuf> {
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|program| std::fs::canonicalize(program).ok())
+        .and_then(|program| Some(program.parent()?.to_path_buf()));
+    find_presentmon_beside(path, notes, beside)
+}
+
+/// find_presentmon of a program in the folder `beside`.
+fn find_presentmon_beside(
+    path: &str,
+    notes: &mut Vec<String>,
+    beside: Option<PathBuf>,
+) -> Option<PathBuf> {
     use lp_devices::rights;
     let mut passed = Vec::new();
     if !path.is_empty() {
@@ -99,10 +112,7 @@ pub fn find_presentmon(path: &str, notes: &mut Vec<String>) -> Option<PathBuf> {
     } else {
         "PresentMon"
     };
-    let own = std::env::current_exe()
-        .ok()
-        .and_then(|program| std::fs::canonicalize(program).ok())
-        .and_then(|program| Some(program.parent()?.join("tools").join(name)));
+    let own = beside.map(|folder| folder.join("tools").join(name));
     if let Some(own) = own.filter(|own| own.is_file()) {
         return Some(own);
     }
@@ -685,5 +695,55 @@ impl PresentMonSource {
 impl Drop for PresentMonSource {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_presentmon_a_download_carries_comes_first_and_a_named_one_before_it() {
+        // (as bundled.py found it: the download's tools folder before PATH, the one the
+        // settings name before both, a named one that is not there none at all, not another)
+        let folder = std::env::temp_dir().join(format!("lp-presentmon-{}", std::process::id()));
+        let tools = folder.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let name = if cfg!(windows) {
+            "PresentMon.exe"
+        } else {
+            "PresentMon"
+        };
+        let carried = tools.join(name);
+        std::fs::write(&carried, b"").unwrap();
+        let named = folder.join("mine");
+        std::fs::write(&named, b"").unwrap();
+        let mut notes = Vec::new();
+        let found = find_presentmon_beside("", &mut notes, Some(folder.clone()));
+        assert_eq!(found, Some(carried.clone()));
+        // (with the highest rights, as on a Windows runner, one from a folder others may change
+        // is passed over for the next, and said)
+        let safe = lp_devices::rights::safe_place(&named);
+        let found =
+            find_presentmon_beside(named.to_str().unwrap(), &mut notes, Some(folder.clone()));
+        assert_eq!(found, Some(if safe { named } else { carried.clone() }));
+        assert_eq!(notes.len(), usize::from(!safe), "{notes:?}");
+        notes.clear();
+        let gone = folder.join("missing");
+        assert_eq!(
+            find_presentmon_beside(gone.to_str().unwrap(), &mut notes, Some(folder.clone())),
+            None
+        );
+        assert!(notes.is_empty(), "{notes:?}");
+        // a download without it, and PresentMon among the user's downloads: never that one
+        std::fs::remove_file(&carried).unwrap();
+        let downloads = folder.join("Downloads");
+        std::fs::create_dir(&downloads).unwrap();
+        for file in ["PresentMon.exe", "PresentMon-2.6.0-x64.exe", "PresentMon"] {
+            std::fs::write(downloads.join(file), b"MZ").unwrap();
+        }
+        let found = find_presentmon_beside("", &mut notes, Some(folder.clone()));
+        assert!(!found.is_some_and(|found| found.starts_with(&downloads)));
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }
