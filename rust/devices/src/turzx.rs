@@ -1516,9 +1516,13 @@ impl Turzx {
     /// is proven on, with the standby clip's name set), else single pictures. What keeps
     /// "auto" from the video is noted.
     pub fn open(setup: Setup) -> Result<Turzx> {
-        let model = setup.model.or_else(|| match &setup.test_link {
-            None if setup.video.mode == "auto" => usb::present_model(&setup.beside, 0),
-            _ => None,
+        // (the bus is looked on for the model where none is named; with the tests' simulated
+        // panel only where the tests make up the bus, LP_TEST_BUS, as the panel stands there)
+        let looks = setup.test_link.is_none() || std::env::var_os("LP_TEST_BUS").is_some();
+        let model = setup.model.or_else(|| {
+            (looks && setup.video.mode == "auto")
+                .then(|| usb::present_model(&setup.beside, 0))
+                .flatten()
         });
         let (video, missing) = video_mode(&setup.video, model);
         if video {
@@ -1965,5 +1969,60 @@ mod tests {
         assert!(note
             .unwrap()
             .contains("no graphics card's encoder (one of before)"));
+    }
+
+    #[test]
+    fn auto_video_mode_needs_a_proven_panel_and_the_clip_name() {
+        // (as turzx.py's video_mode and video_gaps: "auto" turns the video mode on only where
+        // all is there and never makes up the clip name; "on" and "off" decide alone; the
+        // panel decides before anything else. No ffmpeg: Libre Panel's engine encodes)
+        let video = |mode: &str, clip: &str| Video {
+            mode: mode.into(),
+            fps: 25,
+            device_fps: 30,
+            crf: 20,
+            preset: "superfast".into(),
+            keyframe_s: 2.0,
+            maxrate: "auto".into(),
+            profile: "auto".into(),
+            engine_encoder: "auto".into(),
+            local_clip: clip.into(),
+            video_range: "auto".into(),
+            engine_layers: true,
+        };
+        let nine = crate::models::find_model("turing-9.2-usb");
+        let eight = crate::models::find_model("turing-8.8-usb");
+        let ready = video("auto", "usr/data/clip.h264");
+        assert_eq!(video_mode(&ready, nine), (true, vec![]));
+        assert_eq!(video_mode(&ready, None), (false, vec![])); // (no panel found: nothing to say)
+        assert_eq!(
+            video_mode(&ready, eight),
+            (
+                false,
+                vec!["the video mode is not proven on the Turing 8.8\" yet".to_string()]
+            )
+        );
+        let (on, why) = video_mode(&video("auto", ""), nine);
+        assert!(!on && why.len() == 1 && why[0].contains("local_clip is not set"));
+        assert_eq!(video_mode(&video("on", ""), eight), (true, vec![]));
+        assert_eq!(video_mode(&video("off", "x"), nine), (false, vec![]));
+        assert!(video_gaps("x", nine, true).is_empty());
+        assert_eq!(video_gaps("", nine, true), ["clip"]);
+        assert_eq!(video_gaps("", eight, true), ["model"]);
+        assert_eq!(video_gaps("", eight, false), ["clip"]); // ("on" asks for no proof)
+        assert_eq!(video_gaps("", None, true), ["clip"]); // (no panel yet: nothing to prove)
+                                                          // (into the 9.2"'s framebuffer: a landscape frame a quarter turn, one on end upside
+                                                          // down, as to_native turned them)
+        assert_eq!(
+            (rotation_of((1920, 480)), rotation_of((480, 1920))),
+            (270, 180)
+        );
+    }
+
+    #[test]
+    fn the_transparent_layer_is_small_and_see_through() {
+        let layer = transparent_layer((480, 1920)).unwrap();
+        assert!(layer.len() < 10_000, "{} bytes", layer.len());
+        assert_eq!(&layer[..8], b"\x89PNG\r\n\x1a\n");
     }
 }

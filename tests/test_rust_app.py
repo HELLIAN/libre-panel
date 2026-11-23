@@ -1180,7 +1180,7 @@ def test_frames_go_to_the_engine_as_their_layers_and_it_composes_them_as_the_app
 @draws
 @pytest.mark.parametrize(("theme", "turned"), [
     ("terra", False), ("arena", False), ("encore", False), ("lumen-v2", False),
-    ("almanac", False), ("nimbus", False), ("lumen", True),
+    ("almanac", False), ("nimbus", False), ("lumen", True), ("lumen-vertical", False),
 ])  # fmt: skip
 def test_the_engine_composes_each_theme_as_the_app_would(
     rig: Rig, theme: str, turned: bool
@@ -1208,6 +1208,27 @@ def test_the_engine_composes_each_theme_as_the_app_would(
         assert apart is not None and int(apart[1]) <= 16 and int(apart[2]) <= 2, line
         close += 1
     assert int(summed[1]) + close == int(summed[2]), done.stderr
+
+
+@draws
+def test_auto_finds_the_panel_and_its_video_mode_with_no_model_named(rig: Rig) -> None:
+    """`model = "auto"` (none named) and the video mode "auto" with the clip's name: the
+    panel on the bus is looked up (the tests' bus, LP_TEST_BUS: the 9.2" the simulated one
+    is), proven, and it streams; without the clip's name it shows single pictures, and the
+    log says what the video mode lacks once."""
+    bus = rig.home / "bus"
+    bus.write_text("turing-9.2-usb\n", encoding="utf-8")
+    rig.config('theme = "lumen"\n[device]\ndriver = "turzx"\n'
+               '[video]\nfps = 25\nlocal_clip = "usr/data/clip.h264"\n')  # fmt: skip
+    done = rig.run("run", "--demo", "--frames", "30", LP_TEST_BUS=str(bus))
+    assert done.returncode == 0, done.stderr
+    assert 110 in rig.fake.commands and rig.fake.commands.count(121) >= 10, done.stderr
+    rig.fake.commands.clear()
+    rig.config('theme = "lumen"\n[device]\ndriver = "turzx"\n[video]\nfps = 25\n')
+    done = rig.run("run", "--demo", "--frames", "10", LP_TEST_BUS=str(bus))
+    assert done.returncode == 0, done.stderr
+    assert 110 not in rig.fake.commands and 121 not in rig.fake.commands, done.stderr
+    assert done.stderr.count("local_clip is not set") == 1, done.stderr
 
 
 @draws

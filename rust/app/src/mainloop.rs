@@ -770,24 +770,11 @@ impl MainLoop {
 
     fn fps(&self) -> i64 {
         let streams = self.panel.as_ref().is_some_and(Display::streams);
-        if !streams && self.calm() {
-            return 1;
-        }
         let mode = self.host.mode().unwrap_or_default();
         let own = self.config.modes.get(&mode).and_then(|mode| mode.fps);
-        if let Some(fps) = own.filter(|fps| *fps != 0) {
-            return fps.max(1);
-        }
-        if streams {
-            let video = (self.panel.as_ref().and_then(Display::stream_fps))
-                .unwrap_or(self.config.device.video.fps);
-            return match mode.as_str() {
-                "game" => video.min(GAME_STREAM_FPS),
-                _ => video,
-            }
-            .max(1);
-        }
-        self.config.fps.max(1)
+        let video = (self.panel.as_ref().and_then(Display::stream_fps))
+            .unwrap_or(self.config.device.video.fps);
+        frames_a_second(streams, self.calm(), &mode, own, video, self.config.fps)
     }
 
     /// The transition of a switch that begins now, where config.toml has one for it.
@@ -2403,6 +2390,33 @@ fn shine_kinds<'a>(config: &'a Config, theme: &'a lp_theme::Theme) -> Vec<&'a st
         .collect()
 }
 
+/// frames_a_second: one where the motion is calm (and nothing streams), else the active
+/// mode's own (`own`, not 0), else a streaming display's (`video`; in game mode at most 24),
+/// else config.toml's `fps`.
+fn frames_a_second(
+    streams: bool,
+    calm: bool,
+    mode: &str,
+    own: Option<i64>,
+    video: i64,
+    fps: i64,
+) -> i64 {
+    if !streams && calm {
+        return 1;
+    }
+    if let Some(own) = own.filter(|fps| *fps != 0) {
+        return own.max(1);
+    }
+    if streams {
+        return match mode {
+            "game" => video.min(GAME_STREAM_FPS),
+            _ => video,
+        }
+        .max(1);
+    }
+    fps.max(1)
+}
+
 #[cfg(test)]
 mod canvas_tests {
     use super::*;
@@ -2444,5 +2458,23 @@ mod canvas_tests {
         let ending = shared_moment(("media", true)); // (music stops: another change)
         assert!(ending - first > 0.05, "{ending} {first}");
         assert_eq!(TOGETHER, ["game", "media", "idle"]);
+    }
+
+    #[test]
+    fn a_mode_sets_the_frame_rate_and_game_mode_slows_a_stream() {
+        // (as app.py's _fps: a mode's own rate replaces the stream's 50; game mode without
+        // one streams 24 at most; a calm panel that does not stream draws one a second)
+        assert_eq!(frames_a_second(true, false, "game", Some(10), 50, 5), 10);
+        assert_eq!(
+            frames_a_second(true, false, "game", None, 50, 5),
+            GAME_STREAM_FPS
+        );
+        assert_eq!(frames_a_second(true, false, "", None, 50, 5), 50);
+        assert_eq!(frames_a_second(true, false, "game", Some(0), 20, 5), 20);
+        assert_eq!(frames_a_second(false, false, "", None, 50, 5), 5);
+        assert_eq!(frames_a_second(false, false, "night", Some(2), 50, 5), 2);
+        assert_eq!(frames_a_second(false, true, "night", Some(2), 50, 5), 1);
+        assert_eq!(frames_a_second(true, true, "", None, 25, 5), 25); // (a stream is never calm)
+        assert_eq!(frames_a_second(false, false, "", None, 50, 0), 1);
     }
 }
