@@ -481,4 +481,105 @@ mod tests {
         assert!(pid_exists(i64::from(std::process::id())) && !pid_exists(0));
         let _ = std::fs::remove_dir_all(&folder);
     }
+
+    fn settings(name: &str) -> PathBuf {
+        let folder = std::env::temp_dir().join(format!("lp-access-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    #[test]
+    fn the_token_of_a_run_that_ended_or_of_another_server_opens_nothing() {
+        let folder = settings("ended");
+        let token = new_token().unwrap();
+        publish(&folder, &token, 8765).unwrap();
+        // a program that ran and ended
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let ended = i64::from(child.id());
+        child.wait().unwrap();
+        let mut info = Dict::default();
+        info.insert("pid".into(), Value::int(ended));
+        info.insert("port".into(), Value::int(8765));
+        info.insert("token".into(), Value::Str(token.clone()));
+        write(&token_file(&folder), &info).unwrap();
+        assert_eq!(read_token(&folder, Some(8765)), None);
+        assert_eq!(read_token(&folder, None), Some(token)); // (asked by no server's port)
+                                                            // a file that is not ours: no token
+        for junk in [
+            "not json",
+            "[1, 2]",
+            r#"{"token": "short", "port": 8765}"#,
+            r#"{"token": 7}"#,
+        ] {
+            std::fs::write(token_file(&folder), junk).unwrap();
+            assert_eq!(read_token(&folder, None), None, "{junk}");
+        }
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_token_of_the_environment_is_taken_out_of_it() {
+        let token = new_token().unwrap();
+        std::env::set_var(ENV, &token);
+        assert_eq!(inherited_token(), Some(token));
+        assert!(std::env::var_os(ENV).is_none());
+        std::env::set_var(ENV, "not one");
+        assert_eq!(inherited_token(), None);
+        assert!(std::env::var_os(ENV).is_none() && inherited_token().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_folder_of_the_token_is_closed_to_the_others_whatever_it_was() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let folder = settings("closed");
+        let private = token_file(&folder).parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+        publish(&folder, &new_token().unwrap(), 1).unwrap();
+        assert_eq!(std::fs::metadata(&private).unwrap().mode() & 0o777, 0o700);
+        // (one that belongs to somebody else is not used: root can make one)
+        // SAFETY: geteuid has no arguments and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            let other = settings("other");
+            let theirs = token_file(&other).parent().unwrap().to_path_buf();
+            std::fs::create_dir_all(&theirs).unwrap();
+            let path = std::ffi::CString::new(theirs.to_str().unwrap()).unwrap();
+            // SAFETY: a path of the test's own, to the user nobody.
+            assert_eq!(unsafe { libc::chown(path.as_ptr(), 65534, 65534) }, 0);
+            assert_eq!(publish(&other, &new_token().unwrap(), 1), None);
+            std::fs::remove_dir_all(&other).unwrap();
+        }
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_others_can_change_is_no_place_for_the_highest_rights() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = settings("risk");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(folder_risk(&folder, None), "");
+        std::fs::write(folder.join("config.toml"), "").unwrap();
+        std::fs::set_permissions(
+            folder.join("config.toml"),
+            std::fs::Permissions::from_mode(0o666),
+        )
+        .unwrap();
+        assert_eq!(folder_risk(&folder, None), "other users may write to it");
+        std::fs::set_permissions(
+            folder.join("config.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(folder_risk(&folder, None), "other users may write to it");
+        assert_eq!(folder_risk(&folder.join("none"), None), ""); // (nothing to tell)
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }
