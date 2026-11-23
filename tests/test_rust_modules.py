@@ -250,7 +250,6 @@ def test_what_the_editor_asks_of_the_modules_as_python_answers() -> None:
     # cards.py stays, and is asked
     assert ours["lines"] == [_card(cards.card_line(x)) for x in CARD_LINES + TIMES]
     assert ours["times"] == [_bits(cards.card_time(x)) for x in TIMES + CARD_LINES]
-    assert ours["time_texts"] == [cards.time_text(x) for x in seconds]
 
 
 @pytest.mark.kept

@@ -61,14 +61,6 @@ def card_time(text: str) -> float | None:
     return seconds
 
 
-def time_text(seconds: float) -> str:
-    """A turn's time as a line writes it: ``5m``, ``90s``, ``1h`` (card_time reads it back)."""
-    for unit, size in (("h", 3600), ("m", 60)):
-        if seconds % size == 0:
-            return f"{int(seconds // size)}{unit}"
-    return f"{seconds:g}s"
-
-
 def card_line(line: str) -> SlotCard | None:
     """A line of a slot's ``items``: ``name``, then ``for <time>`` if it has a turn of its own,
     then ``if <conditions>`` if it has a rule of its own (``forecast for 5m if

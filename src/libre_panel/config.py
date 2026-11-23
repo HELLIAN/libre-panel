@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import sys
 import threading
 import time
@@ -352,45 +351,6 @@ def usual_dir() -> Path:
         return Path(base) / "LibrePanel"
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "libre-panel"
-
-
-def take_over_into_portable() -> Path | None:
-    """On the first start of a portable copy: the settings in the user's own folder (where an
-    installed Libre Panel, and the portable copies before 0.7, keep theirs) are copied into its
-    ``data`` folder, once; the logs stay behind. The folder they came from, or None."""
-    portable = None if os.environ.get("LIBRE_PANEL_HOME") else portable_dir()
-    if portable is None or portable.exists():
-        return None
-    usual = usual_dir()
-    if not (usual / "config.toml").is_file():
-        return None
-    part = portable.with_name(portable.name + ".part")
-    try:
-        shutil.rmtree(part, ignore_errors=True)
-        shutil.copytree(usual, part, ignore=shutil.ignore_patterns("logs"))
-        part.rename(portable)
-    except OSError as exc:
-        log.warning("portable: the settings of %s were not taken over: %s", usual, exc)
-        shutil.rmtree(part, ignore_errors=True)
-        return None
-    return usual
-
-
-def user_themes_dir() -> Path:
-    return config_dir() / "themes"
-
-
-# caches the versions before kept and this one does not: the weather symbols' lit bodies
-# (render/light3d.py, ten megabytes, until 0.8.0rc1)
-GONE_CACHES = ("light3d",)
-
-
-def forget_gone_caches() -> None:
-    """Remove what :data:`GONE_CACHES` names from the settings folder's ``cache``."""
-    for name in GONE_CACHES:
-        folder = config_dir() / "cache" / name
-        if folder.is_dir():
-            shutil.rmtree(folder, ignore_errors=True)
 
 
 LOG_FILENAME = "libre-panel.log"
