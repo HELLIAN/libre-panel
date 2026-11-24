@@ -1420,7 +1420,8 @@ def test_an_older_serial_panel_says_what_it_cannot_do(app_url, isolated_home, mo
 
 def test_a_panel_written_from_notes_says_what_it_cannot_do(app_url, isolated_home):  # noqa: F811
     """Settings → Panel: what the panel cannot do under its name, in place of what an older
-    serial panel says (the DS916 is on a serial port too, but takes whole pictures)."""
+    serial panel says (the DS916 is on a serial port too, but takes whole pictures); seen on
+    the hardware since an owner's report, it no longer says it was not."""
     isolated_home.mkdir(parents=True, exist_ok=True)
     (isolated_home / "config.toml").write_text(
         'theme = "libre-default"\n\n[device]\nmodel = "jonsbo-ds916"\n', encoding="utf-8"
@@ -1428,8 +1429,9 @@ def test_a_panel_written_from_notes_says_what_it_cannot_do(app_url, isolated_hom
     with browser_page(app_url, "settings/panel") as page:
         page.wait_for_selector("#panel-found")
         note = page.locator("#panel-found [data-limits-note]")
-        expect(note).to_contain_text("Not yet seen on the hardware")
+        expect(note).to_contain_text("It takes whole JPEG pictures")
         expect(note).to_contain_text("no backlight control")
+        expect(note).not_to_contain_text("Not yet seen on the hardware")
         expect(page.locator("#panel-found [data-serial-note]")).to_have_count(0)
 
 
