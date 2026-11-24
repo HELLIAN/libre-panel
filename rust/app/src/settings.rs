@@ -1076,6 +1076,17 @@ impl Settings<'_> {
 
     // -- the panel ------------------------------------------------------------------------
 
+    /// The panel the app shows on now, by the model its panel loop says (None: it shows on
+    /// none, or this is no app with a panel loop).
+    fn showing(&self) -> Option<&'static PanelModel> {
+        self.controls.as_ref().and_then(|app| {
+            let state = app.panel.state();
+            let on = state.get("on_panel") == Some(&Value::Bool(true));
+            let id = state.get("model").and_then(Value::as_str).filter(|_| on)?;
+            lp_devices::models::find_model(id)
+        })
+    }
+
     /// The panel that is found (looked for on the bus, without opening it, so a running
     /// panel is not disturbed) and what the video mode makes of it.
     pub fn panel(&self) -> Answer<Value> {
@@ -1093,12 +1104,7 @@ impl Settings<'_> {
             found = Some(Found::of(configured));
         }
         // (else the one the app shows on: a panel whose port it has open is found by no search)
-        let showing = self.controls.as_ref().and_then(|app| {
-            let state = app.panel.state();
-            let on = state.get("on_panel") == Some(&Value::Bool(true));
-            let id = state.get("model").and_then(Value::as_str).filter(|_| on)?;
-            lp_devices::models::find_model(id)
-        });
+        let showing = self.showing();
         let model = (configured.or(found.as_ref().map(|found| found.model))).or(showing);
         let video = &config.device.video;
         let usb = model.is_none_or(|model| model.protocol == "usb-turing");
@@ -1598,7 +1604,10 @@ impl Settings<'_> {
     /// one, by its USB ids. The bus is only looked at: nothing is sent to a panel.
     pub fn report(&self) -> Answer<Value> {
         let config = self.config()?;
-        let product = find_panel(&config).map_or(String::new(), |found| found.model.label());
+        // (a panel whose port the app has open is found by no search: the one it shows on)
+        let product = (find_panel(&config).map(|found| found.model))
+            .or_else(|| self.showing())
+            .map_or(String::new(), PanelModel::label);
         let (system, release, machine) = platform();
         let mut lines = vec![
             format!(

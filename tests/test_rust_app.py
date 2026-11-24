@@ -1305,6 +1305,26 @@ def _until(done: Any, seconds: float = 60.0) -> Any:
 
 
 @draws
+def test_a_panel_report_names_the_panel_the_app_shows_on(rig: Rig) -> None:
+    """Report a panel (Settings → About): a panel whose port the app has open is found by no
+    search of the bus (a JONSBO DS916 on its COM port), so the report said "Panel found: none"
+    while the app showed on it. It names the one the app shows on: here the simulated 9.2",
+    which is on no bus the search sees."""
+    rig.config(VIDEO)
+    with _background(rig) as (api, said):
+
+        def found() -> str:
+            status, told = api("GET", "/api/report")
+            assert status == "HTTP/1.0 200 OK", told
+            return told["text"] if 'Panel found: Turing 9.2"' in told["text"] else ""
+
+        text = _until(found)
+        assert text, (api("GET", "/api/report")[1], said)
+        status, told = api("GET", "/api/report")
+        assert told["product"] == 'Turing 9.2"' and "product=Turing" in told["form"]
+
+
+@draws
 def test_the_colour_check_shows_the_range_s_a_and_b_on_a_panel_showing_video(rig: Rig) -> None:
     """Settings → Panel → Check the colours on a panel that shows video (the simulated 9.2", its
     video made by the engine): no A/B of the card's conversion, the processor converts either

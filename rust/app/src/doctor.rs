@@ -603,9 +603,10 @@ impl<'a> Doctor<'a> {
                 true
             }
             // (a panel config.toml names, or one on a port by its USB ids, that does not open:
-            // why; nothing there at all: what was looked for)
-            Err(why) if named || self.panel_port(&device) => {
-                let model = lp_devices::models::find_model(&device.model);
+            // why, named by its model; nothing there at all: what was looked for)
+            Err(why) if named || self.panel_port(&device).is_some() => {
+                let model = lp_devices::models::find_model(&device.model)
+                    .or_else(|| self.panel_port(&device));
                 self.report.model = model;
                 let step = match serial(model) {
                     true => "open a USB serial panel (virtual COM port)",
@@ -622,12 +623,10 @@ impl<'a> Doctor<'a> {
         }
     }
 
-    /// Whether a port has a serial panel's USB ids (looked for as the app looks).
-    fn panel_port(&self, device: &lp_config::DeviceConfig) -> bool {
-        matches!(
-            lp_devices::ports::find_port(None, &device.port),
-            Ok(Some(_))
-        )
+    /// The model of the serial panel a port has the USB ids of (looked for as the app looks).
+    fn panel_port(&self, device: &lp_config::DeviceConfig) -> Option<&'static PanelModel> {
+        let found = lp_devices::ports::find_port(None, &device.port).ok()??;
+        Some(found.model)
     }
 
     fn no_panel(&mut self) {

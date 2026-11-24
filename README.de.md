@@ -341,7 +341,7 @@ zur Seite, wenn seine Messwerte fehlen, und kostet nichts, solange kein Theme es
 |---|---|---|---|
 | **Turing / TURZX** | 8,8", 9,2", 12,3" | 1,6", 2,1" rund, 2,8" rund, 4,6", 5,2", 8" | USB, Videomodus |
 | **Turing Smart Screen** | 3,5", 8,8" | 2,1" rund, 5" | COM-Port |
-| **JONSBO** | ZC-360, jedes Display ein eigenes Panel; DS339 | ZC-360 als ein Bild, TF3-360SC, DS916 | USB |
+| **JONSBO** | ZC-360, jedes Display ein eigenes Panel; DS339, DS916 | ZC-360 als ein Bild, TF3-360SC | USB |
 | **Waveshare USB Monitor** | 2,8", als USB-Display | – | USB |
 | **UsbPCMonitor** | – | 3,5", 5", 7" | COM-Port |
 | **XuanFang** | – | 3,5" | COM-Port |
@@ -349,7 +349,7 @@ zur Seite, wenn seine Messwerte fehlen, und kostet nichts, solange kein Theme es
 | **WeAct Display FS V1** | 0,96" | 3,5" | COM-Port |
 | **VMAX** | – | 4,6" | USB |
 | **Hongtai / Jungle Leopard** | – | Chill Arc 360, MSI EZ Display und mehr | COM-Port |
-| **Lian Li** | – | Universal Screen, HydroShift II, OLED Curve | USB |
+| **Lian Li** | Universal Screen 8,8" | Universal Screen 9,2", HydroShift II, OLED Curve | USB |
 | **Thermalright** | – | Trofeo Vision | USB |
 | **BeadaPanel** | – | jedes Modell | USB |
 | **NZXT Kraken** | – | mit LCD | USB |

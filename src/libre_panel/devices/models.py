@@ -770,6 +770,8 @@ _CONFIRMED: set[str] = {
     "jonsbo-ds339",
     # runs and "works great": its owner's report in the TURZX forum (0.9.5)
     "lianli-universal-8.8",
+    # shows the theme as it should, with 0.9.4 on Windows: its owner's report (#64, 0.9.5)
+    "jonsbo-ds916",
 }
 # What the panels whose drivers were written from other projects' notes cannot do (their
 # drivers say why); each begins with what all of them share: nobody has run them yet.
@@ -820,7 +822,7 @@ _LIMITS = {
         "motion."
     ),
     "jonsbo-ds916": (
-        "Not yet seen on the hardware. It takes whole JPEG pictures: no smooth motion, and "
+        "It takes whole JPEG pictures: no smooth motion, and "
         "fine detail may soften. It has no backlight control: dimming darkens the picture. "
         "When Libre Panel quits, the panel shows its own animation again."
     ),

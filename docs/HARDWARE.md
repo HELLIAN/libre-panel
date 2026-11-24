@@ -37,8 +37,8 @@ motion (the video mode is for the TURZX USB panels). The panel test's speed chec
   JONSBO, Hongtai, VMAX, Lian Li, Thermalright, BeadaPanel, NZXT and Thermaltake (and the
   Turing 1.6" and 2.1" USB panels) the protocol comes from other projects' notes and captures
   and from the makers' own sources: nobody has run them with Libre Panel yet, but for the
-  JONSBO ZC-360's screens as panels of their own (#13), the JONSBO DS339 (#46) and the Lian Li
-  Universal Screen 8.8", which are supported.
+  JONSBO ZC-360's screens as panels of their own (#13), the JONSBO DS339 (#46) and DS916 (#64)
+  and the Lian Li Universal Screen 8.8", which are supported.
 - **planned** — the panel is in the catalog (editor menu, sizes), the driver is
   not written yet. Design themes now; they will work once the driver lands.
 
@@ -170,9 +170,9 @@ a TURZX panel comes from the notes of the MIT-licensed
 ### JONSBO DS916 and DS339
 
 Neither has a TURZX controller inside; their protocols come from the JONSBO drivers of
-[InfoPanel](https://github.com/habibrehmansg/infopanel) (GPL-3.0). The DS339 runs, as its
-owner reports ([#46](https://github.com/syntensa/libre-panel/issues/46)); the DS916 is
-unverified.
+[InfoPanel](https://github.com/habibrehmansg/infopanel) (GPL-3.0). Both run, as their
+owners report: the DS339 ([#46](https://github.com/syntensa/libre-panel/issues/46)) and the
+DS916 ([#64](https://github.com/syntensa/libre-panel/issues/64)), on Windows.
 
 - **DS916** (9.16", 1920×462, `device.model = "jonsbo-ds916"`, or found by `auto`): a USB
   serial port (`33c3:f101`) that takes whole JPEG pictures. It shows Lumen like the 9.2" bars.

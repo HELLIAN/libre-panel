@@ -37,6 +37,15 @@ impl SerialPort {
         })
     }
 
+    /// What an open of `device` failed with, without the "cannot open <device>: " open() puts
+    /// before it: for a message that names the port itself (in the app's language).
+    pub fn cause(error: &DeviceError, device: &str) -> String {
+        let said = &error.0;
+        (said.strip_prefix(&format!("cannot open {device}: ")))
+            .unwrap_or(said)
+            .to_string()
+    }
+
     pub fn device(&self) -> &str {
         &self.device
     }
@@ -981,10 +990,17 @@ mod everywhere {
             "/dev/ttyLP-none"
         };
         let refused = SerialPort::open(missing, 2_000_000, false).err();
-        let message = refused.expect("no such port").0;
+        let refused = refused.expect("no such port");
+        let message = refused.0.clone();
         assert!(
             message.starts_with(&format!("cannot open {missing}: ")),
             "{message}"
+        );
+        // (the cause alone, for a message that names the port itself)
+        let cause = SerialPort::cause(&refused, missing);
+        assert!(
+            !cause.is_empty() && !cause.contains("cannot open"),
+            "{cause}"
         );
     }
 }

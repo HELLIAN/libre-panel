@@ -330,7 +330,7 @@ nothing while no theme shows it.
 |---|---|---|---|
 | **Turing / TURZX** | 8.8", 9.2", 12.3" | 1.6", 2.1" round, 2.8" round, 4.6", 5.2", 8" | USB, video mode |
 | **Turing Smart Screen** | 3.5", 8.8" | 2.1" round, 5" | COM port |
-| **JONSBO** | ZC-360, each screen its own panel; DS339 | ZC-360 as one picture, TF3-360SC, DS916 | USB |
+| **JONSBO** | ZC-360, each screen its own panel; DS339, DS916 | ZC-360 as one picture, TF3-360SC | USB |
 | **Waveshare USB Monitor** | 2.8", as a USB display | – | USB |
 | **UsbPCMonitor** | – | 3.5", 5", 7" | COM port |
 | **XuanFang** | – | 3.5" | COM port |
