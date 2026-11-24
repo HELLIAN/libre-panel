@@ -401,8 +401,8 @@ your user the panel's USB access with one click. Or the <b>tarball</b>.
 <b>With Python</b><br>
 <sub>3.11 or newer</sub>
 <br><br>
-<b>pipx</b> installs it from this repository, with the panel's drivers and the tray, on
-Windows and Linux.
+<b>pipx</b> installs the same app as the downloads, from the release's wheel for Windows or
+Linux.
 <br><br>
 <a href="#with-python">The commands</a>
 </td>
@@ -472,7 +472,8 @@ administrator rights.
 ### With Python
 
 ```bash
-pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.4"
+pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-manylinux_2_35_x86_64.whl"    # Linux
+pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-win_amd64.whl"    # Windows
 libre-panel tray                    # the background app with its tray icon; opens its window
 libre-panel autostart enable        # start it whenever you log in
 ```
