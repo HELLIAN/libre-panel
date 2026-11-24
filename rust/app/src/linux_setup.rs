@@ -21,8 +21,10 @@ use lp_py::{Dict, Value};
 
 /// the USB vendor ids the udev rule is for: TURZX USB panels, the JONSBO ZC-360's screens
 pub const USB_VENDORS: [&str; 3] = ["1cbe", "43a8", "345f"];
-/// and other makers' screens, with their product ids
-pub const USB_PRODUCTS: [(&str, &str); 10] = [
+/// and other makers' screens (and the light ring of Lian Li's Universal Screen 8.8"), with
+/// their product ids
+pub const USB_PRODUCTS: [(&str, &str); 11] = [
+    ("0416", "8050"),
     ("0416", "5302"),
     ("0416", "5408"),
     ("4e58", "1001"),
@@ -863,6 +865,12 @@ fn may_use(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+        // LP_TEST_RIGHTS=user is the tests' own (as lp_devices::rights has it): a user who
+        // neither owns the node nor is in its group, whoever runs them (a container is root)
+        if std::env::var("LP_TEST_RIGHTS").as_deref() == Ok("user") {
+            return std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o006 == 0o006);
+        }
         let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
             return false;
         };
@@ -1317,6 +1325,20 @@ pub fn elevation(
     terminal: bool,
     json_output: bool,
 ) -> Elevation {
+    let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
+    let graphical = set("DISPLAY") || set("WAYLAND_DISPLAY");
+    elevation_in(options, command, terminal, json_output, graphical, &which)
+}
+
+/// elevation on a desktop (`graphical`) or none, with the programs `which` finds.
+fn elevation_in(
+    options: Options,
+    command: Option<&[String]>,
+    terminal: bool,
+    json_output: bool,
+    graphical: bool,
+    which: &dyn Fn(&str) -> Option<String>,
+) -> Elevation {
     let text = terminal_command(options, command);
     let Some(command) = command else {
         return Elevation {
@@ -1327,8 +1349,6 @@ pub fn elevation(
     };
     let mut tail = command.to_vec();
     tail.extend(arguments(options, json_output, false));
-    let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
-    let graphical = set("DISPLAY") || set("WAYLAND_DISPLAY");
     let pkexec = which("pkexec");
     if let (Some(pkexec), true) = (&pkexec, graphical) {
         let mut argv = vec![pkexec.clone(), "--disable-internal-agent".into()];
@@ -1378,7 +1398,12 @@ const APP_MARKS: [&str; 6] = ["_PYI_", "PYI_", "APPDIR", "APPIMAGE", "ARGV0", "O
 /// clean_environment: the environment pkexec is started in: none of what the bundle put
 /// there for its own libraries.
 pub fn clean_environment() -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> = std::env::vars()
+    cleaned(std::env::vars())
+}
+
+/// clean_environment of the environment `vars`.
+fn cleaned(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = vars
         .filter(|(key, _)| {
             !STRIPPED.contains(&key.as_str())
                 && !APP_MARKS.iter().any(|mark| key.starts_with(mark))
@@ -1619,6 +1644,14 @@ pub fn status(facts: &Facts, with_job: bool) -> Dict {
     told
 }
 
+/// supported: whether this system has the setup (linux_setup.supported): Linux does.
+/// LP_SETUP_SYSTEM=other is the tests' own: a system without it, as the browser tests make
+/// every computer but those they bring.
+pub fn supported() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var_os("LP_SETUP_SYSTEM").is_none_or(|system| system != "other")
+}
+
 /// Where the computer's files are: `/`, or the folder the tests make one in (LP_SETUP_ROOT,
 /// as linux_setup.gather's `root`).
 pub fn root() -> PathBuf {
@@ -1747,5 +1780,212 @@ pub fn run_cli(args: &CliOptions) -> u8 {
         0
     } else {
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn pkexec_asks_where_there_is_a_desktop_and_a_terminal_uses_sudo() {
+        let command = vec!["/opt/Libre Panel/libre-panel".to_string()];
+        let all = |name: &str| Some(format!("/usr/bin/{name}"));
+        let options = Options {
+            rapl: Some(true),
+            remove: false,
+        };
+        // (a desktop, X11 or Wayland: polkit's dialog, without pkexec's agent in a terminal)
+        let way = elevation_in(options, Some(&command), false, true, true, &all);
+        assert_eq!(way.method, "pkexec");
+        assert_eq!(
+            way.argv,
+            [
+                "/usr/bin/pkexec",
+                "--disable-internal-agent",
+                "/opt/Libre Panel/libre-panel",
+                "system-setup",
+                "--linux",
+                "--rapl",
+                "--json"
+            ]
+        ); // fmt: skip
+           // the command to type quotes a path with spaces
+        let typed = "sudo '/opt/Libre Panel/libre-panel' system-setup --linux --rapl";
+        assert_eq!(way.terminal, typed);
+        // without a desktop the app can only tell the command; a terminal asks with sudo
+        let way = elevation_in(options, Some(&command), false, true, false, &all);
+        assert_eq!((way.method, way.argv.len()), ("", 0));
+        let way = elevation_in(options, Some(&command), true, false, false, &all);
+        assert_eq!(way.method, "sudo");
+        assert_eq!(
+            way.argv[..2],
+            ["/usr/bin/sudo".to_string(), command[0].clone()]
+        );
+        let no_sudo = |name: &str| (name == "pkexec").then(|| "/usr/bin/pkexec".to_string());
+        let way = elevation_in(options, Some(&command), true, false, false, &no_sudo);
+        assert_eq!(
+            (way.method, way.argv[0].as_str()),
+            ("pkexec", "/usr/bin/pkexec")
+        );
+        // a desktop without pkexec: the command to type
+        let none = |_: &str| None;
+        let way = elevation_in(options, Some(&command), false, true, true, &none);
+        assert_eq!(way.method, "");
+        // no program root can run: only a command to type
+        let way = elevation_in(
+            Options {
+                rapl: None,
+                remove: true,
+            },
+            None,
+            true,
+            true,
+            true,
+            &all,
+        );
+        assert_eq!(
+            (way.method, way.terminal.as_str()),
+            ("", "sudo libre-panel system-setup --linux --remove")
+        );
+    }
+
+    #[test]
+    fn the_report_is_the_last_line_that_is_json_and_modprobe_s_answers_are_told_apart() {
+        let said = "loading nct6775\n{\"steps\": 1}\nnoise {\n{\"steps\": 2, \"ok\": true}\nbye\n";
+        let found = parse_result(said).unwrap();
+        assert_eq!(found.get("steps"), Some(&Value::int(2)));
+        assert!(parse_result("nothing\n{ not json").is_none());
+        assert_eq!(classify(0, ""), LOADED);
+        assert_eq!(
+            classify(
+                1,
+                "modprobe: ERROR: could not insert 'it87': No such device"
+            ),
+            ABSENT
+        );
+        assert_eq!(
+            classify(
+                1,
+                "ERROR: could not insert 'nct6775': Device or resource busy"
+            ),
+            BUSY
+        );
+        assert_eq!(
+            classify(1, "modprobe: FATAL: Module nct6687 not found in directory"),
+            MISSING
+        );
+        assert_eq!(classify(1, "something else"), FAILED);
+        assert_eq!(shlex_quote(""), "''");
+        assert_eq!(shlex_quote("it's"), "'it'\"'\"'s'");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_run_ends_as_its_exit_code_and_report_say_and_one_runs_at_a_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = std::env::temp_dir().join(format!("lp-setup-run-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let script = |name: &str, body: &str| {
+            let path = folder.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            Elevation {
+                method: "sudo",
+                argv: vec![path.display().to_string()],
+                terminal: String::new(),
+            }
+        };
+        let ended = || {
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let Value::Dict(told) = snapshot() else {
+                    unreachable!()
+                };
+                if told.get("running") == Some(&Value::Bool(false))
+                    || std::time::Instant::now() > end
+                {
+                    return told;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        let said = |told: &Dict, key: &str| told.get(key).map(Value::str).unwrap_or_default();
+        // nothing runs without a way to ask
+        assert!(!start(
+            &Elevation {
+                method: "",
+                argv: Vec::new(),
+                terminal: String::new()
+            },
+            "unlock"
+        ));
+        // the report is the last line that is JSON; a second run waits for the first
+        let slow = script(
+            "ok",
+            "sleep 0.5; echo working; echo '{\"ok\": true, \"steps\": 2}'",
+        );
+        assert!(start(&slow, "unlock"));
+        assert!(!start(&slow, "remove"));
+        let told = ended();
+        assert_eq!(
+            (said(&told, "state"), said(&told, "action")),
+            ("done".into(), "unlock".into())
+        );
+        assert_eq!(
+            (said(&told, "code"), said(&told, "method")),
+            ("0".into(), "sudo".into())
+        );
+        // a closed dialog (126) and no pkexec (127) without a report; a failure says why
+        for (code, state) in [(126, "cancelled"), (127, "unavailable")] {
+            assert!(start(&script("exit", &format!("exit {code}")), "unlock"));
+            assert_eq!(said(&ended(), "state"), state);
+        }
+        assert!(start(
+            &script(
+                "fails",
+                "echo 'it went wrong' >&2; echo '{\"ok\": false}'; exit 1"
+            ),
+            "remove"
+        ));
+        let told = ended();
+        assert_eq!(
+            (said(&told, "state"), said(&told, "error")),
+            ("failed".into(), "it went wrong".into())
+        );
+        assert_eq!(said(&told, "action"), "remove"); // (a new run forgets the last one)
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_system_s_programs_get_the_system_s_libraries() {
+        // (an AppImage's loader put its folder first in LD_LIBRARY_PATH; inherited, it made the
+        // system's /bin/sh take the bundle's older readline and stop: the path from before, or
+        // none, and nothing the bundle set for itself)
+        let given = env(&[
+            ("LD_LIBRARY_PATH", "/tmp/_MEI/lib:/opt/mine"),
+            ("LD_LIBRARY_PATH_ORIG", "/opt/mine"),
+            ("PATH", "/usr/bin"),
+            ("APPDIR", "/tmp/.mount"),
+            ("PYTHONPATH", "/x"),
+            ("_PYI_APPLICATION_HOME_DIR", "/tmp/_MEI"),
+        ]);
+        assert_eq!(
+            cleaned(given.into_iter()),
+            env(&[("PATH", "/usr/bin"), ("LD_LIBRARY_PATH", "/opt/mine")])
+        );
+        let given = env(&[("LD_LIBRARY_PATH", "/tmp/_MEI/lib"), ("PATH", "/usr/bin")]);
+        assert_eq!(cleaned(given.into_iter()), env(&[("PATH", "/usr/bin")]));
+        let given = env(&[("LD_LIBRARY_PATH_ORIG", ""), ("HOME", "/home/a")]);
+        assert_eq!(cleaned(given.into_iter()), env(&[("HOME", "/home/a")]));
+        assert_eq!(cleaned(Vec::new().into_iter()), Vec::new());
     }
 }

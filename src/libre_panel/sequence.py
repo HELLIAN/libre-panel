@@ -19,12 +19,11 @@ A step lasts its ``seconds``, ``minutes`` and ``hours`` together (``minutes = 1,
 30``), at least :data:`SHORTEST_S`. The sequence is the panel's normal theme: a game's
 mode, the autopilot or a service that shows a theme of its own go first, and the sequence
 goes on underneath. It begins with its first step when the panel starts and whenever the
-steps change.
+steps change (rust/config's sequence.rs); here the steps are read, as config.toml has them.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,13 +42,6 @@ class Step:
 
     theme: str
     seconds: int
-
-    def to_table(self) -> dict[str, Any]:
-        """As config.toml has it, in the largest unit that takes it whole: ``minutes = 5``."""
-        for unit, size in UNITS:
-            if self.seconds % size == 0:
-                return {"theme": self.theme, unit: self.seconds // size}
-        return {"theme": self.theme, "seconds": self.seconds}  # (never reached: size 1)
 
 
 def parse_step(raw: Any, where: str) -> Step:
@@ -82,57 +74,3 @@ def parse_steps(raw: Any, where: str = "sequence.steps") -> list[Step]:
     if not isinstance(raw, list):
         raise StepError(f"{where}: expected a list of steps ([[{where}]])")
     return [parse_step(entry, f"{where}[{n}]") for n, entry in enumerate(raw)]
-
-
-@dataclass(frozen=True)
-class Position:
-    """Where a sequence stands: its step (by index), that step's theme and the seconds left
-    of it."""
-
-    index: int
-    theme: str
-    left_s: float
-
-
-def position(steps: Sequence[Step], elapsed: float) -> Position:
-    """The step ``elapsed`` seconds after the sequence began, going round."""
-    total = sum(step.seconds for step in steps)
-    at = elapsed % total
-    for index, step in enumerate(steps):
-        if at < step.seconds:
-            return Position(index, step.theme, step.seconds - at)
-        at -= step.seconds
-    last = len(steps) - 1  # (rounding at the very end of a round)
-    return Position(last, steps[last].theme, 0.0)
-
-
-class Rotation:
-    """Follows a sequence on the clock: it begins with the first step when it is first asked,
-    and again whenever the steps change (a change of anything else in config.toml leaves it
-    where it is). While a switch to new steps is made ready, the steps before are asked too:
-    they go on where they were, until they have not been asked for a while."""
-
-    FORGET_S = 60.0
-
-    def __init__(self, clock: Callable[[], float]) -> None:
-        self.clock = clock
-        self.steps: tuple[Step, ...] = ()
-        self.began = 0.0
-        self.before: tuple[tuple[Step, ...], float, float] | None = None  # steps, began, asked
-
-    def where(self, steps: Sequence[Step], now: float | None = None) -> Position | None:
-        """The step to show now, or None without steps."""
-        now = self.clock() if now is None else now
-        steps = tuple(steps)
-        if not steps:
-            return None
-        if steps == self.steps:
-            began = self.began
-        elif self.before and self.before[0] == steps and now - self.before[2] < self.FORGET_S:
-            began = self.before[1]
-            self.before = (steps, began, now)
-        else:
-            self.before = (self.steps, self.began, now) if self.steps else None
-            self.steps, self.began = steps, now
-            began = now
-        return position(steps, max(0.0, now - began))

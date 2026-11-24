@@ -163,6 +163,27 @@ fn add_columns(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// watt_minutes: the minutes kept since `since` (Unix seconds) and the sum of the means of
+/// `columns` in them, as the app's History adds up the power of a span (its summary); None
+/// where a column is none of the means or the database cannot be read.
+pub fn watt_minutes(path: &std::path::Path, since: i64, columns: &[&str]) -> Option<(f64, f64)> {
+    if columns.is_empty() || columns.iter().any(|column| !MEANS.contains(column)) {
+        return None;
+    }
+    let sums: Vec<String> = (columns.iter())
+        .map(|column| format!("COALESCE(SUM({column}), 0)"))
+        .collect();
+    let query = format!(
+        "SELECT COUNT(*), {} FROM minutes WHERE ts >= ?1",
+        sums.join(" + ")
+    );
+    let connection = read_only(path).ok()?;
+    let found = connection.query_row(&query, [since], |row| {
+        Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))
+    });
+    found.ok()
+}
+
 /// read_only: the database for reading only (the writer may be at work; WAL lets both).
 pub fn read_only(path: &std::path::Path) -> rusqlite::Result<Connection> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -432,4 +453,83 @@ pub fn last_fingerprint(path: &std::path::Path) -> String {
         }
     };
     read().ok().flatten().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder(name: &str) -> std::path::PathBuf {
+        let folder = std::env::temp_dir().join(format!("lp-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    fn until(done: impl Fn() -> bool) -> bool {
+        let end = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            if Instant::now() > end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        true
+    }
+
+    #[test]
+    fn a_store_that_cannot_open_its_file_says_so_and_tries_again() {
+        let folder = folder("open");
+        let store = Store::sized(&folder.join("later").join(DATABASE), 100, 0.3);
+        store.start();
+        store.put("CREATE TABLE IF NOT EXISTS t (a)", Vec::new());
+        let cannot = "the database cannot be used";
+        assert!(until(|| store
+            .error()
+            .is_some_and(|said| said.starts_with(cannot))));
+        store.put("CREATE TABLE IF NOT EXISTS t (a)", Vec::new()); // (lost: not again yet)
+        std::fs::create_dir_all(folder.join("later")).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        store.put("CREATE TABLE IF NOT EXISTS t (a)", Vec::new());
+        assert!(until(|| store.written() == 1 && store.error().is_none()));
+        let notes = store.notes();
+        assert_eq!(notes.len(), 1, "{notes:?}"); // (said once)
+        assert!(
+            notes[0].starts_with(&format!("memory: {cannot}")),
+            "{notes:?}"
+        );
+        store.stop(5.0);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_full_queue_drops_what_does_not_fit_and_says_so() {
+        let folder = folder("full");
+        let store = Store::sized(&folder.join(DATABASE), 2, 30.0); // (not started: stuck)
+        for _ in 0..2 {
+            store.put("CREATE TABLE IF NOT EXISTS t (a)", Vec::new());
+        }
+        assert_eq!(store.error(), None);
+        store.put("CREATE TABLE IF NOT EXISTS t (a)", Vec::new());
+        let full = "the queue is full: the disk is too slow or the file is locked";
+        assert_eq!(store.error().as_deref(), Some(full));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_failing_statement_is_said_and_the_next_one_is_written() {
+        let folder = folder("failing");
+        let store = Store::sized(&folder.join(DATABASE), 100, 30.0);
+        store.start();
+        store.put("INSERT INTO nowhere VALUES (1)", Vec::new());
+        store.put("CREATE TABLE IF NOT EXISTS t (a)", Vec::new());
+        store.put("INSERT INTO t VALUES (?)", vec![Value::int(7)]);
+        assert!(until(|| store.written() == 2));
+        assert_eq!(store.error(), None); // (the next one worked)
+        let notes = store.notes();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("no such table: nowhere"), "{notes:?}");
+        store.stop(5.0);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }

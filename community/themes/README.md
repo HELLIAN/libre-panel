@@ -26,6 +26,13 @@ made for the sizes the entry names, and then as it checks any shared theme
    request adds its entry at the list's end: when one is merged, the workflow makes those of
    the themes that still wait anew on the new list.)
 
+A new version of a theme that is listed: share it the same way and write its name, as the
+list shows it, under *Replaces* in the form. The pull request then puts it in that theme's
+place (its folder and its entry, where it was in the list) instead of beside it, and says so;
+before it is merged someone makes sure it is yours to replace (shared by the one who shared
+the version before, or with its maker's agreement). Who installed it already keeps the
+version they have; the app installs the new one from then on.
+
 ### By hand
 
 The same without the app's help, for themes made elsewhere or more at once:

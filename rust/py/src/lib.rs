@@ -25,7 +25,7 @@ pub mod zones;
 
 pub use value::{Dict, Value};
 
-/// Libre Panel's version, as `src/libre_panel/__init__.py` names it (build.rs).
+/// Libre Panel's version, as pyproject.toml sets it (build.rs).
 pub const VERSION: &str = env!("LIBRE_PANEL_VERSION");
 
 /// str.isspace (and the regular expressions' \s) for one character.

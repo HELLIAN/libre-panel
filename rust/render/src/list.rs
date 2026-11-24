@@ -86,6 +86,37 @@ pub(crate) fn read_keys(text: &str) -> impl Iterator<Item = String> {
         .map(|e| e.pattern)
 }
 
+/// unsampled: the keys of `live` that a theme names (`texts`: every text of its JSON, read as
+/// a list's lines) and the demo's readings `demo` have no sample of, so that Design's picture
+/// shows them with this PC's readings: a sensor of a source the demo cannot know (a JSON file's,
+/// an MQTT topic's). A key named whole, or the keys a pattern matches where it matches none of
+/// the demo's (a pattern the demo answers stays the demo's: its fans are not joined by this
+/// PC's).
+pub fn unsampled<'a, R>(
+    texts: impl IntoIterator<Item = &'a str>,
+    demo: &indexmap::IndexMap<String, R>,
+    live: &indexmap::IndexMap<String, R>,
+) -> Vec<String> {
+    let mut found = indexmap::IndexSet::new();
+    for text in texts {
+        for pattern in read_keys(text) {
+            if !pattern.contains(['*', '?', '[']) {
+                if !demo.contains_key(&pattern) && live.contains_key(&pattern) {
+                    found.insert(pattern);
+                }
+                continue;
+            }
+            let answered = fnmatch::filter(demo.keys().map(String::as_str), &pattern)
+                .is_ok_and(|keys| !keys.is_empty());
+            if !answered {
+                let keys = fnmatch::filter(live.keys().map(String::as_str), &pattern);
+                found.extend(keys.unwrap_or_default().into_iter().map(String::from));
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
 /// A part of _natural's key: a run of digits as its number, the text between as it is.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Part {

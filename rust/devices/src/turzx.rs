@@ -57,7 +57,7 @@ pub const DEFAULT_BLOCK: u32 = 202_752;
 /// plays at the last rate set.
 pub const POWER_ON_FPS: u8 = 30;
 /// What x264 is told for drawn frames (h264.py's DRAWN_X264).
-pub const DRAWN_X264: &str = "no-deblock=1:subme=0";
+pub const DRAWN_X264: &str = "no-deblock=1:subme=0:deadzone-inter=6:deadzone-intra=6";
 /// The models whose decoder shows the high profile (HIGH_PROFILE_MODELS).
 pub const HIGH_PROFILE_MODELS: [&str; 2] = ["turing-9.2-usb", "turing-12.3-usb"];
 /// 4:4:4 at 90 keeps coloured text crisp; busy frames step down.
@@ -284,6 +284,30 @@ pub fn block_of(size: (i64, i64)) -> Option<i64> {
     [16, 8]
         .into_iter()
         .find(|block| size.0 % block == 0 && size.1 % block == 0)
+}
+
+/// engine_encoder: the encoder the engine is asked for, as video.engine_encoder says and the
+/// engine at hand can (its `capabilities`): "card" where it has the graphics card's encoders
+/// (else x264, which is said), "auto" on Windows where it proves the card with the panels,
+/// x264 otherwise; and the note to say.
+pub fn engine_encoder(
+    setting: &str,
+    capabilities: &str,
+    windows: bool,
+) -> (String, Option<String>) {
+    let (encoder, note) = match setting {
+        "card" if !capabilities.contains("cards") => (
+            "x264",
+            Some(
+                "video: this engine has no graphics card's encoder (one of before); x264 in the \
+                 engine encodes",
+            ),
+        ),
+        "card" => ("card", None),
+        "auto" if windows && capabilities.contains("proven") => ("auto", None),
+        _ => ("x264", None),
+    };
+    (encoder.to_string(), note.map(str::to_string))
 }
 
 /// engine_options: how the engine encodes frames of `size` into the panel's framebuffer, as
@@ -818,25 +842,14 @@ impl TurzxVideo {
         }
         // (the graphics card's encoder where this engine has it; on Windows only)
         let can = capabilities(&setup.engine);
-        let encoder = match setup.video.engine_encoder.as_str() {
-            "card" if !can.contains("cards") => {
-                notes.push(
-                    "video: this engine has no graphics card's encoder (one of before); x264 \
-                     in the engine encodes"
-                        .to_string(),
-                );
-                "x264"
-            }
-            "card" => "card",
-            "auto" if cfg!(windows) && can.contains("proven") => "auto",
-            _ => "x264",
-        }
-        .to_string();
+        let (encoder, note) = engine_encoder(&setup.video.engine_encoder, &can, cfg!(windows));
+        notes.extend(note);
         let scenes = (setup.video.engine_layers && can.contains("scenes")).then(|| {
             crate::scene::SceneSender::with(can.contains("views"), can.contains("grown"))
                 .with_rings(can.contains("rings"))
                 .with_bars(can.contains("bars"))
                 .with_fans(can.contains("laid") && can.contains("fans"))
+                .with_lights(can.contains("lights"))
         });
         let mut panel = TurzxVideo {
             conn,
@@ -1132,6 +1145,11 @@ impl TurzxVideo {
         self.scenes.as_ref().is_some_and(|scenes| scenes.fans())
     }
 
+    /// Whether frames go as their layers to an engine that draws a light field up.
+    pub fn draws_lights(&self) -> bool {
+        self.scenes.as_ref().is_some_and(|scenes| scenes.lights())
+    }
+
     /// The frame of layers the engine composed last (EngineLink::shown), within `timeout`.
     pub fn shown(&self, timeout: std::time::Duration) -> Option<Image> {
         self.scenes.as_ref()?;
@@ -1362,35 +1380,11 @@ impl TurzxVideo {
             }
             self.notes.push(said);
         }
-        if of("pictures") > 0.0 {
-            let late = of("late") as u64;
-            let mut said = format!(
-                "video: the engine sent {} pictures, {late} of them late",
-                of("pictures") as u64
-            );
-            if late > 0 && counted.contains_key("came_late") {
-                said += &format!(
-                    " ({} made after their time; the latest {:.0} ms past it)",
-                    of("came_late") as u64,
-                    of("late_most_ms")
-                );
-            }
+        if let Some(said) = lateness_said(&counted) {
             self.notes.push(said);
         }
-        if counted.contains_key("x264_ms") && of("frames") > 0.0 {
-            let encoder = if of("card") != 0.0 {
-                "the graphics card's encoder"
-            } else {
-                "x264"
-            };
-            self.notes.push(format!(
-                "video: the engine took {:.1} ms a frame: {:.1} composing it, {:.1} its YUV, \
-                 {:.1} {encoder}",
-                of("encode_ms"),
-                of("compose_ms"),
-                of("yuv_ms"),
-                of("x264_ms")
-            ));
+        if let Some(said) = encoding_said(&counted) {
+            self.notes.push(said);
         }
     }
 }
@@ -1522,9 +1516,13 @@ impl Turzx {
     /// is proven on, with the standby clip's name set), else single pictures. What keeps
     /// "auto" from the video is noted.
     pub fn open(setup: Setup) -> Result<Turzx> {
-        let model = setup.model.or_else(|| match &setup.test_link {
-            None if setup.video.mode == "auto" => usb::present_model(&setup.beside, 0),
-            _ => None,
+        // (the bus is looked on for the model where none is named; with the tests' simulated
+        // panel only where the tests make up the bus, LP_TEST_BUS, as the panel stands there)
+        let looks = setup.test_link.is_none() || std::env::var_os("LP_TEST_BUS").is_some();
+        let model = setup.model.or_else(|| {
+            (looks && setup.video.mode == "auto")
+                .then(|| usb::present_model(&setup.beside, 0))
+                .flatten()
         });
         let (video, missing) = video_mode(&setup.video, model);
         if video {
@@ -1614,6 +1612,11 @@ impl Turzx {
         matches!(self, Turzx::Video(panel) if panel.makes_fans())
     }
 
+    /// Whether frames go as their layers to an engine that draws a light field up.
+    pub fn draws_lights(&self) -> bool {
+        matches!(self, Turzx::Video(panel) if panel.draws_lights())
+    }
+
     /// The pixels of the frame that went last as its layers (video only: TurzxVideo::keep_last).
     pub fn keep_last(&mut self, frame: std::rc::Rc<Image>) {
         if let Turzx::Video(panel) = self {
@@ -1690,6 +1693,52 @@ impl Turzx {
             Turzx::Stills(panel) => panel.close(),
         }
     }
+}
+
+/// encoding_said: what each frame took the engine on average (composing it from its layers,
+/// its YUV, x264 or the graphics card's encoder), as a run ends; None from an older engine,
+/// which counts none of it, or where it made no frame.
+fn encoding_said(counted: &std::collections::HashMap<String, f64>) -> Option<String> {
+    let of = |name: &str| counted.get(name).copied().unwrap_or(0.0);
+    if !counted.contains_key("x264_ms") || of("frames") <= 0.0 {
+        return None;
+    }
+    let encoder = if of("card") != 0.0 {
+        "the graphics card's encoder"
+    } else {
+        "x264"
+    };
+    Some(format!(
+        "video: the engine took {:.1} ms a frame: {:.1} composing it, {:.1} its YUV, \
+         {:.1} {encoder}",
+        of("encode_ms"),
+        of("compose_ms"),
+        of("yuv_ms"),
+        of("x264_ms")
+    ))
+}
+
+/// lateness_said: how many pictures the engine sent and how many of them late, and of those
+/// how many were made after their time (the frame or its encoding, not the sender) and the
+/// latest; an engine of before counts no causes. None where it sent none.
+fn lateness_said(counted: &std::collections::HashMap<String, f64>) -> Option<String> {
+    let of = |name: &str| counted.get(name).copied().unwrap_or(0.0).max(0.0);
+    if of("pictures") <= 0.0 {
+        return None;
+    }
+    let late = of("late") as u64;
+    let mut said = format!(
+        "video: the engine sent {} pictures, {late} of them late",
+        of("pictures") as u64
+    );
+    if late > 0 && counted.contains_key("came_late") {
+        said += &format!(
+            " ({} made after their time; the latest {:.0} ms past it)",
+            of("came_late") as u64,
+            of("late_most_ms")
+        );
+    }
+    Some(said)
 }
 
 #[cfg(test)]
@@ -1810,11 +1859,13 @@ mod tests {
         assert_eq!(
             options.join(" "),
             "--size 1920x480 --turn 270 --fps 25 --crf 20 --kbit 2000 --keyint 50 --preset \
-             superfast --profile high --x264 no-deblock=1:subme=0 --lead-ms 80"
+             superfast --profile high --x264 no-deblock=1:subme=0:deadzone-inter=6:deadzone-intra=6 \
+             --lead-ms 80"
         );
         let options = engine_options((480, 1920), &video, "", true, 1.5, "auto");
         assert!(options.join(" ").ends_with(
-            "--profile baseline --x264 no-deblock=1:subme=0 --encoder auto --full --lead-ms 80"
+            "--profile baseline --x264 no-deblock=1:subme=0:deadzone-inter=6:deadzone-intra=6 \
+             --encoder auto --full --lead-ms 80"
         ));
         assert_eq!(
             jpeg_width(crate::models::find_model("turing-9.2-usb"), 480),
@@ -1826,5 +1877,152 @@ mod tests {
             firmware_of(b"\x00\x00turzx_0001_0015\x00rest"),
             "turzx_0001_0015"
         );
+    }
+
+    #[test]
+    fn the_log_says_why_the_engines_pictures_went_late() {
+        // (as turzx_video.py's lateness_said said it)
+        let counted = |pairs: &[(&str, f64)]| -> std::collections::HashMap<String, f64> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+        };
+        let on_time = counted(&[
+            ("pictures", 9286.0),
+            ("late", 0.0),
+            ("came_late", 0.0),
+            ("late_most_ms", 0.0),
+        ]);
+        assert_eq!(
+            lateness_said(&on_time).as_deref(),
+            Some("video: the engine sent 9286 pictures, 0 of them late")
+        );
+        let late = counted(&[
+            ("pictures", 3080.0),
+            ("late", 1808.0),
+            ("came_late", 12.0),
+            ("late_most_ms", 12.6),
+        ]);
+        assert_eq!(
+            lateness_said(&late).as_deref(),
+            Some(
+                "video: the engine sent 3080 pictures, 1808 of them late (12 made after their \
+                 time; the latest 13 ms past it)"
+            )
+        );
+        let before = counted(&[("pictures", 3080.0), ("late", 1808.0)]);
+        assert_eq!(
+            lateness_said(&before).as_deref(),
+            Some("video: the engine sent 3080 pictures, 1808 of them late")
+        );
+        assert_eq!(lateness_said(&counted(&[])), None);
+    }
+
+    #[test]
+    fn the_log_says_where_the_engines_time_for_a_frame_goes() {
+        // (as turzx_video.py's encoding_said said it)
+        let counted = |pairs: &[(&str, f64)]| -> std::collections::HashMap<String, f64> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+        };
+        let base = [
+            ("frames", 868.0),
+            ("encode_ms", 7.401),
+            ("compose_ms", 1.715),
+            ("yuv_ms", 1.072),
+            ("x264_ms", 4.613),
+        ];
+        let x264 = "video: the engine took 7.4 ms a frame: 1.7 composing it, 1.1 its YUV, 4.6 x264";
+        assert_eq!(encoding_said(&counted(&base)).as_deref(), Some(x264));
+        assert_eq!(
+            encoding_said(&counted(&[("frames", 868.0), ("encode_ms", 7.4)])),
+            None
+        );
+        let mut none = counted(&base);
+        none.insert("frames".into(), 0.0);
+        assert_eq!(encoding_said(&none), None);
+        let mut card = counted(&base);
+        card.insert("card".into(), 1.0);
+        assert_eq!(
+            encoding_said(&card).as_deref(),
+            Some(
+                "video: the engine took 7.4 ms a frame: 1.7 composing it, 1.1 its YUV, 4.6 the \
+                 graphics card's encoder"
+            )
+        );
+        card.insert("card".into(), 0.0);
+        assert_eq!(encoding_said(&card).as_deref(), Some(x264));
+    }
+
+    #[test]
+    fn the_engines_encoder_is_the_cards_where_proven_on_windows_and_x264_elsewhere() {
+        // (as h264.py's engine_options chose it: "auto", the default, asks for the graphics
+        // card's encoder on Windows where the engine proves it; "x264" never passes it)
+        let proven = "x264 panel scenes cards proven";
+        assert_eq!(engine_encoder("auto", proven, true), ("auto".into(), None));
+        assert_eq!(engine_encoder("auto", proven, false), ("x264".into(), None));
+        assert_eq!(
+            engine_encoder("auto", "x264 panel cards", true),
+            ("x264".into(), None)
+        );
+        assert_eq!(engine_encoder("x264", proven, true), ("x264".into(), None));
+        assert_eq!(engine_encoder("card", proven, false), ("card".into(), None));
+        let (encoder, note) = engine_encoder("card", "x264 panel", true);
+        assert_eq!(encoder, "x264");
+        assert!(note
+            .unwrap()
+            .contains("no graphics card's encoder (one of before)"));
+    }
+
+    #[test]
+    fn auto_video_mode_needs_a_proven_panel_and_the_clip_name() {
+        // (as turzx.py's video_mode and video_gaps: "auto" turns the video mode on only where
+        // all is there and never makes up the clip name; "on" and "off" decide alone; the
+        // panel decides before anything else. No ffmpeg: Libre Panel's engine encodes)
+        let video = |mode: &str, clip: &str| Video {
+            mode: mode.into(),
+            fps: 25,
+            device_fps: 30,
+            crf: 20,
+            preset: "superfast".into(),
+            keyframe_s: 2.0,
+            maxrate: "auto".into(),
+            profile: "auto".into(),
+            engine_encoder: "auto".into(),
+            local_clip: clip.into(),
+            video_range: "auto".into(),
+            engine_layers: true,
+        };
+        let nine = crate::models::find_model("turing-9.2-usb");
+        let eight = crate::models::find_model("turing-8.8-usb");
+        let ready = video("auto", "usr/data/clip.h264");
+        assert_eq!(video_mode(&ready, nine), (true, vec![]));
+        assert_eq!(video_mode(&ready, None), (false, vec![])); // (no panel found: nothing to say)
+        assert_eq!(
+            video_mode(&ready, eight),
+            (
+                false,
+                vec!["the video mode is not proven on the Turing 8.8\" yet".to_string()]
+            )
+        );
+        let (on, why) = video_mode(&video("auto", ""), nine);
+        assert!(!on && why.len() == 1 && why[0].contains("local_clip is not set"));
+        assert_eq!(video_mode(&video("on", ""), eight), (true, vec![]));
+        assert_eq!(video_mode(&video("off", "x"), nine), (false, vec![]));
+        assert!(video_gaps("x", nine, true).is_empty());
+        assert_eq!(video_gaps("", nine, true), ["clip"]);
+        assert_eq!(video_gaps("", eight, true), ["model"]);
+        assert_eq!(video_gaps("", eight, false), ["clip"]); // ("on" asks for no proof)
+        assert_eq!(video_gaps("", None, true), ["clip"]); // (no panel yet: nothing to prove)
+                                                          // (into the 9.2"'s framebuffer: a landscape frame a quarter turn, one on end upside
+                                                          // down, as to_native turned them)
+        assert_eq!(
+            (rotation_of((1920, 480)), rotation_of((480, 1920))),
+            (270, 180)
+        );
+    }
+
+    #[test]
+    fn the_transparent_layer_is_small_and_see_through() {
+        let layer = transparent_layer((480, 1920)).unwrap();
+        assert!(layer.len() < 10_000, "{} bytes", layer.len());
+        assert_eq!(&layer[..8], b"\x89PNG\r\n\x1a\n");
     }
 }

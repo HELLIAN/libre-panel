@@ -4,6 +4,7 @@ checked where nothing can be written, then added as data."""
 import hashlib
 import io
 import json
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -11,15 +12,31 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from libre_panel.editor.community import parse_index
-
 ROOT = Path(__file__).resolve().parent.parent
 URL = "https://github.com/user-attachments/files/12345/glow.zip"
 
 
+def listed(tool, index: bytes) -> list[dict]:
+    """The entries of a list the app reads (`libre-panel share entry` counts them), each with
+    its id (its folder)."""
+    entries = json.loads(index)["themes"]
+    assert tool._readable(json.loads(index)) == len(entries)  # (as the app reads it)
+    return [{**entry, "id": entry["zip"].split("/")[0]} for entry in entries]
+
+
 @pytest.fixture(scope="module")
 def tool():
+    from rust_check import find
+
+    check = find()
+    program = check and check.with_name("libre-panel.exe" if os.name == "nt" else "libre-panel")
+    if not os.environ.get("LIBRE_PANEL_PROGRAM") and not (program and program.is_file()):
+        pytest.skip("needs the libre-panel program (rust/ built)")
     with pytest.MonkeyPatch.context() as patch:
+        if not os.environ.get("LIBRE_PANEL_PROGRAM"):
+            patch.setenv("LIBRE_PANEL_PROGRAM", str(program))
+        # (the themes and fonts of this checkout, wherever the program was built)
+        patch.setenv("LIBRE_PANEL_DATA", os.environ.get("LIBRE_PANEL_DATA") or str(ROOT / "data"))
         patch.syspath_prepend(str(ROOT / "tools"))
         import community_theme
 
@@ -45,11 +62,12 @@ def theme_zip(name="Glow", width=480, height=320) -> bytes:
 
 
 def issue(name="Glow", author="", description="Soft light around the time.", theme=None,
-          consent=True) -> str:  # fmt: skip
+          consent=True, replaces="") -> str:  # fmt: skip
     """An issue as GitHub writes the form's answers."""
     theme = f"[glow.zip]({URL})" if theme is None else theme
     return "\n".join([
         "### Name", "", name or "_No response_", "",
+        "### Replaces", "", replaces or "_No response_", "",
         "### Made by", "", author or "_No response_", "",
         "### What it shows", "", description or "_No response_", "",
         "### The theme", "", theme, "",
@@ -111,14 +129,12 @@ def test_a_shared_theme_is_installed_under_the_name_and_maker_its_entry_shows(to
     """A theme made from another one (here a copy of a built-in theme, renamed in the editor):
     the zip in the list carries the form's name, maker and description, its first maker kept
     as whom it is after; every other file as it was."""
-    from libre_panel.theme.share import inspect_shared
-
     data = theme_zip("Libre Default (mine)")
     checked = tool.check(issue(name="All in", author="Varulf", description="All at a glance."),
                          "someone", tmp_path / "checked", get=lambda url, limit: data)  # fmt: skip
     assert checked["name"] == "All in" and checked["author"] == "Varulf, after In the theme"
     shared = (tmp_path / "checked/theme.zip").read_bytes()
-    assert inspect_shared(shared)["name"] == "All in"
+    assert tool.inspect_shared(shared)["name"] == "All in"
     with zipfile.ZipFile(io.BytesIO(shared)) as archive, zipfile.ZipFile(io.BytesIO(data)) as was:
         assert archive.namelist() == was.namelist()
         theme = json.loads(archive.read("glow/theme.json"))
@@ -165,7 +181,7 @@ def test_a_checked_theme_goes_beside_the_list_under_a_name_of_its_own(tool, tmp_
     entry = tool.add(checked, 12, root)
     assert entry["id"] == "glow" and entry["zip"] == "glow/glow.zip"
     index = (root / "community/themes/index.json").read_bytes()
-    assert [e["id"] for e in parse_index(index)] == ["glow"]  # as the app reads it
+    assert [e["id"] for e in listed(tool, index)] == ["glow"]  # as the app reads it
     assert (root / "community/themes/glow/glow.zip").read_bytes() == (
         checked / "theme.zip"
     ).read_bytes()
@@ -183,6 +199,56 @@ def test_a_checked_theme_goes_beside_the_list_under_a_name_of_its_own(tool, tmp_
         tool.add(checked, 15, root)
 
 
+def test_a_new_version_of_a_listed_theme_takes_its_place(tool, tmp_path):
+    """*Replaces* names a listed theme (as the list shows its name, or by its id): the new
+    version goes into that one's folder and its entry, where it was in the list, and the pull
+    request says which one it replaces and to make sure it is theirs to replace. A name the list
+    does not have keeps it out, said in words; without *Replaces* it is a theme of its own."""
+    root = a_list(tmp_path / "repo")
+    for n, name in enumerate(("Glow", "Dusk")):
+        tool.check(issue(name=name), "maker", tmp_path / name,
+                   get=lambda url, limit, name=name: theme_zip(name))  # fmt: skip
+        tool.add(tmp_path / name, 20 + n, root)
+    (root / "community/themes/glow/notes.txt").write_text("of the version before", "utf-8")
+    newer = tmp_path / "newer"
+    checked = tool.check(issue(name="Glow 2", replaces="  glow  "), "maker", newer,
+                         get=lambda url, limit: theme_zip("Glow 2", 1920, 480))  # fmt: skip
+    assert checked["replaces"] == "glow"
+    entry = tool.add(newer, 22, root)
+    assert entry["id"] == "glow" and entry["zip"] == "glow/glow.zip"
+    assert entry["replaced"] == {"name": "Glow", "author": "In the theme", "sizes": ["480x320"]}
+    entries = listed(tool, (root / "community/themes/index.json").read_bytes())
+    assert [(e["id"], e["name"]) for e in entries] == [("glow", "Glow 2"), ("dusk", "Dusk")]
+    assert entries[0]["sha256"] == hashlib.sha256((newer / "theme.zip").read_bytes()).hexdigest()
+    folder = root / "community/themes/glow"
+    assert sorted(p.name for p in folder.iterdir()) == ["glow.zip", "preview.png"]
+    assert (folder / "glow.zip").read_bytes() == (newer / "theme.zip").read_bytes()
+    text = tool.pull_request_text(entry, 22)
+    assert text.startswith("A new version of the community theme **Glow** by In the theme")
+    assert "1920 × 480" in text and "480 × 320" in text and "Closes #22" in text
+    assert "make sure it is theirs to replace" in text
+    assert "git log -- community/themes/glow" in text
+    # by the name the list shows (any case and spaces), and the command line names it so
+    tool.check(issue(name="Dusk", replaces="DUSK"), "maker", tmp_path / "dusk2",
+               get=lambda url, limit: theme_zip("Dusk"))  # fmt: skip
+    out = tmp_path / "out"
+    out.mkdir()
+    pr, refusal = out / "pr.md", out / "refusal.md"
+    code = tool.main(["add", "--checked", str(tmp_path / "dusk2"), "--number", "23", "--root",
+                      str(root), "--pull-request", str(pr), "--refusal", str(refusal)])  # fmt: skip
+    assert code == 0 and not refusal.exists()
+    assert pr.read_text("utf-8").startswith("A new version of the community theme **Dusk**")
+    assert len(listed(tool, (root / "community/themes/index.json").read_bytes())) == 2
+    # a name the list does not have: kept out, and nothing changed
+    before = (root / "community/themes/index.json").read_bytes()
+    tool.check(issue(name="Noon", replaces="Midday"), "maker", tmp_path / "noon",
+               get=lambda url, limit: theme_zip("Noon"))  # fmt: skip
+    with pytest.raises(tool.Refused, match="No theme called “Midday”"):
+        tool.add(tmp_path / "noon", 24, root)
+    assert (root / "community/themes/index.json").read_bytes() == before
+    assert not (root / "community/themes/noon").exists()
+
+
 def test_the_form_and_the_workflow_fit_the_tool(tool):
     form = (ROOT / ".github/ISSUE_TEMPLATE/share_theme.yml").read_text(encoding="utf-8")
     labels = re.findall(r"^      label: (.+)$", form, flags=re.MULTILINE)
@@ -190,6 +256,15 @@ def test_the_form_and_the_workflow_fit_the_tool(tool):
     flow = (ROOT / ".github/workflows/community-theme.yml").read_text(encoding="utf-8")
     check, add = flow.split("\n  add:\n")
     again, check = check.split("\n  check:\n")
+    again, program = again.split("\n  program:\n")
+    # Libre Panel is built from main in a job that sees nothing of the issue and may write
+    # nothing; both jobs after it take that program, never one the issue's job made
+    assert "permissions:\n      contents: read\n    outputs:" in program
+    assert "issue" not in program.split("steps:")[1] and ": write" not in program
+    assert "persist-credentials: false" in program
+    assert "cargo build --release --locked -p libre-panel" in program
+    assert "needs: program" in check and "needs: [program, check]" in add
+    assert "upload-artifact" not in add and "name: program" in check and "name: program" in add
     # what comes from the issue is looked into without rights; the job that writes adds data
     assert "permissions:\n      contents: read\n      issues: read\n    steps:" in check
     assert ": write" not in check
@@ -206,7 +281,7 @@ def test_the_form_and_the_workflow_fit_the_tool(tool):
     assert "checkout" not in again.split("\njobs:\n")[1]  # (it reads no file of the repository)
     assert "NUMBER: ${{ inputs.issue }}" in check
     assert "NUMBER: ${{ github.event.issue.number || inputs.issue }}" in add
-    assert "needs: check" in add and "contents: write" in add
+    assert "contents: write" in add
     # the issue's text reaches the steps only through the environment, never the script itself
     runs = re.findall(r"run: \|\n((?:          .*\n?)+)", flow)
     assert runs and not any("${{" in run for run in runs)

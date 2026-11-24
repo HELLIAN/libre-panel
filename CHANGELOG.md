@@ -1,5 +1,413 @@
 # Changelog
 
+## 0.9.5 — 2026-11-24
+
+Transitions that move across all your panels at once, among them the new Morph, Cascade, Comet
+and Portal; light that moves on rings, graphs and the cover that plays; and Lumen, Arena and
+Encore in a second version with a light that flows over the panels. Also new: the weather from
+OpenWeatherMap, a model server of your own on the AI board, data amounts in MB, the light ring
+of Lian Li's 8.8", and finer start screens.
+
+![Morph: Lumen v2 gives way to Arena v2, and what both show flies to its new place and size: the time into the corner, the CPU and GPU rings over; then back](https://raw.githubusercontent.com/syntensa/libre-panel/v0.9.5/docs/media/morph.gif)
+
+**New**
+- **Transitions across all panels.** With more than one panel, a slide, the wipe, the line of
+  light, the iris and the shatter run over all of them as over one screen. You can turn this off
+  in *Settings → Transitions → Across the panels*.
+- **Four new transitions.** *Morph*: what both screens show (the time, a ring, the cover, a
+  game's logo) flies to its new place and size, even from one panel to the other. *Cascade*: the
+  new screen's cards rise in one after another. *Comet*: a comet with a glowing tail flies
+  across. *Portal*: a ring of light opens onto the new screen.
+- **Moving light.** The end of a ring breathes in its colour, the newest point of a graph beats
+  with each reading, the cover that plays glows in its own colours, a download shimmers, and the
+  sun and moon glow softly. Each kind can be turned off in *Settings → Panel → Moving light*
+  (`[shine]`). A calm panel shows none of it.
+- **Lumen, Arena and Encore v2.** Soft pools of light drift across all your panels as one,
+  warmer while the PC works; Encore's take the colours of the cover. Your own themes can use the
+  same light with `background.field`.
+- **Weather from OpenWeatherMap** as well as Open-Meteo (*Settings → Weather and place →
+  Source*), with your own API key; a free one is enough. The readings are the same as
+  Open-Meteo's, so every theme shows the weather alike.
+- **A model server of your own on the AI board.** llama.cpp's server or Ollama, on this PC or
+  another in your network (*Settings → AI activity → Model server*). It shows whether the server
+  is working or idle, its model, and the tokens of the day. The server is asked only while a
+  theme shows it. In the AI module, choose *Local model*. So far it has been tested against
+  stand-in servers only.
+- **Data amounts in MB.** *Settings → Panel → Amounts of data* shows network speed, graphics
+  memory and drive rates in MB on every screen. Themes can ask for MB with `{value:mb}`, and for
+  a short count (`48.2k`) with `{value:count}`.
+- **The light ring of the Lian Li Universal Screen 8.8"** (*Settings → Services → Light ring*):
+  one colour, breathing, a rainbow, a running light, or colours that follow a reading. It is
+  written from immortalbob's protocol reference and not yet tried on a ring.
+- **Dell's fans** through Dell Command | Monitor (*Settings → Sensors*, Windows), for Dell PCs
+  that show their fans to no other program. It is not yet tried on a Dell.
+- **Start screens on more panels.** The 8.8" gets start screens with the 9.2"'s room. The
+  family's other panels (1.6" to 8", and JONSBO's TF3 pump screen) can try one at their owner's
+  own risk, with a form to share how it went.
+- **Plugins:** a plugin's display driver can now drive a panel, and plugins installed with pip
+  or pipx start the plugin host.
+- **Smaller additions:** the language chosen in the Windows setup becomes the app's, and a
+  shared community theme can replace an older version of itself.
+
+**Changed**
+- **Finer start screens in the same room.** The logo tries every JPEG quality from 95 down, and a
+  clip's quality goes in quarter steps. Logos are up to 0.8 dB finer and clips up to 0.4 dB
+  finer. No file is coarser than in 0.9.4, and none needs more room. Before the release it ran
+  on the same 9.2" (mounted on end) and 12.3" as 0.9.4's run: written, written again, a smaller
+  clip over a larger one, the factory logo brought back, and both panels started with what was
+  written.
+- **The JONSBO DS916 and the Lian Li Universal Screen 8.8" are supported**, as their owners
+  report (issue #64 for the DS916).
+- **pip and pipx install the Rust app**, the same app as the downloads, from the release's wheel
+  for Linux or Windows. The Python app is gone from the repository. Python plugins run as
+  before, through the plugin host.
+- **Less work for the same pictures.** Transitions take a half to a sixteenth of the work they
+  took. A cover's colour is worked out once per picture, not on every frame, and a frame no
+  longer keeps pictures alive that have changed. Measured on a 12.3" at 25 fps, Lumen now takes
+  21 % of a CPU core with its light, where 0.9.4 took 24 % without it.
+- **Smooth light stays smooth in video mode**, instead of moving in visible steps.
+- **The plugin host is leaner:** it shares Libre Panel's files instead of keeping its own copy
+  (12.5 MB less to download), and it loads a third of what it did.
+- **The format field in Design** says what each format gives, and links to the full list.
+- **Issue 52, concluded:** what the rescue command found on that 9.2" is in the
+  [protocol notes](docs/protocol/turzx-usb.md#what-goes-on-a-panel), and the guide says how to
+  read the command's last line when a panel takes nothing.
+
+**Fixed**
+- **The frame rate in games with an anti-cheat** no longer drops to "No game running" for a few
+  seconds (issue #62). The log now also says when PresentMon ends and starts again.
+- **JONSBO DS339:** it starts on Windows again (issue #59), and it counts as connected while it
+  shows the theme.
+- **Diagnose tests every kind of panel the app shows on** (issues #60 and #64). Where a
+  screen stays black, the panel test tries the other JPEG layout.
+- **The MAJESTY 9.16" is named as itself** (issue #54), and *Settings → Panel* finds a panel
+  while the app shows on it.
+- **"Energy this month"** counts the whole month again, not only today.
+- **Design:** a module whose service is off now says so and offers to turn the service on.
+  Sensors of your own sources show in the picture, and the tabs no longer jump.
+- **On the panel:** a number gliding to a new reading no longer stalls on the way, and a calm
+  panel (`[device] motion`) stays calm.
+- **The app's window** no longer says "Libre Panel does not answer" while a sensor is slow.
+- **Start's news items** offer to write the start screen upright again only on panels whose
+  start screen is written.
+- **Settings → Panel** asks how the panel is mounted only where a screen has a version for
+  it, as Start does. On a 3.5" the choice did nothing: its screens are each made one way, such
+  as *Column* upright and *Libre Default* on its side (issue #54).
+- **Settings → More panels:** a picture across the panels chosen right after *Line them up
+  again* now covers them.
+- **Windows: no PresentMon error when the PC shuts down.** While Windows ends the session,
+  Libre Panel no longer starts PresentMon again, nor runs it to end its recording.
+- **Report a panel names the panel the app shows on** (issue #64). A panel on a COM port that
+  the app holds said "Panel found: none". `libre-panel doctor` also names the model of a port it
+  cannot open, and gives the port's error only once.
+- **Linux:** time zones such as `TZ=EST5EDT` that have no zone file are understood again.
+- **Plugins:** `libre_panel.clock()` is the app's clock again, as PLUGINS.md promises.
+- **Windows:** the app's folders and tools are shown without the `\\?\` prefix of Windows' long
+  paths.
+
+## 0.9.5rc4 — 2026-11-22
+
+The fourth candidate for 0.9.5, and the first that is public: everything of 0.9.5rc3 below
+(the weather from OpenWeatherMap, transitions that move over all the panels at once with
+Morph among them, light that moves, and Lumen, Arena and Encore in a second version), and now
+the light ring round Lian Li's Universal Screen 8.8", which is supported. Everything of the
+candidates before it stays: start screens made finer, and written to more panels. They go to
+a panel as 0.9.4 sends them, checked before and after; the finer files are run on a 9.2" and
+a 12.3" before this is 0.9.5, which has not been done yet.
+
+**New**
+- **The light ring of Lian Li's Universal Screen 8.8".** *Settings → Services → Light ring*
+  lights the 60 LEDs round the screen: in one colour, breathing, as a rainbow, as a light
+  running round, or by a reading (green to red between two values you set, the processor's
+  temperature for one), at the brightness and speed you choose, and the other way round if you
+  like. What moves is sent 30 times a second, what stands still once and again every 5 seconds.
+  Measured here: a frame of the rainbow takes about 2 µs to make, and the service took a quarter
+  of a percent of one CPU core at 30 frames a second (the USB transfers to the ring not
+  counted). Close L-Connect (and OpenRGB, if it drives the ring) while the service runs: one
+  program at a time can hold the ring, and the service says so when another has it. Libre Panel
+  sends the ring nothing but its colours and asks its firmware's version once: never a firmware
+  command. On Linux, *Settings → Sensors → Set up sensors and panel access* lets you reach it
+  without root (Start asks for it again where an earlier setup does not let you reach the
+  ring). Not yet seen on the hardware: written from the
+  [Lian Li Universal Screen 8.8" protocol reference](https://github.com/immortalbob/lian-li-universal-screen-protocol)
+  by immortalbob (CC BY 4.0). Asked for by an owner in the TURZX forum.
+
+**Changed**
+- **The Lian Li Universal Screen 8.8" is supported**: it runs, and "works great", its owner's
+  report in the TURZX forum.
+
+**Fixed**
+- *Settings → More panels*: a picture across the panels chosen right after *Line them up
+  again* left the panels unplaced, so it covered none of them; they are placed in a row as the
+  view shows them, as when the picture is chosen later.
+
+## 0.9.5rc3 — 2026-11-22
+
+The third candidate for 0.9.5: the weather from OpenWeatherMap, transitions that move over all
+the panels at once (Morph among them), light that moves, and Lumen, Arena and Encore in a second
+version. The JONSBO DS339 starts on Windows again, the MAJESTY 9.16" is named as itself, and
+Diagnose tests panels on a serial port too. Everything of 0.9.5rc2 and 0.9.5rc1 below stays:
+start screens made finer, and written to more panels. They go to a panel as 0.9.4 sends them,
+checked before and after; the finer files are run on a 9.2" and a 12.3" before this is 0.9.5,
+which has not been done yet.
+
+**New**
+- **The weather from OpenWeatherMap.** *Settings → Weather and place → Source*: Open-Meteo as
+  before, or OpenWeatherMap with an API key of your own (a free one is enough). Its weather comes
+  as the same readings as Open-Meteo's, in the same units and with the same symbols and words,
+  so every theme shows it alike. Any key gets the present weather and the forecast in 3-hour
+  steps (the hours between drawn from them, the days it holds whole, no rain of the next two
+  hours); a key with One Call 3.0 gets the hours, seven days and that rain as Open-Meteo gives
+  them, which Libre Panel tries first. The key stays in config.toml: the app's page is told only
+  that there is one, and no log line has it.
+- **One move over all the panels.** With more than one panel, a slide, the wipe and the line
+  of light now go over all of them as over one screen where they all change at once: a scene
+  put on or off, a game, music or the PC at rest coming or going, and **▶** in *Settings →
+  Transitions*. The new screen pushes in on one panel and runs on through the gap into the
+  next, a soft shadow at its edge; the line of light crosses them all. The panels stand as
+  *Settings → More panels* shows them and begin from one moment, 0.8 s after the change (0.4 s
+  after **▶**). *Settings → Transitions → Across the panels* (`[transitions] canvas`) turns it
+  off. The Rust app draws each frame of it bit for bit as Python does.
+- **Three new transitions, and two more over all the panels.** *Cascade*: the ground changes,
+  then the new screen's cards come in one after another, each rising and growing into its place,
+  as a wave along the panels; the cards are taken from how a theme is drawn, so it works with
+  any theme. *Comet*: a comet with a glowing tail and sparks flies across, from one panel into
+  the next, and the new screen opens behind it. *Portal*: a ring of light opens from the middle
+  and the new screen grows through it into its place. The iris and the shatter now go over all
+  the panels too: the circle opens from the middle of all of them, the old screen's tiles fall
+  one after another along them. On one panel by itself each plays on it alone, the iris and the
+  shatter as before. The Rust app draws each frame bit for bit as Python does.
+- **Morph.** A new transition: what the old screen and the new one both show (the time, a ring
+  or a number of the same reading, the album cover, a game's logo, the moon) flies from its old
+  place to its new one on a gentle arc, growing or shrinking to its new size and turning into
+  its new look on the way, while the rest of the old screen fades out and the new one's comes
+  in. Two screens with nothing alike simply fade. In the Rust app on a 12.3" with the demo's
+  readings (Lumen to Arena, Arena to Lumen, Encore to Lumen), its first frame, which takes both
+  screens apart, takes 13.5 to 17.7 ms, each frame after it 3.6 to 4.8 ms (the median). The Rust
+  app draws it as Python does, to the bit but in the glow of a screen's rings and bars, which
+  its renderer draws within a level: there a pixel now and then a level or two apart. Over all
+  the panels a thing flies from the panel that showed it to the one that shows it now, through
+  the gap between them: when music comes, Lumen's cover on the first panel flies to the
+  companion's on the second. Shown with **▶**, it turns the screen into Arena's version of the
+  theme (Arena's into Lumen's, any other into Lumen) and back, so that something flies.
+- **Light that moves.** On a panel that moves, light now moves over what it shows: the end of
+  a ring breathes in its colour and now and then a light runs along the ring (past 80 % its end
+  glows wider); the newest point of a curve beats with each reading; while a track plays, its
+  cover glows round about in its own colours, three bars dance after "Playing" and a light runs
+  along its progress; a download's progress has a sheen, the faster the faster it loads; the
+  sun on its way (by night the moon) glows softly and a glint runs along the day gone. Each kind
+  can be turned off in *Settings → Panel → Moving light* (`[shine]`), a theme may show fewer
+  (`animation.shine`), and a calm panel shows none. Each light is made once and only laid anew
+  where it moves. Measured on a 12.3" at 25 fps with the demo's readings (the app and its
+  engine, share of a core): Lumen 21 % with it, against 24 % before without it; Encore while
+  music plays 10 % (6 % without it, 7 % before), as its bars and sheen ask for 25 pictures a
+  second instead of 13. The Rust app draws every light bit for bit as Python does.
+
+- **Lumen v2, Arena v2 and Encore v2.** The three screens over a light of their own: soft pools
+  of light in their colours drift slowly across all your panels as one (each panel shows its part
+  of it, where it stands in *Settings → More panels*), calm and cool at rest, warmer and brighter
+  while the computer works. Encore v2's light takes the colours of the cover that plays, in place
+  of the cover blurred behind the screen, and glides into a new track's colours over two seconds.
+  Two switches on each: *The light flows* and *The light follows the load*. Every size and
+  version the three have, the companions across and on end too; their cards a little more
+  see-through, so the light shows. It moves only where the frames stream to the panel (the TURZX
+  12.3" and 9.2" in video mode), 6.25 steps a second; on a panel sent a whole picture at each
+  change it stands and takes each reading's load. The app makes the light at an eighth of the
+  panel and the engine draws it up and lays the screen in front of it once: measured on the
+  12.3" (Lumen, readings moving), the engine's time a frame is 6.2 ms with the light at rest and
+  7.2 under full load, against 3.8 without a light. Themes of your own get it with
+  `background.field` ([Themes](docs/THEMES.md)). The Rust app draws it bit for bit as Python
+  does.
+
+- **Dell's fans.** Many Dell PCs show their fans to no other program, LibreHardwareMonitor
+  included. Where Dell Command | Monitor is installed, the new *Dell fans* source (*Settings →
+  Sensors*, Windows) reads the fans and temperatures it reports, as `fan.dell.<name>` and
+  `temp.dell.<name>` ("Processor Fan" is `fan.dell.processor_fan`), so the fan widgets, fan
+  lists and any other widget show them. Asked of a Dell owner; not yet tried on a Dell PC here.
+- **The Windows setup's language is the app's.** The language chosen in the setup only applied
+  to the setup; the app followed Windows' language until one was picked in *Settings → Start
+  and system → Language*. On a new install where the language chosen is not the one the setup
+  offered (Windows' own, else English), the app now speaks it too; a language chosen in the
+  app is kept, and an update leaves it as it is. `libre-panel config language de` sets it from
+  a terminal (without a language: which it is and what the app speaks).
+- **A new version of a community theme takes the old one's place.** The *Share a theme* form
+  has a *Replaces* field: the name of a listed theme, as the list shows it. Its pull request
+  then puts the new version in that theme's folder and entry, where it was in the list, instead
+  of adding it beside it, and says which theme it replaces, so that the one who looks at it
+  makes sure it is the sharer's to replace.
+
+**Changed**
+- **The format field says what it takes.** Design's hint under a reading's format only showed
+  examples; it now says that this is Python's format syntax, what `{value}`, `{unit}`,
+  `{label}`, `{value:.0f}`, `{value:.1f}` and `{value:bytes}/s` give, and links to the list of
+  every format, in each of the app's languages.
+- **Smooth light stays smooth in video mode.** x264 held a change of a level or two in a smooth
+  light back until it was two or three, so a slowly changing light moved in visible steps. Its
+  dead zones are smaller now (6 instead of 21 and 11): decoded again, Lumen with its light is
+  0.20 levels from the frames drawn instead of 0.43 on the mean, Lumen and Arena as they are
+  0.25 instead of 0.27 and 0.20 instead of 0.22, at 3 to 7 % more bits and the same time.
+- **Transitions cost less in the Rust app, with the same pixels.** Counted per frame on a 12.3"
+  panel (callgrind, the instructions of a transition's frames):
+  - the glitch takes a sixteenth of what it did, as its colour bands now move a row at a time;
+  - the shatter over the panels takes a third;
+  - the tiles, the wipe and the iris take about half;
+  - the comet takes 0.56 to 0.63 of what it did;
+  - the cascade and the portal take three quarters;
+  - a slide over the panels no longer copies both screens first.
+
+  Under them, pasting through a mask works a row at a time, a picture of one colour is filled
+  at once, and a turned picture is worked out four bands and four places at once where the
+  processor has AVX2. Resizing is compiled for AVX2 too: a whole 12.3" picture takes 11.7
+  instead of 13.3 ms. Every frame is still bit for bit what Python draws.
+- **Less work and memory for what was there.** Found while measuring the light: the Rust app
+  worked out a cover's colour (`@cover`, and a card's frame while a track plays) anew each time
+  it drew, 0.7 ms each, where Python keeps it per picture; now it keeps it too (Encore without
+  the light 4.7–6.5 % instead of 6.8–8.1 %, Lumen 19–20 % instead of 23–26 %). And where a
+  part of a frame was laid again, what lay under it kept the pictures under it alive after
+  they had changed, which only the region's own bytes were counted for: that goes with the
+  frame now, in both apps (Orbit 87 instead of 91 MB, and 93 instead of 180 MB with the light).
+- **The downloads carry Libre Panel's files once.** The plugin host (the program the app starts
+  for Python plugins) had its own copy of the themes, fonts, translations and pictures; it now
+  takes the app's, and its folder is 12.5 MB smaller (103.3 instead of 115.7 MB on Linux). In
+  the repository these files are in `data`, which both apps read, and an install from it puts
+  them in `share/libre-panel`; the version is set in `pyproject.toml` alone.
+- **The plugin host loads a third of what it did.** The Rust app runs no Python itself; where
+  plugins are installed, it starts a process of their own for them, the plugin host. That host
+  loaded the Python app's renderer to draw a plugin's widget types and screen; it now draws
+  them with what they need alone, and the app gives their pieces a widget's opacity, shadow
+  and glow as it gives its own widgets (and keeps the result while the plugin draws the same
+  piece). Over the plugin tests the host loaded 18 of Libre Panel's modules (6,536 lines)
+  instead of 55 (30,277), and took 23–34 MB at its peak instead of 44–54 MB; the pixels are
+  the same as before.
+- **pip and pipx install the Rust app.** A release now carries two wheels, one for Linux
+  (27.8 MB) and one for Windows (36.5 MB), with the app as its downloads carry it: its programs,
+  the engine, Libre Panel's files, on Linux the libraries it draws with, on Windows the sensor
+  service. The Python
+  package in them is only the plugin host's. pipx installs them as any wheel (`pipx install
+  "libre-panel @ <the wheel's link>"`), and the app's update card shows that command with the
+  new version's wheel. Until now pip and pipx installed the Python app.
+
+**Fixed**
+- **"Energy this month" is the month's again.** The background app started its services before
+  it told them where their files are: the power count found none of its totals as it
+  started, so today and this month began at nothing at every start, and the month showed what
+  today did; the memory and the cooling advice could not make their files at the first try.
+  The services know their folder before any starts now. Where the memory runs, the power
+  count also starts from what it recorded of today and of this month where that is more (as
+  *Status → History* adds them up), so the month counts from its first day, the days before
+  this version included.
+- **The tabs stay where they are in every view.** Design and Look showed the theme's name
+  between the brand and the tabs, so the tabs moved right on the way there and back on the way
+  out, and the chosen tab's bolder name nudged the ones after it. The theme's name is now on the
+  right, beside the panel chip and what acts on the theme, and a tab is as wide chosen or not.
+  What gives way in a narrow window is on the right of the tabs, and below 1210 px the brand is
+  its icon in every view; only where that is not enough (two panels and a long theme name) do
+  the tabs come closer, then in every view alike. A theme's name longer than the header
+  gives any name no longer folds the whole header at every width; its tooltip has it whole.
+- **A module whose service is off says so in Design.** Power use, Timer, AI activity and the
+  Download card show what their service reports, and every service is off until it is switched
+  on; Design's picture then showed sample values, while the panel showed nothing there. The
+  module now says that its service is off and turns it on with one click.
+- **Design's picture shows a sensor of your own source.** A fan of a JSON file named in a
+  list's *Which fans* was on the panel and on Start, but not in Design's picture: that picture
+  takes the demo's sample readings, which cannot know such a sensor. Where the background app
+  runs, a sensor the theme names (whole, or by a pattern the samples do not answer) that the
+  samples lack now shows the panel's reading. Nothing is started for it.
+- **A number gliding to a new reading no longer stands still on the way.** Where its glide first
+  ran away from the reading, or past it, the number was taken as already there and showed the
+  value of a moment before while its ring or bar went on. It follows its glide now, in both
+  apps.
+- **The Rust app keeps a calm panel calm** (`[device] motion`, the older USB serial panels by
+  themselves), as the Python app does: nothing glides, turns or breathes on it.
+- **The JONSBO DS339 is said to be connected while it shows the panel's theme** (its owner's
+  report). *Settings → Panel*, the overview and *Status → Diagnose* said "not connected": the
+  search never finds a USB display chip by itself, as USB-to-HDMI adapters have the same one.
+  Chosen by hand, the DS339 (and the VMAX 4.6") now counts as there while its USB ids are on the
+  bus, nothing of it opened; and any panel counts as connected while the app's frames go to it,
+  whatever the search finds.
+- **The JONSBO DS339 starts on Windows again** (issue #59). It stopped at once with "invalid or
+  unsupported argument": a setting for the display chip went out through whichever of its two
+  USB interfaces came first, and Windows takes one only through the interface it is for. Each
+  now goes through its own, and one for an interface that is not claimed is refused with a
+  reason.
+- **Diagnose tests every kind of panel the app shows on** (issue #60). The Rust app's panel
+  test opened only TURZX USB panels and the Hongtai family: a Turing 3.5" on a serial port, a
+  DS339 or a BeadaPanel came out as "panel: none found" while it showed the theme. It now finds
+  and opens the panel as the app does, the model config.toml names or any panel there is, and
+  where one is there and does not open, it says why.
+- **The MAJESTY 9.16" is named as itself** (issue #54). It is in the catalogue now: the header
+  named it "Turing 9.2"" (the first panel's state gave no model, so the theme's size chose
+  one), *Settings → Panel* said "No panel found" while it showed the theme, and plugging it in
+  made a message about a USB device. The header names the first panel by its model, as it names
+  those beside it, and *Settings → Panel* counts a panel as found while the app shows on it:
+  a panel on a serial port that the app has open was "No panel found" too (issue #60), and
+  the page no longer asks which panel that port is while the app shows on it.
+- **What the MAJESTY and the Hongtai screens send by themselves is read and said in the log.**
+  The driver asked them nothing while it sent pictures and never read what came back; it now
+  reads it as it comes (so it never fills the port), counts their frames, writes each new kind
+  to the log once with its first bytes, and when the panel is let go, how many of each came.
+- **The app's state answers while a reading takes long.** The window asks for it every two
+  seconds; it waited for the sensors while they were read, and said "Libre Panel does not
+  answer" while one hung. It no longer waits.
+
+## 0.9.5rc2 — 2026-11-17
+
+The second candidate for 0.9.5: start screens on the family's other panels, for whoever wants
+to try them. Everything of 0.9.5rc1 below stays.
+
+**Changed**
+- **Try the start screen on a panel no one has tried.** The family's other panels (the 1.6" to
+  the 8", and the screen on JONSBO's TF3-360SC pump) were not written to, since how much room
+  they have is not known. Now *Put on the panel* is there too, and first says plainly what
+  happened to the 9.2" of [#52](https://github.com/syntensa/libre-panel/issues/52): files that
+  left it no room stopped it from starting, and nothing sent from the PC reached it again. It
+  writes only on *Write at my own risk*, each time, with the 9.2"'s room by the pixels and every
+  check of 0.9.4. Afterwards the card asks you to switch the PC fully off and on and to **share
+  how it went**, also if it did not work: *Share how it went* opens an issue form with the
+  model, the version, the look and what was written filled in. A model whose report says it
+  worked is written to without the question from the next version on. A look whose files would
+  be too fine for such a panel's room is not offered there, as Levels is offered nowhere:
+  measured for each model, both ways mounted, that is Aurora on the 1.6" to the 4.6" and the
+  pump screen, Pulse on the 4.6" and Circuit on the 1.6".
+- **The 8.8"** asks to share how it went as well, since this candidate is the first to write
+  to one.
+
+## 0.9.5rc1 — 2026-11-17
+
+The candidate for 0.9.5: start screens for the 8.8", and finer start screens in the same room
+on every panel. It is run on a 9.2" and a 12.3" before it is 0.9.5, and goes to an 8.8" where
+an owner of one tries it.
+
+**Changed**
+- **Start screens on the 8.8"**, the 9.2"'s sibling: its maker sells the two as one, with the
+  same framebuffer (480×1920), and the panel's own start screen was first read from the
+  8.8"'s firmware. It gets the 9.2"'s room, 480,000 bytes for both files, and every check
+  0.9.4 brought. This candidate is the first to write to one: if you have an 8.8", how it went
+  is welcome in an issue.
+- **Finer start screens, in the same room.** The boot logo now tries every whole JPEG quality
+  from 95 down, not only 95, 92, 90 and 88: the default look's logo is 94 where it was 92,
+  0.7 to 0.8 dB finer on either panel, and eight more logos are 0.2 to 0.6 dB finer. The
+  clip's crf goes on in quarter steps where a whole step left room (up to 13 % of it):
+  thirteen of the sixteen clips that were not at crf 20 are up to 0.4 dB finer, among them
+  Aurora's on a panel mounted on end, 47.2 dB on the 9.2" where 0.9.4's had 46.8 (47.75 and
+  47.4 on the 12.3"). No file is coarser than in 0.9.4, and none goes past its room: the
+  quarters are tried on the encoder at hand. A clip takes a few seconds more to write: its
+  three quarters are made at once.
+- **The news on Start** offer to write the start screen upright again only where the panel's
+  start screen is written (they asked owners of the family's other panels too).
+- **Issue 52, concluded**: what the rescue command found on that 9.2" is in the
+  [protocol notes](docs/protocol/turzx-usb.md#what-goes-on-a-panel). In ten minutes it came
+  81 times and its port took nothing, where a sound 9.2" takes the first packet 0.32 s after
+  it comes: its program never reads its USB port before it starts again, so nothing a PC
+  sends reaches it. The guide says how to read the command's last line when that is so.
+
+**Fixed**
+- **A time zone of summer time without its rules** on Linux, such as `TZ=EST5EDT` where no
+  zone file has that name (newer systems keep the old names in a package of their own): the
+  app reads it as the C library does, by the United States' rules where there is no
+  `posixrules` file. Before, it did not know the computer's zone there, and left out what
+  needs it: another place's time, the globe, slideshows by the clock.
+
 ## 0.9.4 — 2026-11-17
 
 Start screens are written to the panel again, on the 9.2" and the 12.3", into a room that is

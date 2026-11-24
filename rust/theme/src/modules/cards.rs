@@ -996,7 +996,11 @@ fn rows_of(role: &str) -> Option<Vec<Row>> {
         "gpu" => vec![
             row("gpu.temp", heat, t("Temp")),
             row("gpu.power", "{value:.0f} W", t("Watt")),
-            row("gpu.mem.used", "{value:gb} GB", t("VRAM")),
+            // (in MB where amounts of data are said in MB alone: data_unit)
+            match lp_i18n::data_in_mb() {
+                true => row("gpu.mem.used", "{value:mb} MB", t("VRAM")),
+                false => row("gpu.mem.used", "{value:gb} GB", t("VRAM")),
+            },
         ],
         "mem" => vec![
             row("mem.free", "{value:.1f} GB", t("Free")),
@@ -1018,9 +1022,12 @@ fn heat_of(b: &Build, sensor: &str) -> Value {
     }
 }
 
-/// _sample: the widest a reading may be, as text to measure (`gb` writes a tenth too).
+/// _sample: the widest a reading may be, as text to measure (`gb` writes a tenth too, `mb` a
+/// graphics card's memory in five digits).
 fn sample(number: &str, unit: &str) -> &'static str {
-    if number.contains(".1f") || number.contains(":gb}") {
+    if number.contains(":mb}") {
+        "00000"
+    } else if number.contains(".1f") || number.contains(":gb}") {
         "00.0"
     } else if ["MHz", "RPM", "MT/s"].contains(&unit) {
         "0000"

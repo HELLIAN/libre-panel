@@ -1569,6 +1569,7 @@ dependencies = [
  "lp-decode",
  "lp-devices",
  "lp-i18n",
+ "lp-net",
  "lp-pixels",
  "lp-py",
  "lp-render",

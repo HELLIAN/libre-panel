@@ -98,7 +98,7 @@ under its id, and themes in the 0.7 format, community themes among them, are rea
 ### For everyone (needs the maintainer)
 
 - [ ] Signed Windows downloads (SignPath, free for open source)
-- [ ] winget; PyPI (`release.yml` is ready for trusted publishing); Flatpak
+- [ ] winget; Flatpak (not PyPI: pip and pipx take the release's wheel by its link)
 
 ## Next: a native engine, smooth and light
 

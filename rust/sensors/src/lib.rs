@@ -5,6 +5,7 @@
 pub mod appicon;
 pub mod audio;
 pub mod calendar;
+pub mod dell;
 pub mod frames;
 pub mod gpus;
 pub mod hardware;
@@ -25,12 +26,14 @@ pub mod mqtt;
 pub mod netlink;
 pub mod nut;
 pub mod nvml;
+pub mod openweathermap;
 pub mod presentmon;
 pub mod protocol;
 pub mod provider;
 pub mod rapl;
 pub mod rtss;
 pub mod service;
+pub mod session;
 pub mod shm;
 pub mod sky;
 pub mod smbios;
@@ -39,3 +42,7 @@ pub mod topology;
 pub mod weather;
 #[cfg(windows)]
 pub mod winlink;
+
+/// battery.state: on battery, charging or charged, shown in the person's language
+/// (lp_render::metric translates it)
+pub const BATTERY_STATES: [&str; 3] = ["On battery", "Charging", "Charged"];

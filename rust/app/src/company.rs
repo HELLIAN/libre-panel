@@ -3,7 +3,7 @@
 //! on while the panel is paused (service.py's BackgroundApp: its PluginHost and
 //! ServiceManager).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use lp_config::Config;
@@ -27,10 +27,83 @@ pub struct Company {
     also: Mutex<Option<Also>>,
 }
 
+/// Seconds since `began` on the clock the loops go by (a clip's where one runs them).
+pub fn since(began: Instant) -> f64 {
+    lp_render::clock::now()
+        .saturating_duration_since(began)
+        .as_secs_f64()
+}
+
+/// When this process's clock began: as its first company was made, and every company after it
+/// in the process counts from there too (the plugin host, started once, is told it:
+/// [`clock_zero`]).
+fn began() -> Instant {
+    static BEGAN: OnceLock<Instant> = OnceLock::new();
+    *BEGAN.get_or_init(lp_render::clock::now)
+}
+
+/// Where this process's clock began on the computer's own, the clock Python's
+/// `time.perf_counter` reads (CLOCK_MONOTONIC on Linux and the BSDs, CLOCK_UPTIME_RAW on
+/// macOS, QueryPerformanceCounter on Windows), in its seconds: the plugin host counts
+/// `libre_panel.clock()` from there, so that a plugin's own times compare with the `now` it is
+/// drawn with and with the time stamps of states. None in a clip, whose clock is its own.
+pub fn clock_zero() -> Option<f64> {
+    if lp_render::clock::in_clip() {
+        return None;
+    }
+    let began = began();
+    // (the two read one after the other: a few hundred nanoseconds apart)
+    let computer = perf_counter()?;
+    Some(computer - since(began))
+}
+
+/// The computer's monotonic clock in seconds, as Python's `time.perf_counter` reads it.
+fn perf_counter() -> Option<f64> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Performance::{
+            QueryPerformanceCounter, QueryPerformanceFrequency,
+        };
+        let (mut ticks, mut rate) = (0i64, 0i64);
+        // SAFETY: two calls that each write one number where they are told.
+        let read = unsafe {
+            QueryPerformanceCounter(&mut ticks) != 0 && QueryPerformanceFrequency(&mut rate) != 0
+        };
+        (read && rate > 0).then(|| ticks as f64 / rate as f64)
+    }
+    #[cfg(unix)]
+    {
+        #[cfg(target_os = "macos")]
+        let which = libc::CLOCK_UPTIME_RAW;
+        #[cfg(not(target_os = "macos"))]
+        let which = libc::CLOCK_MONOTONIC;
+        let mut time = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: the call writes the time where it is told.
+        let read = unsafe { libc::clock_gettime(which, &mut time) } == 0;
+        read.then_some(time.tv_sec as f64 + time.tv_nsec as f64 * 1e-9)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        None
+    }
+}
+
+/// `<settings>/plugins-data`: where each service keeps its files (power's totals, the memory's
+/// database)
+pub const SERVICES_DATA: &str = "plugins-data";
+
 impl Company {
-    pub fn new() -> Arc<Company> {
-        let began = Instant::now();
-        let host = PluginHost::new(Box::new(move || began.elapsed().as_secs_f64()));
+    /// The services' host and manager, with the folder of their files under `settings` known
+    /// before any of them starts: a service reads what it kept as it starts (the power count
+    /// its totals), and one that makes its file then (the memory) would fail without it.
+    pub fn new(settings: &std::path::Path) -> Arc<Company> {
+        // (the clock the services and the loops count by: a clip's where one runs them)
+        let began = began();
+        let host = PluginHost::new(Box::new(move || since(began)));
+        host.set_data_dir(settings.join(SERVICES_DATA));
         let manager = Manager::new(&host, crate::services::parts());
         Arc::new(Company {
             began,
@@ -154,5 +227,20 @@ impl Company {
 
     pub fn close(&self) {
         self.host.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_services_know_their_folder_before_any_of_them_starts() {
+        let settings = std::env::temp_dir().join(format!("lp-company-{}", std::process::id()));
+        let company = Company::new(&settings);
+        let host = lp_services::host::ServiceHost::new(&company.host, "power");
+        let folder = host.data_dir();
+        let _ = std::fs::remove_dir_all(&settings);
+        assert_eq!(folder, Some(settings.join(SERVICES_DATA).join("power")));
     }
 }

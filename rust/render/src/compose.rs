@@ -12,7 +12,7 @@ pub type Area = (i64, i64, i64, i64);
 
 /// Where on a frame of `size` a piece leaves its pixels: its layer, the light it adds, and the
 /// box its frosted backdrop blurs (None where none of it lies on the frame).
-fn reach(piece: &Piece, size: (usize, usize)) -> Option<Area> {
+pub(crate) fn reach(piece: &Piece, size: (usize, usize)) -> Option<Area> {
     let layer = |p: &Piece| {
         let (w, h) = p.size();
         (
@@ -41,7 +41,7 @@ fn clip(a: Area, (w, h): (usize, usize)) -> Option<Area> {
     (a.2 > a.0 && a.3 > a.1).then_some(a)
 }
 
-fn meet(a: Area, b: Area) -> bool {
+pub(crate) fn meet(a: Area, b: Area) -> bool {
     a.0 < b.2 && b.0 < a.2 && a.1 < b.3 && b.1 < a.3
 }
 
@@ -153,6 +153,26 @@ impl Underlays {
     pub fn clear(&mut self) {
         self.kept.clear();
         self.bytes = 0;
+    }
+
+    /// _forget_underlays: what lay under pieces that are not in the frame (`pieces`) any more
+    /// goes: it serves no frame after, and it would keep their pictures alive (its bytes count
+    /// the region's only).
+    pub fn keep_current(&mut self, pieces: &[(String, Rc<Piece>)]) {
+        if self.kept.is_empty() {
+            return;
+        }
+        let now: std::collections::HashSet<*const Piece> =
+            pieces.iter().map(|(_, p)| Rc::as_ptr(p)).collect();
+        let mut freed = 0;
+        self.kept.retain(|_, (under, part, _)| {
+            let keep = under.iter().all(|p| now.contains(&Rc::as_ptr(p)));
+            if !keep {
+                freed += part.as_bytes().len();
+            }
+            keep
+        });
+        self.bytes -= freed;
     }
 }
 
@@ -334,4 +354,29 @@ pub fn as_rgb(canvas: &Image) -> Result<Image> {
     let mut rgb = Image::blank(Mode::RGB, canvas.width(), canvas.height());
     rgb.paste(canvas, 0, 0, None)?;
     Ok(rgb)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn piece(v: u8) -> Rc<Piece> {
+        let image = Image::from_bytes(Mode::RGBA, 4, 4, vec![v; 64]).expect("a 4x4 picture");
+        Rc::new(Piece::new(image, 0, 0))
+    }
+
+    #[test]
+    fn what_lay_under_pieces_gone_from_the_frame_goes() {
+        let (a, b, c) = (piece(1), piece(2), piece(3));
+        let part = Image::from_bytes(Mode::RGB, 4, 4, vec![9; 48]).expect("a part");
+        let mut underlays = Underlays::default();
+        underlays.keep((0, 0, 4, 4), vec![Rc::clone(&a), Rc::clone(&b)], &part);
+        underlays.keep((4, 0, 8, 4), vec![Rc::clone(&a)], &part);
+        assert_eq!(underlays.bytes, 96);
+        // (b gone from the frame: what lay under it can serve no frame after, and goes)
+        underlays.keep_current(&[("a".into(), Rc::clone(&a)), ("c".into(), c)]);
+        assert_eq!(underlays.kept.len(), 1);
+        assert!(underlays.kept.contains_key(&(4, 0, 8, 4)));
+        assert_eq!((underlays.bytes, Rc::strong_count(&b)), (48, 1));
+    }
 }

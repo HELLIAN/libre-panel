@@ -11,13 +11,20 @@ The picture of three panels at once is the app's own *Picture of all panels*, of
 the stills of the feature grid (tile-*.png) are made of the pictures here and of the clips'
 posters in docs/media, so tools/readme_media.py runs first. :func:`pictures` names every file
 it writes; ``--only`` makes some of them.
+
+Libre Panel itself draws them: lp-check and the program, built in rust/ (tools/lp_check.py), the
+app's pictures on a computer it is told of (no one's own: LP_HARDWARE, LP_DEMO_READINGS, LP_NOW).
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
+import functools
 import io
+import json
+import math
 import os
 import re
 import sys
@@ -28,22 +35,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-# this checkout's Libre Panel, not one installed elsewhere (an older one drew older pictures)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
-from libre_panel.branding import logo  # noqa: E402
-from libre_panel.fonts import builtin_font_path  # noqa: E402
-from libre_panel.render.renderer import Renderer  # noqa: E402
-from libre_panel.sensors.base import Reading  # noqa: E402
-from libre_panel.sensors.demo import demo_snapshot  # noqa: E402
-from libre_panel.theme.adapt import adapt_theme  # noqa: E402
-from libre_panel.theme.model import (  # noqa: E402
-    find_theme,
-    load_theme,
-    pair_version,
-    parse_theme,
-)
-from libre_panel.theme.modules import LOOKS, look_theme_parts, make_grid, templates  # noqa: E402
+# this checkout's Libre Panel draws them: lp-check, built in rust/ (tools/lp_check.py)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lp_check import ask, libraries, run, typed  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 WHEN = datetime(2026, 10, 9, 10, 8, 24).timestamp()  # a Friday morning
@@ -80,62 +74,107 @@ def pictures() -> list[str]:
     )  # fmt: skip
 
 
-def snapshot():
-    snap = demo_snapshot(fixed_time=WHEN)
-    weather = {
-        "weather.temperature": ("Temperature", "°C", 17.0),
-        "weather.apparent_temperature": ("Feels like", "°C", 16.0),
-        "weather.humidity": ("Humidity", "%", 58.0),
-        "weather.wind_speed": ("Wind", "km/h", 12.0),
-        "weather.code": ("Weather code", "", 2.0),
-        "weather.description": ("Weather", "", "Partly cloudy"),
-    }
-    for key, (label, unit, value) in weather.items():
-        snap.readings[key] = Reading(key, value, unit, label)
+# What the pictures show over the demo's readings at :data:`WHEN`: (value, unit, label).
+EXTRA = {
+    # the weather of a mild morning
+    "weather.temperature": (17.0, "°C", "Temperature"),
+    "weather.apparent_temperature": (16.0, "°C", "Feels like"),
+    "weather.humidity": (58.0, "%", "Humidity"), "weather.wind_speed": (12.0, "km/h", "Wind"),
+    "weather.code": (2.0, "", "Weather code"),
+    "weather.description": ("Partly cloudy", "", "Weather"),
     # a moon worth looking at (the day of these pictures has a new one)
-    moon = {
-        "moon.phase": (0.36, "", "Moon phase"), "moon.illumination": (79.0, "%", "Moon lit"),
-        "moon.name": ("Waxing gibbous", "", "Moon"), "moon.full_in": (4.1, "d", "Full moon in"),
-        "moon.new_in": (18.9, "d", "New moon in"),
-    }  # fmt: skip
-    for key, (value, unit, label) in moon.items():
-        snap.readings[key] = Reading(key, value, unit, label)
+    "moon.phase": (0.36, "", "Moon phase"), "moon.illumination": (79.0, "%", "Moon lit"),
+    "moon.name": ("Waxing gibbous", "", "Moon"), "moon.full_in": (4.1, "d", "Full moon in"),
+    "moon.new_in": (18.9, "d", "New moon in"),
     # the newer modules' sources: the ping, a UPS, the microphone (muted, to show it)
-    more = {
-        "net.ping": (14.0, "ms", "Ping"), "net.ping.lost": (0.0, "%", "Lost"),
-        "net.ping.host": ("1.1.1.1", "", "Host"), "ups.charge": (100.0, "%", "UPS charge"),
-        "ups.runtime": (38.0, "min", "UPS runtime"), "ups.load": (21.0, "%", "UPS load"),
-        "ups.power": (126.0, "W", "UPS power"), "ups.status": ("Online", "", "UPS state"),
-        "audio.mic.muted": (1, "", "Microphone muted"),
-    }  # fmt: skip
-    for key, (value, unit, label) in more.items():
-        snap.readings[key] = Reading(key, value, unit, label)
-    return snap
+    "net.ping": (14.0, "ms", "Ping"), "net.ping.lost": (0.0, "%", "Lost"),
+    "net.ping.host": ("1.1.1.1", "", "Host"), "ups.charge": (100.0, "%", "UPS charge"),
+    "ups.runtime": (38.0, "min", "UPS runtime"), "ups.load": (21.0, "%", "UPS load"),
+    "ups.power": (126.0, "W", "UPS power"), "ups.status": ("Online", "", "UPS state"),
+    "audio.mic.muted": (1, "", "Microphone muted"),
+}  # fmt: skip
+
+
+def snapshot(drop: tuple[str, ...] = ()) -> dict:
+    """The demo's snapshot at :data:`WHEN` with :data:`EXTRA` over it, as lp-check takes it;
+    the readings of ``drop`` left out."""
+    readings = {key: {"v": typed(value), "unit": unit, "label": label}
+                for key, (value, unit, label) in EXTRA.items()}  # fmt: skip
+    return {"demo": WHEN, "readings": readings, "drop": list(drop)}
+
+
+@functools.cache
+def reading_keys() -> tuple[str, ...]:
+    """The keys of the readings the pictures show: the demo's at :data:`WHEN`, and EXTRA's."""
+    (said,) = ask([{"op": "demo_keys", "t": WHEN}])
+    return tuple(dict.fromkeys([*said["keys"], *EXTRA]))
+
+
+def theme_folder(theme_id: str) -> Path:
+    return ROOT / "data" / "themes" / theme_id
+
+
+def theme_name(theme_id: str) -> str:
+    """A built-in theme's name, as its theme.json says it."""
+    data = json.loads((theme_folder(theme_id) / "theme.json").read_text(encoding="utf-8"))
+    return data.get("name") or theme_id
+
+
+def drawn(frames: list[dict]) -> list[dict]:
+    """Each frame as Libre Panel draws it (lp-check's render_frame, an editor's preview), with
+    its picture (RGB) and its modules' boxes."""
+    case = {"op": "render_frame", "fonts_dir": str(ROOT / "data" / "fonts"),
+            "locale": str(ROOT / "data" / "locale"),
+            "frames": [{"now": 0.0, "bytes": True, "module_boxes": True, **frame}
+                       for frame in frames]}  # fmt: skip
+    out = []
+    for frame, done in zip(frames, json.loads(run(json.dumps(case) + "\n"))["frames"],
+                           strict=True):  # fmt: skip
+        if "frame" not in done:
+            raise RuntimeError(f"{frame.get('folder')}: not drawn: {done.get('error') or done}")
+        image = done["frame"]
+        picture = Image.frombytes(image["mode"], tuple(image["size"]),
+                                  base64.b64decode(image["data"]))  # fmt: skip
+        out.append({**done, "picture": picture.convert("RGB")})
+    return out
 
 
 def render(theme_id: str, factor: int = 1, drop: tuple[str, ...] = ()) -> Image.Image:
-    theme = load_theme(find_theme(theme_id))
+    """A built-in theme as the panel shows it (``factor``: scaled up first, as the app adapts
+    a theme to a larger panel), on the demo's readings at :data:`WHEN`."""
+    frame = {"folder": str(theme_folder(theme_id)), "snapshot": snapshot(drop)}
     if factor != 1:
-        data = adapt_theme(
-            theme.to_dict(),
-            "custom",
-            theme.to_dict()["display"].get("orientation", "landscape"),
-            "scale",
-            theme.width * factor,
-            theme.height * factor,
-        )
-        theme = parse_theme(data, root=theme.root)
-    snap = snapshot()
-    for key in drop:
-        snap.readings.pop(key, None)
-    renderer = Renderer(theme, preview=True)
-    frame, _ = renderer.render(snap)
-    renderer.close()
-    return frame.convert("RGB")
+        frame["adapt"] = {"factor": factor}
+    return drawn([frame])[0]["picture"]
 
 
 def font(name: str, size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(str(builtin_font_path(f"builtin:{name}")), size)
+    """One of Libre Panel's own fonts (data/fonts), by its name."""
+    (path,) = sorted((ROOT / "data" / "fonts").glob(f"{name}.[ot]tf"))
+    return ImageFont.truetype(str(path), size)
+
+
+def logo(size: int) -> Image.Image:
+    """The app's icon as Libre Panel draws it (rust/render/src/branding.rs)."""
+    (said,) = ask([{"op": "logo", "size": size}])
+    image = said["image"]
+    return Image.frombytes(image["mode"], tuple(image["size"]), base64.b64decode(image["data"]))
+
+
+@functools.cache
+def parts(layouts: tuple[tuple[str, str], ...] = ()) -> dict:
+    """What the module pictures are made of (lp-check's module_parts): the looks (key, name,
+    palette, cards), the kinds' names, each [model, orientation]'s size, grid and templates,
+    the models' inches and pixels, and Lumen's pair version."""
+    (said,) = ask([{"op": "module_parts", "layouts": [list(each) for each in layouts],
+                    "pairs": ["lumen"], "builtin": str(ROOT / "data" / "themes"),
+                    "user": str(ROOT / "no-such-folder")}])  # fmt: skip
+    said["looks"] = {key: {"name": json.loads(name), "palette": json.loads(palette),
+                           "style": json.loads(style)}
+                     for key, name, palette, style in said["looks"]}  # fmt: skip
+    for layout in said["layouts"]:
+        layout["templates"] = json.loads(layout["templates"])
+    return said
 
 
 def background(w: int, h: int, glow: tuple[float, float] | None = (0.5, 0.0)) -> Image.Image:
@@ -306,7 +345,7 @@ def vertical() -> Image.Image:
     x = margin
     for name, shot in zip(VERTICAL, shots, strict=True):
         img.paste(shot, (x, margin), shot)
-        title = load_theme(find_theme(f"{name}-vertical")).name.removesuffix(" Vertical")
+        title = theme_name(f"{name}-vertical").removesuffix(" Vertical")
         text_center(draw, x + shot.width / 2, margin + shot.height - pad + 22, title,
                     font("Barlow-SemiBold", 30), (226, 232, 240))  # fmt: skip
         x += shot.width + gap
@@ -334,7 +373,7 @@ def round_screens() -> Image.Image:
         x = margin + (i % cols) * (cw + gap)
         y = margin + (i // cols) * (ch + title + gap)
         img.paste(shot, (x, y), shot)
-        label = load_theme(find_theme(f"{name}-480x480")).name
+        label = theme_name(f"{name}-480x480")
         text_center(draw, x + cw / 2, y + ch - pad + 26, label, font("Barlow-SemiBold", 30),
                     (226, 232, 240))  # fmt: skip
     return img.resize((round(w * 0.6), round(h * 0.6)), Image.Resampling.LANCZOS)
@@ -355,7 +394,7 @@ def zc360_screens() -> Image.Image:
     for i, (name, shot) in enumerate(zip(ZC360, shots, strict=True)):
         y = margin + i * (ch + title + gap)
         img.paste(shot, (margin, y), shot)
-        label = f"{i + 1} · {load_theme(find_theme(f'{name}-640x180')).name}"
+        label = f"{i + 1} · {theme_name(f'{name}-640x180')}"
         text_center(draw, w / 2, y + ch - pad + 28, label, font("Barlow-SemiBold", 34),
                     (226, 232, 240))  # fmt: skip
     return img.resize((round(w * 0.6), round(h * 0.6)), Image.Resampling.LANCZOS)
@@ -411,28 +450,26 @@ def adapts(variants: list[tuple[Image.Image, str, str]]) -> Image.Image:
 
 def module_frame(model: str, look: str, modules: list[dict], orientation: str = "landscape"):
     """A theme made of modules, rendered; and its module boxes."""
-    palette, style = look_theme_parts(look)
-    theme = parse_theme(
-        {
-            "format": "libre-panel-theme/1",
-            "display": {"model": model, "orientation": orientation},
-            "palette": palette,
-            "style": style,
-            "background": {"color": palette["bg"]},
-            "widgets": [{"type": "module", "id": f"m{i}", **m} for i, m in enumerate(modules)],
-        }
-    )
-    renderer = Renderer(theme, preview=True)
-    frame, _ = renderer.render(snapshot())
-    return frame.convert("RGB"), renderer.module_boxes
+    chosen = parts()["looks"][look]
+    palette, style = chosen["palette"], chosen["style"]
+    theme = {
+        "format": "libre-panel-theme/1",
+        "display": {"model": model, "orientation": orientation},
+        "palette": palette,
+        "style": style,
+        "background": {"color": palette["bg"]},
+        "widgets": [{"type": "module", "id": f"m{i}", **m} for i, m in enumerate(modules)],
+    }
+    with tempfile.TemporaryDirectory() as folder:
+        (Path(folder) / "theme.json").write_text(json.dumps(theme), encoding="utf-8")
+        (done,) = drawn([{"folder": folder, "snapshot": snapshot()}])
+    return done["picture"], {key: tuple(box) for key, box in done["module_boxes"].items()}
 
 
 def template(model: str, which: str, orientation: str = "landscape") -> list[dict]:
-    from libre_panel.devices.models import get_model
-
-    width, height = get_model(model).size(orientation)
-    grid = make_grid(width, height, None, model)
-    chosen = next(t for t in templates(grid.columns, grid.rows) if t["id"] == which)
+    """The modules of a starting layout (``which``) for ``model``'s grid."""
+    (layout,) = parts(((model, orientation),))["layouts"]
+    chosen = next(t for t in layout["templates"] if t["id"] == which)
     return chosen["modules"]
 
 
@@ -505,7 +542,7 @@ def looks() -> Image.Image:
     modules = template("turing-9.2-usb", "overview")
     shots = [
         (look["name"], module_frame("turing-9.2-usb", key, modules)[0])
-        for key, look in LOOKS.items()
+        for key, look in parts()["looks"].items()
     ]
     border, margin, gap, caption = 10, 44, 34, 52
     label = font("Barlow-SemiBold", 30)
@@ -616,9 +653,7 @@ CATALOG = [  # (section, [(kind, options, cols, rows)])
 
 def module_catalog() -> Image.Image:
     """Every module, at two cells of a 9.2\" bar, named, in groups."""
-    from libre_panel.theme.modules import kinds
-
-    names = {key: kind.name for key, kind in kinds().items()}
+    names = parts()["kinds"]
     columns, gap, margin, head, caption = 4, 28, 44, 64, 44
     tiles = []
     for section, modules in CATALOG:
@@ -707,27 +742,63 @@ def new_module_layouts() -> Image.Image:
     return img.convert("RGB")
 
 
-def neutral_machine() -> None:
-    """The app of the pictures knows no real computer: no panel on the USB bus, a processor and
-    a graphics card with plain names, the demo's values at the fixed time of the other
-    pictures (not the clock and the sensors of whoever runs this)."""
-    from libre_panel.devices import serial_link, turzx_usb
-    from libre_panel.editor import server
-    from libre_panel.sensors import hardware
-    from libre_panel.sensors.base import Snapshot
+# The computer of the app's pictures: no panel on the bus, a processor and a graphics card with
+# plain names (LP_HARDWARE), the demo's readings and EXTRA at the time of the other pictures
+# (LP_NOW, LP_DEMO_READINGS): not the clock, the sensors and the names of whoever runs this.
+NEUTRAL_MACHINE = {"cpu": "8-Core Processor", "adapters": [["Graphics Card", 8 * 2**30, True]]}
 
-    found = hardware.Found(
-        cpu="8-Core Processor", adapters=(hardware.Adapter("Graphics Card", 8 * 2**30, True),)
-    )
-    hardware._found = None
-    hardware._scan_machine = lambda *args: found
-    turzx_usb.present_model = lambda: None
-    serial_link.find_port = lambda model=None, port_name="": None
-    demo = server.demo_snapshot
-    server.demo_snapshot = lambda fixed_time=None, **more: (
-        snapshot() if fixed_time is None else demo(fixed_time=fixed_time, **more)
-    )
-    server.EditorState.live_snapshot = lambda self: Snapshot()
+
+@contextlib.contextmanager
+def rust_app(home: Path, *command: str, extra: bool = True):
+    """Libre Panel (the program built in rust/, tools/lp_check.py) run with ``command`` in the
+    settings folder ``home``, on the neutral computer (``extra``: :data:`EXTRA` over the demo's
+    readings in its previews): the address it says it runs at (with its token after "#token=").
+    It is stopped at the end."""
+    import signal
+    import subprocess
+
+    from lp_check import app_program
+
+    (home / "bus").write_text("", encoding="utf-8")  # (the USB bus and the ports: nothing)
+    (home / "machine.json").write_text(json.dumps(NEUTRAL_MACHINE), encoding="utf-8")
+    (home / "readings.json").write_text(json.dumps(EXTRA), encoding="utf-8")
+    english = {"LANG": "en_US.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": ""}
+    env = {
+        **os.environ, **libraries(), **english,
+        "LIBRE_PANEL_HOME": str(home), "LIBRE_PANEL_DATA": str(ROOT / "data"),
+        "XDG_CONFIG_HOME": str(home / "xdg"), "LP_TEST_BUS": str(home / "bus"),
+        "LP_HARDWARE": str(home / "machine.json"), "LP_NOW": repr(WHEN),
+        "LP_SETUP_SYSTEM": "other", "LP_LINUX_ROOT": "/no/such/root",
+        "LP_COMMUNITY_INDEX": "http://127.0.0.1:9/community/themes/index.json",
+    }  # fmt: skip
+    if extra:
+        env["LP_DEMO_READINGS"] = str(home / "readings.json")
+    process = subprocess.Popen([str(app_program()), *command], env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, encoding="utf-8")  # fmt: skip
+    said = []
+    first = process.stdout.readline()
+    for stream in (process.stdout, process.stderr):  # (read as it is said: no pipe fills up)
+        threading.Thread(target=said.extend, args=(stream,), daemon=True).start()
+    try:
+        if " running at " not in first:
+            raise RuntimeError(f"Libre Panel did not start: {first}{''.join(said)}")
+        yield first.split(" running at ")[1].split()[0]
+    finally:
+        if os.name == "nt":
+            process.terminate()
+        else:
+            process.send_signal(signal.SIGINT)
+        try:
+            process.wait(30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def with_token(address: str, route: str) -> str:
+    """The app's ``route`` ("#/design") at ``address`` (as the app says it, its token after
+    "#token="), the token after the route, as the window gives it to the page."""
+    page, token = address.split("#token=")
+    return f"{page}{route}&token={token}"
 
 
 def editor_shots(out: Path) -> None:
@@ -738,106 +809,138 @@ def editor_shots(out: Path) -> None:
     home = Path(tempfile.mkdtemp()) / "libre-panel"  # a home of its own, with a plain name
     home.mkdir()
     (home / "config.toml").write_text('language = "en"\ntheme = "lumen"\n', encoding="utf-8")
-    os.environ["LIBRE_PANEL_HOME"] = str(home)  # no user themes, no config of the user's
-    from libre_panel.editor import access
-    from libre_panel.editor.server import make_server
-
-    neutral_machine()
-    server = make_server(port=0)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
     modules = "window.libre.doc.widgets().filter(window.libre.doc.isModule).length"
     shown = "[...document.querySelectorAll('%s')].every(i => i.complete && i.naturalWidth > 0)"
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            context = browser.new_context(
-                viewport={"width": 1600, "height": 900},
-                device_scale_factor=1.5,
-                locale="en-US",
-                bypass_csp=True,  # for the waits below
-            )
-            page = context.new_page()
-            page.goto(
-                access.with_token(
-                    f"http://127.0.0.1:{server.server_address[1]}/#/design", server.token
-                )
-            )
-            page.wait_for_selector(".panel-canvas .preview")
-            page.wait_for_timeout(500)
-            # a new theme: starting layouts for this panel (the 9.2" bar) and six looks
-            page.keyboard.press("Control+k")
-            page.locator(".palette input").fill("new theme")
-            page.keyboard.press("Enter")
-            page.wait_for_selector(".dialog .template-card")
-            page.wait_for_function(shown % ".dialog .template-picture img")
-            page.wait_for_function(
-                "document.querySelectorAll('.dialog .template-picture img').length === 4"
-            )
-            page.wait_for_timeout(500)
-            page.locator(".dialog").screenshot(path=str(out / "editor-new.png"))
-            page.locator(".dialog .btn-primary").click()
-            page.wait_for_function(f"{modules} === 5")
-            page.wait_for_timeout(1500)
-            # Design with a ring selected: its handles, the toolbar over it, its settings
-            page.evaluate("window.libre.doc.setSelection(['ring-4'])")
-            page.wait_for_timeout(1200)
-            page.screenshot(path=str(out / "editor.png"))
-            # a module from the library, dragged onto free cells
-            page.evaluate("window.libre.doc.setSelection(['network-2'])")
-            page.keyboard.press("Delete")
-            page.wait_for_timeout(1000)
-            tile = page.locator(".tile[data-item='module:graph']").bounding_box()
-            grid = page.evaluate("window.libre.store.get().render.grid")
-            canvas = page.locator(".panel-canvas").bounding_box()
-            zoom = canvas["width"] / page.evaluate("window.libre.store.get().render.size[0]")
-            x = grid["x"] + (grid["cell_w"] + grid["gap"]) + grid["cell_w"] / 2
-            y = grid["y"] + (grid["cell_h"] + grid["gap"]) + grid["cell_h"] / 2
-            page.mouse.move(tile["x"] + 30, tile["y"] + 20)
-            page.mouse.down()
-            page.mouse.move(tile["x"] + 80, tile["y"] + 40, steps=4)
-            page.mouse.move(canvas["x"] + x * zoom, canvas["y"] + y * zoom, steps=12)
-            page.wait_for_timeout(500)
-            page.screenshot(path=str(out / "editor-drag.png"))
-            page.mouse.up()
-            for close in page.locator(".toast .toast-close").all():  # ("Removed ...": not after)
-                close.click()
-            # the command palette finds everything by a few letters: blocks, settings, themes
-            page.evaluate("window.libre.doc.setSelection([])")
-            page.keyboard.press("Control+k")
-            page.locator(".palette input").fill("weather")
-            page.wait_for_timeout(500)
-            page.screenshot(path=str(out / "palette.png"))
-            page.keyboard.press("Escape")
-            # Start: every theme, each drawn by the panel's own renderer
-            page.evaluate("location.hash = '#/home/themes'")
-            page.wait_for_selector(".start.gallery .theme-card")
-            page.wait_for_function(shown % ".theme-card img")
-            page.mouse.move(0, 0)  # (a card under the pointer shows its pencil)
-            page.wait_for_timeout(500)
-            page.screenshot(path=str(out / "start.png"))
-            # Settings
-            page.evaluate("location.hash = '#/settings/services'")
-            page.wait_for_selector(".settings-card.service")
-            page.wait_for_timeout(500)
-            page.screenshot(path=str(out / "settings.png"))
-            browser.close()
-    finally:
-        server.shutdown()
+    with rust_app(home, "editor", "--port", "0") as address, sync_playwright() as p:
+        browser = p.chromium.launch()
+        context = browser.new_context(
+            viewport={"width": 1600, "height": 900},
+            device_scale_factor=1.5,
+            locale="en-US",
+            bypass_csp=True,  # for the waits below
+        )
+        page = context.new_page()
+        page.goto(with_token(address, "#/design"))
+        page.wait_for_selector(".panel-canvas .preview")
+        page.wait_for_timeout(500)
+        # a new theme: starting layouts for this panel (the 9.2" bar) and six looks
+        page.keyboard.press("Control+k")
+        page.locator(".palette input").fill("new theme")
+        page.keyboard.press("Enter")
+        page.wait_for_selector(".dialog .template-card")
+        page.wait_for_function(shown % ".dialog .template-picture img")
+        page.wait_for_function(
+            "document.querySelectorAll('.dialog .template-picture img').length === 4"
+        )
+        page.wait_for_timeout(500)
+        page.locator(".dialog").screenshot(path=str(out / "editor-new.png"))
+        page.locator(".dialog .btn-primary").click()
+        page.wait_for_function(f"{modules} === 5")
+        page.wait_for_timeout(1500)
+        # Design with a ring selected: its handles, the toolbar over it, its settings
+        page.evaluate("window.libre.doc.setSelection(['ring-4'])")
+        page.wait_for_timeout(1200)
+        page.screenshot(path=str(out / "editor.png"))
+        # a module from the library, dragged onto free cells
+        page.evaluate("window.libre.doc.setSelection(['network-2'])")
+        page.keyboard.press("Delete")
+        page.wait_for_timeout(1000)
+        tile = page.locator(".tile[data-item='module:graph']").bounding_box()
+        grid = page.evaluate("window.libre.store.get().render.grid")
+        canvas = page.locator(".panel-canvas").bounding_box()
+        zoom = canvas["width"] / page.evaluate("window.libre.store.get().render.size[0]")
+        x = grid["x"] + (grid["cell_w"] + grid["gap"]) + grid["cell_w"] / 2
+        y = grid["y"] + (grid["cell_h"] + grid["gap"]) + grid["cell_h"] / 2
+        page.mouse.move(tile["x"] + 30, tile["y"] + 20)
+        page.mouse.down()
+        page.mouse.move(tile["x"] + 80, tile["y"] + 40, steps=4)
+        page.mouse.move(canvas["x"] + x * zoom, canvas["y"] + y * zoom, steps=12)
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(out / "editor-drag.png"))
+        page.mouse.up()
+        for close in page.locator(".toast .toast-close").all():  # ("Removed ...": not after)
+            close.click()
+        # the command palette finds everything by a few letters: blocks, settings, themes
+        page.evaluate("window.libre.doc.setSelection([])")
+        page.keyboard.press("Control+k")
+        page.locator(".palette input").fill("weather")
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(out / "palette.png"))
+        page.keyboard.press("Escape")
+        # Start: every theme, each drawn by the panel's own renderer
+        page.evaluate("location.hash = '#/home/themes'")
+        page.wait_for_selector(".start.gallery .theme-card")
+        page.wait_for_function(shown % ".theme-card img")
+        page.mouse.move(0, 0)  # (a card under the pointer shows its pencil)
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(out / "start.png"))
+        # Settings
+        page.evaluate("location.hash = '#/settings/services'")
+        page.wait_for_selector(".settings-card.service")
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(out / "settings.png"))
+        browser.close()
+
+
+def panels_photo(panels: list[tuple[str, str, tuple[float, float]]], wait_s: float = 90.0):
+    """The app's own *Picture of all panels* (``GET /api/panels/photo``) of ``panels`` (model,
+    theme, where it stands in millimetres): the background app runs them as virtual panels on
+    the demo's readings alone, the time and they standing still at :data:`WHEN` (LP_NOW), on the
+    neutral computer."""
+    import time
+    import urllib.error
+    import urllib.request
+
+    home = Path(tempfile.mkdtemp()) / "libre-panel"  # a home of its own, with a plain name
+    home.mkdir()
+    (first_model, first_theme, first_at), *more = panels
+    lines = [
+        f'language = "en"\ntheme = "{first_theme}"\nfps = 5\n',
+        f'[device]\ndriver = "virtual"\nmodel = "{first_model}"\nat = {list(first_at)}\n',
+        '[sensors]\nproviders = ["demo"]\n',
+    ]
+    for model, theme, at in more:
+        lines.append(f'[[panels]]\ndriver = "virtual"\nmodel = "{model}"\ntheme = "{theme}"\n'
+                     f"at = {list(at)}\n")  # fmt: skip
+    (home / "config.toml").write_text("\n".join(lines), encoding="utf-8")
+    with rust_app(home, "start", "--port", "0", "--no-browser") as address:
+        url, token = address.split("#token=")
+        url = url.split("#")[0]
+
+        def asked(route: str) -> bytes:
+            request = urllib.request.Request(url + route, headers={"X-Libre-Panel": token})
+            with urllib.request.urlopen(request, timeout=60) as answer:
+                return answer.read()
+
+        ends, before = time.monotonic() + wait_s, None
+        while True:  # each panel shows its theme, and the same twice: it has come in, whole
+            panel = json.loads(asked("api/app"))["panel"]
+            states = [panel.get("state"), *(m.get("state") for m in panel.get("more", []))]
+            themes = [panel.get("theme"), *(m.get("theme") for m in panel.get("more", []))]
+            shown = len(states) == len(panels) and all(s == "showing" for s in states)
+            if shown and (panel.get("frames") or 0) > 5 and themes == before:
+                break
+            if time.monotonic() > ends:
+                raise RuntimeError(f"the panels did not show their themes: {states} {themes}")
+            before = themes if shown else None
+            time.sleep(2.0)
+        try:
+            data = asked("api/panels/photo")
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(json.loads(error.read() or b"{}").get("error", error)) from error
+    return Image.open(io.BytesIO(data)).convert("RGB")
 
 
 def more_panels() -> Image.Image:
     """Two bars, one above the other as under a monitor: Lumen and Lumen Companion beside it,
-    in the picture the app's *Picture of all panels* saves."""
-    from libre_panel import arrangement
-    from libre_panel.devices.models import find_model
-
-    w, h = arrangement.millimetres(find_model("turing-9.2-usb"))
-    # the first panel as the app shows it while a companion runs beside it: its pair version
-    first, second = render(pair_version("lumen") or "lumen"), render("lumen-companion")
-    picture = arrangement.photo([((0, 0, w, h), first, False, 1),
-                                 ((0, h + 30, w, h), second, False, 2)])  # fmt: skip
-    assert picture is not None
-    return picture
+    in the picture the app's *Picture of all panels* saves (the first in Lumen's pair version,
+    as the app shows it while a companion runs beside it)."""
+    model = parts((("turing-9.2-usb", "landscape"),))["models"]["turing-9.2-usb"]
+    w, h = model["native"][1], model["native"][0]  # (landscape: the longer side across)
+    h *= model["inch"] * 25.4 / math.hypot(w, h)  # (its height in millimetres: arrangement.rs)
+    # (where a panel stands is said in whole millimetres)
+    return panels_photo([("turing-9.2-usb", "lumen", (0, 0)),
+                         ("turing-9.2-usb", "lumen-companion", (0, round(h + 30)))])  # fmt: skip
 
 
 # Three panels where they stand (millimetres, top left corners): the 12.3" with Lumen, and under
@@ -852,113 +955,9 @@ PANELS_AT_ONCE = (
 PANELS_WIDTH = 2000  # the picture of all panels is up to 4000 pixels across: more than a page shows
 
 
-class _StillTime:
-    """``time`` for the app's panel loops: the time of day stands at :data:`WHEN`."""
-
-    def __getattr__(self, name: str):  # noqa: ANN204
-        import time
-
-        return getattr(time, name)
-
-    def time(self) -> float:
-        return WHEN
-
-
-def panels_at_once(wait_s: float = 90.0) -> Image.Image:
-    """The app's own *Picture of all panels* (``GET /api/panels/photo``) of the panels of
-    :data:`PANELS_AT_ONCE`: the background app runs them as virtual panels, on the demo's values
-    alone (no player, no sky, no names of this PC) at the time of the other pictures, its graphs
-    with the demo's history. The further panels run in threads, not in processes of their own,
-    so that they see the same still time."""
-    import json
-    import time
-    import urllib.error
-    import urllib.request
-    from collections import deque
-    from unittest import mock
-
-    from libre_panel import app as panel_app
-    from libre_panel import panel_process
-    from libre_panel.autostart import Autostart
-    from libre_panel.editor import access
-    from libre_panel.plugins import loader
-    from libre_panel.sensors import base, demo
-    from libre_panel.service import BackgroundApp
-    from libre_panel.theme.model import theme_for
-
-    home = Path(tempfile.mkdtemp()) / "libre-panel"  # a home of its own, with a plain name
-    home.mkdir()
-    (first_model, first_theme, first_at), *more = PANELS_AT_ONCE
-    lines = [
-        f'language = "en"\ntheme = "{first_theme}"\nfps = 5\n',
-        f'[device]\ndriver = "virtual"\nmodel = "{first_model}"\nat = {list(first_at)}\n',
-        f'[sensors]\nproviders = ["demo"]\n\n[sensors.demo]\nfixed_time = {WHEN}\n',
-    ]
-    for model, theme, at in more:
-        lines.append(f'[[panels]]\ndriver = "virtual"\nmodel = "{model}"\ntheme = "{theme}"\n'
-                     f"at = {list(at)}\n")  # fmt: skip
-    (home / "config.toml").write_text("\n".join(lines), encoding="utf-8")
-
-    seed = demo.DemoProvider({"fixed_time": WHEN})
-    remember, build_hub = base.remember, panel_app.build_hub
-
-    def demo_history(history, readings):  # noqa: ANN001, ANN202 (the graphs as in the others)
-        for key in readings:
-            if key in demo._WAVES and key not in history:
-                past = demo.demo_history(seed, key, demo.HISTORY_SAMPLES)
-                history[key] = deque(past, maxlen=base.HISTORY_LENGTH)
-        return remember(history, {k: v for k, v in readings.items() if k not in demo._WAVES})
-
-    def demo_only(config, demo=False):  # noqa: ANN001, ANN202 (the demo's sources alone)
-        return build_hub(config, demo=True)
-
-    def in_a_thread(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
-        raise RuntimeError("the picture's panels run in threads")
-
-    neutral_machine()
-    patches = (
-        mock.patch.dict(os.environ, {"LIBRE_PANEL_HOME": str(home)}),
-        mock.patch.object(loader, "_installed", lambda group: iter(())),  # no mod of this PC
-        mock.patch.object(panel_app, "time", _StillTime()),
-        mock.patch.object(panel_app, "build_hub", demo_only),
-        mock.patch.object(panel_process, "PanelProcess", in_a_thread),
-        mock.patch.object(base, "remember", demo_history),
-    )
-    with contextlib.ExitStack() as stack:
-        for patch in patches:
-            stack.enter_context(patch)
-        app = BackgroundApp(port=0, autostart=Autostart("linux", home=home))
-        stack.enter_context(mock.patch.object(app.hotkeys, "apply", lambda *args: None))
-        app.start()
-        try:
-            first = theme_for(first_theme, "landscape", (1920, 720))
-            wanted = [pair_version(first) or first, *(theme for _model, theme, _at in more)]
-            ends = time.monotonic() + wait_s
-            while True:  # each panel shows its theme (the first its pair version), and a frame
-                status = app.panel.status
-                beside = [status.more.get(n) for n in range(len(more))]
-                shown = [status.theme, *(getattr(each, "theme", "") for each in beside)]
-                frames = [app.plugin_host.shown, *(getattr(each, "shown", None) for each in beside)]
-                if all(s.startswith(w) for s, w in zip(shown, wanted, strict=True)) and all(
-                    frame is not None for frame in frames
-                ):
-                    break
-                if time.monotonic() > ends:
-                    raise RuntimeError(f"the panels did not show their themes: {shown}")
-                time.sleep(0.5)
-            time.sleep(2.0)  # (a frame or two more: a theme that has just come in, drawn whole)
-            request = urllib.request.Request(
-                app.editor.url.rstrip("/") + "/api/panels/photo",
-                headers={access.HEADER: app.editor.token},
-            )
-            with urllib.request.urlopen(request, timeout=60) as answer:
-                data = answer.read()
-        except urllib.error.HTTPError as error:
-            raise RuntimeError(json.loads(error.read() or b"{}").get("error", error)) from error
-        finally:
-            app.quit()
-            app.shutdown()
-    picture = Image.open(io.BytesIO(data)).convert("RGB")
+def panels_at_once() -> Image.Image:
+    """The app's own *Picture of all panels* of :data:`PANELS_AT_ONCE`, made smaller."""
+    picture = panels_photo(list(PANELS_AT_ONCE))
     height = round(picture.height * PANELS_WIDTH / picture.width)
     return picture.resize((PANELS_WIDTH, height), Image.Resampling.LANCZOS)
 
@@ -1015,10 +1014,10 @@ def tiles(out: Path, media: Path) -> None:
 
 
 def app_icon(name: str) -> str:
-    """The drawing of one of the app's icons (src/libre_panel/editor/app/ui/icons.js): the
+    """The drawing of one of the app's icons (data/editor/app/ui/icons.js): the
     inside of its 24 x 24 SVG, stroked in the text colour (its strings, and its dots, as the
     app's ``DOT(x, y)`` draws them, in the order they come)."""
-    source = (ROOT / "src/libre_panel/editor/app/ui/icons.js").read_text(encoding="utf-8")
+    source = (ROOT / "data/editor/app/ui/icons.js").read_text(encoding="utf-8")
     key = re.search(rf"^  \"?{re.escape(name)}\"?:", source, re.M)
     if key is None:
         raise KeyError(f"the app has no icon {name!r}")
@@ -1134,7 +1133,7 @@ def main() -> None:
     if wanted("hero.png"):
         hero(sharp("lumen")).save(out / "hero.png", optimize=True)
     # Studio with nothing playing: the weather in its card, Lumen above it with the track
-    media = tuple(k for k in snapshot().readings if k.startswith("media."))
+    media = tuple(k for k in reading_keys() if k.startswith("media."))
     if wanted("gallery.png"):
         shots = {theme_id: sharp(theme_id) for theme_id in THEMES}
         gallery({**shots, "studio": render("studio", 2, media)}).save(
@@ -1143,8 +1142,8 @@ def main() -> None:
     if wanted("social-preview.png"):
         social(sharp("lumen")).save(out / "social-preview.png", optimize=True)
     # (the card shows what plays before the weather: without either, it shows the day)
-    quiet = tuple(k for k in snapshot().readings if k.startswith(("weather.", "media.")))
-    gpu = tuple(k for k in snapshot().readings if k.startswith("gpu."))
+    quiet = tuple(k for k in reading_keys() if k.startswith(("weather.", "media.")))
+    gpu = tuple(k for k in reading_keys() if k.startswith("gpu."))
     if wanted("studio-adapts.png"):
         adapts(
             [

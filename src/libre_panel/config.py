@@ -12,14 +12,12 @@ import json
 import logging
 import os
 import re
-import shutil
 import sys
 import threading
 import time
 import tomllib
 import unicodedata
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +25,18 @@ from libre_panel.sequence import Step, StepError, parse_steps
 
 log = logging.getLogger(__name__)
 
+ACCENT_SYSTEM = "system"  # config.toml's accent: Windows' accent colour
+ACCENT_HEX = re.compile(r"#[0-9a-fA-F]{6}")  # ... or one of the person's ("#E0457B")
+
 CONFIG_FILENAME = "config.toml"
 # The theme of every panel but the bars, and what ``Config.theme`` is where nothing better is
-# known (libre_panel.theme.defaults has the panel's own default).
+# known (rust/theme/src/defaults.rs has the panel's own default).
 DEFAULT_THEME = "libre-default"
-# The looks of the weather symbols and the moon (render/symbols.py, render/moon.py): the first,
+# The looks of the weather symbols and the moon (rust/render's symbols.rs and moon.rs): the first,
 # and the second with more to them
 SYMBOL_PACKS = ("classic", "vivid")
+# How amounts of data are said (data_unit): each in the unit that fits it, or in MB alone
+DATA_UNITS = ("auto", "mb")
 # How much moves on the panel (app.calm): calm where the panel is slow, full, or calm everywhere
 MOTIONS = ("auto", "full", "calm")
 # How a TURZX USB panel takes its stills: "auto" (JPEG on the 5.2", PNG elsewhere), "png", "jpeg"
@@ -49,7 +52,7 @@ DEFAULT_SYMBOLS = "vivid"
 # The cards a card slot that leaves them to the person holds (Lumen's, in each of its versions:
 # config.toml ``cards``, theme.modules with_cards), in the order they are asked: the first
 # that has something to show is on show, or with ``card_order = "turns"`` each in turn for its
-# time ("forecast for 5m"; theme.modules CARD_ORDERS, CARD_TRANSITIONS)
+# time ("forecast for 5m"; cards.py CARD_ORDERS, CARD_TRANSITIONS)
 DEFAULT_CARDS = ("playback", "ai", "forecast", "date")
 
 _DEFAULT_CONFIG_TEMPLATE = """\
@@ -238,6 +241,9 @@ url = "http://127.0.0.1:8085/data.json"
 # Weather is off by default. Turn it on and set your own location.
 enabled = false
 provider = "open-meteo"
+# or "openweathermap", with your own key from openweathermap.org (the app sets both:
+# Settings, Weather and place)
+# api_key = ""
 # Find coordinates with:  libre-panel location "Your City"  (or in the app: Settings)
 # latitude = 0.0
 # longitude = 0.0
@@ -259,7 +265,7 @@ def time_of_day(text: str) -> int | None:
 
 
 # The night may begin at sunset and end at sunrise (night_from, night_to) at the weather's
-# place; without one at these times
+# place; without one at these times (the app's night.rs)
 SUN_TIMES = {"sunset": "19:00", "sunrise": "07:00"}
 
 
@@ -271,57 +277,6 @@ def night_time(text: str) -> str | None:
         return word
     minutes = time_of_day(text)
     return None if minutes is None else "{:02d}:{:02d}".format(*divmod(minutes, 60))
-
-
-def night_now(
-    device: DeviceConfig, now: datetime | None = None, place: tuple[float, float] | None = None
-) -> bool:
-    """Whether it is night for the panel (``[device] night``, from ``night_from`` to
-    ``night_to``; a night that goes over midnight too). Sunset and sunrise are those of
-    ``place`` (latitude, longitude) on that day; in a polar night it is night all day, under
-    the midnight sun never."""
-    if not device.night:
-        return False
-    now = now or datetime.now()
-    sun = None
-    if place is not None and {device.night_from, device.night_to} & set(SUN_TIMES):
-        from libre_panel.sensors.sky import sun_times
-
-        sun = sun_times(now.date(), *place)
-        if sun["always"] is not None:
-            return sun["always"] == "night"
-
-    def minute(text: str) -> int | None:
-        if text in SUN_TIMES:
-            if sun is None:
-                return time_of_day(SUN_TIMES[text])
-            at = datetime.fromtimestamp(sun["set" if text == "sunset" else "rise"])
-            return at.hour * 60 + at.minute
-        return time_of_day(text)
-
-    start, end = minute(device.night_from), minute(device.night_to)
-    if start is None or end is None or start == end:
-        return False
-    minute_now = now.hour * 60 + now.minute
-    return start <= minute_now < end if start < end else minute_now >= start or minute_now < end
-
-
-def brightness_now(
-    device: DeviceConfig,
-    now: datetime | None = None,
-    away: bool | None = None,
-    place: tuple[float, float] | None = None,
-) -> int:
-    """The brightness the panel shows now: while the person is away (``away``; None: as
-    presence.py has it) the one for then, at night the night's (its sunset and sunrise at
-    ``place``), else its own."""
-    if away is None:
-        from libre_panel import presence
-
-        away = presence.away()
-    if away and device.dark_when_away:
-        return device.away_brightness
-    return device.night_brightness if night_now(device, now, place) else device.brightness
 
 
 def default_providers(platform: str | None = None) -> list[str]:
@@ -400,51 +355,35 @@ def usual_dir() -> Path:
     return Path(base) / "libre-panel"
 
 
-def take_over_into_portable() -> Path | None:
-    """On the first start of a portable copy: the settings in the user's own folder (where an
-    installed Libre Panel, and the portable copies before 0.7, keep theirs) are copied into its
-    ``data`` folder, once; the logs stay behind. The folder they came from, or None."""
-    portable = None if os.environ.get("LIBRE_PANEL_HOME") else portable_dir()
-    if portable is None or portable.exists():
-        return None
-    usual = usual_dir()
-    if not (usual / "config.toml").is_file():
-        return None
-    part = portable.with_name(portable.name + ".part")
-    try:
-        shutil.rmtree(part, ignore_errors=True)
-        shutil.copytree(usual, part, ignore=shutil.ignore_patterns("logs"))
-        part.rename(portable)
-    except OSError as exc:
-        log.warning("portable: the settings of %s were not taken over: %s", usual, exc)
-        shutil.rmtree(part, ignore_errors=True)
-        return None
-    return usual
-
-
-def user_themes_dir() -> Path:
-    return config_dir() / "themes"
-
-
-# caches the versions before kept and this one does not: the weather symbols' lit bodies
-# (render/light3d.py, ten megabytes, until 0.8.0rc1)
-GONE_CACHES = ("light3d",)
-
-
-def forget_gone_caches() -> None:
-    """Remove what :data:`GONE_CACHES` names from the settings folder's ``cache``."""
-    for name in GONE_CACHES:
-        folder = config_dir() / "cache" / name
-        if folder.is_dir():
-            shutil.rmtree(folder, ignore_errors=True)
-
-
 LOG_FILENAME = "libre-panel.log"
 
 
 def log_file() -> Path:
     """The log of the tray app (its "Open log"); the editor's pages read it too."""
     return config_dir() / "logs" / LOG_FILENAME
+
+
+# What config.toml's [video] may choose (devices/h264.py does as they say):
+X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium")
+# "auto": high where it was measured to show (h264's HIGH_PROFILE_MODELS), baseline elsewhere;
+# main and high ask more of the panel's decoder, and compress better.
+PROFILES = ("auto", "baseline", "main", "high")
+# "auto": Libre Panel's engine (NATIVE) where the download carries it (auto_engine), for the
+# frames Libre Panel draws; else the graphics card's encoder where it was measured to show and
+# ffmpeg can start it (h264's AUTO_ENCODERS, in that order), else x264 on the processor.
+# NVIDIA's and Intel's are an experiment.
+ENCODERS = ("auto", "libx264", "native", "h264_nvenc", "h264_amf", "h264_qsv")
+# The encoder inside the engine (video.encoder "native"): "auto" the graphics card's own where it
+# is AMD's or NVIDIA's (engine/src/encoder.rs's proven) and opens, else x264; "x264"
+# on the processor; "card" the graphics card's whichever it is, through Windows' Media
+# Foundation (engine/src/mf.rs), x264 where that cannot start. The cards' are Windows' only.
+ENGINE_ENCODERS = ("auto", "x264", "card")
+# Who turned the frames into YUV in the Python app (video.pixels): "auto" the graphics card
+# where the colour check found it converting as the processor does on this PC, else ffmpeg on
+# the processor, the frames four bytes a pixel (rgb0); "card" the card; "rgb" the processor, fed
+# three bytes a pixel (rgb24). The Rust app's engine converts every video's colours itself
+# (rust/app/src/colours.rs), and keeps the key as it is set.
+PIXELS = ("auto", "rgb", "card")
 
 
 @dataclass
@@ -480,20 +419,15 @@ class VideoConfig:
     profile: str = "auto"  # "auto" | "baseline" | "main" | "high"
     # "auto" | "native" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv"
     encoder: str = "auto"
-    # How the frames reach ffmpeg and who converts their colours: "auto" four bytes a pixel as
-    # they are drawn (rgb0), converted on the graphics card where a colour check found the card
-    # converting as the processor does (devices/card_choice.py), else by ffmpeg on the processor
-    # (BT.601); "rgb" the processor always, the way of before (rgb24); "card" the card always
-    # (AMD's, NVIDIA's and Intel's encoders; the colour check measured AMD's shifting the
-    # colours when left to itself)
+    # How the frames reached ffmpeg in the Python app and who converted their colours (PIXELS);
+    # the Rust app's engine converts them itself
     pixels: str = "auto"  # "auto" | "rgb" | "card"
     # Where the engine encodes ("auto" with the download's engine, or "native"): it has the
-    # panel and sends it the pictures, each on its time (devices/engine.py), with nothing of
-    # Python's between a frame and the panel; false: Libre Panel sends them as for the other
-    # encoders (the engine only encodes)
+    # panel and sends it the pictures, each on its time (rust/devices/src/engine.rs); false:
+    # Libre Panel sends them as for the other encoders (the engine only encodes)
     engine_sends: bool = True
     # With the engine sending (engine_sends): it also composes the frames from the layers Libre
-    # Panel draws, each sent to it once (render/scene.py: stage 2), where nothing else is drawn
+    # Panel draws, each sent to it once (rust/render/src/scene.rs), where nothing else is drawn
     # over the frame (a transition, the alarm's edge; a message in the built-in card or a look
     # of the volume is one more layer); false: Libre Panel composes every frame
     engine_layers: bool = True
@@ -552,13 +486,13 @@ class DeviceConfig:
     jpeg_quality: int = 90
     dark_on_quit: bool = False  # a black picture and its light off when Libre Panel quits
     dark_on_sleep: bool = True  # so too while the computer sleeps (Windows), lit when it wakes
-    # a brightness of its own at night (night_now): from night_from to night_to, over midnight
-    # too, "HH:MM"; 0 is dark
+    # a brightness of its own at night (the app's night.rs): from night_from to night_to, over
+    # midnight too, "HH:MM"; 0 is dark
     night: bool = False
     night_from: str = "22:00"
     night_to: str = "07:00"
     night_brightness: int = 10
-    # while the person is away (the computer locked, its monitor off: presence.py), this
+    # while the person is away (the computer locked, its monitor off: the app's presence.rs), this
     # brightness; 0 is dark
     dark_when_away: bool = True
     away_brightness: int = 0
@@ -590,7 +524,7 @@ class HardwareConfig:
     memory_name: str = ""
     # the fans' own names, by the key of the sensor that measures each ([[hardware.fans]])
     fans: dict[str, str] = field(default_factory=dict)
-    # how the fans turn on the panel (render/fan_looks.py): a look and colours for all ("":
+    # how the fans turn on the panel (rust/render/src/fan_looks.rs): a look and colours for all ("":
     # the default), and for some fans by their sensor ([[hardware.fans]] look, paint)
     fan_look: str = ""
     fan_paint: str = ""
@@ -601,7 +535,8 @@ class HardwareConfig:
 @dataclass
 class WeatherConfig:
     enabled: bool = False
-    provider: str = "open-meteo"
+    provider: str = "open-meteo"  # or "openweathermap", with api_key (the Rust app's)
+    api_key: str = ""
     latitude: float | None = None
     longitude: float | None = None
     place: str = ""  # what the app calls the place; the coordinates are what counts
@@ -629,8 +564,9 @@ class ModeConfig:
     minutes: float | None = None
 
 
-# Where a switch of the screen comes from ([transitions], app.py works it out): a game, music, the
-# PC at rest, the screens in turn, the autopilot, the round report, or a theme or scene chosen
+# Where a switch of the screen comes from ([transitions], rust/app/src/switch.rs works it
+# out): a game, music, the PC at rest, the screens in turn, the autopilot, the round report, or
+# a theme or scene chosen
 TRANSITION_OCCASIONS = ("game", "media", "idle", "sequence", "autopilot", "report", "manual")
 # each occasion's own at first; "" is what the service asks for (the game's entrance with its
 # logo, the autopilot's and the round report's tube), else the default
@@ -652,12 +588,37 @@ _TRANSITION_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 @dataclass
 class TransitionsConfig:
     """How the panel goes from one screen to the next ([transitions]): the default, how fast,
-    each occasion's own (TRANSITION_OCCASIONS; "" the default) and what "random" picks from."""
+    each occasion's own (TRANSITION_OCCASIONS; "" the default), what "random" picks from, and
+    whether a slide, the wipe and the line of light go over all the panels as one where they
+    all change at once (``canvas``: rust/render/src/canvas.rs)."""
 
     default: str = "fade"
     speed: str = "normal"
+    canvas: bool = True
     occasions: dict[str, str] = field(default_factory=lambda: dict(OCCASION_TRANSITIONS))
     random: list[str] = field(default_factory=lambda: list(RANDOM_TRANSITIONS))
+
+
+# The light that moves over a panel that moves ([shine], rust/render/src/shine.rs), each kind of it
+SHINE_KINDS = ("rings", "graphs", "music", "downloads", "sun")
+
+
+@dataclass
+class ShineConfig:
+    """Which light moves over a panel that moves ([shine]): a ring's end that breathes and a
+    sweep along it, a graph's end that beats, a cover that glows while music plays (with the
+    bars after "Playing" and the progress's light), a download's sheen, the sun's glow and
+    glint. A theme may show fewer (its ``animation.shine``)."""
+
+    rings: bool = True
+    graphs: bool = True
+    music: bool = True
+    downloads: bool = True
+    sun: bool = True
+
+    def kinds(self) -> frozenset[str]:
+        """The kinds that are on."""
+        return frozenset(kind for kind in SHINE_KINDS if getattr(self, kind))
 
 
 @dataclass
@@ -738,8 +699,9 @@ class Config:
     # between themes: the default of [transitions], which config.toml may still name here
     transition: str = "fade"
     transitions: TransitionsConfig = field(default_factory=TransitionsConfig)
+    shine: ShineConfig = field(default_factory=ShineConfig)  # [shine]: the light that moves
     check_updates: bool | None = None  # a look for a newer version once a day; None: not asked
-    allow_notify: bool = False  # other programs may show a notice (notify.py)
+    allow_notify: bool = False  # other programs may show a notice (rust/app/src/notify.rs)
     tray_icon: bool = False  # its icon in the notification area (the tray), with its menu
     device: DeviceConfig = field(default_factory=DeviceConfig)
     sensors: SensorsConfig = field(default_factory=SensorsConfig)
@@ -755,6 +717,7 @@ class Config:
     hotkeys: dict[str, str] = field(default_factory=dict)  # action: combination (hotkeys.py)
     hotkeys_enabled: bool = True  # [hotkeys] enabled: off holds no key, the combinations kept
     symbols: str = DEFAULT_SYMBOLS  # the look of the weather symbols and the moon
+    data_unit: str = "auto"  # amounts of data in the unit that fits each, or "mb" alone
     # the cards of the card slots that leave them to the person (Lumen's), in the order they
     # are asked; the first that has something to show is on show (DEFAULT_CARDS)
     cards: list[str] = field(default_factory=lambda: list(DEFAULT_CARDS))
@@ -763,8 +726,8 @@ class Config:
     # goes to the next ("light", "fade", "slide", "rise", "wipe", "cut", "random")
     card_order: str = "first"
     card_transition: str = "light"
-    # an accent colour for every theme instead of its own (accent.py): "" the themes' own,
-    # "system" Windows', or "#RRGGBB"
+    # an accent colour for every theme instead of its own (the app's accent.rs): "" the themes'
+    # own, ACCENT_SYSTEM Windows', or "#RRGGBB"
     accent: str = ""
     # how much of the background the cards of every theme cover, in per cent (40 to 100; 0: as
     # each theme has them): the module cards' surface and the frames in a theme's surface colour
@@ -777,8 +740,8 @@ class Config:
     # scrolling on (Settings → Panel → Graphs): a video panel then gets fewer frames (a graph
     # with its own fine course, Arena's frame rate, scrolls on)
     graph_steps: bool = False
-    # one picture across all panels that are placed (arrangement.py): a file in the settings
-    # folder (or a path of its own); "" none
+    # one picture across all panels that are placed (rust/app/src/arrangement.rs): a file in
+    # the settings folder (or a path of its own); "" none
     across: str = ""
     # the person's choice of the themes' switches (Theme.switches; Look shows them): for every
     # theme ([switches] frames = false, kept under "*") and by theme, all its versions
@@ -852,7 +815,8 @@ def _transition_name(value: Any, name: str, empty: bool = False) -> str:
 
 
 def _transitions(cfg: Config, table: dict[str, Any]) -> None:
-    """``[transitions]``: ``default``, ``speed``, each occasion's own and ``random``."""
+    """``[transitions]``: ``default``, ``speed``, ``canvas``, each occasion's own and
+    ``random``."""
     chosen = cfg.transitions
     for key, value in table.items():
         name = f"transitions.{key}"
@@ -862,6 +826,8 @@ def _transitions(cfg: Config, table: dict[str, Any]) -> None:
             chosen.speed = _expect(value, str, name)
             if chosen.speed not in TRANSITION_SPEEDS:
                 raise ConfigError(f"{name}: one of {', '.join(TRANSITION_SPEEDS)}")
+        elif key == "canvas":
+            chosen.canvas = _expect(value, bool, name)
         elif key in TRANSITION_OCCASIONS:
             chosen.occasions[key] = _transition_name(value, name, empty=True)
         elif key == "random":
@@ -873,6 +839,15 @@ def _transitions(cfg: Config, table: dict[str, Any]) -> None:
                 raise ConfigError(f"{name}: random cannot pick itself")
         else:
             raise ConfigError(f"unknown setting {name!r}")
+
+
+def _shine(cfg: Config, table: dict[str, Any]) -> None:
+    """``[shine]``: each kind of the light that moves, on or off (SHINE_KINDS)."""
+    for key, value in table.items():
+        name = f"shine.{key}"
+        if key not in SHINE_KINDS:
+            raise ConfigError(f"unknown setting {name!r}")
+        setattr(cfg.shine, key, _expect(value, bool, name))
 
 
 def _expect(value: Any, kind: type | tuple[type, ...], name: str) -> Any:
@@ -897,7 +872,7 @@ def hardware_name(value: Any, name: str) -> str:
     return text
 
 
-# The looks of a fan's rotor (render/fan_looks.py has them) and the colours it may take
+# The looks of a fan's rotor (rust/render/src/fan_looks.rs has them) and the colours it may take
 FAN_LOOKS = ("noctua-g2", "noctua-a12x25", "noctua-a14", "libre")
 FAN_PAINTS = ("theme", "own")
 
@@ -998,14 +973,19 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
             data["transition"], "transition"
         )
     _transitions(cfg, _expect(data.get("transitions", {}), dict, "transitions"))
+    _shine(cfg, _expect(data.get("shine", {}), dict, "shine"))
     if "symbols" in data:
         cfg.symbols = _expect(data["symbols"], str, "symbols").strip()
         if cfg.symbols not in SYMBOL_PACKS:
             raise ConfigError(f"symbols: must be one of {', '.join(SYMBOL_PACKS)}")
+    if "data_unit" in data:
+        cfg.data_unit = _expect(data["data_unit"], str, "data_unit").strip()
+        if cfg.data_unit not in DATA_UNITS:
+            raise ConfigError(f"data_unit: must be one of {', '.join(DATA_UNITS)}")
     if "cards" in data:
         cfg.cards = card_choice(data["cards"], "cards")
     if "card_order" in data or "card_transition" in data:
-        from libre_panel.theme.modules import CARD_ORDERS, CARD_TRANSITIONS
+        from libre_panel.cards import CARD_ORDERS, CARD_TRANSITIONS
 
         for key, allowed in (("card_order", CARD_ORDERS), ("card_transition", CARD_TRANSITIONS)):
             if key in data:
@@ -1014,10 +994,8 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
                     raise ConfigError(f"{key}: must be one of {', '.join(allowed)}")
                 setattr(cfg, key, value)
     if "accent" in data:
-        from libre_panel.accent import HEX, SYSTEM
-
         cfg.accent = _expect(data["accent"], str, "accent").strip()
-        if cfg.accent and cfg.accent != SYSTEM and not HEX.fullmatch(cfg.accent):
+        if cfg.accent and cfg.accent != ACCENT_SYSTEM and not ACCENT_HEX.fullmatch(cfg.accent):
             raise ConfigError('accent: "system", a colour such as "#E0457B", or empty')
     if "card_opacity" in data:
         cfg.card_opacity = _expect(data["card_opacity"], int, "card_opacity")
@@ -1078,6 +1056,7 @@ def parse_config(data: dict[str, Any], path: Path | None = None) -> Config:
     w = _expect(data.get("weather", {}), dict, "weather")
     cfg.weather.enabled = _expect(w.get("enabled", False), bool, "weather.enabled")
     cfg.weather.provider = _expect(w.get("provider", "open-meteo"), str, "weather.provider")
+    cfg.weather.api_key = _expect(w.get("api_key", ""), str, "weather.api_key")
     for key in ("latitude", "longitude"):
         if key in w:
             setattr(cfg.weather, key, float(_expect(w[key], (int, float), f"weather.{key}")))
@@ -1319,8 +1298,6 @@ _MAXRATE = re.compile(r"^(auto|[0-9]+(\.[0-9]+)?[kKM]?)$")
 
 
 def _parse_video(v: dict[str, Any]) -> VideoConfig:
-    from libre_panel.devices.h264 import ENCODERS, ENGINE_ENCODERS, PIXELS, PROFILES, X264_PRESETS
-
     video = VideoConfig()
     video.mode = _expect(v.get("mode", video.mode), str, "video.mode")
     if video.mode not in ("auto", "off", "on"):
@@ -1421,9 +1398,9 @@ _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 def card_choice(value: Any, where: str) -> list[str]:
     """The cards of the card slots, as config.toml's ``cards`` has them: a list of the cards'
-    names (theme.modules CARD_NAMES), each once, one at least, each with the time of its turn
-    if it has one of its own (``"forecast for 5m"``, theme.modules card_line)."""
-    from libre_panel.theme.modules import TURN_S, card_line
+    names (cards.py CARD_NAMES), each once, one at least, each with the time of its turn if it
+    has one of its own (``"forecast for 5m"``, cards.py card_line)."""
+    from libre_panel.cards import TURN_S, card_line
 
     lines = _expect(value, list, where)
     cards: list[str] = []

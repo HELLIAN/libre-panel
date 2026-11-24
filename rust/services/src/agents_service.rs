@@ -1,5 +1,5 @@
-//! AI activity: what Claude Code and Codex do on this PC, for a screen that shows it
-//! (services/agents.py).
+//! AI activity: what Claude Code and Codex do on this PC, and a model server of one's own
+//! (llama.cpp's, Ollama: agents_local.rs), for a screen that shows it (services/agents.py).
 //!
 //! The readings come from the board (agents.rs): the agents' hooks and Claude Code's status
 //! line, and in the background the plan's usage, asked of the programs themselves while a
@@ -11,6 +11,7 @@
 //! codex_usage = true    # ask Codex's app-server every minute
 //! task = true           # what the session is called
 //! notice = false        # a notice on the panel when a session begins to wait for you
+//! local_server = ""     # a model server's address (http://192.168.1.20:8080): ai.local.*
 //! ```
 
 use std::collections::HashMap;
@@ -23,7 +24,8 @@ use lp_py::datetime::DateTime;
 use lp_py::Value;
 use lp_render::overlays::Toast;
 
-use crate::agents::{board, Board, AGENTS};
+use crate::agents::{board, Board, AGENTS, LOCAL};
+use crate::agents_local;
 use crate::agents_usage::{self as usage, UsageError};
 use crate::host::ServiceHost;
 use crate::manager::{Part, Schema, Service};
@@ -47,6 +49,9 @@ pub struct Options {
     pub task: bool,
     pub notice: bool,
 }
+
+/// The model server's address (`local_server`), "" for none.
+type Server = String;
 
 /// A notice that a session began to wait for you.
 #[derive(Clone, Debug, PartialEq)]
@@ -107,6 +112,7 @@ fn days() -> Option<(String, String)> {
 struct Shared {
     host: ServiceHost,
     options: Options,
+    server: Server,
     board: Arc<Board>,
     began: Instant,
     /// when each agent's program is asked next (the service's clock)
@@ -133,8 +139,11 @@ impl Shared {
         let Ok(mut states) = self.states.lock() else {
             return;
         };
-        let (readings, waiting) = look(self.board.readings(), &self.options, &mut states);
+        let (mut readings, waiting) = look(self.board.readings(), &self.options, &mut states);
         drop(states);
+        if !self.server.is_empty() {
+            readings.extend(self.board.local_readings());
+        }
         for (key, value) in readings {
             self.host.publish(&key, value, "", "");
         }
@@ -217,6 +226,51 @@ impl Shared {
     }
 }
 
+/// Asks the model server every few seconds while a theme shows `ai.local.*`; says in the log
+/// when it stops answering and when it answers again.
+fn ask_local(shared: &Arc<Shared>) {
+    let mut failing: Option<String> = None;
+    let mut model = String::new();
+    while !shared.stop.load(Ordering::Relaxed) {
+        if shared.host.hub().shows("ai.local.") {
+            match agents_local::ask(&shared.server, &model) {
+                Ok(seen) => {
+                    if failing.take().is_some() {
+                        shared
+                            .host
+                            .note("AI activity: the model server answers again");
+                    }
+                    model = seen
+                        .as_ref()
+                        .map(|seen| seen.model.clone())
+                        .unwrap_or_default();
+                    shared.board.local(seen.as_ref());
+                }
+                Err(why) => {
+                    if failing.is_none() {
+                        shared.host.note(&format!(
+                            "AI activity: the model server at {} does not answer ({why})",
+                            agents_local::base(&shared.server)
+                        ));
+                    }
+                    failing = Some(why);
+                    model.clear();
+                    shared.board.local(None);
+                }
+            }
+        }
+        // (stop() wakes it at once)
+        let until = Instant::now() + std::time::Duration::from_secs_f64(agents_local::EVERY_S);
+        while !shared.stop.load(Ordering::Relaxed) {
+            let Some(left) = until.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            std::thread::park_timeout(left);
+        }
+    }
+    shared.board.local(None);
+}
+
 fn run(shared: &Arc<Shared>) {
     let mut asking: Option<JoinHandle<()>> = None;
     while !shared.stop.load(Ordering::Relaxed) {
@@ -240,6 +294,7 @@ fn run(shared: &Arc<Shared>) {
 pub struct Agents {
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
+    local: Option<JoinHandle<()>>,
 }
 
 fn options() -> Schema {
@@ -248,6 +303,7 @@ fn options() -> Schema {
         ("codex_usage", "bool", Value::Bool(true)),
         ("task", "bool", Value::Bool(true)),
         ("notice", "bool", Value::Bool(false)),
+        ("local_server", "string", Value::Str(String::new())),
     ]
 }
 
@@ -257,6 +313,10 @@ pub fn part() -> Part {
         options,
         make: |host, options| {
             let on = |key: &str, default: bool| options.get(key).map_or(default, Value::truthy);
+            let server = match options.get("local_server") {
+                Some(Value::Str(server)) => server.trim().to_string(),
+                _ => String::new(),
+            };
             Ok(Box::new(Agents {
                 shared: Arc::new(Shared {
                     host,
@@ -266,6 +326,7 @@ pub fn part() -> Part {
                         task: on("task", true),
                         notice: on("notice", false),
                     },
+                    server,
                     board: board(),
                     began: Instant::now(),
                     next: Mutex::new([0.0; 2]),
@@ -273,6 +334,7 @@ pub fn part() -> Part {
                     stop: AtomicBool::new(false),
                 }),
                 thread: None,
+                local: None,
             }))
         },
     }
@@ -286,13 +348,26 @@ impl Service for Agents {
             .name("service-agents".into())
             .spawn(move || run(&shared));
         self.thread = Some(thread.map_err(|why| why.to_string())?);
+        if !self.shared.server.is_empty() {
+            let shared = Arc::clone(&self.shared);
+            let local = std::thread::Builder::new()
+                .name(format!("agents-{LOCAL}"))
+                .spawn(move || ask_local(&shared));
+            self.local = Some(local.map_err(|why| why.to_string())?);
+        }
         Ok(())
     }
 
     fn stop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
         self.shared.board.wake();
-        if let Some(thread) = self.thread.take() {
+        if let Some(local) = &self.local {
+            local.thread().unpark();
+        }
+        for thread in [self.thread.take(), self.local.take()]
+            .into_iter()
+            .flatten()
+        {
             let _ = thread.join();
         }
     }

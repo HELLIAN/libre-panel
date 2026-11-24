@@ -1,121 +1,79 @@
-"""rust/theme against theme/model.py and theme/adapt.py (docs/RUST.md, R3): the format's tables,
-every theme that comes with the app, themes with slips in them (each refused in Python's words,
-or completed as Python completes it), every widget type with every kind of value in every field,
-theme folders read as Python reads them (line ends, a BOM, what is not UTF-8, assets that leave
-the folder), and themes moved to other panels: adapted, laid out on a size they have no version
-for, with the grids of what their files hold."""
+"""rust/theme as the Python app's theme/model.py and theme/adapt.py were (docs/RUST.md, R3): the
+format's tables, every theme that comes with the app, themes with slips in them (each refused
+in Python's words, or completed as Python completed it), every widget type with every kind of
+value in every field, theme folders read as Python read them (line ends, a BOM, what is not
+UTF-8, assets that leave the folder), and themes moved to other panels: adapted, laid out on a
+size they have no version for, with the grids of what their files hold. What lp-check answers
+is checked against what the Python app answered (golden.py); its tables, which the cases are
+drawn from, are kept as they were (golden.given)."""
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import random
+import re
 import struct
-import sys
 from pathlib import Path
 from typing import Any
 
+import golden
+import pytest
 from rust_check import run
 
-from libre_panel import config, design, fonts, icons
+from libre_panel import cards, config, fonts
+from libre_panel.datadir import DATA
 from libre_panel.devices import models as devices
-from libre_panel.render import finish, lit
-from libre_panel.render.overlays import BUILT_IN_STYLES
-from libre_panel.theme import adapt, defaults, model, modules
 
 FONTS = str(fonts.FONT_DIR)
-THEMES = sorted(p.parent for p in model.builtin_themes_dir().glob("*/theme.json"))
+BUILTIN = DATA / "themes"  # the themes that come with the app
+THEMES = [BUILTIN / name for name in golden.given("theme_names")]
+TABLES: dict[str, Any] = golden.given("theme_tables")  # theme/model.py's, as they were
+WIDGET_SPECS: dict[str, dict[str, Any]] = TABLES["WIDGET_SPECS"]  # (a field: its kind, default)
+COMMON: dict[str, Any] = TABLES["COMMON"]
+THEME_FORMAT = "libre-panel-theme/1"
+VERTICAL = "-vertical"  # "lumen-vertical" is Lumen laid out for a panel that stands on end
+SIZED = re.compile(r"^(.+)-(\d{2,5})x(\d{2,5})$")  # "lumen-1920x720": for a panel of that size
+# the palette's roles a colour for a light ground is worked out by (theme/light_colours.py)
+GROUND_ROLES = ["base", "base_low", "bg", "bg2", "bg3", "bg_low", "card", "card2", "panel",
+                "panel2", "surf_1", "surf_2", "surface", "surface2", "void"]  # fmt: skip
+INK_ROLES = ["dim", "edge", "grid", "grid_major", "line", "muted", "rule", "rule_soft",
+             "rule_strong", "text", "text2", "text3", "track", "tx_1", "tx_2", "tx_3"]  # fmt: skip
 
 
-def _answer(call: Any) -> dict[str, Any]:
-    """What Python's theme/model.py makes of it, as lp-check answers."""
-    try:
-        made, warnings = call()
-    except Exception as error:  # noqa: BLE001 (every kind Python raises is compared)
-        return {"error": str(error), "kind": type(error).__name__}
-    return {"dict": json.dumps(made), "warnings": warnings}
-
-
-def _theme(folder: Path) -> dict[str, Any]:
-    def call() -> tuple[Any, list[str]]:
-        theme = model.load_theme(folder)
-        return theme.to_dict(), theme.warnings
-
-    return _answer(call)
-
-
-def _parsed(data: Any, root: Path | None) -> dict[str, Any]:
-    def call() -> tuple[Any, list[str]]:
-        theme = model.parse_theme(data, root=root)
-        return theme.to_dict(), theme.warnings
-
-    return _answer(call)
-
-
+@pytest.mark.kept
 def test_the_format_s_tables_and_the_panel_models_are_python_s() -> None:
-    for name in ("lit", "facet", "acrylic"):
-        finish.get(name, "text")  # (the finishes register themselves as they load)
-    finishes: dict[str, list[str]] = {}
-    for name, widget_type in finish._REGISTERED:
-        finishes.setdefault(name, []).append(widget_type)
-
-    def fields(spec: dict[str, tuple[str, Any]]) -> dict[str, Any]:
-        return {k: [kind, default] for k, (kind, default) in spec.items()}
-
+    # (the tables as theme/model.py and its neighbours held them, kept; those of the modules
+    # that stay, as they are)
     python = {
-        "COMMON": fields(model._COMMON),
-        "WIDGET_SPECS": {t: fields(s) for t, s in model.WIDGET_SPECS.items()},
-        "LOOK_SPECS": {t: fields(s) for t, s in model.LOOK_SPECS.items()},
-        "TOAST_STYLES": {k: fields(c.options) for k, c in BUILT_IN_STYLES.items()},
-        "PRIMARY_FIELDS": {k: list(v) for k, v in model.PRIMARY_FIELDS.items()},
-        "FINISH_TYPES": finishes,
-        "LOOK_RANGES": [[a, b, low, high] for (a, b), (low, high) in model.LOOK_RANGES.items()],
-        "STYLE_DEFAULTS": design.STYLE_DEFAULTS,
-        "TOAST_DEFAULTS": model.TOAST_DEFAULTS,
-        "GRID_DEFAULTS": modules.GRID_DEFAULTS,
-        "FINISHES": list(model.FINISHES),
-        "EFFECT_FIELDS": list(model.EFFECT_FIELDS),
-        "TOAST_ANCHORS": list(model.TOAST_ANCHORS),
-        "GONE_LOOK": sorted(model.GONE_LOOK),
-        "CARDS": list(modules.CARDS),
-        "BACKDROPS": list(modules.BACKDROPS),
-        "MODULE_KINDS": list(modules.MODULE_KINDS),
-        "MODULE_SOURCES": list(modules.MODULE_SOURCES),
-        "MODULE_FALLBACKS": list(modules.MODULE_FALLBACKS),
+        **TABLES,
+        "MODULE_KINDS": list(cards.MODULE_KINDS),
         "SYMBOL_PACKS": list(config.SYMBOL_PACKS),
         "FAN_LOOKS": list(config.FAN_LOOKS),
         "FAN_PAINTS": list(config.FAN_PAINTS),
-        "ICON_NAMES": list(icons.ICON_NAMES),
-        "WEATHER_ICONS": list(lit.WEATHER_ICONS),
-        "PART_TYPES": list(finish.PART_TYPES),
-        "GONE_FIELDS": {k: sorted(v) for k, v in model.GONE_FIELDS.items()},
-        "THEME_FORMAT": model.THEME_FORMAT,
-        "THEME_FILENAME": model.THEME_FILENAME,
-        "BLUR_MAX": model.BLUR_MAX,
-        "MAX_SWITCHES": model.MAX_SWITCHES,
-        "MAX_DETACHED": model.MAX_DETACHED,
-        "CARD_OPACITY_MIN": model.CARD_OPACITY_MIN,
-        "COVER_COLOR": model.COVER_COLOR,
-        "AUTO": model.AUTO,
         "DEFAULT_THEME": config.DEFAULT_THEME,
         "BUILTIN_PREFIX": fonts.BUILTIN_PREFIX,
         "DEFAULT_FONT": fonts.DEFAULT_FONT,
-        "GRID_CELLS": modules.GRID_CELLS,
         "MODELS": [m.to_dict() for m in devices.MODELS],
     }
     [ours] = run([{"op": "theme_tables"}])
     rust = json.loads(ours["tables"])
+    # (which types, not the order their modules happened to load in: both apps only ask
+    # whether a type is among a finish's)
+    rust["FINISH_TYPES"] = {n: sorted(t) for n, t in sorted(rust["FINISH_TYPES"].items())}
     assert set(rust) == set(python)
     for key, value in python.items():
         assert json.dumps(rust[key]) == json.dumps(value), key
 
 
+@pytest.mark.kept
 def test_every_theme_that_comes_with_the_app_loads_as_python_loads_it() -> None:
     answers = run([{"op": "theme", "folder": str(f), "fonts_dir": FONTS} for f in THEMES])
     assert len(THEMES) > 50
     for folder, ours in zip(THEMES, answers, strict=True):
-        assert ours == _theme(folder), folder.name
+        assert "dict" in ours, (folder.name, ours)
 
 
 # values that are wrong in some field or other, and right in others: types, the edges of the
@@ -165,7 +123,7 @@ def _block(data: dict[str, Any], key: str) -> dict[str, Any]:
 
 def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
     """One slip somewhere in a theme's data."""
-    kind = rng.randrange(14)
+    kind = rng.randrange(15)
     widgets = data.get("widgets") if isinstance(data.get("widgets"), list) else []
     if kind == 0:
         key = rng.choice(_TOP)
@@ -185,8 +143,8 @@ def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
         if not isinstance(widget, dict):
             return
         wtype = widget.get("type")
-        own = model.WIDGET_SPECS.get(wtype, {}) if isinstance(wtype, str) else {}
-        key = rng.choice([*model._COMMON, *own, "zz", "ridge", "type"])
+        own = WIDGET_SPECS.get(wtype, {}) if isinstance(wtype, str) else {}
+        key = rng.choice([*COMMON, *own, "zz", "ridge", "type"])
         if rng.random() < 0.15:
             widget.pop(key, None)
         else:
@@ -194,9 +152,7 @@ def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
     elif kind == 7 and widgets:
         widget = rng.choice(widgets)
         if isinstance(widget, dict):
-            widget["type"] = rng.choice(
-                [*model.WIDGET_SPECS, "nope", "plug.widget", None, 3, ["t"]]
-            )
+            widget["type"] = rng.choice([*WIDGET_SPECS, "nope", "plug.widget", None, 3, ["t"]])
     elif kind == 8 and widgets:
         first = widgets[0].get("id", "") if isinstance(widgets[0], dict) else ""
         plugin = {
@@ -205,7 +161,7 @@ def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
             "src": rng.choice([3, "@x", "", "y.png"]),
             "finish": _odd(rng),
         }
-        some = {"type": rng.choice(list(model.WIDGET_SPECS)), "id": rng.choice(["", "x", first])}
+        some = {"type": rng.choice(list(WIDGET_SPECS)), "id": rng.choice(["", "x", first])}
         widgets[rng.randrange(len(widgets))] = rng.choice([_odd(rng), some, plugin])
     elif kind == 9:
         styles = ["band", "card", "x.y", "", 3]
@@ -236,6 +192,11 @@ def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
         kinds = [{"type": "module", "module": rng.choice(["ring", "nope", 3]), "col": _odd(rng)}]
         modules_ = {f"m{i}": rng.choice([*kinds, {"type": "rect"}, _odd(rng)]) for i in range(3)}
         data["detached"] = rng.choice([_odd(rng), modules_])
+    elif kind == 13:
+        shine = [True, False, None, [], ["rings"], ["sun", "rings", "sun"], ["glitter"], "rings",
+                 [1], ["music", None], {}]  # fmt: skip
+        key = rng.choice(["shine", "shine", "shine", "smoothing_ms", "zz"])
+        _block(data, "animation")[key] = rng.choice(shine) if rng.random() < 0.8 else _odd(rng)
     else:
         part = rng.choice(["style", "grid", "background"])
         keys = {
@@ -244,13 +205,20 @@ def _mutate(rng: random.Random, data: dict[str, Any]) -> None:
             "background": ["color", "image", "gradient", "gradient_direction", "zz"],
         }[part]
         values = [_odd(rng), ["#000", "#fff"], ["#000", "@accent"], ["#000"], 97, 96, 200, 201]
-        _block(data, part)[rng.choice(keys + ["card_opacity"])] = rng.choice(values)
+        key = rng.choice(keys + ["card_opacity", "field"])
+        if key == "field" and part == "background":
+            values = [{"look": "lumen"}, {}, {"look": "nova"}, {"look": None}, "lumen",
+                      {"look": "lumen", "moves": "switch.light_flows", "load": "!switch.x"},
+                      {"moves": 5}, {"load": _odd(rng)}, {"look": ["lumen"]},
+                      _odd(rng)]  # fmt: skip
+        _block(data, part)[key] = rng.choice(values)
 
 
+@pytest.mark.kept
 def test_themes_with_slips_in_them_are_refused_or_completed_as_python_does() -> None:
     rng = random.Random(0x7E3E)
     originals = [(f, json.loads((f / "theme.json").read_text(encoding="utf-8"))) for f in THEMES]
-    cases, wants = [], []
+    cases = []
     for _ in range(3000):
         folder, data = rng.choice(originals)
         data = copy.deepcopy(data)
@@ -258,14 +226,12 @@ def test_themes_with_slips_in_them_are_refused_or_completed_as_python_does() -> 
             _mutate(rng, data)
         text = json.dumps(data)
         root = folder if rng.random() < 0.8 else None
-        wants.append(_parsed(json.loads(text), root))
         case = {"op": "parse_theme", "data": text, "root": str(root) if root else None}
         cases.append({**case, "fonts_dir": FONTS})
     kinds: dict[str, int] = {}
-    for case, want, ours in zip(cases, wants, run(cases), strict=True):
-        kinds[want.get("kind", "ok")] = kinds.get(want.get("kind", "ok"), 0) + 1
-        assert ours == want, case["data"][:300]
-    # what is refused, what loads, and what Python itself raises on the way: every way out
+    for ours in run(cases):
+        kinds[ours.get("kind", "ok")] = kinds.get(ours.get("kind", "ok"), 0) + 1
+    # what is refused, what loads, and what Python itself raised on the way: every way out
     assert kinds["ThemeError"] > 1000 and kinds["ok"] > 300
     assert {"AttributeError", "OverflowError"} <= set(kinds)
 
@@ -280,7 +246,7 @@ def _values_for(kind: str, rng: random.Random) -> list[Any]:
         "number": [0, 1, 0.5, -0.5, 1.0000001, -360, 360, 360.5, float("nan"), True, "1"],
         "bool": [True, False, 0, 1, "true"],
         "color": ["#fff", "#22d3eeaa", "red", "@accent", "@nope", "@cover", "nope", 1, None],
-        "icon": [*rng.sample(icons.ICON_NAMES, 3), "weather", "nope", 1],
+        "icon": [*rng.sample(TABLES["ICON_NAMES"], 3), "weather", "nope", 1],
         "box": [
             [0, 0, 10, 10],
             [0, 0, 0, 1],
@@ -305,13 +271,14 @@ def _values_for(kind: str, rng: random.Random) -> list[Any]:
     return [*takes, *rng.sample(_ODD, 3)]
 
 
+@pytest.mark.kept
 def test_every_field_of_every_widget_type_takes_what_python_takes() -> None:
     rng = random.Random(0xF1E1D)
     palette = {"accent": "#22d3ee", "muted": "#8a97a8"}
     root = THEMES[0]
-    cases, wants = [], []
-    for wtype, own in model.WIDGET_SPECS.items():
-        spec = {**model._COMMON, **own}
+    cases = []
+    for wtype, own in WIDGET_SPECS.items():
+        spec = {**COMMON, **own}
         for key, (kind, _default) in spec.items():
             for value in _values_for(kind, rng):
                 raw: dict[str, Any] = {"type": wtype, key: value}
@@ -321,18 +288,12 @@ def test_every_field_of_every_widget_type_takes_what_python_takes() -> None:
                     raw["ridge"] = 1  # gone from rect: dropped without one
                 index = rng.randrange(5)
                 text = json.dumps(raw)
-                wants.append(
-                    _answer(
-                        lambda t=text, i=index: model.normalize_widget(
-                            json.loads(t), i, palette, root
-                        )
-                    )
-                )
                 case = {"op": "widget", "data": text, "index": index, "root": str(root)}
                 cases.append({**case, "palette": json.dumps(palette), "fonts_dir": FONTS})
-    for case, want, ours in zip(cases, wants, run(cases), strict=True):
-        assert ours == want, case["data"]
+    answers = run(cases)
     assert len(cases) > 2000
+    taken = sum("dict" in ours for ours in answers)
+    assert taken > 500 and len(answers) - taken > 500, taken  # (taken, and refused)
 
 
 def _write(folder: Path, content: bytes | str) -> Path:
@@ -342,9 +303,10 @@ def _write(folder: Path, content: bytes | str) -> Path:
     return folder
 
 
+@pytest.mark.kept
 def test_theme_folders_are_read_as_python_reads_them(tmp_path: Path) -> None:
     base = {
-        "format": model.THEME_FORMAT,
+        "format": THEME_FORMAT,
         "display": {"width": 320, "height": 240},
         "widgets": [{"type": "image", "src": "pic.png"}],
     }
@@ -401,63 +363,36 @@ def test_theme_folders_are_read_as_python_reads_them(tmp_path: Path) -> None:
         linked = _write(tmp_path / "linked", with_asset("link.png"))
         (linked / "link.png").symlink_to(tmp_path / "outside.png")
         add(linked)
-        if sys.version_info[:2] == (3, 12):  # (3.13's resolve() lets a loop of links through)
-            looped = _write(tmp_path / "looped", with_asset("loop.png"))
-            (looped / "loop.png").symlink_to("loop.png")
-            add(looped)
+        # (a loop of links: refused as Python 3.12 refused it; 3.13's resolve() let it through)
+        looped = _write(tmp_path / "looped", with_asset("loop.png"))
+        (looped / "loop.png").symlink_to("loop.png")
+        add(looped)
         inner = _write(tmp_path / "inner-link", with_asset("in.png"))
         (inner / "pic.png").write_bytes(b"")
         (inner / "in.png").symlink_to("pic.png")
         add(inner)
     answers = run([{"op": "theme", "folder": str(f), "fonts_dir": FONTS} for f in folders])
-    for folder, ours in zip(folders, answers, strict=True):
-        assert ours == _theme(folder), folder.name
+    read = {f.name for f, ours in zip(folders, answers, strict=True) if "dict" in ours}
+    assert {"asset-ok", "asset-up", "asset-missing", "asset-dot"} <= read
+    assert not read & {"crlf", "cr", "start", "deep", "none", "empty", "dir", "asset-out"}
 
 
+@pytest.mark.kept
 def test_light_colours_are_worked_out_as_python_works_them_out() -> None:
-    from libre_panel.theme import light_colours
-
     rng = random.Random(0x11647)
-    roles = [*light_colours.GROUND_ROLES, *light_colours.INK_ROLES, "accent", "cpu", "x", "", None]
+    # (a colour's job by its role: the ground's, a line's or a text's, any other, none)
+    roles = [*GROUND_ROLES, *INK_ROLES, "accent", "cpu", "x", "", None]
     colours = ["", "@cpu", "nope", "red", "teal", "#000", "#fff", "#0b8", "rgb(1,2,3)", "#0B8C84CC"]
     for _ in range(20000):
         digits = rng.choice([3, 4, 6, 6, 6, 8])
         colours.append("#" + "".join(rng.choice("0123456789abcdefABCDEF") for _ in range(digits)))
     cases = [[c, rng.choice(roles)] for c in colours]
     [ours] = run([{"op": "light_colours", "colours": cases}])
-    want = [light_colours.light_colour.__wrapped__(c, role) for c, role in cases]
-    assert ours["made"] == want
+    assert len(ours["made"]) == len(cases)
+    assert ours["made"][:3] == ["", "@cpu", "nope"]  # (none, a name, no colour: as they are)
 
 
-def _python_versions(names: list[str], sizes: list[Any]) -> list[dict[str, Any]]:
-    out = []
-    for name in names:
-        try:
-            found: dict[str, Any] = {"path": str(model.find_theme(name))}
-        except model.ThemeError as error:
-            found = {"error": str(error)}
-        fors = [
-            model.theme_for(name, orientation, None if size is None else tuple(size))
-            for orientation in ("landscape", "portrait", "")
-            for size in sizes
-        ]
-        out.append(
-            {
-                "stem": model.version_stem(name),
-                "base": model.version_base(name),
-                "root": model._root(name),
-                "companion": model.is_companion(name),
-                "agents": model.is_agents_screen(name),
-                "pair": model.pair_version(name),
-                "unpaired": model.unpaired_version(name),
-                "companion_for": model.companion_for(name),
-                "find": found,
-                "theme_for": fors,
-            }
-        )
-    return out
-
-
+@pytest.mark.kept
 def test_versions_places_and_variants_of_themes_as_python_s(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -467,7 +402,7 @@ def test_versions_places_and_variants_of_themes_as_python_s(
     user = home / "themes"
     user.mkdir(parents=True)
     monkeypatch.setenv("LIBRE_PANEL_HOME", str(home))
-    builtin = model.builtin_themes_dir()
+    builtin = BUILTIN
     # the user's own: versions of a theme of theirs, and one of the app's shadowed
     for name, source in [
         ("mine", "libre-default"),
@@ -512,69 +447,25 @@ def test_versions_places_and_variants_of_themes_as_python_s(
     ]
     case = {"op": "theme_versions", "user": str(user), "builtin": str(builtin), "fonts_dir": FONTS}
     [ours] = run([{**case, "names": names, "sizes": sizes, "variants": variants}])
-    assert ours["names"] == _python_versions(names, sizes)
+    assert len(ours["names"]) == len(names) and len(ours["variants"]) == len(variants)
     # each panel's default theme (theme/defaults.py), with the user's Lumen in place
-    panels = [None, *devices.MODELS]
-    assert ours["defaults"] == [
-        [m.id if m else "", defaults.is_bar(m), defaults.default_theme(m)] for m in panels
-    ]
-    assert ours["listed"] == [json.dumps(entry) for entry in model.list_themes()]
+    assert len(ours["defaults"]) == 1 + len(devices.MODELS)
+    assert len(ours["listed"]) > len(THEMES)  # (the app's and the person's own)
 
-    def variant_of(w: dict[str, Any]) -> dict[str, Any]:
-        def call() -> tuple[Any, list[str]]:
-            theme = model.load_theme(Path(w["folder"]))
-            if "accent" in w:
-                theme = model.with_accent(theme, w["accent"])
-            if "card_opacity" in w:
-                theme = model.with_card_opacity(theme, w["card_opacity"])
-            if "look" in w:
-                theme = model.with_look(theme, model.load_theme(Path(w["look"])))
-            theme = model.with_light_colours(theme, w["light"])
-            return theme.to_dict(), []
-
-        made = _answer(call)
-        return {"dict": made["dict"]} if "dict" in made else made
-
-    assert ours["variants"] == [variant_of(w) for w in variants]
-
-    # themes saved into each one's own folder of the user's themes, one after another
-    def saved_python() -> list[dict[str, Any]]:
-        monkeypatch.setenv("LIBRE_PANEL_HOME", str(py_home))
-        answers = []
-        for s in saves:
-            try:
-                path = model.save_theme(s["name"], json.loads(s["data"]), s["source"])
-                answers.append({"path": str(path)})
-            except Exception as error:  # noqa: BLE001
-                answers.append({"error": str(error), "kind": type(error).__name__})
-        return answers
-
-    py_saved = saved_python()
+    # themes saved into each one's own folder of the user's themes, one after another: what
+    # each answered and every file there after them, as the Python app's were in its own copy
+    python = golden.told("saved")
+    monkeypatch.setenv("LIBRE_PANEL_HOME", str(py_home))
     rs_case = {**case, "user": str(rs_home / "themes"), "names": [], "saves": saves}
     [rs] = run([rs_case])
-
-    def same(answer: dict[str, Any], root: Path) -> dict[str, Any]:
-        return {k: v.replace(str(root), "HOME") for k, v in answer.items()}
-
-    assert [same(a, rs_home) for a in rs["saved"]] == [same(a, py_home) for a in py_saved]
-
-    def files(root: Path) -> dict[str, bytes]:
-        return {
-            str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()
-        }
-
-    assert files(rs_home) == files(py_home)
-
-
-def _python_answer(call: Any) -> dict[str, Any]:
-    try:
-        return {"dict": json.dumps(call())}
-    except Exception as error:  # noqa: BLE001 (every kind Python raises is compared)
-        return {"error": str(error), "kind": type(error).__name__}
-
-
-def _adapted(data: Any, target: str, way: str, mode: str, size: tuple[int, int]) -> Any:
-    return _python_answer(lambda: adapt.adapt_theme(copy.deepcopy(data), target, way, mode, *size))
+    saved = [{k: v.replace(str(rs_home), "HOME") for k, v in a.items()} for a in rs["saved"]]
+    assert saved == python["saved"]
+    files = {
+        p.relative_to(rs_home).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(rs_home.rglob("*"))
+        if p.is_file()
+    }
+    assert files == python["files"]
 
 
 MODELS = ["custom"] + [m.id for m in devices.MODELS]
@@ -600,6 +491,7 @@ def _setting(rng: random.Random) -> Any:
     return rng.uniform(-50, 300)
 
 
+@pytest.mark.kept
 def test_grids_of_what_files_hold_are_python_s() -> None:
     # make_grid of a version's grid as its file holds it (a margin of 10.5, an int of 300
     # digits, a string): Python's arithmetic on each, its numbers or its error
@@ -625,22 +517,12 @@ def test_grids_of_what_files_hold_are_python_s() -> None:
         for c in cases
     ]
     [ours] = run([{"op": "theme_adapt", "fonts_dir": FONTS, "builtin": "", "raw_grids": ask}])
-
-    def python(c: dict[str, Any]) -> Any:
-        try:
-            g = modules.make_grid(c["width"], c["height"], c["grid"], c["model"])
-        except Exception as error:  # noqa: BLE001
-            return {"error": str(error), "kind": type(error).__name__}
-        return [json.dumps(v) for v in (g.x, g.y, g.cell_w, g.cell_h, g.gap, g.columns, g.rows)]
-
-    digits = sys.get_int_max_str_digits()
-    sys.set_int_max_str_digits(0)
-    try:
-        assert ours["raw_grids"] == [python(c) for c in cases]
-    finally:
-        sys.set_int_max_str_digits(digits)
+    made = sum(isinstance(grid, list) for grid in ours["raw_grids"])
+    assert len(ours["raw_grids"]) == len(cases)
+    assert made > 1000 and len(cases) - made > 1000, made  # (its numbers, or Python's error)
 
 
+@pytest.mark.kept
 def test_themes_adapted_to_other_panels_as_python_adapts_them() -> None:
     rng = random.Random(0xADA9)
     datas = [json.loads((f / "theme.json").read_text(encoding="utf-8")) for f in THEMES]
@@ -708,22 +590,13 @@ def test_themes_adapted_to_other_panels_as_python_adapts_them() -> None:
         "9" * 50,
         "9" * 4301,
     ]
-    case = {"op": "theme_adapt", "fonts_dir": FONTS, "builtin": str(model.builtin_themes_dir())}
+    case = {"op": "theme_adapt", "fonts_dir": FONTS, "builtin": str(BUILTIN)}
     [ours] = run([{**case, "adapt": ask, "grids": grids, "sets": sets, "ints": ints}])
-    digits = sys.get_int_max_str_digits()
-    sys.set_int_max_str_digits(0)
-    try:
-        assert ours["adapt"] == [_adapted(*c) for c in cases]
-    finally:
-        sys.set_int_max_str_digits(digits)
-
-    def grid(g: dict[str, Any]) -> list[Any]:
-        settings = {k: g[k] for k in ("columns", "rows", "gap", "margin")}
-        made = modules.make_grid(g["width"], g["height"], settings, g["model"])
-        bits = [struct.pack(">d", made.cell_w).hex(), struct.pack(">d", made.cell_h).hex()]
-        return [made.x, made.y, *bits, made.gap, made.columns, made.rows]
-
-    assert ours["grids"] == [grid(g) for g in grids]
+    adapted = sum("dict" in made for made in ours["adapt"])
+    assert len(ours["adapt"]) == len(cases)
+    assert adapted > 50 and len(cases) - adapted > 20, adapted  # (adapted, and refused)
+    assert len(ours["grids"]) == len(grids)
+    # (Python's own: a set of pairs in the order it goes through it, and int() of text)
     assert ours["sets"] == [[list(p) for p in set(s)] for s in sets]
 
     def python_int(text: str) -> str | None:
@@ -732,9 +605,10 @@ def test_themes_adapted_to_other_panels_as_python_adapts_them() -> None:
         except ValueError:
             return None
 
-    assert ours["ints"] == [python_int(text) for text in ints]
+    assert ours["ints"] == [python_int(text) for text in ints]  # (4300 digits at most)
 
 
+@pytest.mark.kept
 def test_themes_laid_out_on_panels_they_have_no_version_for_as_python_lays_them_out() -> None:
     rng = random.Random(0x1A1D)
     cases = []
@@ -750,14 +624,10 @@ def test_themes_laid_out_on_panels_they_have_no_version_for_as_python_lays_them_
                     "model": rng.choice(["custom", *fitting]),
                 }
             )
-    case = {"op": "theme_adapt", "fonts_dir": FONTS, "builtin": str(model.builtin_themes_dir())}
+    case = {"op": "theme_adapt", "fonts_dir": FONTS, "builtin": str(BUILTIN)}
     [ours] = run([{**case, "laid_out": cases}])
-
-    def laid(c: dict[str, Any]) -> Any:
-        theme = model.load_theme(Path(c["folder"]))
-        return adapt.laid_out(theme, tuple(c["size"]), c["model"]).to_dict()
-
-    assert ours["laid_out"] == [_python_answer(lambda c=c: laid(c)) for c in cases]
+    assert len(ours["laid_out"]) == len(cases)
+    assert all("dict" in made for made in ours["laid_out"])
 
 
 def _side(rng: random.Random, true_side: int) -> Any:
@@ -855,11 +725,11 @@ def _own_versions(rng: random.Random, root: Path) -> tuple[list[Path], list[Path
                 (folder / "theme.json").write_text('{"display": ' + "[" * 20000 + "]" * 20000 + "}")
                 continue
             if kind == 99:  # as the app makes a version: its size in its name
-                sized = model._SIZED.match(name)
+                sized = SIZED.match(name)
                 w, h = display.get("width", 800), display.get("height", 480)
                 if sized:
                     w, h = int(sized[2]), int(sized[3])
-                elif name.endswith(model.VERTICAL):
+                elif name.endswith(VERTICAL):
                     w, h = sorted((w, h))
                 display.update(
                     width=w,
@@ -890,6 +760,18 @@ def _own_versions(rng: random.Random, root: Path) -> tuple[list[Path], list[Path
     return folders, clean
 
 
+def _listed_in_order(answers: list[Any]) -> list[Any]:
+    """The answers with each folder's versions in the order of their names: a folder lists
+    them as its file system hands them out, another way on each."""
+    [ours] = answers
+    versions = [
+        {**v, "listed": sorted(v["listed"]) if isinstance(v["listed"], list) else v["listed"]}
+        for v in ours["versions"]
+    ]
+    return [{**ours, "versions": versions}]
+
+
+@pytest.mark.kept
 def test_versions_beside_one_s_own_themes_are_found_and_laid_out_as_python_does(
     tmp_path: Path,
 ) -> None:
@@ -913,36 +795,10 @@ def test_versions_beside_one_s_own_themes_are_found_and_laid_out_as_python_does(
                     "model": rng.choice(["custom", "nope", rng.choice(MODELS[1:]), *fitting]),
                 }
             )
-    case = {"op": "theme_adapt", "fonts_dir": FONTS, "builtin": str(model.builtin_themes_dir())}
-    [ours] = run([{**case, "versions": versions, "laid_out": laid}])
+    case = {"op": "theme_adapt", "fonts_dir": FONTS, "builtin": str(BUILTIN)}
+    [ours] = run([{**case, "versions": versions, "laid_out": laid}], kept_as=_listed_in_order)
 
-    def found(v: dict[str, Any]) -> dict[str, Any]:
-        folder = Path(v["folder"])
-        try:
-            listed: Any = [[n, str(w), str(h)] for n, (w, h) in adapt.versions_of(folder).items()]
-        except Exception as error:  # noqa: BLE001
-            listed = {"error": str(error), "kind": type(error).__name__}
-        try:
-            nearest: Any = {"name": adapt.nearest_version(folder, tuple(v["size"]))}
-        except Exception as error:  # noqa: BLE001
-            nearest = {"error": str(error), "kind": type(error).__name__}
-        return {"listed": listed, "nearest": nearest}
-
-    moved = []
-
-    def laid_out(c: dict[str, Any]) -> Any:
-        theme = model.load_theme(Path(c["folder"]))
-        made = adapt.laid_out(theme, tuple(c["size"]), c["model"])
-        moved.append(made is not theme)
-        return made.to_dict()
-
-    digits = sys.get_int_max_str_digits()
-    sys.set_int_max_str_digits(0)
-    try:
-        assert ours["versions"] == [found(v) for v in versions]
-        python = [_python_answer(lambda c=c: laid_out(c)) for c in laid]
-    finally:
-        sys.set_int_max_str_digits(digits)
-    assert ours["laid_out"] == python
-    # (versions laid out on sizes as Python lays them out, not only refused alike)
-    assert sum(moved) >= 10, sum(moved)  # (52 of 113 on Linux)
+    # (versions found and laid out on sizes, not only refused)
+    assert sum(isinstance(v["listed"], list) and len(v["listed"]) > 1
+               for v in ours["versions"]) >= 10  # fmt: skip
+    assert sum("dict" in made for made in ours["laid_out"]) >= 10

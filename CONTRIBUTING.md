@@ -15,14 +15,20 @@ Thanks for helping! The most valuable contributions right now:
 
 ## Development
 
+Libre Panel is written in Rust (`rust/`, [docs/RUST.md](docs/RUST.md)); Python is its plugin
+host and the tests beside the crates' own.
+
 ```bash
 git clone https://github.com/syntensa/libre-panel
 cd libre-panel
+# Linux: sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev (the window), as CI does
+cargo build --release --manifest-path rust/Cargo.toml
+cargo test --release --manifest-path rust/Cargo.toml
 python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -e ".[dev,usb]"
-pytest
+pip install -e ".[dev]"
+pytest                                           # (with lp-check from rust/target/release)
 ruff check . && ruff format --check .
-libre-panel editor
+rust/target/release/libre-panel editor
 ```
 
 Please keep pull requests focused, add tests for behaviour changes, and run the

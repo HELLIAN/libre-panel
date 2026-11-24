@@ -17,6 +17,11 @@ body:
     validations:
       required: true
   - type: input
+    id: replaces
+    attributes:
+      label: Replaces
+      description: A new version of a theme already among the community themes? Its name as the list shows it, and this one takes its place there. Empty for a new theme.
+  - type: input
     id: author
     attributes:
       label: Made by

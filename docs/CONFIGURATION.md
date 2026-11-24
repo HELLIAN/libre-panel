@@ -6,6 +6,7 @@ Without it Libre Panel runs on defaults. Create a commented one with:
 ```bash
 libre-panel config init
 libre-panel config path     # where it is
+libre-panel config language de   # the app's language ("auto": the system's)
 ```
 
 | System | Location |
@@ -72,6 +73,11 @@ fps = 10                       # 1-60; values glide between readings
                                # frames (Settings → Panel → Graphs); a graph with its own
                                # fine course (Arena's frame rate) scrolls on. False or left
                                # out: they scroll
+# data_unit = "mb"             # a network's or a drive's rate and the graphics card's
+                               # memory in MB alone, on every screen (Settings → Panel →
+                               # Amounts of data); "auto" or left out: each in the unit that
+                               # fits it (KB/s, MB/s, GB/s; GB). A theme's own format can ask
+                               # for MB too: {value:mb} (THEMES.md, "Format strings")
 # cards = ["playback", "ai", "forecast", "date"]
                                # the cards of the card slots that leave them to you
                                # (Lumen's, in each of its versions), in the order they are
@@ -82,6 +88,17 @@ fps = 10                       # 1-60; values glide between readings
                                # in cards (else 5 minutes), those with nothing passed over
 # card_transition = "fade"     # from one card to the next: "light" (the default, a line of
                                # light), "fade", "slide", "rise", "wipe", "cut", "random"
+
+# [shine]                      # the light that moves (Settings → Panel → Moving light),
+# rings = true                 # each kind on or off (left out: on): a ring's end breathes
+# graphs = true                # in its colour, a light runs along it now and then, past
+# music = true                 # 80 % it glows wider; a graph's newest point beats with each
+# downloads = true             # reading; while a track plays its cover glows in its own
+# sun = true                   # colours, three bars dance after "Playing" and a light runs
+                               # along its progress; a download's sheen, the faster the
+                               # faster it loads; the sun (by night the moon) glows softly
+                               # and a glint runs along the day gone. A theme may show fewer
+                               # (its animation.shine); nothing of it on a calm panel
 
 # [[panels]]                   # a panel beside this one (see "More panels at once")
 # theme = "lumen"
@@ -148,11 +165,10 @@ port = ""                      # serial panels: found by their USB ids; only if 
 providers = ["load", "audio", "linux", "psutil"]
 
 [sensors.librehardwaremonitor]
-# mode = "auto"                # "auto", "service", "inprocess" (inside Libre Panel), "webserver"
-# dll_dir = ""                 # pip install: the folder with LibreHardwareMonitor's libraries
+# mode = "auto"                # "auto", "service", "webserver"
 # poll_seconds = 1             # how often it is read
 url = "http://127.0.0.1:8085/data.json"   # the web server (mode "webserver", and "auto"
-                               # where it cannot be read inside Libre Panel)
+                               # while the sensor service is not there or does not answer)
 # stale_seconds = 5            # no answer for this long: its readings are hidden
                                # ("--" on the panel); 0 keeps the last ones
 # gpu = "RTX 4070"             # with several graphics cards: the one whose name has this
@@ -180,7 +196,8 @@ url = "http://127.0.0.1:8085/data.json"   # the web server (mode "webserver", an
 
 [weather]
 enabled = false                # off unless you turn it on
-provider = "open-meteo"
+provider = "open-meteo"        # or "openweathermap", with your own api_key
+# api_key = ""                 # (openweathermap only; the app sets it, see Weather below)
 # latitude = 0.0               # your location; find it with:
 # longitude = 0.0              #   libre-panel location "Your City" (or in the app)
 # place = ""                   # what the app calls it; the coordinates are what counts
@@ -471,6 +488,7 @@ a card with its name and back. A calm panel (`device.motion`, a USB serial one) 
 [transitions]
 default = "fade"      # every switch that has none of its own
 speed = "normal"      # "fast", "normal", "slow": shorter or longer, each of them
+canvas = true         # with more panels: a slide, the wipe and the light over all of them
 game = ""             # a game starts or ends ("": the game's entrance, with its logo)
 media = "entrance"    # music starts or stops: the cover and the track; "Music ended"
 idle = "fade"         # the PC is at rest (Almanac), or in use again
@@ -497,7 +515,55 @@ random = ["fade", "wipe", "zoom", "iris", "blinds", "dissolve", "light", "tiles"
 | `glitch` | a short digital fault: rows slip, the colours split |
 | `tiles` | the screen turns over tile by tile |
 | `shatter` | the old screen breaks into pieces that fly apart |
+| `cascade` | the ground changes, then the new screen's cards come in one after another, each rising and growing into its place |
+| `comet` | a comet flies across, the new screen opening behind it |
+| `portal` | a ring of light opens from the middle, the new screen growing through it into its place |
+| `morph` | what both screens show (the time, a ring, a number, the album cover) flies from its old place to its new one, growing or shrinking on the way; the rest fades |
 | `random` | another of `random` each time |
+
+**Over all the panels.** With more than one panel, a slide, the wipe, the iris, the line of
+light, the shatter, the cascade, the comet, the portal and the morph go over all of them as
+over one screen where they all change at once: a scene put on or off, a game, music or the PC
+at rest coming or going, and **▶**. The panels stand as *Settings → More panels* shows them;
+the new screen runs through the gap between them (a slide with a soft shadow at its edge), the
+iris and the portal open from the middle of all of them, the shatter's tiles fall one after
+another along them, the cascade's cards come in as a wave along them, the comet flies from one
+panel into the next and what the morph carries flies from the panel that showed it to the one
+that shows it now; each panel draws its part from the same moment on (0.8 s after the change,
+so that each has noticed it and made its new screen; 0.4 s after **▶**). Over all of them a
+slide, the wipe, the line of light, the iris, the shatter and the morph take a little longer
+than on one (1.25 s; the line of light 1.4 s, the iris 1.3 s, the shatter 1.8 s, the morph
+2.4 s); the cascade (1.9 s), the comet (1.7 s) and the portal (1.5 s) take as long on one panel
+as over all; the pace stretches each as any other. *Across the panels* off (`canvas = false`)
+plays it on each panel by itself, as does any other transition and any switch of one panel
+alone.
+
+The cascade takes the new screen's cards from how it is drawn, in any theme: what covers all of
+the panel at the bottom (its background, a full-panel picture or rect, a look's grid) is the
+ground that comes first, and the widgets on it, joined where they overlap, are the cards.
+
+The morph (2.1 s) finds what the old screen and the new one both show: the time (a clock or a
+face, the seconds beside it going with it), the date, a reading in the same form (a ring, a
+bar, a graph, a number, a fan or an agent's sign of the same sensor), a live picture (the album
+cover, a game's logo), the moon, the earth, the sun's way and the month. Each flies on a gentle
+arc from where it was to where it is now, as large as its new place, turning into its new look
+half way; the rest of the old screen fades out under them and the new one's comes in, and at
+the end the new screen as it is now. What is shown more than once apart (a reading as a number
+here and there), what covers all of the panel and what is the same on any screen (a frame, a
+text, an icon) stays with its screen and fades. Two screens of other sizes, or a switch with
+nothing on the panel before, simply fade.
+
+Over all the panels the morph carries a thing from the panel that showed it to the one that
+shows it now, through the gap between them: when music comes, the cover on the first panel
+flies to the second where only the second shows it then. What both screens of one panel show
+flies on that panel; where more than one other panel showed it, or shows it now, it fades with
+its screen. The panels tell one another what their screens show; each waits for the others
+until the things begin to fly (0.14 s in) and goes on with those that came.
+
+Shown to see it (**▶**), the morph turns the screen into another of Libre Panel's themes and
+back, both with the readings of the moment: Lumen into Arena's version of the same kind (the
+pair into Arena's pair), Arena into Lumen's, any other into Lumen. Where the other theme cannot
+be drawn for the panel, it fades to the card and back.
 
 A plugin's transition goes by its name (`myplugin.curtain`, [Plugins](PLUGINS.md)). The old
 setting `transition = "fade"` at the top of `config.toml` still names the default.
@@ -608,10 +674,11 @@ Jonsbo TF3's pump), in the look chosen on the card, which shows them as they wil
 
 They are drawn in floating point and made 8 bits only at the end, with a dither of a level's
 worth, so that a dark gradient has no bands and a glow no rings. The boot logo is a JPEG with
-every pixel's colour, at quality 95 or the next below that fits its room on the panel (92, 90,
-88, 85); the clip is made at crf 20, and coarser, a step at a time, where it must be to fit
-its room (up to 26); in full range on a panel whose decoder shows every stream so (the 9.2"
-and the 12.3", or `video_range = "full"`): in limited range their black was grey.
+every pixel's colour, at the finest whole quality from 95 down to 85 that fits its room on the
+panel; the clip is made at crf 20, and coarser, a step at a time, where it must be to fit its
+room (up to 26), then a quarter of a step finer again where that still fits; in full range on
+a panel whose decoder shows every stream so (the 9.2" and the 12.3", or
+`video_range = "full"`): in limited range their black was grey.
 
 **How much goes on a panel.** Both files go where the panel keeps its own settings. How much
 room there is cannot be asked, and one 9.2" was full at about 718,000 bytes of these files: a
@@ -623,23 +690,48 @@ panel gets what is known to fit:
 | Panel | Standby clip | Boot logo | Together at most | which is |
 |---|---|---|---|---|
 | 9.2" | 360,000 | 120,000 | 480,000 bytes | two thirds of the 718,000 that filled one |
+| 8.8" | 360,000 | 120,000 | 480,000 bytes | the 9.2"'s: its maker sells the two as one |
 | 12.3" | 500,000 | 150,000 | 650,000 bytes | four fifths of the 817,587 one has held for weeks |
 
-The looks come to 401,000 to 454,000 bytes on the 9.2" and to 537,000 to 634,000 on the 12.3",
-whichever way the panel is mounted (Dark: 59,000 and 96,000), and look as they did: against
-the files of 0.9.0 the clips are at most 1.8 dB apart (at 49.7 dB or better) and the boot
-logos at most 2.5 dB (at 45.5 dB or better). One clip is the exception: Aurora's on a panel
-mounted on end takes the coarsest step there is, 46.8 dB on the 9.2" where 0.9.0's had 49.6
-(47.4 and 49.2 on the 12.3"), and its finest rays are softer. Nothing is made coarser than
-that. **Levels**, whose thousands of small lights took 1.4 MB on a 9.2", is therefore not
-written to either: chosen, the card says so, and gives no file of it.
+The looks come to 434,000 to 476,000 bytes on the 9.2" and to 606,000 to 642,000 on the 12.3",
+on a panel that lies and on one on end (Dark: 59,000 and 96,000; turned round for a panel
+mounted upside down, each is made the same way, in the same room), and look as they did:
+against the files of 0.9.0 the clips are at most 1.7 dB apart (at 49.9 dB or better) and the
+boot logos at most 2.1 dB (at 45.7 dB or better). One clip is the exception: Aurora's on a
+panel mounted on end, 47.2 dB on the 9.2" where 0.9.0's had 49.6 (47.75 and 49.2 on the 12.3"),
+and its finest rays are a little softer. Nothing is made coarser than crf 26 and quality 85.
+**Levels**, whose thousands of small lights took 1.4 MB on a 9.2", is therefore not written to
+either: chosen, the card says so, and gives no file of it.
 
-**Only the 9.2" and the 12.3" are written to**, the models it has been done on. For the
-family's other panels *Put on the panel* is greyed out, since how much room they have is not
-known; the card still shows both pictures, downloads them, says what is on the panel and
-takes the boot logo off. (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment
-switches writing on there for who looks into it on a panel of their own: the files are then
-made for the 9.2"'s room, by the pixels.)
+Since 0.9.5 the files come closer to their room: every whole JPEG quality is tried, not only
+95, 92, 90, 88, and the clip's crf goes on in quarter steps where a whole step left room. That
+made the default look's boot logo 94 where it was 92 (0.7 to 0.8 dB finer, on either panel),
+eight more logos 0.2 to 0.6 dB finer, and thirteen of the sixteen clips that were not at
+crf 20 up to 0.4 dB finer (Aurora's on end 47.2 dB on the 9.2", where 0.9.4's had 46.8). A
+clip takes a few seconds more to write for it: the three quarters are made at once.
+
+**The 9.2", the 12.3" and the 8.8" are written to**: the first two are the models it has been
+done on, and the 8.8" gets the 9.2"'s room, since its maker sells the two as one, with the same
+framebuffer (480×1920), and its firmware is where the panel's own start screen was first read.
+0.9.5's candidate is the first to write to one, so the card asks whoever does to share how it
+went.
+
+**The family's other panels** (the 1.6" to the 8", and the screen on JONSBO's TF3-360SC pump)
+are written to only where you agree to try it, at your own risk, each time: how much room they
+have is not known. *Put on the panel* first says what happened to the 9.2" of issue 52, whose
+files left it no room, so that it no longer started and nothing sent from the PC reached it
+again, and writes only on *Write at my own risk*. The files are then made for the 9.2"'s room,
+by the pixels, and written and checked exactly as on the 9.2": what is on the panel is asked
+before and after, a file that ends early is taken off again, and nothing is deleted to make
+room. A look whose files would be too fine for that room is not offered there, as Levels is
+offered nowhere: measured for each model, both ways mounted, that is Aurora on the 1.6" to the
+4.6" and the pump screen, Pulse on the 4.6" and Circuit on the 1.6". Afterwards the card asks
+you to switch the PC fully off and on again and to **share how it went** (also when it did not
+work): *Share how it went* opens a GitHub issue form with the model, the version, the look and
+what was written already filled in. A model on which start screens have worked, by such a
+report, is written to like the 9.2" from the next version on, without the question.
+(`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment writes there without the question,
+for who looks into it on a panel of their own.)
 
 - **Put on the panel** writes one, after a question: the panel's themes pause, the panel
   shows what was written (the logo at once, the clip playing), and *Show the themes again*
@@ -701,6 +793,14 @@ made for the 9.2"'s room, by the pixels.)
   and counts as none. The lines say whether the panel took each sync: an endpoint can take a
   packet or two by itself, the ones after only where something on the panel reads. No step
   starts the video, whose start plays the standby clip, and none writes a file.
+
+  **Where the port takes nothing**, the last line says `its port took nothing that was
+  sent`, and that is the answer. On the 9.2" of issue 52 it took nothing in 81 comings of
+  about six seconds: the panel's program never got as far as reading its USB port before
+  the panel started again, so nothing sent from a PC reaches it, from this command or any
+  other program. What may still bring such a panel back is its maker's, a way to put its
+  software back that is not known here
+  ([more](protocol/turzx-usb.md#what-goes-on-a-panel)).
 
   The steps go to the Turing 9.2" alone, the panel they were seen to work on: the vendor id
   is shared by other makers' panels with other protocols, and the family's other models may
@@ -801,8 +901,8 @@ only while a theme or a service reads it:
   (Spotify, browsers, media players). Windows reports a new track, a pause or
   another player at once, so the panel follows without delay; a look every
   five seconds is only the safety net, and the position moves on by itself in
-  between. The cover is read when the track changes. The installer brings what
-  it needs; a pip install needs `pip install "libre-panel[media]"`.
+  between. The cover is read when the track changes. Libre Panel has it
+  built in, a pip install too.
 - Linux: any MPRIS player (Spotify, browsers, media players) through `playerctl`, asked
   once a second; where it is not installed, straight from the session's D-Bus with systemd's
   `busctl` (the player that plays, else one that is paused).
@@ -849,9 +949,8 @@ entities = ["sensor.*", "binary_sensor.front_door", "climate.*"]
 poll_seconds = 10
 ```
 
-**MQTT** (`mqtt.*`; `pip install "libre-panel[mqtt]"`, included in the
-installers): what your devices publish. A JSON object is taken apart into one
-reading per field.
+**MQTT** (`mqtt.*`): what your devices publish. A JSON object is taken apart into one
+reading per field. Libre Panel has it built in, a pip install too.
 
 ```toml
 [sensors]
@@ -1040,6 +1139,23 @@ as the UPS says, or its load of the nominal power), `ups.input` (V), `ups.on_bat
 while the mains is off) and `ups.status` ("On mains", "On battery", "Battery low"); the UPS
 module shows them. A warning with `key = "ups.on_battery"` and `crit = 1` in the
 [notices](#notices) turns the mains going off into an alarm on every panel.
+
+**Dell's fans** (`fan.dell.*`, `temp.dell.*`, Windows): many Dell PCs show their fans to no
+other program, LibreHardwareMonitor included. Where Dell Command | Monitor is installed
+(Dell's own program for its PCs, from Dell's support site), Libre Panel reads the fans and
+temperatures it reports, every `update_s` seconds, and names them as it does: its "Processor
+Fan" is `fan.dell.processor_fan` (RPM), its "CPU Temperature" `temp.dell.cpu_temperature`
+(°C), where every fan and temperature of a PC is. Switch it on in *Settings → Sensors → Dell
+fans*, or name it among the sources; a PC without Dell Command | Monitor is said once in the
+log.
+
+```toml
+[sensors]
+providers = ["load", "audio", "librehardwaremonitor", "presentmon", "psutil", "dell"]
+
+[sensors.dell]
+update_s = 2
+```
 
 Show these readings with the Dashboard module (`ha.sensor.living_room_temperature
 = Living room`, one per line), a list, or any widget with a `sensor`.
@@ -1292,7 +1408,11 @@ currency = "€"
 `power.watts`, `power.today` and `power.month` (kWh), with a price `power.today.cost` and
 `power.month.cost`. The totals are kept in the service's folder (`plugins-data/power/`) every
 minute and when it stops, so a restart loses nothing; a new day and a new month begin at
-zero, and time the PC sleeps is not counted.
+zero, and time the PC sleeps is not counted. Where the [memory](#memory-and-round-report) runs and the totals
+are made of `cpu.power` and `gpu.power` (as they are unless `sensors` names others), they
+start from what it recorded of today and of this month where that is more, as *Status →
+History* adds them up: so "this month" is the month from its first day, also for the time
+the count did not run.
 
 ### Waveshare USB monitor (experimental)
 
@@ -1371,6 +1491,8 @@ claude_usage = true   # ask Claude Code for the plan's usage every three minutes
 codex_usage = true    # ask Codex's app-server every minute
 task = true           # show what the session is called (ai.<agent>.task)
 notice = false        # a notice on the panel when a session begins to wait for you
+local_server = ""     # a model server of your own: http://192.168.1.20:8080 (llama.cpp's)
+                      # or http://localhost:11434 (Ollama); "" for none
 ```
 
 While a theme shows `ai.*`, the service asks the programs themselves for the plan's usage, also
@@ -1405,6 +1527,28 @@ With `notice` on, a notice comes on the panel when a session begins to wait for 
 (a question, a permission): what the session is called where `task` is on, else *Waiting for
 you*. A theme that shows `ai.*` itself leaves it out, as one that shows what plays leaves out
 the notice of a new track.
+
+#### A model server of your own
+
+With `local_server` set (in *Settings → Game mode and more → AI activity*: *Model server*), a
+model that runs on this PC or another of the network is the board's third agent, `local`:
+llama.cpp's server (`llama-server`) or Ollama. While a theme shows `ai.local.*`, the service
+asks it every two seconds, a few GETs and nothing else sent; it says in the log once when it
+stops answering, and when it answers again.
+
+- **llama.cpp**: its slots (`/slots`) are the sessions, each working or idle, with the model
+  it serves. The tokens of each task it saw (the prompt's and those it made) add up to
+  `ai.local.tokens_today`. A server started with `--no-slots` says only that it runs: idle,
+  with its model.
+- **Ollama**: the model it holds (`/api/ps`); it does not say whether it works, so it is idle
+  while it holds one.
+
+A server that holds no model, loads one or does not answer is `off`. The readings are those of
+the other agents where the server tells them: `ai.local.state` (`working`, `idle`, `off`),
+`.busy`, `.tool` (the model, while it works), `.model`, `.since`, `.sessions`, `.tokens_today`,
+`.s1.state` to `.s3.state` with `.task` (the slot) and `.since`, and `.server` (`llama.cpp` or
+`Ollama`). The AI activity module shows it with `agent = "local"`: its sign and state, the
+model, the tokens of the day, and its other slots where there is room.
 
 #### Claude Code in the cloud
 
@@ -1853,7 +1997,11 @@ Portuguese (Brazil), Russian, Japanese and Simplified Chinese: `"en"`, `"de"`,
 `"fr"`, `"es"`, `"it"`, `"pl"`, `"pt"`, `"ru"`, `"ja"`, `"zh"`.
 `language = "auto"`
 follows the system language, and English where Libre Panel does not speak it;
-*Settings → Start and system → Language* (and Ctrl+K) writes this setting. It
+*Settings → Start and system → Language* (and Ctrl+K) writes this setting, and so does
+`libre-panel config language de` (with no language: which it is and what the app speaks;
+`--if-auto`: only where it is `"auto"` or there is no `config.toml` yet). On a new install the
+Windows setup gives the app the language chosen in it where that is not the one it offered
+(Windows' own, else English); an update leaves the setting as it is. It
 covers the app, the tray menu, messages about the panel, and the panel itself:
 weekday and month names (in German with "27.", in Spanish and Portuguese with
 "27 de", in Polish and Russian in the genitive, "27 września" and "27 сентября", in Chinese
@@ -1863,10 +2011,11 @@ that are part of a theme (such as "CPU TEMP")
 stay as the theme's author wrote them. Command-line output for diagnostics
 (`models`, `devices`, `sensors`, `doctor`) is in English.
 
-Translations live in `src/libre_panel/locale/<language>.json`, keyed by the
+Translations live in `data/locale/<language>.json`, keyed by the
 English text; a test makes sure every text has one. To add a language, copy
 `de.json`, translate the values and add the language to `LANGUAGES` in
-`src/libre_panel/i18n.py`.
+`rust/i18n/src/lib.rs` and in `src/libre_panel/i18n.py` (the plugin host's; a test holds the
+two to each other).
 
 ## Video
 
@@ -2025,8 +2174,8 @@ Only while Libre Panel runs with administrator rights does it pass over one that
 programs without those rights may change it (outside Program Files and Windows): it then
 takes the one in this folder or on the `PATH` that is safe, and Settings → Overview says so.
 Without them Libre Panel looks in this folder first, then on the `PATH`. It never looks in
-your Downloads folder. A pip install has no such folder: install ffmpeg yourself, and
-PresentMon if you want game frame rates.
+your Downloads folder. A pip install's `tools` holds Libre Panel's engine alone: install
+ffmpeg yourself, and PresentMon if you want game frame rates.
 
 ## Windows sensors (GPU, power, fans)
 
@@ -2040,10 +2189,14 @@ one of three ways, chosen by `mode` under `[sensors.librehardwaremonitor]`:
 
 | `mode` | |
 |---|---|
-| `"auto"` (default) | through the sensor service where it is installed; else inside Libre Panel where that is possible, else through the web server of a LibreHardwareMonitor that you run yourself. A service that does not answer for 20 seconds is replaced by the others until it answers again, and a service installed while Libre Panel runs takes over |
+| `"auto"` (default) | through the sensor service where it is installed, else through the web server of a LibreHardwareMonitor that you run yourself. A service that does not answer for 20 seconds is replaced by the web server until it answers again, and a service installed while Libre Panel runs takes over |
 | `"service"` | the sensor service only |
-| `"inprocess"` | inside Libre Panel only. Where that is not possible, the log says why and those readings show "--" |
 | `"webserver"` | the web server only, as Libre Panel 0.4 did |
+
+Up to 0.9.4 Libre Panel could also load LibreHardwareMonitor itself (`mode = "inprocess"`,
+with pythonnet and `dll_dir`); it no longer does: the sensor service runs it, with the rights
+its sensors need, and Libre Panel needs none. A file that still says `"inprocess"` gets the
+readings of neither, and the tray and the Control page say so: set `"auto"`.
 
 ### Through the sensor service: every sensor, Libre Panel without administrator rights
 
@@ -2070,84 +2223,30 @@ libre-panel sensors --check-service                             # does it answer
 says what the service may and may not do, and why other users of the PC can only read
 readings through it.
 
-### Inside Libre Panel: no extra program
+### Without the sensor service
 
-Without the sensor service (not set up yet, a pip install, or `mode = "inprocess"`) Libre
-Panel reads LibreHardwareMonitor itself. **The Windows downloads** (setup and zip) carry
-LibreHardwareMonitor's library.
-Nothing else is to be installed or started, and no web server turned on. Libre
-Panel loads the library with [pythonnet](https://pythonnet.github.io/) on the
-.NET Framework that Windows has (4.7.2 or later; Windows 10 from version 1803 and
-Windows 11 have it) and reads it in the background once a second
-(`poll_seconds`). Only the parts of your computer that the theme on the panel
-shows are asked, so a theme with just a clock costs next to nothing.
+Not set up yet (or removed), Libre Panel asks the web server of a LibreHardwareMonitor that
+you run yourself ([below](#through-the-web-server-of-librehardwaremonitor)); without one the
+readings it would give show "--", never 0, and everything else works as it does.
+`libre-panel sensors` and `libre-panel doctor` say what is missing, and the tray (a line
+under its status line, and its tooltip) and the Control page say it too, in a sentence in
+your language, for as long as it is the case.
 
-What it needs:
-
-| Reading | Needs |
-|---|---|
-| everything of the graphics card (temperature, load, power, clock, fan, memory), the loads of CPU and memory, memory use, network | nothing |
-| **CPU temperature, power and clock**, RAM temperature (`mem.temp`; DDR4 and DDR5), **the fans on the mainboard** | Libre Panel runs **as administrator**, and the **PawnIO** driver is installed |
-
-PawnIO is the small signed driver that LibreHardwareMonitor uses to talk to the
-chips on the mainboard and in the CPU. It is a separate program, not part of
-Libre Panel: install it once from [pawnio.eu](https://pawnio.eu) (version 2 or
-newer; installing a driver takes administrator rights). Windows starts programs
-without those rights, so Libre Panel has to be told to start with them:
-
-```
-libre-panel autostart enable --elevated      # in a terminal opened as administrator
-```
-
-([Running in the background](BACKGROUND.md#windows-starting-with-the-highest-rights)
-says what that does and when it is safe.) Without the rights or the driver these
-readings show "--", never 0, and everything else works as it does. In that case
-Libre Panel asks a LibreHardwareMonitor web server (below) once at the start: if
-yours runs as administrator, its readings fill in what is missing.
-
-Drive temperatures (`temp.nvme.*` and the like) are not read inside Libre Panel;
-the sensor service and the web server have them.
-
-`libre-panel sensors` and `libre-panel doctor` say which of the two is missing.
-`libre-panel sensors --check-lhm` only tests that the library loads and opens.
-The tray (a line under its status line, and its tooltip) and the Control page say
-it too, in a sentence in your language, for as long as it is the case.
+The processor's temperature, power and clock, the memory's temperature and the mainboard's
+fans need the **PawnIO** driver, the small signed driver through which LibreHardwareMonitor
+talks to those chips. The Windows downloads carry its installer (`--pawnio` above); a pip
+install does not: install it from [pawnio.eu](https://pawnio.eu) (version 2 or newer).
 
 ### With pip
 
-A pip install has no library in it. Install the extra, which brings pythonnet,
-and fetch the libraries (they are not part of Libre Panel; the script downloads
-them from NuGet and checks them against fixed checksums):
-
-```
-pip install "libre-panel[lhm]"
-python fetch_lhm.py "C:\Program Files\lhm-libs"      # in a terminal opened as administrator
-```
-
-`fetch_lhm.py` is in the repository under
-[`packaging/windows`](https://github.com/syntensa/libre-panel/tree/main/packaging/windows);
-it needs nothing but Python. Then name the folder:
-
-```toml
-[sensors.librehardwaremonitor]
-dll_dir = "C:\\Program Files\\lhm-libs"
-```
-
-A 32-bit Python needs `--arch x86`. `dll_dir` can also be the folder of an
-unpacked [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases)
-download (0.9.6 or a 0.9.7 build), which holds the same libraries.
-
-Libre Panel loads these libraries with the rights it has itself, and for the CPU's
-temperatures that means administrator rights. So keep them where only administrators can change
-them, under *Program Files* as above: every user of the PC may change a folder made directly
-under `C:\` unless you take their rights away, and a library of their own in it would run as
-administrator. The app does not change `dll_dir` while it runs as administrator.
+The release's wheel for Windows carries the sensor service as the downloads do: set it up
+once with `libre-panel system-setup --service --pawnio` in a terminal opened as
+administrator (PawnIO from [pawnio.eu](https://pawnio.eu) first: a pip install has no
+installer of it).
 
 ### Through the web server of LibreHardwareMonitor
 
-Used where Libre Panel cannot read the library itself (pythonnet or the library
-is missing, or the .NET Framework would not start, e.g. because another program
-already started pythonnet on another runtime), and always with
+Used while the sensor service is not installed or does not answer, and always with
 `mode = "webserver"`:
 
 1. Install LibreHardwareMonitor and run it **as administrator** (CPU
@@ -2278,12 +2377,45 @@ The log of the setup and `libre-panel sensors` say what was tried.
 ## Weather
 
 Weather is off by default and nothing is sent anywhere until you enable it.
-When enabled, only your coordinates go to Open-Meteo every `update_minutes`.
+When enabled, only your coordinates go to the weather service every `update_minutes`:
+Open-Meteo (`provider = "open-meteo"`, the default, no key needed) or OpenWeatherMap
+(`provider = "openweathermap"`, with an API key of your own, which goes along).
 In the app, *Settings → Weather and place* finds the place by its name: the name
 you type goes to Open-Meteo's place search, only when you press *Search*, and the
 place is kept (and sent) to about a kilometre. The sun and the moon use the place
 too, also while the weather is off.
-The answer includes the rain in 15-minute steps, for the `weather.rain.*`
+Open-Meteo's answer includes the rain in 15-minute steps, for the `weather.rain.*`
 readings of the [theme guide](THEMES.md#sensor-keys).
 Weather data by [Open-Meteo.com](https://open-meteo.com), CC BY 4.0, free for
 non-commercial use.
+
+### OpenWeatherMap
+
+Get a free key at [openweathermap.org](https://home.openweathermap.org/api_keys), then choose
+*OpenWeatherMap* in *Settings → Weather and place* and give the key there, or write both into
+config.toml:
+
+```toml
+[weather]
+provider = "openweathermap"
+api_key = "your key"
+```
+
+The key stays in config.toml: the app's page is told only that there is one, and no log line
+has it. It goes to OpenWeatherMap alone. A new key can take a few hours before OpenWeatherMap
+takes it; until then *Status → Diagnose* says that it does not.
+
+The readings are those Open-Meteo gives, in the same units (km/h, the WMO weather codes and
+their words), so a theme shows them alike. What a key gets:
+
+- **Any key** (the free plan): the present weather and the forecast of the next five days in
+  3-hour steps. The hours between the steps are drawn from the steps either side (the
+  temperature on the line between them, the rest from the nearer one); a day is shown where the
+  forecast holds all of it, today with what was seen of it since Libre Panel started; there is
+  no rain of the next two hours (`weather.rain.*`). Two calls each `update_minutes`.
+- **A key with One Call 3.0** (OpenWeather's *One Call by Call*, a number of calls a day free):
+  the hours, seven days and the rain of the next hour by the minute (and the hours' rain after
+  it), as Open-Meteo gives them. One call each `update_minutes`.
+
+Libre Panel tries One Call first and, where the key does not have it, says so once in its log and
+uses the free plan's answers. Weather data by [OpenWeather](https://openweathermap.org) (ODbL).

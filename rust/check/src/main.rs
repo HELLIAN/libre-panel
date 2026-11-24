@@ -765,6 +765,155 @@ fn run(case: &Value) -> Result<Value, String> {
                 lp_render::branding::logo(size, case["status"].as_str()).map_err(|e| e.0)?;
             json!({"image": value_of(&picture)})
         }
+        "mark" => {
+            // branding.mark(diameter, light): the mark alone, as the panel's screens take it
+            let diameter = case["diameter"].as_f64().unwrap_or(200.0);
+            let light = case["light"].as_f64().unwrap_or(1.0);
+            let picture = lp_render::branding::mark(diameter, light).map_err(|e| e.0)?;
+            json!({"image": value_of(&picture)})
+        }
+        "theme_grid" => {
+            // a theme's size, model and grid as the editor makes it (make_grid of its width,
+            // height, grid settings and model), of its JSON text; or why it is no theme
+            let env = lp_theme::Env {
+                fonts_dir: case["fonts_dir"].as_str().unwrap_or("").into(),
+            };
+            let data = match lp_py::json::loads(case["theme"].as_str().unwrap_or("")) {
+                Ok(data) => data,
+                Err(e) => return Ok(json!({"error": e.to_string()})),
+            };
+            let theme = match lp_theme::model::parse_theme(&data, None, &env) {
+                Ok(theme) => theme,
+                Err(e) => return Ok(json!({"error": e.msg})),
+            };
+            let int = |k: &str| match theme.grid.as_ref().and_then(|g| g.get(k)) {
+                Some(lp_py::Value::Int(n)) => i64::try_from(n).unwrap_or(0),
+                Some(lp_py::Value::Bool(b)) => i64::from(*b),
+                _ => 0,
+            };
+            let settings = lp_theme::grid::Settings {
+                columns: int("columns"),
+                rows: int("rows"),
+                gap: int("gap"),
+                margin: int("margin"),
+            };
+            let grid = lp_theme::grid::make_grid(theme.width, theme.height, settings, &theme.model);
+            json!({"width": theme.width, "height": theme.height, "model": theme.model,
+                "x": grid.x, "y": grid.y, "cell_w": grid.cell_w, "cell_h": grid.cell_h,
+                "gap": grid.gap, "columns": grid.columns, "rows": grid.rows})
+        }
+        "demo_keys" => {
+            // the keys of the demo's readings at a moment (sensors/demo.py's demo_snapshot)
+            let utc = lp_py::zones::Zone::utc();
+            let zone = lp_py::zones::local().unwrap_or(&utc);
+            let t = case["t"].as_f64().unwrap_or(0.0);
+            let demo = lp_services::demo::demo_snapshot(t, 1, zone)?;
+            json!({"keys": demo.readings.keys().collect::<Vec<_>>()})
+        }
+        "module_parts" => {
+            // what tools/readme_images.py builds its module pictures of: each look's palette
+            // and cards (look_theme_parts), the kinds' names, for each [model, orientation] its
+            // size, grid and the grid's templates, each model's inches and pixels, and the pair
+            // version of each theme named (JSON text: ints and floats as they are)
+            use lp_theme::modules::info;
+            let how = lp_py::json::Dumps::default();
+            let text = |v: &lp_py::Value| lp_py::json::dumps(v, &how);
+            let mut looks = Vec::new();
+            for (key, look) in lp_theme::design::looks() {
+                let name = look.as_dict().and_then(|l| l.get("name")).cloned();
+                if let Some((palette, style)) = info::look_theme_parts(key) {
+                    looks.push(json!([
+                        key,
+                        text(&name.unwrap_or(lp_py::Value::None)),
+                        text(&lp_py::Value::Dict(palette)),
+                        text(&lp_py::Value::Dict(style))
+                    ]));
+                }
+            }
+            let kinds: serde_json::Map<String, Value> = info::module_info()
+                .get("kinds")
+                .and_then(lp_py::Value::as_dict)
+                .map(|kinds| {
+                    kinds
+                        .iter()
+                        .map(|(key, kind)| {
+                            let name = kind.as_dict().and_then(|k| k.get("name"));
+                            let name = match name {
+                                Some(lp_py::Value::Str(s)) => s.clone(),
+                                _ => String::new(),
+                            };
+                            (key.clone(), json!(name))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut models = serde_json::Map::new();
+            let layouts: Vec<Value> = case["layouts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|l| {
+                    let id = l[0].as_str().unwrap_or("");
+                    let way = l[1].as_str().unwrap_or("landscape");
+                    let Some(model) = lp_devices::models::find_model(id) else {
+                        return json!({"error": format!("no model {id}")});
+                    };
+                    let (w, h) = model.size(way);
+                    models.insert(
+                        id.to_string(),
+                        json!({
+                            "inch": model.size_inch.get(),
+                            "native": [model.native_width, model.native_height],
+                        }),
+                    );
+                    let grid = lp_theme::grid::make_grid(w, h, Default::default(), id);
+                    json!({"size": [w, h], "columns": grid.columns, "rows": grid.rows,
+                        "templates": text(&info::templates(grid.columns, grid.rows))})
+                })
+                .collect();
+            let places = lp_theme::versions::Places {
+                user: case["user"].as_str().unwrap_or("").into(),
+                plugins: Vec::new(),
+                builtin: case["builtin"].as_str().unwrap_or("").into(),
+            };
+            let pairs: serde_json::Map<String, Value> = case["pairs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n.as_str())
+                .map(|n| {
+                    (
+                        n.to_string(),
+                        json!(lp_theme::versions::pair_version(n, &places)),
+                    )
+                })
+                .collect();
+            json!({"looks": looks, "kinds": kinds, "layouts": layouts, "models": models,
+                "pairs": pairs})
+        }
+        "design" => {
+            // design.py's looks, the names of SPUR II's for their roles, the families of the
+            // built-in themes and the cards where nothing says (tools/design.py)
+            let mut told = lp_py::Dict::default();
+            let looks = lp_theme::design::looks().clone();
+            told.insert("looks".into(), lp_py::Value::Dict(looks));
+            let aliases = lp_theme::design::aliases().clone();
+            told.insert("aliases".into(), lp_py::Value::Dict(aliases));
+            let families = lp_theme::design::families().clone();
+            told.insert("families".into(), lp_py::Value::Dict(families));
+            let defaults = lp_theme::model::style_defaults();
+            told.insert("style_defaults".into(), lp_py::Value::Dict(defaults));
+            let how = lp_py::json::Dumps::default();
+            json!({"design": lp_py::json::dumps(&lp_py::Value::Dict(told), &how)})
+        }
+        "mark_svg" => json!({
+            // the mark as the app's header and the website show it
+            "svg": lp_render::branding::mark_svg(
+                case["box"].as_f64().unwrap_or(24.0),
+                case["margin"].as_f64().unwrap_or(0.7),
+            ),
+            "clearance": lp_render::branding::clearance(),
+        }),
         "linear_gradient" => json!({"image": value_of(&Image::linear_gradient())}),
         "radial_gradient" => json!({"image": value_of(&Image::radial_gradient())}),
         "open" => {
@@ -1876,11 +2025,13 @@ fn run(case: &Value) -> Result<Value, String> {
         "config_edit" => config::edit(case)?,
         "regex" | "hwnames" | "lhm_readings" | "lhm_tree" | "sensor_protocol" | "lhm_hints"
         | "load_math" | "netlink" | "audio" | "game_frames" | "hardware" | "linux_source"
-        | "sky" | "weather" | "web_sources" | "nut" | "mqtt" | "calendar" | "shared_memory"
-        | "services_host" | "timer" | "power" | "agents" | "notices" | "service_paths"
-        | "steam" | "launchers" | "machine" | "game" | "autopilot" | "downloads" | "memory"
-        | "cooling" | "devices" | "waveshare" | "ports" | "demo" | "mangohud" | "media"
-        | "appicon" => sensors::run(op, case)?,
+        | "sky" | "weather" | "web_sources" | "nut" | "mqtt" | "dell" | "calendar"
+        | "shared_memory" | "services_host" | "timer" | "power" | "agents" | "notices"
+        | "service_paths" | "steam" | "launchers" | "machine" | "game" | "autopilot"
+        | "downloads" | "memory" | "memory_schema" | "cooling" | "devices" | "waveshare"
+        | "ports" | "demo" | "clip_demo" | "mangohud" | "media" | "appicon" => {
+            sensors::run(op, case)?
+        }
         "toml" => {
             // each text read as tomllib.loads reads it; each file's bytes as
             // Path.read_text(encoding="utf-8") and then tomllib.loads read them; `frame`: how
@@ -2663,6 +2814,41 @@ fn run(case: &Value) -> Result<Value, String> {
                         Ok(theme) => theme,
                         Err(e) => return json!({"error": e.msg}),
                     };
+                    // (the theme scaled to another size first, as adapt_theme(..., "custom",
+                    // its orientation, "scale", width, height) makes it, where asked: "width"
+                    // and "height", or "factor" times its own)
+                    let theme = match c["adapt"].as_object() {
+                        None => theme,
+                        Some(size) => {
+                            let factor = size.get("factor").and_then(Value::as_i64);
+                            let own = |k: &str| match k {
+                                "width" => theme.width,
+                                _ => theme.height,
+                            };
+                            let big = |k: &str| {
+                                num_bigint::BigInt::from(match factor {
+                                    Some(f) => own(k) * f,
+                                    None => size[k].as_i64().unwrap_or(0),
+                                })
+                            };
+                            let data = theme.to_dict();
+                            let way = theme.orientation().to_string();
+                            let adapted = lp_theme::adapt::adapt_theme(
+                                &data,
+                                "custom",
+                                &way,
+                                "scale",
+                                &big("width"),
+                                &big("height"),
+                                &env,
+                            )
+                            .and_then(|d| lp_theme::model::parse_theme(&d, Some(&folder), &env));
+                            match adapted {
+                                Ok(theme) => theme,
+                                Err(e) => return json!({"error": e.msg}),
+                            }
+                        }
+                    };
                     let options = lp_render::Options {
                         // (an editor's preview, unless a panel's frame is asked for)
                         preview: c["preview"].as_bool().unwrap_or(true),
@@ -2703,9 +2889,24 @@ fn run(case: &Value) -> Result<Value, String> {
                     renderer.native_rings = c["native_rings"].as_bool().unwrap_or(false);
                     renderer.native_bars = c["native_bars"].as_bool().unwrap_or(false);
                     renderer.native_fans = c["native_fans"].as_bool().unwrap_or(false);
+                    // (where this panel stands among the panels standing together, its own box
+                    // and the canvas of all of them in millimetres, as the loop sets it for a
+                    // light across them; and an engine that draws the light up)
+                    let rect = |v: &Value| {
+                        let at = |k: usize| v[k].as_f64();
+                        Some((at(0)?, at(1)?, at(2)?, at(3)?))
+                    };
+                    renderer.canvas = rect(&c["light_canvas"][0]).zip(rect(&c["light_canvas"][1]));
+                    renderer.native_lights = c["native_lights"].as_bool().unwrap_or(false);
                     // (video mode: every frame reaches the panel, the graphs scroll on in each,
                     // as the loop sets it for a panel that streams)
                     renderer.continuous = c["continuous"].as_bool().unwrap_or(false);
+                    // (the light that moves, of the kinds the person and the theme let shine,
+                    // as the loop sets them)
+                    if let Some(kinds) = c["shine"].as_array() {
+                        let kinds = kinds.iter().filter_map(|k| k.as_str());
+                        renderer.shine.borrow_mut().set_kinds(kinds);
+                    }
                     // (what the person chose for the fans, as the app sets it: a look and paint
                     // for all, and for some by their sensor)
                     if let Some(chosen) = c["fan_choices"].as_object() {
@@ -2743,6 +2944,35 @@ fn run(case: &Value) -> Result<Value, String> {
                     renderer.video_fps = c["video_fps"].as_u64().map(|f| f as u32);
                     renderer.video_keys = c["video_keys"].as_bool().unwrap_or(false);
                     let bytes = c["bytes"].as_bool() == Some(true);
+                    let with_modules = c["module_boxes"].as_bool() == Some(true);
+                    let scene = c["scene"].as_bool() == Some(true);
+                    // (the moving lights of the step before, kept alive so that one of this
+                    // step is told the same piece by itself, not by an address used again)
+                    let mut lit_before: std::collections::HashMap<
+                        String,
+                        std::rc::Rc<lp_render::Piece>,
+                    > = std::collections::HashMap::new();
+                    // (the demo's snapshot at a moment, with its pictures, where the snapshot asks
+                    // for it ("demo": seconds since 1970), the readings it names over the
+                    // demo's and those of "drop" taken out; else the snapshot as it is given)
+                    let fonts_dir = env.fonts_dir.clone();
+                    let snapshot_at = move |given: &Value| {
+                        let Some(t) = given["demo"].as_f64() else {
+                            return snapshot_of(given);
+                        };
+                        let utc = lp_py::zones::Zone::utc();
+                        let zone = lp_py::zones::local().unwrap_or(&utc);
+                        let demo = lp_services::demo::HISTORY_SAMPLES;
+                        let Ok(mut base) = lp_services::demo::demo_snapshot(t, demo, zone) else {
+                            return snapshot_of(given);
+                        };
+                        base.images = lp_services::demo::pictures(&fonts_dir).unwrap_or_default();
+                        base.readings.extend(snapshot_of(given).readings);
+                        for key in given["drop"].as_array().into_iter().flatten() {
+                            base.readings.shift_remove(key.as_str().unwrap_or(""));
+                        }
+                        base
+                    };
                     let mut frame_at = |snapshot: &Value, now: f64, sample: &Value| {
                         // (fresh readings taken at a time, the next after a while: as the loop
                         // tells the renderer before the frame)
@@ -2751,7 +2981,31 @@ fn run(case: &Value) -> Result<Value, String> {
                                 renderer.new_sample(at, every);
                             }
                         }
-                        let mut out = match renderer.render(snapshot_of(snapshot), now) {
+                        // (where asked, the frame as its layers where the engine can compose
+                        // them, as the loop asks a panel's engine for it: composed here then as
+                        // the engine's frame is, and said so)
+                        let mut layered = None;
+                        let drawn = if scene {
+                            renderer.render_scene(snapshot_at(snapshot), now).and_then(
+                                |(drawing, boxes)| {
+                                    use lp_render::renderer::Drawing;
+                                    let frame = match drawing {
+                                        Drawing::Scene(scene) => {
+                                            layered = Some(true);
+                                            scene.compose().map_err(lp_render::Unported::from)?
+                                        }
+                                        Drawing::Frame(frame) => {
+                                            layered = Some(false);
+                                            (*frame).clone()
+                                        }
+                                    };
+                                    Ok((frame, boxes))
+                                },
+                            )
+                        } else {
+                            renderer.render(snapshot_at(snapshot), now)
+                        };
+                        let mut out = match drawn {
                             Ok((frame, boxes)) => {
                                 let sum = Sha256::digest(frame.as_bytes());
                                 let hex: String = sum.iter().map(|b| format!("{b:02x}")).collect();
@@ -2764,8 +3018,51 @@ fn run(case: &Value) -> Result<Value, String> {
                                     "native_bars": renderer.native_bars_made.get(),
                                     "native_fans": renderer.native_fans_made.get(),
                                     "moving": renderer.moving, "due": renderer.due});
+                                // (where asked: each module's box, as the editor has them)
+                                if with_modules {
+                                    out["module_boxes"] = json!(renderer
+                                        .module_boxes
+                                        .iter()
+                                        .map(|(k, b)| (k.clone(), json!(b)))
+                                        .collect::<serde_json::Map<String, Value>>());
+                                }
                                 if bytes {
                                     out["frame"] = value_of(&frame);
+                                }
+                                if let Some(layered) = layered {
+                                    out["layered"] = json!(layered);
+                                }
+                                // (where asked: each piece of the frame in its order, where it
+                                // lies and whether it is light added; a moving light's own
+                                // pixels as their SHA-256, its mode first, and whether its piece
+                                // is the one of the step before, not made anew)
+                                // ("all": every piece's own pixels so, not only a light's)
+                                let all = c["lights"].as_str() == Some("all");
+                                if all || c["lights"].as_bool() == Some(true) {
+                                    let mut lit = std::collections::HashMap::new();
+                                    let pieces: Vec<Value> = renderer
+                                        .composed_pieces()
+                                        .map(|(id, p)| {
+                                            let light = id.contains("\0shine-");
+                                            let sum = (all || light).then(|| {
+                                                let sum = Sha256::digest(p.layer.as_bytes());
+                                                let hex: String = sum
+                                                    .iter()
+                                                    .map(|b| format!("{b:02x}"))
+                                                    .collect();
+                                                format!("{} {hex}", p.layer.mode().name())
+                                            });
+                                            let kept = light.then(|| {
+                                                lit.insert(id.to_string(), std::rc::Rc::clone(p));
+                                                lit_before
+                                                    .get(id)
+                                                    .is_some_and(|b| std::rc::Rc::ptr_eq(b, p))
+                                            });
+                                            json!([id, p.x, p.y, p.add, sum, kept])
+                                        })
+                                        .collect();
+                                    lit_before = lit;
+                                    out["lights"] = json!(pieces);
                                 }
                                 out
                             }
@@ -3146,12 +3443,248 @@ fn run(case: &Value) -> Result<Value, String> {
                 }
             }
         }
+        "shown" => {
+            // morph.shown_as of each of the case's widgets (typed, as typed() takes them): what
+            // each shows, for the morph to find it on the next screen; null where it cannot tell
+            let shown: Vec<Value> = case["widgets"]
+                .as_array()
+                .map(|all| {
+                    all.iter()
+                        .map(|w| match typed(w) {
+                            lp_py::Value::Dict(d) => {
+                                lp_render::morph::shown_as(&d).map_or(Value::Null, Value::from)
+                            }
+                            _ => Value::Null,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            json!({ "shown": shown })
+        }
+        "field" => {
+            // render/field.py's small and field: the light field of the look "look" on a panel
+            // of "size" standing at "own" in the canvas "whole" (millimetres, each a double's
+            // bits), at "t" under "load" (bits too), on "base" (RGB): its levels at an eighth,
+            // and drawn up ("digest": the drawn-up picture's SHA-256 alone)
+            let bits = |v: &Value| {
+                f64::from_bits(u64::from_str_radix(v.as_str().unwrap_or("0"), 16).unwrap_or(0))
+            };
+            let rect = |v: &Value| (bits(&v[0]), bits(&v[1]), bits(&v[2]), bits(&v[3]));
+            let n = |v: &Value| v.as_u64().unwrap_or(0) as usize;
+            let size = (n(&case["size"][0]), n(&case["size"][1]));
+            let Some(pools) = lp_render::field::look(case["look"].as_str().unwrap_or("")) else {
+                return Err("no such look".into());
+            };
+            let (own, whole) = (rect(&case["own"]), rect(&case["whole"]));
+            let (t, load) = (bits(&case["t"]), bits(&case["load"]));
+            let base = [0, 1, 2].map(|c| case["base"][c].as_u64().unwrap_or(0).min(255) as u8);
+            let (fw, fh, levels) = lp_render::field::small(size, own, whole, t, load, pools, base);
+            let drawn = lp_render::field::field(size, own, whole, t, load, pools, base)
+                .map_err(|e| e.to_string())?;
+            json!({
+                "small": [fw, fh, STANDARD.encode(&levels)],
+                "field": image_answer(&drawn, case["digest"].as_bool() == Some(true)),
+            })
+        }
+        "things" => {
+            // morph.things and morph._where of a frame of the case's pieces (each of a blank
+            // layer: "wid", "x", "y", "w", "h", "add", "light" [x, y, w, h], "frosted"
+            // [x, y, w, h] its backdrop's box) on a panel of "size", "shows" what each widget
+            // shows: each thing's pieces and box, and where the pieces "gone" are laid again
+            use lp_render::morph::{laid_again, things, Parting};
+            use lp_render::piece::Piece;
+            let n = |v: &Value| v.as_i64().unwrap_or(0);
+            let size = (n(&case["size"][0]) as usize, n(&case["size"][1]) as usize);
+            let blank = |w: &Value, h: &Value| {
+                Image::new(
+                    Mode::RGBA,
+                    n(w).max(0) as usize,
+                    n(h).max(0) as usize,
+                    &[0, 0, 0, 0],
+                )
+            };
+            let mut pieces = Vec::new();
+            for p in case["pieces"].as_array().into_iter().flatten() {
+                let mut piece = Piece::new(blank(&p["w"], &p["h"]), n(&p["x"]), n(&p["y"]));
+                piece.add = p["add"].as_bool() == Some(true);
+                if let Some(l) = p["light"].as_array() {
+                    piece.light = Some(Box::new(Piece::new(
+                        blank(&l[2], &l[3]),
+                        n(&l[0]),
+                        n(&l[1]),
+                    )));
+                }
+                if let Some(b) = p["frosted"].as_array() {
+                    piece.hit = Some([n(&b[0]), n(&b[1]), n(&b[2]), n(&b[3])]);
+                    let mask = |v: &Value| n(v).max(0) as usize;
+                    piece.backdrop = Some(Image::new(Mode::L, mask(&b[2]), mask(&b[3]), &[255]));
+                }
+                let wid = p["wid"].as_str().unwrap_or("").to_string();
+                pieces.push((wid, std::rc::Rc::new(piece)));
+            }
+            let shows = (case["shows"].as_object().into_iter().flatten())
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect();
+            let parting = Parting {
+                ground: Image::new(Mode::RGB, size.0, size.1, &[0, 0, 0]),
+                pieces,
+                shows,
+                opaque: true,
+                frame: None,
+            };
+            let mut found: Vec<(String, Value)> = things(&parting)
+                .into_iter()
+                .map(|(key, (places, b))| (key, json!([places, [b.0, b.1, b.2, b.3]])))
+                .collect();
+            found.sort_by(|a, b| a.0.cmp(&b.0));
+            let gone = (case["gone"].as_array().into_iter().flatten())
+                .filter_map(|v| v.as_u64().map(|i| i as usize))
+                .collect();
+            let again: Vec<Value> = laid_again(&parting, &gone)
+                .into_iter()
+                .map(|r| json!([r.0, r.1, r.2, r.3]))
+                .collect();
+            json!({ "things": found.into_iter().collect::<serde_json::Map<_, _>>(), "again": again })
+        }
+        "apart" => {
+            // morph.take_apart and morph.lay: a frame of the case's pieces (each "image" at "x",
+            // "y", "add", a "light" {"image", "x", "y"}) on "ground", "opaque", with the
+            // "frame" they made or none, the things "taken" ([key, places, [x0, y0, x1, y1]]
+            // each) taken out of it; then each part laid on the frame without them at each of
+            // "lays" ([mx, my, room w, room h, alpha] each): the frame without them, each
+            // part (its bounds, body and light) and each picture laid, by the key's order
+            use lp_render::morph::{lay, take_apart, Found, Parting};
+            use lp_render::piece::Piece;
+            let n = |v: &Value| v.as_i64().unwrap_or(0);
+            let f = |v: &Value| v.as_f64().unwrap_or(0.0);
+            let digest = case["digest"].as_bool() == Some(true);
+            let mut pieces = Vec::new();
+            for p in case["pieces"].as_array().into_iter().flatten() {
+                let mut piece = Piece::new(image_of(&p["image"])?, n(&p["x"]), n(&p["y"]));
+                piece.add = p["add"].as_bool() == Some(true);
+                if p["light"].is_object() {
+                    let l = &p["light"];
+                    let glow = Piece::new(image_of(&l["image"])?, n(&l["x"]), n(&l["y"]));
+                    piece.light = Some(Box::new(glow));
+                }
+                let wid = p["wid"].as_str().unwrap_or("").to_string();
+                pieces.push((wid, std::rc::Rc::new(piece)));
+            }
+            let frame = match case["frame"].is_object() {
+                true => Some(image_of(&case["frame"])?),
+                false => None,
+            };
+            let parting = Parting {
+                ground: image_of(&case["ground"])?,
+                pieces,
+                shows: std::collections::HashMap::new(),
+                opaque: case["opaque"].as_bool() == Some(true),
+                frame,
+            };
+            let mut taken: Vec<(String, Found)> = Vec::new();
+            for t in case["taken"].as_array().into_iter().flatten() {
+                let places = (t[1].as_array().into_iter().flatten())
+                    .filter_map(|v| v.as_u64().map(|i| i as usize))
+                    .collect();
+                let b = &t[2];
+                let bounds = (n(&b[0]), n(&b[1]), n(&b[2]), n(&b[3]));
+                taken.push((t[0].as_str().unwrap_or("").to_string(), (places, bounds)));
+            }
+            let (without, parts) = take_apart(&parting, &taken).map_err(|e| e.0)?;
+            let mut keys: Vec<&String> = parts.keys().collect();
+            keys.sort();
+            let mut told = serde_json::Map::new();
+            let mut laid = Vec::new();
+            for key in keys {
+                let part = &parts[key];
+                let b = part.bounds;
+                told.insert(
+                    key.clone(),
+                    json!({
+                        "bounds": [b.0, b.1, b.2, b.3],
+                        "body": image_answer(&part.body, digest),
+                        "light": part.light.as_ref().map(|l| image_answer(l, digest)),
+                    }),
+                );
+                let (w, h) = parting.size();
+                let (bw, bh) = part.body.size();
+                // (and with "own" at half its alpha in its own size, in the middle)
+                let own = (case["own"].as_bool() == Some(true))
+                    .then(|| json!([w as f64 / 2.0, h as f64 / 2.0, bw as f64, bh as f64, 0.5]));
+                let lays = case["lays"].as_array().into_iter().flatten();
+                for l in lays.chain(own.iter()) {
+                    let mut out = without.clone();
+                    lay(
+                        &mut out,
+                        part,
+                        (f(&l[0]), f(&l[1])),
+                        (f(&l[2]), f(&l[3])),
+                        f(&l[4]),
+                    )
+                    .map_err(|e| e.0)?;
+                    laid.push(image_answer(&out, digest));
+                }
+            }
+            json!({ "without": image_answer(&without, digest), "parts": told, "laid": laid })
+        }
+        "paired" => {
+            // morph.paired over the panels "seen" (each "panel", its "own" place in
+            // millimetres, its frames' "size" and the things its "old" and its "new" screen
+            // show, {key: [places, [x0, y0, x1, y1]]}): what flies from which panel to which
+            use lp_render::morph::{paired, Found, Seen};
+            let n = |v: &Value| v.as_i64().unwrap_or(0);
+            let f = |v: &Value| v.as_f64().unwrap_or(0.0);
+            let found = |v: &Value| -> std::collections::HashMap<String, Found> {
+                (v.as_object().into_iter().flatten())
+                    .map(|(key, t)| {
+                        let places = (t[0].as_array().into_iter().flatten())
+                            .filter_map(|p| p.as_u64().map(|i| i as usize))
+                            .collect();
+                        let b = &t[1];
+                        (
+                            key.clone(),
+                            (places, (n(&b[0]), n(&b[1]), n(&b[2]), n(&b[3]))),
+                        )
+                    })
+                    .collect()
+            };
+            let mut seen = std::collections::BTreeMap::new();
+            for s in case["seen"].as_array().into_iter().flatten() {
+                let own = &s["own"];
+                let size = (n(&s["size"][0]) as usize, n(&s["size"][1]) as usize);
+                let one = Seen {
+                    own: (f(&own[0]), f(&own[1]), f(&own[2]), f(&own[3])),
+                    size,
+                    old: found(&s["old"]),
+                    new: found(&s["new"]),
+                };
+                seen.insert(n(&s["panel"]), std::sync::Arc::new(one));
+            }
+            let flights: Vec<Value> = paired(&seen)
+                .into_iter()
+                .map(|(key, from, to)| json!([key, from, to]))
+                .collect();
+            json!({ "flights": flights })
+        }
         "transition" => {
             // overlays.transition((name, params), RenderContext(renderer)) of a theme's
             // renderer, made anew for each of the case's switches, and the frames it draws: each
             // step an old frame and a new one (frames of noise, as the tests make them; the same
-            // old spec is the same frame), and how far it has gone (a double's bits)
+            // old spec is the same frame), and how far it has gone (a double's bits); where the
+            // case says "drawn" (a moment's bits), the renderer draws its frame of that moment
+            // first, as the panel's loop has before a transition begins (what the cascade
+            // brings in, card by card), its clocks at "now" where the case gives it ([year,
+            // month, day, hour, minute, second, microsecond]), its readings those of "snapshot"
+            // where it gives one; where it says "pictures", each step also gives its frame (to
+            // look at, not to compare); where it says "time", each step
+            // also tells how long its frame took, in nanoseconds (to measure, not to compare);
+            // where it says "beside" (each another panel's "theme" and moment "at", its old
+            // screen's "before" ({"theme", "at"}) and its "canvas"), a morph over all the panels
+            // plays with them: they say theirs, this one its own, they theirs again, before its
+            // steps (as the tests' Python plays them)
             use lp_render::transitions::Transition;
+            let timed = case["time"].as_bool() == Some(true);
+            let pictures = case["pictures"].as_bool() == Some(true);
             let env = lp_theme::Env {
                 fonts_dir: case["fonts_dir"].as_str().unwrap_or("").into(),
             };
@@ -3176,11 +3709,60 @@ fn run(case: &Value) -> Result<Value, String> {
             };
             let mut renderer = lp_render::Renderer::new(theme, &env, options).map_err(|e| e.0)?;
             // (the pictures services published: a logo by its key)
-            let mut snapshot = lp_render::snapshot::Snapshot::default();
+            // (or, where the case gives one, a whole snapshot: readings, pictures, histories)
+            let mut snapshot = match case.get("snapshot") {
+                Some(given) => snapshot_of(given),
+                None => lp_render::snapshot::Snapshot::default(),
+            };
             for (key, picture) in case["images"].as_object().into_iter().flatten() {
                 snapshot.images.insert(key.clone(), image_of(picture)?);
             }
-            renderer.set_snapshot(snapshot);
+            if let Some(at) = case["now"].as_array() {
+                // (the moment its clocks tell)
+                snapshot.now = datetime_of(at);
+            }
+            if let Some(now) = case.get("drawn") {
+                renderer
+                    .render(snapshot.clone(), float_in(now))
+                    .map_err(|e| format!("not drawn: {}", e.0))?;
+            }
+            // (where the case says "before": {"theme", "drawn"}, the old screen's theme drawn at
+            // its moment first, as the panel's loop had it before the switch: what the morph
+            // takes apart)
+            let before = match case.get("before") {
+                Some(old) => {
+                    let theme = lp_theme::load_theme(
+                        std::path::Path::new(old["theme"].as_str().unwrap_or("")),
+                        &env,
+                    )
+                    .map_err(|e| e.msg)?;
+                    let mut was =
+                        lp_render::Renderer::new(theme, &env, options).map_err(|e| e.0)?;
+                    was.render(snapshot.clone(), float_in(&old["drawn"]))
+                        .map_err(|e| format!("not drawn before: {}", e.0))?;
+                    was.parting().map_err(|e| e.0)?
+                }
+                None => None,
+            };
+            // (and "after": the new screen's, where it is not the renderer's: what a morph shown
+            // to see it turns the screen into)
+            let after = match case.get("after") {
+                Some(new) => {
+                    let theme = lp_theme::load_theme(
+                        std::path::Path::new(new["theme"].as_str().unwrap_or("")),
+                        &env,
+                    )
+                    .map_err(|e| e.msg)?;
+                    let mut other =
+                        lp_render::Renderer::new(theme, &env, options).map_err(|e| e.0)?;
+                    other
+                        .render(snapshot.clone(), float_in(&new["drawn"]))
+                        .map_err(|e| format!("not drawn after: {}", e.0))?;
+                    other.parting().map_err(|e| e.0)?
+                }
+                None => None,
+            };
+            renderer.set_snapshot(snapshot.clone()); // (and the panels beside, if any)
             let mut olds: Vec<(String, Image)> = Vec::new();
             let mut answers = Vec::new();
             for spec in case["switches"].as_array().into_iter().flatten() {
@@ -3193,6 +3775,27 @@ fn run(case: &Value) -> Result<Value, String> {
                     answers.push(json!({"made": false}));
                     continue;
                 };
+                made.set_before(before.clone());
+                made.set_after(after.clone());
+                let first = spec["steps"].as_array().and_then(|steps| steps.first());
+                if let (Some(beside), Some(first)) = (case["beside"].as_array(), first) {
+                    let key = params.get("canvas").and_then(|c| match c {
+                        lp_py::Value::Dict(c) => c.get("key").cloned(),
+                        _ => None,
+                    });
+                    let mut others = Vec::new();
+                    for other in beside {
+                        others.push(beside_of(other, key.clone(), &snapshot, &env, options)?);
+                    }
+                    for (renderer, made, blank) in &mut others {
+                        let _ = made.frame(blank, 0, blank, 0.0, renderer);
+                    }
+                    let (old, new) = (noise_frame(&first[0]), noise_frame(&first[1]));
+                    let _ = made.frame(&old, u64::MAX, &new, 0.0, &renderer);
+                    for (renderer, made, blank) in &mut others {
+                        let _ = made.frame(blank, 0, blank, 0.0, renderer);
+                    }
+                }
                 let mut steps = Vec::new();
                 for step in spec["steps"].as_array().into_iter().flatten() {
                     let key = step[0].to_string();
@@ -3205,19 +3808,29 @@ fn run(case: &Value) -> Result<Value, String> {
                     };
                     let new = noise_frame(&step[1]);
                     let t = float_in(&step[2]);
-                    steps.push(
-                        match made.frame(&olds[at].1, at as u64, &new, t, &renderer) {
-                            Ok(out) => json!({
+                    let began = std::time::Instant::now();
+                    let frame = made.frame(&olds[at].1, at as u64, &new, t, &renderer);
+                    let took = began.elapsed().as_nanos() as u64;
+                    steps.push(match frame {
+                        Ok(out) => {
+                            let mut answer = json!({
                                 "size": [out.width(), out.height()],
                                 "mode": out.mode().name(),
                                 "sha256": Sha256::digest(out.as_bytes())
                                     .iter()
                                     .map(|b| format!("{b:02x}"))
                                     .collect::<String>(),
-                            }),
-                            Err(_) => json!({"error": true}),
-                        },
-                    );
+                            });
+                            if timed {
+                                answer["ns"] = json!(took);
+                            }
+                            if pictures {
+                                answer["image"] = value_of(&out);
+                            }
+                            answer
+                        }
+                        Err(_) => json!({"error": true}),
+                    });
                 }
                 answers.push(json!({
                     "made": true,
@@ -3514,6 +4127,19 @@ fn run(case: &Value) -> Result<Value, String> {
                 })
                 .collect();
             json!({"cases": cases, "auto": auto, "parts": parts})
+        }
+        "i18n_texts" => {
+            // what Libre Panel shows in the person's language that comes from a table of its own,
+            // not from a text its code hands to t (tests/i18n_keys.py)
+            let models = lp_devices::models::MODELS.iter();
+            json!({
+                "weather": lp_sensors::weather::WMO.iter().map(|(_, text)| *text).collect::<Vec<_>>(),
+                "moon": lp_sensors::sky::MOON_PHASES,
+                "battery": lp_sensors::BATTERY_STATES,
+                "media": lp_sensors::media::MEDIA_STATES,
+                "notes": models.clone().map(|m| m.notes).filter(|n| !n.is_empty()).collect::<Vec<_>>(),
+                "limits": models.map(|m| m.limits).filter(|l| !l.is_empty()).collect::<Vec<_>>(),
+            })
         }
         "theme_tables" => {
             // the tables, as JSON text, for the comparison with Python's
@@ -3918,8 +4544,6 @@ fn font_call<F: lp_text::text::TextFace>(
     })
 }
 
-/// A value as the tests give it with its type: `{"f": bits in hex}`, `{"i": decimal}`,
-/// `{"s": text}`, `{"b": bool}`, `{"l": [...]}`; anything else None.
 /// A frame of noise as the tests make it: each byte the top 8 of the low 32 bits of its index
 /// times 2654435761 plus the seed.
 fn noise_frame(spec: &Value) -> Image {
@@ -3937,6 +4561,58 @@ fn noise_frame(spec: &Value) -> Image {
     Image::from_bytes(mode, w, h, data).expect("a frame of its size")
 }
 
+/// A value as the tests give it with its type: `{"f": bits in hex}`, `{"i": decimal}`,
+/// `{"s": text}`, `{"b": bool}`, `{"l": [...]}`, `{"d": {key: ...}}`; anything else None.
+/// Another panel's part of a morph over all the panels (the transition op's "beside"): its
+/// theme drawn at its moment, its old screen's at its own, the morph made with its canvas and
+/// the switch's key; and a frame of its size.
+fn beside_of(
+    other: &Value,
+    key: Option<lp_py::Value>,
+    snapshot: &lp_render::snapshot::Snapshot,
+    env: &lp_theme::Env,
+    options: lp_render::Options,
+) -> Result<
+    (
+        lp_render::Renderer,
+        lp_render::transitions::Transition,
+        Image,
+    ),
+    String,
+> {
+    let float_in =
+        |v: &Value| f64::from_bits(u64::from_str_radix(v.as_str().unwrap_or("0"), 16).unwrap_or(0));
+    let drawn = |theme: &Value, at: &Value| -> Result<lp_render::Renderer, String> {
+        let theme = lp_theme::load_theme(std::path::Path::new(theme.as_str().unwrap_or("")), env)
+            .map_err(|e| e.msg)?;
+        let mut renderer = lp_render::Renderer::new(theme, env, options).map_err(|e| e.0)?;
+        renderer
+            .render(snapshot.clone(), float_in(at))
+            .map_err(|e| format!("not drawn beside: {}", e.0))?;
+        Ok(renderer)
+    };
+    let renderer = drawn(&other["theme"], &other["at"])?;
+    let was = drawn(&other["before"]["theme"], &other["before"]["at"])?;
+    let mut canvas = match typed(&other["canvas"]) {
+        lp_py::Value::Dict(canvas) => canvas,
+        _ => lp_py::Dict::default(),
+    };
+    if let Some(key) = key {
+        canvas.insert("key".to_string(), key);
+    }
+    let mut params = lp_py::Dict::default();
+    params.insert("canvas".to_string(), lp_py::Value::Dict(canvas));
+    let mut made = lp_render::transitions::Transition::new("morph", &params, &renderer)
+        .ok_or("no morph beside")?;
+    made.set_before(was.parting().map_err(|e| e.0)?);
+    let (w, h) = (
+        renderer.theme.width as usize,
+        renderer.theme.height as usize,
+    );
+    let blank = Image::new(lp_pixels::Mode::RGB, w, h, &[0, 0, 0]);
+    Ok((renderer, made, blank))
+}
+
 fn typed(v: &Value) -> lp_py::Value {
     if let Some(h) = v["f"].as_str() {
         lp_py::Value::Float(f64::from_bits(u64::from_str_radix(h, 16).unwrap_or(0)))
@@ -3948,6 +4624,8 @@ fn typed(v: &Value) -> lp_py::Value {
         lp_py::Value::Bool(b)
     } else if let Some(l) = v["l"].as_array() {
         lp_py::Value::List(l.iter().map(typed).collect())
+    } else if let Some(d) = v["d"].as_object() {
+        lp_py::Value::Dict(d.iter().map(|(k, v)| (k.clone(), typed(v))).collect())
     } else {
         lp_py::Value::None
     }

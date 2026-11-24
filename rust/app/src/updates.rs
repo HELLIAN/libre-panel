@@ -26,6 +26,26 @@ const RETRY_S: f64 = 3600.0;
 const NOTES_CHARS: usize = 600;
 /// the tests' own: a file whose JSON stands for GitHub's answer
 pub const RELEASES_ENV: &str = "LP_RELEASES_FILE";
+/// the tests' own: the version this Libre Panel takes itself for where it looks for a newer
+/// one, instead of its own: what it finds is then the same whatever version is built
+pub const RUNNING_ENV: &str = "LP_RUNNING_VERSION";
+
+/// The version that runs, which a newer one is looked for from.
+pub fn running() -> &'static str {
+    static NAMED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let named = NAMED.get_or_init(|| {
+        let named = std::env::var(RUNNING_ENV).ok()?;
+        Some(named).filter(|version| !version.is_empty())
+    });
+    named.as_deref().unwrap_or(lp_py::VERSION)
+}
+/// the end of the name of this platform's wheel on a release (packaging/platform_wheel.py),
+/// whose pipx command Start shows an install with pip or pipx
+const WHEEL_ENDING: &str = if cfg!(windows) {
+    "-win_amd64.whl"
+} else {
+    "_x86_64.whl"
+};
 /// the end of each download's name on a release, by how Libre Panel came
 const ASSET_ENDINGS: [(&str, &str); 4] = [
     ("setup", "-windows-x64-setup.exe"),
@@ -138,7 +158,8 @@ fn pick<'a>(data: &'a Value, current: &str) -> Option<&'a Dict> {
 
 /// install_kind: how this Libre Panel came: "setup" (the Windows setup), "portable" (the
 /// Windows .zip), "appimage", "linux" (the Linux .tar.gz) or "python" (built from its
-/// source), which says the download that replaces it.
+/// source, or installed with pip or pipx: [`installed`]), which says the download that
+/// replaces it (none for "python": its command is shown).
 pub fn install_kind() -> &'static str {
     // (the tests' own: how Libre Panel came, instead of what it finds)
     if let Ok(kind) = std::env::var(crate::install::KIND_ENV) {
@@ -149,7 +170,7 @@ pub fn install_kind() -> &'static str {
             return known;
         }
     }
-    if !crate::settings::packaged() {
+    if !crate::settings::packaged() || installed() {
         return "python";
     }
     if cfg!(windows) {
@@ -164,6 +185,28 @@ pub fn install_kind() -> &'static str {
         return "appimage";
     }
     "linux"
+}
+
+/// Whether this program is an install's, with pip or pipx (packaging/platform_wheel.py):
+/// Libre Panel's files in share/libre-panel beside the folder of the program (an
+/// environment's `bin`, or its `libre-panel` on Windows), not in that folder, as the
+/// downloads keep them.
+fn installed() -> bool {
+    let Ok(program) = std::env::current_exe() else {
+        return false;
+    };
+    installed_at(&std::fs::canonicalize(&program).unwrap_or(program))
+}
+
+/// [`installed`] for the program at `program`.
+fn installed_at(program: &Path) -> bool {
+    let holds = |folder: &Path| {
+        let share = folder.join("share").join("libre-panel");
+        share.join("themes").is_dir() && share.join("fonts").is_dir()
+    };
+    program
+        .parent()
+        .is_some_and(|folder| !holds(folder) && folder.parent().is_some_and(holds))
 }
 
 /// A name of a release's file, which an update keeps as the name of its download.
@@ -218,7 +261,8 @@ fn files(data: &Dict, ending: Option<&str>) -> (Value, String) {
 }
 
 /// _release: what Start shows of GitHub's answer: the version, its page, the start of its
-/// notes, the download for this kind of install and, for "Update to", that file of the
+/// notes, the download for this kind of install (for pip, "python", the platform's wheel
+/// among the release's files, whose command is shown) and, for "Update to", that file of the
 /// release with the address of its checksums.
 fn release(data: &Value, kind: &str, current: &str) -> Option<Value> {
     let data = pick(data, current)?;
@@ -251,6 +295,22 @@ fn release(data: &Value, kind: &str, current: &str) -> Option<Value> {
         .collect();
     let published = text_of(data, "published_at").unwrap_or("");
     let (asset, sums) = files(data, ending);
+    let own = format!("{RELEASE_FILES}{tag}/");
+    let mut wheel = String::new();
+    let assets = match data.get("assets") {
+        Some(Value::List(assets)) if kind == "python" => assets.as_slice(),
+        _ => &[],
+    };
+    for item in assets {
+        let Value::Dict(item) = item else { continue };
+        if let (Some(name), Some(url)) =
+            (text_of(item, "name"), text_of(item, "browser_download_url"))
+        {
+            if url.starts_with(&own) && name.ends_with(WHEEL_ENDING) && file_name(name) {
+                wheel = url.to_string();
+            }
+        }
+    }
     Some(Value::Dict(dict([
         ("version", Value::Str(version.into())),
         ("page", Value::Str(page.into())),
@@ -259,6 +319,7 @@ fn release(data: &Value, kind: &str, current: &str) -> Option<Value> {
         ("published", Value::Str(published.into())),
         ("asset", asset),
         ("sums", Value::Str(sums)),
+        ("wheel", Value::Str(wheel)),
     ])))
 }
 
@@ -268,7 +329,7 @@ fn fetch_latest() -> Result<Value, String> {
     let text = match std::env::var_os(RELEASES_ENV) {
         Some(file) => std::fs::read(file).map_err(|why| why.to_string())?,
         None => {
-            let url = match prerelease(lp_py::VERSION) {
+            let url = match prerelease(running()) {
                 true => RELEASES_URL,
                 false => LATEST_URL,
             };
@@ -285,8 +346,7 @@ fn fetch_latest() -> Result<Value, String> {
 }
 
 fn now() -> f64 {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-    since.map_or(0.0, |since| since.as_secs_f64())
+    crate::clock::now()
 }
 
 /// A number as Python's isinstance(x, int | float) takes it (True among them).
@@ -344,7 +404,7 @@ impl Updates {
 
     fn ask(&self, mut data: Dict) -> Dict {
         let (latest, error) = match fetch_latest() {
-            Ok(answer) => match release(&answer, install_kind(), lp_py::VERSION) {
+            Ok(answer) => match release(&answer, install_kind(), running()) {
                 Some(latest) => (Some(latest), String::new()),
                 None => (None, "GitHub's answer named no release".to_string()),
             },
@@ -381,7 +441,7 @@ impl Updates {
             Some(Value::Dict(latest)) => latest.get("version").map(lp_py::format::str_of),
             _ => None,
         };
-        let is_newer = on && version.is_some_and(|v| newer(&v, lp_py::VERSION));
+        let is_newer = on && version.is_some_and(|v| newer(&v, running()));
         let asked = match data.get("asked") {
             Some(asked @ (Value::Bool(_) | Value::Int(_) | Value::Float(_))) => asked.clone(),
             _ => Value::None,
@@ -392,7 +452,7 @@ impl Updates {
         };
         Value::Dict(dict([
             ("check", check.map_or(Value::None, Value::Bool)),
-            ("current", Value::Str(lp_py::VERSION.into())),
+            ("current", Value::Str(running().into())),
             ("kind", Value::Str(install_kind().into())),
             (
                 "latest",
@@ -421,5 +481,35 @@ impl Updates {
             self.write(&data);
         }
         Ok(self.state(check, false))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_install_is_told_from_the_downloads_by_where_its_files_are() {
+        let root = std::env::temp_dir().join(format!("lp-installed-{}", std::process::id()));
+        let share = |folder: &Path| {
+            for part in ["themes", "fonts"] {
+                std::fs::create_dir_all(folder.join("share").join("libre-panel").join(part))
+                    .unwrap();
+            }
+        };
+        // pip and pipx: bin/libre-panel (Windows: libre-panel\libre-panel.exe), share beside
+        let env = root.join("env");
+        std::fs::create_dir_all(env.join("bin")).unwrap();
+        share(&env);
+        assert!(installed_at(&env.join("bin").join("libre-panel")));
+        // a download: its files in its own folder (beside the program), whatever is above it
+        let download = env.join("libre-panel");
+        share(&download);
+        assert!(!installed_at(&download.join("libre-panel")));
+        // neither: nothing of Libre Panel's anywhere near
+        assert!(!installed_at(
+            &root.join("bare").join("bin").join("libre-panel")
+        ));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

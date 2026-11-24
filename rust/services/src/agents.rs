@@ -1,4 +1,5 @@
-//! What the AI coding agents on this PC do: Claude Code and Codex (libre_panel/agents.py).
+//! What the AI coding agents on this PC do: Claude Code and Codex (libre_panel/agents.py), and
+//! a model server of one's own beside them (llama.cpp's, Ollama: agents_local.rs).
 //!
 //! Three ways in, all on this computer; no account and none of their keys is read:
 //!
@@ -20,6 +21,8 @@ use lp_py::{Dict, Value};
 use sha2::{Digest, Sha256};
 
 pub const AGENTS: [&str; 2] = ["claude", "codex"];
+/// the model server (agents_local.rs): an agent of the board, asked rather than heard from
+pub const LOCAL: &str = "local";
 pub const STATES: [&str; 4] = ["working", "waiting", "idle", "off"];
 /// of what a session is called, on the one line a theme has for it
 pub const MAX_TASK: usize = 120;
@@ -228,6 +231,13 @@ pub struct Agent {
     pub cost_today: Option<f64>,
     /// the day cost_today is of (ISO date)
     pub cost_day: String,
+    /// the model server's slots: the task each worked on when it was asked last, and how many
+    /// of its tokens are counted already (LOCAL)
+    pub counted: IndexMap<String, (i64, f64)>,
+    /// the day tokens_today is of (LOCAL; ISO date)
+    pub tokens_day: String,
+    /// which server it is ("llama.cpp", "Ollama"; LOCAL)
+    pub server: String,
 }
 
 /// Where the plan's usage last came from, for Settings.
@@ -350,7 +360,7 @@ fn line(known: &Agent, now: f64) -> String {
 impl Board {
     pub fn new(clock: Clock) -> Board {
         let mut known = Known::default();
-        for name in AGENTS {
+        for name in AGENTS.into_iter().chain([LOCAL]) {
             known.agents.insert(name, Agent::default());
         }
         Board {
@@ -594,94 +604,188 @@ impl Board {
     /// `ai.<agent>.*` as numbers and texts (None: not known), in their order.
     pub fn readings(&self) -> Vec<(String, Value)> {
         let now = (self.clock)();
-        let float = |value: Option<f64>| value.map_or(Value::None, Value::Float);
-        let text = |value: &str| match value {
-            "" => Value::None,
-            value => Value::Str(value.to_string()),
-        };
         let mut out = Vec::new();
         for agent in AGENTS {
-            let values = self.with(agent, |known, _| {
-                let ranked = ranked(known, now);
-                let best = ranked.first();
-                let state = best.map_or("off", |best| best.state.as_str());
-                let today = day_of(now);
-                let since = best.map_or(now, |best| best.changed);
-                let active = known
-                    .sessions
-                    .values()
-                    .filter(|session| now - session.seen <= SESSION_GONE_S)
-                    .count();
-                let busy = match state {
-                    "waiting" => 2,
-                    "working" => 1,
-                    "idle" => 0,
-                    _ => -1,
-                };
-                let cost_today = known.cost_today.map(|cost| match known.cost_day == today {
-                    true => cost,
-                    false => 0.0,
-                });
-                let mut values: Vec<(String, Value)> = vec![
-                    ("state".into(), Value::Str(state.to_string())),
-                    ("busy".into(), Value::int(busy)),
-                    (
-                        "tool".into(),
-                        Value::Str(best.map(|best| best.tool.clone()).unwrap_or_default()),
-                    ),
-                    ("task".into(), text(best.map_or("", |best| &best.task))),
-                    ("since".into(), Value::Float((now - since).max(0.0))),
-                    ("sessions".into(), Value::int(active as i64)),
-                    ("model".into(), text(&known.model)),
-                    ("context".into(), float(known.context)),
-                    ("cost".into(), float(known.cost)),
-                    ("tokens_today".into(), float(known.tokens_today)),
-                    ("tokens_week".into(), float(known.tokens_week)),
-                    // what its sessions cost today, by their status lines (an estimate)
-                    ("cost_today".into(), float(cost_today)),
-                ];
-                // the sessions one by one, as ranked (s1 is the one the state above is of)
-                for n in 0..LISTED {
-                    let session = ranked.get(n);
-                    let name = format!("s{}", n + 1);
-                    values.push((
-                        format!("{name}.state"),
-                        session.map_or(Value::None, |s| Value::Str(s.state.clone())),
-                    ));
-                    values.push((
-                        format!("{name}.task"),
-                        session.map_or(Value::None, |s| text(&s.task)),
-                    ));
-                    values.push((
-                        format!("{name}.since"),
-                        float(session.map(|s| (now - s.changed).max(0.0))),
-                    ));
-                }
-                for (window, name) in [(FIVE_HOUR, "five_hour"), (WEEK, "week")] {
-                    // (a window that began anew: what it said is over)
-                    let quota = known
-                        .quotas
-                        .get(window)
-                        .filter(|quota| !quota.resets.is_some_and(|resets| resets < now));
-                    let left = quota
-                        .and_then(|quota| quota.resets)
-                        .filter(|resets| *resets != 0.0)
-                        .map(|resets| resets - now);
-                    values.push((name.to_string(), float(quota.map(|quota| quota.used))));
-                    values.push((format!("{name}_reset"), float(left))); // seconds
-                    values.push((
-                        format!("{name}_age"),
-                        float(quota.map(|quota| now - quota.seen)),
-                    ));
-                }
-                values
-            });
+            let values = self.with(agent, |known, _| values_of(known, now));
             for (name, value) in values.unwrap_or_default() {
                 out.push((format!("ai.{agent}.{name}"), value));
             }
         }
         out
     }
+
+    /// `ai.local.*`, the model server's: as an agent's, and which server it is (`server`).
+    pub fn local_readings(&self) -> Vec<(String, Value)> {
+        let now = (self.clock)();
+        let values = self.with(LOCAL, |known, _| {
+            let mut values = values_of(known, now);
+            let server = match known.server.as_str() {
+                "" => Value::None,
+                server => Value::Str(server.to_string()),
+            };
+            values.push(("server".into(), server));
+            values
+        });
+        (values.unwrap_or_default().into_iter())
+            .map(|(name, value)| (format!("ai.{LOCAL}.{name}"), value))
+            .collect()
+    }
+
+    /// What the model server said when it was asked (agents_local.rs): its slots as sessions,
+    /// working or idle, its model, and the tokens of its tasks counted for the day; None: it
+    /// did not answer, or holds no model (off).
+    pub fn local(&self, seen: Option<&crate::agents_local::Seen>) {
+        let now = (self.clock)();
+        let today = day_of(now);
+        self.with(LOCAL, |known, notes| {
+            let Some(seen) = seen else {
+                known.sessions.clear();
+                known.counted.clear();
+                known.model.clear();
+                known.server.clear();
+                return;
+            };
+            heard(LOCAL, known, notes, now, seen.server);
+            known.server = seen.server.to_string();
+            known.model = head(&seen.model, 60);
+            let slots: Vec<(String, bool, i64, f64)> = match seen.tells_work {
+                true => (seen.slots.iter())
+                    .map(|slot| {
+                        (
+                            format!("slot {}", slot.id),
+                            slot.working,
+                            slot.task,
+                            slot.tokens,
+                        )
+                    })
+                    .collect(),
+                // (a server that does not tell: idle while it holds a model)
+                false => vec![("server".into(), false, -1, 0.0)],
+            };
+            known
+                .sessions
+                .retain(|key, _| slots.iter().any(|(slot, ..)| slot == key));
+            if known.tokens_day != today {
+                known.tokens_day = today;
+                known.tokens_today = Some(0.0);
+            }
+            let mut grew = 0.0;
+            for (key, working, task, tokens) in &slots {
+                let session = known
+                    .sessions
+                    .entry(key.clone())
+                    .or_insert_with(|| Session::new(now));
+                session.seen = now;
+                session.task = key.clone(); // (beside the others: which slot)
+                let state = if *working { "working" } else { "idle" };
+                if session.state != state {
+                    session.state = state.to_string();
+                    session.changed = now;
+                }
+                // (what the server works with, on the line of the tool at work)
+                session.tool = match working {
+                    true => known.model.clone(),
+                    false => String::new(),
+                };
+                // a task's tokens counted once: what it did since it was asked last (a slot
+                // without a task, where the last one's stay, counts none)
+                let before = match known.counted.get(key) {
+                    _ if *task < 0 => *tokens,
+                    Some((was, counted)) if was == task && *tokens >= *counted => *counted,
+                    _ => 0.0,
+                };
+                grew += tokens - before;
+                known.counted.insert(key.clone(), (*task, *tokens));
+            }
+            known
+                .counted
+                .retain(|key, _| slots.iter().any(|(slot, ..)| slot == key));
+            known.tokens_today = Some(known.tokens_today.unwrap_or(0.0) + grew);
+        });
+        self.set_changed();
+    }
+}
+
+/// An agent's `ai.<agent>.*` (without the agent's name), in their order.
+fn values_of(known: &mut Agent, now: f64) -> Vec<(String, Value)> {
+    let float = |value: Option<f64>| value.map_or(Value::None, Value::Float);
+    let text = |value: &str| match value {
+        "" => Value::None,
+        value => Value::Str(value.to_string()),
+    };
+    let ranked = ranked(known, now);
+    let best = ranked.first();
+    let state = best.map_or("off", |best| best.state.as_str());
+    let today = day_of(now);
+    let since = best.map_or(now, |best| best.changed);
+    let active = known
+        .sessions
+        .values()
+        .filter(|session| now - session.seen <= SESSION_GONE_S)
+        .count();
+    let busy = match state {
+        "waiting" => 2,
+        "working" => 1,
+        "idle" => 0,
+        _ => -1,
+    };
+    let cost_today = known.cost_today.map(|cost| match known.cost_day == today {
+        true => cost,
+        false => 0.0,
+    });
+    let mut values: Vec<(String, Value)> = vec![
+        ("state".into(), Value::Str(state.to_string())),
+        ("busy".into(), Value::int(busy)),
+        (
+            "tool".into(),
+            Value::Str(best.map(|best| best.tool.clone()).unwrap_or_default()),
+        ),
+        ("task".into(), text(best.map_or("", |best| &best.task))),
+        ("since".into(), Value::Float((now - since).max(0.0))),
+        ("sessions".into(), Value::int(active as i64)),
+        ("model".into(), text(&known.model)),
+        ("context".into(), float(known.context)),
+        ("cost".into(), float(known.cost)),
+        ("tokens_today".into(), float(known.tokens_today)),
+        ("tokens_week".into(), float(known.tokens_week)),
+        // what its sessions cost today, by their status lines (an estimate)
+        ("cost_today".into(), float(cost_today)),
+    ];
+    // the sessions one by one, as ranked (s1 is the one the state above is of)
+    for n in 0..LISTED {
+        let session = ranked.get(n);
+        let name = format!("s{}", n + 1);
+        values.push((
+            format!("{name}.state"),
+            session.map_or(Value::None, |s| Value::Str(s.state.clone())),
+        ));
+        values.push((
+            format!("{name}.task"),
+            session.map_or(Value::None, |s| text(&s.task)),
+        ));
+        values.push((
+            format!("{name}.since"),
+            float(session.map(|s| (now - s.changed).max(0.0))),
+        ));
+    }
+    for (window, name) in [(FIVE_HOUR, "five_hour"), (WEEK, "week")] {
+        // (a window that began anew: what it said is over)
+        let quota = known
+            .quotas
+            .get(window)
+            .filter(|quota| !quota.resets.is_some_and(|resets| resets < now));
+        let left = quota
+            .and_then(|quota| quota.resets)
+            .filter(|resets| *resets != 0.0)
+            .map(|resets| resets - now);
+        values.push((name.to_string(), float(quota.map(|quota| quota.used))));
+        values.push((format!("{name}_reset"), float(left))); // seconds
+        values.push((
+            format!("{name}_age"),
+            float(quota.map(|quota| now - quota.seen)),
+        ));
+    }
+    values
 }
 
 fn heard(agent: &str, known: &mut Agent, notes: &mut Vec<String>, now: f64, what: &str) {
@@ -696,4 +800,94 @@ fn heard(agent: &str, known: &mut Agent, notes: &mut Vec<String>, now: f64, what
 pub fn board() -> Arc<Board> {
     static BOARD: OnceLock<Arc<Board>> = OnceLock::new();
     Arc::clone(BOARD.get_or_init(|| Arc::new(Board::default())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents_local::{Seen, Slot};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn at(board: &Board, name: &str) -> Value {
+        let readings = board.local_readings();
+        let key = format!("ai.local.{name}");
+        (readings.into_iter())
+            .find(|(found, _)| *found == key)
+            .map_or(Value::None, |(_, value)| value)
+    }
+
+    fn seen(slots: &[(bool, i64, f64)]) -> Seen {
+        Seen {
+            server: "llama.cpp",
+            model: "Qwen3-8B-Q4_K_M.gguf".into(),
+            slots: (slots.iter().enumerate())
+                .map(|(id, &(working, task, tokens))| Slot {
+                    id: id as i64,
+                    working,
+                    task,
+                    tokens,
+                })
+                .collect(),
+            tells_work: true,
+        }
+    }
+
+    #[test]
+    fn a_model_server_s_slots_are_its_sessions_and_its_tasks_tokens_counted_once() {
+        static NOW: AtomicU64 = AtomicU64::new(0);
+        let set = |now: f64| NOW.store(now.to_bits(), Ordering::SeqCst);
+        set(1_800_000_000.0);
+        let board = Board::new(Box::new(|| f64::from_bits(NOW.load(Ordering::SeqCst))));
+        assert_eq!(at(&board, "state"), Value::Str("off".into()));
+        board.local(Some(&seen(&[(false, -1, 0.0), (false, -1, 0.0)])));
+        assert_eq!(at(&board, "state"), Value::Str("idle".into()));
+        assert_eq!(at(&board, "server"), Value::Str("llama.cpp".into()));
+        assert_eq!(
+            at(&board, "model"),
+            Value::Str("Qwen3-8B-Q4_K_M.gguf".into())
+        );
+        assert_eq!(at(&board, "tokens_today"), Value::Float(0.0));
+        // a task: counted as it grows, the model on the line of the tool at work
+        set(1_800_000_002.0);
+        board.local(Some(&seen(&[(true, 7, 512.0), (false, -1, 0.0)])));
+        assert_eq!(at(&board, "state"), Value::Str("working".into()));
+        assert_eq!(
+            at(&board, "tool"),
+            Value::Str("Qwen3-8B-Q4_K_M.gguf".into())
+        );
+        assert_eq!(at(&board, "task"), Value::Str("slot 0".into()));
+        assert_eq!(at(&board, "s2.task"), Value::Str("slot 1".into()));
+        set(1_800_000_004.0);
+        board.local(Some(&seen(&[(true, 7, 600.0), (true, 8, 100.0)])));
+        assert_eq!(at(&board, "tokens_today"), Value::Float(700.0));
+        // done: what stays on the slot is not counted again, with its task or without
+        set(1_800_000_006.0);
+        board.local(Some(&seen(&[(false, 7, 640.0), (false, -1, 120.0)])));
+        assert_eq!(at(&board, "state"), Value::Str("idle".into()));
+        assert_eq!(at(&board, "tokens_today"), Value::Float(740.0));
+        board.local(Some(&seen(&[(false, 7, 640.0), (false, -1, 120.0)])));
+        assert_eq!(at(&board, "tokens_today"), Value::Float(740.0));
+        // a server started anew: its first task again, smaller
+        board.local(Some(&seen(&[(true, 7, 30.0), (false, -1, 0.0)])));
+        assert_eq!(at(&board, "tokens_today"), Value::Float(770.0));
+        // gone: off, its sessions and model with it
+        board.local(None);
+        assert_eq!(at(&board, "state"), Value::Str("off".into()));
+        assert_eq!(at(&board, "model"), Value::None);
+        assert_eq!(at(&board, "server"), Value::None);
+    }
+
+    #[test]
+    fn an_ollama_that_does_not_tell_when_it_works_is_idle_while_it_holds_a_model() {
+        let board = Board::new(Box::new(|| 1_800_000_000.0));
+        board.local(Some(&Seen {
+            server: "Ollama",
+            model: "qwen3:8b".into(),
+            slots: Vec::new(),
+            tells_work: false,
+        }));
+        assert_eq!(at(&board, "state"), Value::Str("idle".into()));
+        assert_eq!(at(&board, "model"), Value::Str("qwen3:8b".into()));
+        assert_eq!(at(&board, "sessions"), Value::int(1));
+    }
 }

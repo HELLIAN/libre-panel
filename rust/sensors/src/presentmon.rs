@@ -10,7 +10,8 @@
 //! The recording session must exist *before* the game starts: the anti-cheat of some games
 //! refuses to let a new session begin while the game runs, but leaves one that is already
 //! running alone. So PresentMon runs for as long as a theme shows `game.*` readings (it stops
-//! a minute after none does), and is started again only slowly while a game runs. It sits in
+//! a minute after none does; the `game` service asks for them for as long as it runs), and is
+//! started again only slowly while a game runs. When it ends and why, the log says. It sits in
 //! a Windows job that ends it with Libre Panel, whatever way Libre Panel ends. While Windows
 //! ends the session it is not started again, nor to stop its recording session: Windows
 //! refuses new programs then, with a box that names PresentMon.
@@ -47,10 +48,6 @@ pub const NOT_FOUND_SECONDS: f64 = 30.0;
 /// a PresentMon that does not end when asked is killed after this long
 pub const STOP_SECONDS: f64 = 5.0;
 
-/// Windows ends the session (the user logs off, the computer shuts down): the program says so
-/// here, and PresentMon is not started again.
-pub static SESSION_ENDING: AtomicBool = AtomicBool::new(false);
-
 /// find_presentmon: the PresentMon program: the path named in the settings, the one a
 /// download carries (its `tools` folder), PATH, or Intel's folder under Program Files. With
 /// the highest rights only one from a safe place: a named one elsewhere is passed over for
@@ -73,6 +70,16 @@ pub fn target() -> Option<String> {
 }
 
 pub fn find_presentmon(path: &str, notes: &mut Vec<String>) -> Option<PathBuf> {
+    // (the program's folder as a person writes it: on Windows not `\\?\C:\...`)
+    find_presentmon_beside(path, notes, lp_devices::rights::program_folder())
+}
+
+/// find_presentmon of a program in the folder `beside`.
+fn find_presentmon_beside(
+    path: &str,
+    notes: &mut Vec<String>,
+    beside: Option<PathBuf>,
+) -> Option<PathBuf> {
     use lp_devices::rights;
     let mut passed = Vec::new();
     if !path.is_empty() {
@@ -99,10 +106,7 @@ pub fn find_presentmon(path: &str, notes: &mut Vec<String>) -> Option<PathBuf> {
     } else {
         "PresentMon"
     };
-    let own = std::env::current_exe()
-        .ok()
-        .and_then(|program| std::fs::canonicalize(program).ok())
-        .and_then(|program| Some(program.parent()?.join("tools").join(name)));
+    let own = beside.map(|folder| folder.join("tools").join(name));
     if let Some(own) = own.filter(|own| own.is_file()) {
         return Some(own);
     }
@@ -405,17 +409,22 @@ fn begin(shared: &Arc<Shared>, program_of: &mut Option<PathBuf>) -> Option<Run> 
 
 /// A PresentMon ended: say why, and (how long to wait, how often it failed in a row).
 fn ended(shared: &Shared, run: Run, failures: u32, game_runs: bool) -> (f64, u32) {
+    let lived = run.started.elapsed().as_secs_f64();
     for reader in run.readers {
         let _ = reader.join(); // the last lines of its output
     }
     if run.told.header.load(Ordering::Relaxed) {
-        // it worked: start it again soon
+        // it worked: start it again soon (said, and that it records again, once it does)
         shared.blocked.store(false, Ordering::Relaxed);
         let wait = if game_runs {
             BLOCKED_SECONDS
         } else {
             RESTART_SECONDS
         };
+        shared.say(
+            &format!("PresentMon ended after {lived:.0} s; it starts again in {wait:.0} s"),
+            "ended",
+        );
         return (wait, 0);
     }
     let lines: Vec<String> = run
@@ -530,7 +539,14 @@ fn supervise(shared: &Arc<Shared>) {
         } else {
             match idle_since {
                 None => idle_since = Some(now),
-                Some(since) if now.duration_since(since).as_secs_f64() > IDLE_SECONDS => break,
+                Some(since) if now.duration_since(since).as_secs_f64() > IDLE_SECONDS => {
+                    if run.is_some() {
+                        shared.note(
+                            "PresentMon ends: for a minute no theme or service read game.*".into(),
+                        );
+                    }
+                    break;
+                }
                 Some(_) => {}
             }
         }
@@ -554,7 +570,7 @@ fn supervise(shared: &Arc<Shared>) {
                 next_start = now + Duration::from_secs_f64(delay);
             }
         }
-        if run.is_none() && now >= next_start && !SESSION_ENDING.load(Ordering::Relaxed) {
+        if run.is_none() && now >= next_start && !crate::session::ending() {
             run = begin(shared, &mut program);
             if run.is_none() {
                 // not there, or it would not start
@@ -572,7 +588,7 @@ fn supervise(shared: &Arc<Shared>) {
             let _ = reader.join();
         }
     }
-    if !SESSION_ENDING.load(Ordering::Relaxed) {
+    if !crate::session::ending() {
         // (Windows ends the recording session with itself)
         release_session(program.as_deref());
     }
@@ -685,5 +701,240 @@ impl PresentMonSource {
 impl Drop for PresentMonSource {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_presentmon_a_download_carries_comes_first_and_a_named_one_before_it() {
+        // (as bundled.py found it: the download's tools folder before PATH, the one the
+        // settings name before both, a named one that is not there none at all, not another)
+        let folder = std::env::temp_dir().join(format!("lp-presentmon-{}", std::process::id()));
+        let tools = folder.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let name = if cfg!(windows) {
+            "PresentMon.exe"
+        } else {
+            "PresentMon"
+        };
+        let carried = tools.join(name);
+        std::fs::write(&carried, b"").unwrap();
+        let named = folder.join("mine");
+        std::fs::write(&named, b"").unwrap();
+        let mut notes = Vec::new();
+        let found = find_presentmon_beside("", &mut notes, Some(folder.clone()));
+        assert_eq!(found, Some(carried.clone()));
+        // (with the highest rights, as on a Windows runner, one from a folder others may change
+        // is passed over for the next, and said)
+        let safe = lp_devices::rights::safe_place(&named);
+        let found =
+            find_presentmon_beside(named.to_str().unwrap(), &mut notes, Some(folder.clone()));
+        assert_eq!(found, Some(if safe { named } else { carried.clone() }));
+        assert_eq!(notes.len(), usize::from(!safe), "{notes:?}");
+        notes.clear();
+        let gone = folder.join("missing");
+        assert_eq!(
+            find_presentmon_beside(gone.to_str().unwrap(), &mut notes, Some(folder.clone())),
+            None
+        );
+        assert!(notes.is_empty(), "{notes:?}");
+        // a download without it, and PresentMon among the user's downloads: never that one
+        std::fs::remove_file(&carried).unwrap();
+        let downloads = folder.join("Downloads");
+        std::fs::create_dir(&downloads).unwrap();
+        for file in ["PresentMon.exe", "PresentMon-2.6.0-x64.exe", "PresentMon"] {
+            std::fs::write(downloads.join(file), b"MZ").unwrap();
+        }
+        let found = find_presentmon_beside("", &mut notes, Some(folder.clone()));
+        assert!(!found.is_some_and(|found| found.starts_with(&downloads)));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// A PresentMon of the test's own: a shell script in a folder of its own.
+    #[cfg(unix)]
+    fn script(name: &str, body: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = std::env::temp_dir().join(format!("lp-pm-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let program = folder.join("PresentMon");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ncd \"$(dirname \"$0\")\"\n{body}\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (folder, program)
+    }
+
+    #[cfg(unix)]
+    fn game() -> Wanted {
+        let wanted = Wanted::default();
+        wanted.set(["game.*".to_string()]);
+        wanted
+    }
+
+    #[cfg(unix)]
+    fn until(seconds: f64, mut done: impl FnMut() -> bool) -> bool {
+        let end = Instant::now() + Duration::from_secs_f64(seconds);
+        while !done() {
+            if Instant::now() > end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        true
+    }
+
+    #[cfg(unix)]
+    fn alive(folder: &Path) -> bool {
+        let pid = std::fs::read_to_string(folder.join("pid")).unwrap_or_default();
+        let pid = pid.trim();
+        !pid.is_empty()
+            && Command::new("kill")
+                .args(["-0", pid])
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn it_starts_when_somebody_reads_game_its_frames_become_readings_and_close_ends_it() {
+        let (folder, program) = script(
+            "frames",
+            r#"echo $$ > pid
+echo "Application,ProcessID,MsBetweenPresents,MsCPUBusy,MsCPUWait,MsGPUBusy,MsGPUWait"
+while :; do echo "Game.exe,12,16.6,5,1,9,0.5"; sleep 0.02; done"#,
+        );
+        let wanted = Wanted::default();
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), wanted.clone());
+        assert!(source.read().is_empty());
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!folder.join("pid").exists()); // (nobody reads game.*: not started)
+        wanted.set(["game.*".to_string()]);
+        assert!(until(10.0, || source.read().contains_key("game.fps")));
+        let readings = source.read();
+        let shown = lp_py::Value::Str("Game".into()); // (the program's name, as it is shown)
+        assert_eq!(readings["game.app"].value, shown);
+        assert!(alive(&folder));
+        source.close();
+        assert!(!alive(&folder));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_session_the_anti_cheat_refuses_is_said_once_and_tried_again_slowly() {
+        let (folder, program) = script(
+            "blocked",
+            r#"echo x >> tries
+echo "error: Access denied (0x5)" >&2
+exit 1"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        assert!(until(10.0, || source.blocked()));
+        let said = "PresentMon cannot start a session while a game with an anti-cheat runs; \
+                    it tries again until the game is over";
+        assert_eq!(source.problem().as_deref(), Some(said));
+        std::thread::sleep(Duration::from_secs(2));
+        assert_eq!(source.notes(), [said]);
+        let tries = std::fs::read_to_string(folder.join("tries")).unwrap();
+        assert_eq!(tries.lines().count(), 1); // (again only after BLOCKED_SECONDS)
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_that_cannot_run_without_rights_says_so_and_one_that_works_clears_it() {
+        let (folder, program) = script(
+            "rights",
+            r#"if [ ! -e tried ]; then
+  touch tried
+  echo "warning: PresentMon requires elevated privilege" >&2
+  echo "error: failed to start trace session" >&2
+  exit 1
+fi
+echo "Application,ProcessID,MsBetweenPresents"
+while :; do echo "Game.exe,12,16.6"; sleep 0.02; done"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        let rights = "PresentMon ended at once: it needs administrator rights or the \
+                      \"Performance Log Users\" group: error: failed to start trace session";
+        assert!(until(10.0, || source.problem().as_deref() == Some(rights)));
+        assert!(!source.blocked());
+        // (started again after RETRY_SECONDS, recording once steady)
+        assert!(until(15.0, || source.problem().is_none()));
+        assert_eq!(source.notes(), [rights, "PresentMon is recording"]);
+        assert!(until(5.0, || source.read().contains_key("game.fps")));
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_that_ends_after_it_worked_is_said_and_started_again() {
+        let (folder, program) = script(
+            "restart",
+            r#"echo "Application,ProcessID,MsBetweenPresents"
+if [ ! -e ran ]; then
+  touch ran
+  for i in 1 2 3 4 5 6 7 8 9 10; do echo "Game.exe,12,16.6"; sleep 0.02; done
+  exit 0
+fi
+while :; do echo "Game.exe,12,16.6"; sleep 0.02; done"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        // (how long it lived as the supervisor saw it end: at most a look later)
+        let ended = |said: &str| {
+            said.starts_with("PresentMon ended after ")
+                && said.ends_with(" s; it starts again in 2 s")
+        };
+        assert!(until(10.0, || source
+            .problem()
+            .is_some_and(|said| ended(&said))));
+        // (started again after RESTART_SECONDS, recording once steady)
+        assert!(until(15.0, || source.problem().is_none()));
+        let notes = source.notes();
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(
+            ended(&notes[0]) && notes[1] == "PresentMon is recording",
+            "{notes:?}"
+        );
+        assert!(until(5.0, || source.read().contains_key("game.fps")));
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_output_without_a_frame_time_ends_it_and_one_not_there_is_said() {
+        let (folder, program) = script(
+            "columns",
+            r#"echo $$ > pid
+echo "Application,ProcessID,Foo"
+exec sleep 30"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        let none = "PresentMon: no frame time column in ";
+        assert!(until(10.0, || source
+            .problem()
+            .is_some_and(|said| said.starts_with(none))));
+        assert!(until(10.0, || !alive(&folder)));
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+        let mut missing = PresentMonSource::new("/nowhere/PresentMon", game());
+        missing.read();
+        let said = "PresentMon not found: set path in [sensors.presentmon]";
+        assert!(until(10.0, || missing.problem().as_deref() == Some(said)));
+        missing.close();
     }
 }

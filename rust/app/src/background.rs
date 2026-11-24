@@ -390,16 +390,22 @@ impl PanelService {
         told.insert("detail".into(), Value::Str(detail));
         let running = matches!(state, "showing" | "waiting");
         // what to do when temperatures and power show "--" (Windows), in the user's language
+        // (the hub as it is free: a reading that takes long never holds up the app's state,
+        // which the window asks for every two seconds; the hint waits for the next ask)
         let hint = match (running, &status.hub) {
             (true, Some(hub)) => {
-                let latest = self.company.host.latest();
-                let readings = latest
-                    .map(|latest| latest.readings.clone())
-                    .unwrap_or_default();
-                let mut hub = hub
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                hub.hint(&readings, crate::unlock_offered())
+                let free = match hub.try_lock() {
+                    Ok(hub) => Some(hub),
+                    Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+                    Err(std::sync::TryLockError::WouldBlock) => None,
+                };
+                free.map_or(String::new(), |mut hub| {
+                    let latest = self.company.host.latest();
+                    let readings = latest
+                        .map(|latest| latest.readings.clone())
+                        .unwrap_or_default();
+                    hub.hint(&readings, crate::unlock_offered())
+                })
             }
             _ => String::new(),
         };
@@ -461,7 +467,16 @@ impl PanelService {
         };
         told.insert("sequence".into(), sequence);
         told.insert("target".into(), Value::Str(status.target));
+        // whether its frames go to a panel that takes them (not to a PNG file)
+        told.insert(
+            "on_panel".into(),
+            Value::Bool(status.on_panel && state == "showing"),
+        );
         told.insert("default_theme".into(), Value::Str(status.default_theme));
+        // the panel's model, set or reported, while it runs ("": not known), as for those beside
+        // it: the header names the panel by it, not by the theme's size (issue #54)
+        let model = if running { status.model } else { String::new() };
+        told.insert("model".into(), Value::Str(model));
         told.insert("mode".into(), status.mode.map_or(Value::None, Value::Str));
         // numbers of the last seconds (meter.rs); none while it does not run
         let stats = status.stats.filter(|_| running).unwrap_or_default();
@@ -506,6 +521,7 @@ impl PanelService {
             "theme",
             "default_theme",
             "frames",
+            "model",
             "mode",
             "sequence",
             "size",
@@ -624,7 +640,7 @@ pub struct BackgroundApp {
 impl BackgroundApp {
     pub fn new(home: Home, asked: Asked) -> Arc<BackgroundApp> {
         let config_file = asked.config.clone().unwrap_or_else(|| home.config_file());
-        let company = Company::new();
+        let company = Company::new(&home.settings);
         Arc::new_cyclic(|app: &Weak<BackgroundApp>| {
             let pressed = app.clone();
             let act: hotkeys::Fire = Arc::new(move |action: &str| {

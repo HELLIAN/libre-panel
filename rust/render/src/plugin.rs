@@ -1,6 +1,8 @@
 //! What plugins draw (render/renderer.py `_draw_plugin`, `_screen_image`): widget types and
 //! screens of installed plugins, which are Python code. The app gives the renderer a [`Plugins`]
-//! that has them drawn (its plugin host); without one, a frame that holds either is not made here.
+//! that has them drawn (its plugin host, plugins/drawing.py); without one, a frame that holds
+//! either is not made here. A widget type's piece comes as the plugin drew it: the renderer
+//! gives it the widget's effects, as its own widgets'.
 
 use std::rc::Rc;
 
@@ -35,9 +37,11 @@ pub struct Drawing<T> {
 }
 
 pub trait Plugins {
-    /// The piece a plugin's widget type draws of `widget` (its effects applied, as `_cached`
-    /// applies them); None where it draws nothing, or no plugin has the type (the theme loader
-    /// has warned). Err: it failed (the widget is left out, with a warning).
+    /// The piece a plugin's widget type draws of `widget`, without the widget's effects (the
+    /// renderer applies them, as `_cached` does); None where it draws nothing, or no plugin has
+    /// the type (the theme loader has warned). Err: it failed (the widget is left out, with a
+    /// warning). (the same piece as the frame before, the same Rc: its effects are not applied
+    /// again)
     fn widget(
         &self,
         widget: &Dict,

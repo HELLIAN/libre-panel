@@ -1,0 +1,14 @@
+{
+ "programs": [],
+ "steam": true,
+ "steam_path": "",
+ "launchers": true,
+ "folders": [],
+ "ignore": [],
+ "automatic": true,
+ "force": false,
+ "entrance": true,
+ "logo": true,
+ "linger_s": 6.0,
+ "poll_s": 2.0
+}

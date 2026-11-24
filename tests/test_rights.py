@@ -1,5 +1,6 @@
 """With the highest rights Libre Panel loads and starts nothing that programs without them may
-change (rights.py): plugin folders, ffmpeg, PresentMon, the AI agents' programs."""
+change (rights.py): which places are safe, which programs are found there, and who has those
+rights."""
 
 import os
 import sys
@@ -8,10 +9,6 @@ from pathlib import Path
 import pytest
 
 from libre_panel import rights
-from libre_panel.config import Config, VideoConfig
-from libre_panel.devices import h264
-from libre_panel.devices.turzx import video_gaps
-from libre_panel.plugins import loader
 
 
 @pytest.fixture
@@ -84,139 +81,22 @@ def test_with_the_highest_rights_only_a_program_from_a_safe_place_is_found(
     assert found(rights.which("lp-tool")) == found(str(safe))  # the first one that may be started
 
 
-def test_with_the_highest_rights_the_plugin_folders_are_held_back(plugin_folder, elevated):
-    package = plugin_folder("def ring(*args):\n    return None\n",
-                            {"libre_panel.widgets": {"mine.ring": "ring"}})  # fmt: skip
-    found = loader.discover()
-    assert found.held_back == [package]
-    assert "mine.ring" not in found.parts.get("widgets", {})
-    built_in = [part for parts in found.parts.values() for part in parts.values()]
-    assert built_in and all(part.source == loader.BUILT_IN for part in built_in)  # Libre Panel's
+# -- who has the highest rights -------------------------------------------------------------------
 
 
-def test_a_plugin_folder_in_a_safe_place_is_loaded(plugin_folder, monkeypatch):
-    plugin_folder(
-        "def ring(*args):\n    return None\n", {"libre_panel.widgets": {"mine.ring": "ring"}}
-    )
-    monkeypatch.setattr(rights, "elevated", lambda: True)
-    monkeypatch.setattr(rights, "safe_place", lambda path: True)  # (root's own folder)
-    found = loader.discover()
-    assert found.held_back == [] and "mine.ring" in found.parts["widgets"]
+real_elevated = rights.elevated  # (conftest.py replaces it for the tests; this is the real one)
 
 
-def test_with_the_highest_rights_video_ffmpeg_elsewhere_is_passed_over(
-    tmp_path, monkeypatch, elevated
-):
-    named = program(tmp_path / "user", "ffmpeg")
-    monkeypatch.setenv("PATH", "")
-    with pytest.raises(h264.FfmpegHeldBack):
-        h264.find_ffmpeg(str(named))
-    assert video_gaps(VideoConfig(ffmpeg=str(named), local_clip="x.h264"), None) == [
-        "ffmpeg-rights"
-    ]
-    other = program(tmp_path / "safe", "ffmpeg")
-    monkeypatch.setenv("PATH", str(other.parent))
-    assert found(h264.find_ffmpeg(str(named))) == found(
-        str(other)
-    )  # the panel goes on with a safe one
-    assert video_gaps(VideoConfig(ffmpeg=str(named), local_clip="x.h264"), None) == []
-    # a path that names nothing is said as before, rights or not
-    with pytest.raises(h264.DeviceError) as missing:
-        h264.find_ffmpeg(str(tmp_path / "nowhere" / "ffmpeg"))
-    assert not isinstance(missing.value, h264.FfmpegHeldBack)
+def test_root_and_an_administrator_are_elevated(monkeypatch):
+    monkeypatch.setattr(rights.sys, "platform", "linux")
+    monkeypatch.setattr(rights.os, "geteuid", lambda: 0, raising=False)
+    assert real_elevated() is True
+    monkeypatch.setattr(rights.os, "geteuid", lambda: 1000, raising=False)
+    assert real_elevated() is False
+    monkeypatch.delattr(rights.os, "geteuid", raising=False)  # no such thing there
+    assert real_elevated() is False
 
-
-def test_with_the_highest_rights_presentmon_and_the_agents_come_from_safe_places(
-    tmp_path, monkeypatch, elevated
-):
-    from libre_panel import agents
-    from libre_panel.sensors.presentmon import find_presentmon
-
-    named = program(tmp_path / "user", "PresentMon")
-    monkeypatch.setenv("PATH", "")
-    assert find_presentmon(str(named)) is None
-    safe = program(tmp_path / "safe", "PresentMon")
-    monkeypatch.setenv("PATH", str(safe.parent))
-    assert found(find_presentmon(str(named))) == found(str(safe))
-    program(tmp_path / "user", "claude")
-    monkeypatch.setenv("PATH", str(tmp_path / "user"))
-    assert agents.program("claude") is None
-
-
-def test_the_settings_say_what_a_run_with_the_highest_rights_holds_back(
-    tmp_path, monkeypatch, elevated, plugin_folder
-):
-    from libre_panel.editor.settings import Settings
-
-    package = plugin_folder("", {})
-    named = program(tmp_path / "user", "ffmpeg")
-    config = Config()
-    config.device.video.ffmpeg = str(named)
-    config.sensors.options["presentmon"] = {"path": str(program(tmp_path / "safe", "PM"))}
-    assert Settings._held_back(config) == {"plugins": [package], "programs": ["video.ffmpeg"]}
-    monkeypatch.setattr(rights, "elevated", lambda: False)
-    loader.reset_registry()
-    assert Settings._held_back(config) == {"plugins": [], "programs": []}
-
-
-def test_with_the_highest_rights_librehardwaremonitor_s_libraries_come_from_a_safe_place(
-    tmp_path, elevated
-):
-    """``dll_dir`` is in config.toml, in the user's own folder: a program without the rights
-    could name a folder of its own there, and its libraries would be loaded with them."""
-    from libre_panel.sensors import lhm_inprocess
-
-    for folder in ("user", "safe"):
-        (tmp_path / folder).mkdir()
-        (tmp_path / folder / f"{lhm_inprocess.LIBRARY}.dll").write_bytes(b"MZ")
-    assert lhm_inprocess.find_dll_dir(str(tmp_path / "user")) is None  # (nor the download's)
-    assert lhm_inprocess.find_dll_dir(str(tmp_path / "safe")) == tmp_path / "safe"
-
-
-def test_without_the_highest_rights_the_configured_libraries_are_loaded(tmp_path, monkeypatch):
-    from libre_panel.sensors import lhm_inprocess
-
-    monkeypatch.setattr(rights, "elevated", lambda: False)
-    (tmp_path / f"{lhm_inprocess.LIBRARY}.dll").write_bytes(b"MZ")
-    assert lhm_inprocess.find_dll_dir(str(tmp_path)) == tmp_path
-
-
-def test_with_the_highest_rights_the_panel_s_png_file_is_written_only_in_a_safe_place(
-    tmp_path, monkeypatch, elevated
-):
-    """The file config.toml names (or a link in the user's settings folder) could lead
-    anywhere: the frame would be written over it with the rights. Elsewhere it is kept, but
-    not written."""
-    from PIL import Image
-
-    from libre_panel.config import DeviceConfig
-    from libre_panel.devices.virtual import VirtualDisplay
-
-    frame = Image.new("RGB", (8, 4), "#123456")
-    shown = {}
-    for folder in ("user", "safe"):
-        (tmp_path / folder).mkdir()
-        target = tmp_path / folder / "new" / "frame.png"  # (a folder that is not there yet)
-        display = VirtualDisplay(DeviceConfig(driver="virtual", output=str(target)))
-        display.open()
-        display.show(frame)
-        assert display.frame.size == (8, 4)
-        shown[folder] = target.is_file()
-    assert shown == {"user": False, "safe": True}
-    monkeypatch.setattr(rights, "elevated", lambda: False)
-    monkeypatch.setattr(rights, "safe_place", lambda path: True)
-    target = tmp_path / "user" / "frame.png"
-    display = VirtualDisplay(DeviceConfig(driver="virtual", output=str(target)))
-    display.open()
-    display.show(frame)
-    assert target.is_file()  # without the rights: wherever it says
-
-
-def test_the_settings_name_the_libraries_held_back(tmp_path, elevated):
-    from libre_panel.editor.settings import Settings
-
-    config = Config()
-    config.sensors.options["librehardwaremonitor"] = {"dll_dir": str(tmp_path / "user")}
-    assert "[sensors.librehardwaremonitor] dll_dir" in Settings._held_back(config)["programs"]
-    config.sensors.options["librehardwaremonitor"] = {"dll_dir": str(tmp_path / "safe")}
-    assert Settings._held_back(config)["programs"] == []
+    monkeypatch.setattr(rights.sys, "platform", "win32")
+    for answer in (True, False):
+        monkeypatch.setattr(rights, "is_admin", lambda answer=answer: answer)
+        assert real_elevated() is answer

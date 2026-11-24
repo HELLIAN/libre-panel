@@ -16,6 +16,8 @@ lp-i18n = { path = "../i18n" }
 lp-devices = { path = "../devices" }
 lp-decode = { path = "../decode" }
 lp-sensors = { path = "../sensors" }
+# a model server asked over HTTP (agents_local.rs)
+lp-net = { path = "../net" }
 indexmap = "2"
 num-bigint = "0.4"
 sha2 = "0.10"

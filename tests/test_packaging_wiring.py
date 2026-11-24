@@ -4,9 +4,15 @@ fetch comes before the build, the checks run on the built folder, on what the se
 and on the AppImage's files, and every place agrees on what the folder is called."""
 
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
+
+import pytest
 
 from libre_panel import bundled
 
@@ -38,7 +44,7 @@ def test_the_release_fetches_before_it_builds_and_checks_the_built_folder():
     release.yml calls ci.yml, and publishes only once all of it passed."""
     release = read(".github", "workflows", "release.yml")
     assert "uses: ./.github/workflows/ci.yml" in job(release, "app")
-    assert "needs: [python-package, app]" in job(release, "github-release")
+    assert "needs: [test, app]" in job(release, "github-release")
     ci = read(".github", "workflows", "ci.yml")
     assert "\n  workflow_call:\n" in ci[: ci.index("\njobs:")]
     rust = job(ci, "rust")
@@ -95,14 +101,9 @@ def test_the_downloads_carry_the_notice_that_names_their_sources():
     assert 'cp NOTICE.md "$app/licenses/"' in job(ci, "appimage")
 
 
-def test_the_spec_puts_the_fetched_folder_next_to_the_program_under_the_name_the_app_looks_for():
-    spec = read("packaging", "pyinstaller", "libre-panel.spec")
+def test_the_fetched_tools_go_next_to_the_program_under_the_name_the_app_looks_for():
     fetch_tools = load("fetch_tools_wiring", PACKAGING / "fetch_tools.py")
     assert fetch_tools.DEFAULT_FOLDER.name == "bundled-tools"
-    assert 'ROOT / "packaging" / "bundled-tools"' in spec
-    assert "from libre_panel.bundled import TOOLS_FOLDER" in spec
-    assert 'program_folder = Path(DISTPATH) / "libre-panel"' in spec  # the built folder
-    assert "copytree(tools, program_folder / TOOLS_FOLDER" in spec  # and next to the program
     check_tools = load("check_tools_wiring", PACKAGING / "check_tools.py")
     assert check_tools.TOOLS_FOLDER == bundled.TOOLS_FOLDER == "tools"
     # the setup clears the same folder on an update
@@ -118,10 +119,10 @@ def test_the_names_the_app_looks_for_are_the_ones_the_table_installs(monkeypatch
     for platform, system in (("windows", "win32"), ("linux", "linux")):
         monkeypatch.setattr(sys, "platform", system)
         files = {tool.file for tool in fetch_tools.TOOLS if tool.platform == platform}
-        assert bundled.program_name("ffmpeg") in files
         if platform == "windows":
-            assert {bundled.program_name("PresentMon"), bundled.PAWNIO_SETUP} <= files
-            assert len(files) == 3  # and nothing else that the app does not know of
+            # (and nothing else that the app does not know of: rust/app's tools.rs, h264.rs,
+            # presentmon.rs and system_setup.rs look for these)
+            assert files == {"ffmpeg.exe", "PresentMon.exe", "PawnIO_setup.exe"}
         else:
             assert files == {"ffmpeg"}
 
@@ -141,15 +142,52 @@ def test_the_setup_starts_the_app_as_the_user_who_ran_it():
     script = read("packaging", "windows", "libre-panel.iss")
     run = script.split("\n[Run]\n", 1)[1].split("\n[", 1)[0]
     lines = [line for line in run.splitlines() if line.startswith("Filename:")]
-    assert len(lines) == 2 and all("runasoriginaluser" in line for line in lines)
+    assert len(lines) == 3 and all("runasoriginaluser" in line for line in lines)
+
+
+def test_the_language_chosen_in_the_setup_is_the_apps_on_a_new_install():
+    """The setup's language becomes the app's (config.toml's `language`, as Settings → Language
+    sets it) on a new install where it was chosen, not taken as the setup offered it (the one
+    Windows speaks, else English: the app speaks Windows' anyway); the app keeps a language
+    chosen in it (`config language --if-auto`), and an update leaves it as it is. The setup's
+    languages are the app's codes, and whether Libre Panel was installed before is asked
+    before the setup registers itself, under the AppId's key."""
+    script = read("packaging", "windows", "libre-panel.iss")
+    run = script.split("\n[Run]\n", 1)[1].split("\n[", 1)[0]
+    (line,) = [line for line in run.splitlines() if "config language" in line]
+    assert 'Parameters: "config language {language} --if-auto"' in line
+    assert "Check: LanguageChosen" in line and "runasoriginaluser" in line
+    languages = re.findall(r'^Name: "(\w+)"; MessagesFile:', script, re.M)
+    assert languages == ["en", "de"]  # (the first is the one offered where Windows' is neither)
+    app_id = re.search(r"^AppId=\{(\{[0-9A-F-]+\})$", script, re.M)
+    assert app_id
+    first = script.split("<event('InitializeSetup')>", 1)[1].split("\nend;", 1)[0]
+    assert f"\\Uninstall\\{app_id[1]}_is1'" in first
+    assert all(f"RegKeyExists({root}, Key)" in first for root in ("HKLM64", "HKLM32", "HKCU"))
+    chosen = script.split("function LanguageChosen: Boolean;", 1)[1].split("\nend;", 1)[0]
+    assert "(GetUILanguage and $3FF) = $07" in chosen and "Offered := 'de'" in chosen
+    assert "Offered := 'en'" in chosen
+    assert "Result := NewInstall and (ActiveLanguage <> Offered);" in chosen
+
+
+def test_ci_runs_every_comparison_with_the_rust_crates_where_they_are_built():
+    """Only CI's rust job builds lp-check and the program: elsewhere a comparison skips. A file of
+    comparisons left out of its lists would never run anywhere (the light field's and the
+    morph's were, for a while)."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = ci.split("\n  rust:", 1)[1].split("\n  try:", 1)[0]
+    listed = set(re.findall(r"tests/(test_rust_\w+\.py)", job))
+    comparisons = {path.name for path in (ROOT / "tests").glob("test_rust_*.py")}
+    assert comparisons - listed == set()
 
 
 def test_ci_runs_every_test_that_needs_a_browser_where_there_is_one():
-    """Only CI's desktop job has Playwright and Chromium: elsewhere a test that needs them skips.
-    A file of such tests left out of its list would never run anywhere."""
+    """Only the browser step of CI's job rust has Playwright and Chromium: elsewhere a test that
+    needs them skips. A file of such tests left out of its list would never run anywhere."""
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    job = ci.split("\n  desktop:", 1)[1]
-    listed = set(re.findall(r"tests/[\w*]+\.py", job))
+    step = ci.split("- name: The app in a browser, on the Rust app's server (Linux)\n", 1)[1]
+    step = step.split("\n      - ", 1)[0]
+    listed = set(re.findall(r"tests/[\w*]+\.py", step))
     tests = ROOT / "tests"
     uses = re.compile(r"^(?:from|import) playwright|importorskip\(\s*\"playwright", re.M)
     needing = {
@@ -165,15 +203,97 @@ def test_ci_runs_every_test_that_needs_a_browser_where_there_is_one():
 def test_a_release_candidate_is_never_for_everyone():
     """A pre-release is a draft that only those who may write to the repository see, by hand as
     by tag; a run keeps none of its files (on a public repository anyone signed in to GitHub
-    could download them), after the release and PyPI, whether they ran or not."""
+    could download them), after the release, whether it ran or not."""
     workflow = read(".github", "workflows", "release.yml")
     publish = workflow[workflow.index("- name: Publish the release with all files") :]
     assert 'if [ "$pre" = true ]; then flags+=(--draft); fi' in publish  # a pushed tag
     assert 'artifacts/* --repo "$GITHUB_REPOSITORY" --draft' in publish  # Run workflow
     assert 'echo "::error::$TAG is published already"' in publish  # never one made public
     forget = workflow[workflow.index("  forget-the-files:") :]
-    assert "if: always()" in forget and "github-release, pypi]" in forget
+    assert "if: always()" in forget and "needs: [test, app, github-release]" in forget
     assert 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"' in forget
+
+
+CHANGELOG = """# Changelog
+
+## 1.2.0 — 2026-01-05
+
+The release, see [the guide](docs/GUIDE.md).
+
+## 1.2.0rc3 — 2026-01-04
+
+The third candidate, see [the guide](docs/GUIDE.md).
+
+## 1.2.0rc2 — 2026-01-03
+
+The second candidate.
+
+## 1.2.0rc1 — 2026-01-02
+
+The first candidate.
+
+## 1.1.2 — 2026-01-01
+
+The second fix.
+
+## 1.1.1 — 2025-12-31
+
+The first fix.
+
+## 1.1.0 — 2025-12-30
+
+What it fixes.
+
+## 1.0.0 — 2025-12-01
+
+Long ago.
+"""
+
+
+def notes_of(version, folder):
+    """What release.yml's step makes of CHANGELOG for a version's release notes."""
+    workflow = read(".github", "workflows", "release.yml")
+    step = workflow[workflow.index("- name: Release notes from CHANGELOG.md") :]
+    script = step[step.index("run: |\n") + len("run: |\n") : step.index("\n      - name: ")]
+    script = "\n".join(line[10:] for line in script.splitlines())
+    (folder / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
+    env = {**os.environ, "TAG": f"v{version}", "GITHUB_REPOSITORY": "own/app", "GITHUB_SHA": "abc"}
+    subprocess.run(["bash", "-e", "-c", script], cwd=folder, env=env, check=True)
+    notes = (folder / "notes.md").read_text(encoding="utf-8")
+    assert notes.rstrip().endswith("(https://github.com/own/app#install-and-first-start).")
+    return notes[: notes.index("\n**Which file?**")]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or not (shutil.which("bash") and shutil.which("awk")),
+    reason="the step is the release workflow's, which runs on Linux",
+)
+def test_the_notes_of_a_candidate_go_on_with_the_candidates_before_it(tmp_path):
+    """A release's notes are its section of CHANGELOG. A hotfix's go on with the sections down
+    to the release it fixes; a candidate's with those of the candidates before it, which were
+    drafts no one else saw (0.9.5rc3 was the first of its three to be public, and its notes
+    said nothing of what rc1 and rc2 brought); each under its heading, and never further."""
+    third = notes_of("1.2.0rc3", tmp_path)
+    assert "## 1.2.0rc3" not in third and third.lstrip().startswith("The third candidate")
+    assert "(https://github.com/own/app/blob/abc/docs/GUIDE.md)" in third  # (links of the tag)
+    assert third.index("## 1.2.0rc2 — 2026-01-03") < third.index("The second candidate.")
+    assert third.index("The second candidate.") < third.index("## 1.2.0rc1 — 2026-01-02")
+    assert third.rstrip().endswith("The first candidate.")  # (not the release before)
+    second = notes_of("1.2.0rc2", tmp_path)
+    assert "third" not in second and second.count("## ") == 1 and "The first candidate." in second
+    first = notes_of("1.2.0rc1", tmp_path)
+    assert first.strip() == "The first candidate."
+    release = notes_of("1.2.0", tmp_path)  # (the release says it all itself)
+    assert release.strip() == (
+        "The release, see [the guide](https://github.com/own/app/blob/abc/docs/GUIDE.md)."
+    )
+    fix = notes_of("1.1.2", tmp_path)
+    assert [line for line in fix.splitlines() if line.startswith("## ")] == [
+        "## 1.1.1 — 2025-12-31",
+        "## 1.1.0 — 2025-12-30",
+    ]
+    assert fix.rstrip().endswith("What it fixes.") and "candidate" not in fix
+    assert notes_of("1.1.0", tmp_path).strip() == "What it fixes."
 
 
 def test_presentmon_is_a_box_of_the_setup_that_says_first_what_will_not_work_without_it():
@@ -208,7 +328,7 @@ def test_presentmon_is_a_box_of_the_setup_that_says_first_what_will_not_work_wit
     )
     tester = read("packaging", "windows", "test_installer.py")
     assert 'TASKS = "autostart,presentmon,' in tester
-    assert 'install(setup, TASKS.replace("presentmon,", ""))' in tester
+    assert 'install(setup, TASKS.replace("presentmon,", ""), chosen)' in tester
 
 
 def test_the_windows_programs_say_who_made_them_and_start_with_a_loader_of_their_own():
@@ -245,7 +365,7 @@ def test_the_windows_programs_say_who_made_them_and_start_with_a_loader_of_their
         "sensorhost", "LibrePanel.Sensors.csproj"
     )
     workflow = read(".github", "workflows", "release.yml")
-    release = workflow[workflow.index("  github-release:") : workflow.index("  pypi:")]
+    release = workflow[workflow.index("  github-release:") : workflow.index("  forget-the-files:")]
     assert "id-token: write" in release and "attestations: write" in release
     attest = release.index("uses: actions/attest@v4")
     assert release.index("- name: SHA-256 sums") < attest < release.index("- name: Publish the")
@@ -298,13 +418,297 @@ def test_the_release_builds_the_dotnet_sensor_service_and_the_spec_takes_it():
     assert "<Company>Libre Panel contributors</Company>" in project
 
 
-def test_the_programs_are_built_without_docstrings_and_their_help_does_not_need_one():
-    """Python's code in the downloads is compiled as by ``python -OO`` (each process holds less
-    of it): the command line's help then still says what Libre Panel is."""
-    spec = read("packaging", "pyinstaller", "libre-panel.spec")
-    assert "OPTIMIZE = 2" in spec
-    assert spec.count("optimize=OPTIMIZE") == 2  # (the programs, and the sensor service)
-    from libre_panel import cli
+def test_an_install_gets_every_file_of_the_data_folder_where_both_apps_look(monkeypatch):
+    """Libre Panel's files (the data folder) go whole into an install's share/libre-panel
+    (setup.py), where src/libre_panel/datadir.py and rust/app/src/home.rs look for them; the
+    downloads copy the folder there too (ci.yml), and the version is pyproject.toml's alone."""
+    from types import SimpleNamespace
 
-    parser = cli.build_parser()
-    assert parser.description == cli.DESCRIPTION and "Libre Panel" in parser.description
+    from libre_panel import __version__, datadir
+
+    asked = {}
+    monkeypatch.setitem(sys.modules, "setuptools", SimpleNamespace(setup=asked.update))
+    monkeypatch.chdir(ROOT)
+    load("libre_panel_setup", ROOT / "setup.py")
+    installed = {Path(target, Path(source).name).as_posix()
+                 for target, sources in asked["data_files"] for source in sources}  # fmt: skip
+    data = ROOT / "data"
+    files = {path.relative_to(data).as_posix() for path in data.rglob("*") if path.is_file()}
+    assert installed == {f"share/libre-panel/{name}" for name in files}
+    assert {"themes/lumen/theme.json", "fonts/Barlow-Medium.ttf", "locale/de.json",
+            "editor/app/index.html", "pages/web/index.html"} <= files  # fmt: skip
+    assert datadir.DATA == data and datadir.holds_data(data)
+    assert datadir.SHARE.as_posix() == "share/libre-panel"
+    assert '.join("share").join("libre-panel")' in read("rust", "app", "src", "home.rs")
+    assert read(".github", "workflows", "ci.yml").count("cp -r data/. ") == 2
+    package = ROOT / "src" / "libre_panel"
+    kept = [path for path in package.rglob("*") if path.is_file() and path.suffix != ".py"
+            and "__pycache__" not in path.parts]  # fmt: skip
+    assert not kept  # (the package is its code alone)
+    project = re.search(r'^version = "([^"]+)"', read("pyproject.toml"), re.M)[1]
+    assert __version__ == project
+    assert '__version__ = "' not in read("src", "libre_panel", "__init__.py")
+
+
+def _pure_wheel(folder):
+    """A wheel as ``python -m build --wheel`` makes the Python package's: its code, a file of
+    Libre Panel's in share/libre-panel, the Python command and the plugin host's."""
+    import zipfile
+
+    wheel = folder / "libre_panel-1.2.3-py3-none-any.whl"
+    info = "libre_panel-1.2.3.dist-info"
+    with zipfile.ZipFile(wheel, "w") as made:
+        made.writestr("libre_panel/__init__.py", "")
+        made.writestr("libre_panel-1.2.3.data/data/share/libre-panel/themes/a.json", "{}")
+        made.writestr(f"{info}/METADATA", "Metadata-Version: 2.4\nName: libre-panel\n"
+                      "Version: 1.2.3\n")  # fmt: skip
+        made.writestr(f"{info}/WHEEL", "Wheel-Version: 1.0\nGenerator: setuptools\n"
+                      "Root-Is-Purelib: true\nTag: py3-none-any\n")  # fmt: skip
+        points = "[console_scripts]\nlibre-panel-plugins = libre_panel.plugin_host:main\n"
+        made.writestr(f"{info}/entry_points.txt", points)
+        made.writestr(f"{info}/RECORD", "")
+    return wheel
+
+
+def _files(folder, names):
+    for name, data in names.items():
+        path = folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        if name.split("/")[-1] in ("libre-panel", "libre-panel-window", "libre-panel-engine"):
+            path.chmod(0o755)
+    return folder
+
+
+def _checked(wheel):
+    """The wheel's files, after checking its RECORD names each with its digest and size and
+    the .dist-info comes last."""
+    import base64
+    import csv
+    import hashlib
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(wheel) as made:
+        infos = made.infolist()
+        files = {info.filename: made.read(info) for info in infos}
+    record = next(name for name in files if name.endswith(".dist-info/RECORD"))
+    rows = {row[0]: row[1:] for row in csv.reader(io.StringIO(files[record].decode()))}
+    assert set(rows) == set(files) and rows[record] == ["", ""]
+    for name, data in files.items():
+        if name != record:
+            digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+            assert rows[name] == ["sha256=" + digest.decode(), str(len(data))], name
+    names = [info.filename for info in infos]
+    assert all(".dist-info/" in name for name in names[-4:]), names
+    modes = {info.filename: info.external_attr >> 16 & 0o777 for info in infos}
+    return files, modes
+
+
+def test_the_wheels_pip_and_pipx_install_carry_the_rust_app(tmp_path):
+    """packaging/platform_wheel.py: the Python package's wheel with the Rust app, for Linux
+    with the programs as the commands and Pillow's libraries beside the environment's bin, for
+    Windows with the app in a folder of its own and libre_panel/launch.py as its command; the
+    names end as the app's updates look for them among a release's files."""
+    platform_wheel = load("platform_wheel", PACKAGING / "platform_wheel.py")
+    pure = _pure_wheel(tmp_path)
+    linux = _files(tmp_path / "linux", {
+        "libre-panel": b"\x7fELF app", "libre-panel-window": b"\x7fELF window",
+        "tools/libre-panel-engine": b"\x7fELF engine", "tools/licenses/x264.txt": b"GPL",
+        "tools/run.sh": b"#!/bin/sh\n",
+    })  # fmt: skip
+    lib = _files(tmp_path / "lib", {"libfreetype-1a2b.so.6": b"\x7fELF ft"})
+    licenses = _files(tmp_path / "licenses", {"THIRD-PARTY-RUST.txt": b"MIT", "x/a.txt": b"BSD"})
+    made = platform_wheel.build(pure, linux, sorted(lib.iterdir()), "manylinux_2_35_x86_64",
+                                tmp_path / "out", licenses)  # fmt: skip
+    assert made.name == "libre_panel-1.2.3-py3-none-manylinux_2_35_x86_64.whl"
+    assert made.name.endswith("_x86_64.whl")  # (updates.py's WHEEL_ENDING off Windows)
+    files, modes = _checked(made)
+    data = "libre_panel-1.2.3.data"
+    assert files[f"{data}/scripts/libre-panel"] == b"\x7fELF app"
+    assert files[f"{data}/scripts/tools/libre-panel-engine"] == b"\x7fELF engine"
+    assert files[f"{data}/data/lib/libre-panel/libfreetype-1a2b.so.6"] == b"\x7fELF ft"
+    assert files[f"{data}/data/share/libre-panel/themes/a.json"] == b"{}"
+    # (programs by what they start with, wherever the wheel is made: a licence is none)
+    assert modes[f"{data}/scripts/libre-panel"] == modes[f"{data}/scripts/tools/run.sh"] == 0o755
+    assert modes[f"{data}/scripts/tools/licenses/x264.txt"] == 0o644
+    points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
+    assert points == "[console_scripts]\nlibre-panel-plugins = libre_panel.plugin_host:main\n"
+    info = "libre_panel-1.2.3.dist-info"
+    assert files[f"{info}/licenses/THIRD-PARTY-RUST.txt"] == b"MIT"
+    assert files[f"{info}/licenses/x/a.txt"] == b"BSD"
+    metadata = files[f"{info}/METADATA"].decode()
+    assert metadata.endswith("1.2.3\nLicense-File: THIRD-PARTY-RUST.txt\nLicense-File: x/a.txt\n")
+    wheel_meta = files["libre_panel-1.2.3.dist-info/WHEEL"].decode()
+    assert "Root-Is-Purelib: false\n" in wheel_meta
+    assert "Tag: py3-none-manylinux_2_35_x86_64\n" in wheel_meta
+    assert "py3-none-any" not in wheel_meta
+
+    windows = _files(tmp_path / "windows", {
+        "libre-panel.exe": b"MZ app", "LibrePanel.exe": b"MZ windowed", "freetype.dll": b"MZ ft",
+        "tools/libre-panel-engine.exe": b"MZ engine",
+        "sensors/libre-panel-sensors.exe": b"MZ sensors",
+    })  # fmt: skip
+    made = platform_wheel.build(pure, windows, [], "win_amd64", tmp_path / "out")
+    assert made.name.startswith("libre_panel-1.2.3-")  # (a licence's name is not the wheel's)
+    assert made.name == "libre_panel-1.2.3-py3-none-win_amd64.whl"
+    assert made.name.endswith("-win_amd64.whl")  # (WHEEL_ENDING on Windows)
+    files, modes = _checked(made)
+    assert files[f"{data}/data/libre-panel/libre-panel.exe"] == b"MZ app"
+    assert files[f"{data}/data/libre-panel/sensors/libre-panel-sensors.exe"] == b"MZ sensors"
+    assert files[f"{data}/data/libre-panel/tools/libre-panel-engine.exe"] == b"MZ engine"
+    assert not any(name.startswith(f"{data}/scripts/") for name in files)
+    assert modes[f"{data}/data/libre-panel/libre-panel.exe"] == 0o755
+    assert modes[f"{data}/data/libre-panel/freetype.dll"] == 0o644
+    points = files["libre_panel-1.2.3.dist-info/entry_points.txt"].decode()
+    assert points == ("[console_scripts]\n" + platform_wheel.LAUNCHER
+                      + "\nlibre-panel-plugins = libre_panel.plugin_host:main\n")  # fmt: skip
+    from libre_panel import launch
+
+    assert (launch.FOLDER, "libre-panel.exe") == ("libre-panel", windows.joinpath(
+        "libre-panel.exe").name)  # fmt: skip
+    assert platform_wheel.LAUNCHER == "libre-panel = libre_panel.launch:main"
+
+
+def test_pip_installs_the_linux_wheel_as_the_app_looks_for_its_files(tmp_path):
+    """pip puts the programs in the environment's bin (folders kept: the engine in bin/tools),
+    the libraries in lib/libre-panel beside it and Libre Panel's files in share/libre-panel,
+    where rust/app looks for each: home.rs, name_own_libraries, the engine's tools. (Into a
+    folder of its own, and --ignore-installed: an install into a prefix would otherwise
+    take a Libre Panel installed where the tests run out of it.)"""
+    import subprocess
+
+    pytest = __import__("pytest")
+    if subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True).returncode:
+        pytest.skip("no pip here")
+    platform_wheel = load("platform_wheel", PACKAGING / "platform_wheel.py")
+    pure = _pure_wheel(tmp_path)
+    programs = _files(tmp_path / "programs", {
+        "libre-panel": b"\x7fELF app", "tools/libre-panel-engine": b"\x7fELF engine",
+    })  # fmt: skip
+    lib = _files(tmp_path / "lib", {"libjpeg-9c8d.so.62": b"\x7fELF jpeg"})
+    made = platform_wheel.build(pure, programs, sorted(lib.iterdir()),
+                                "manylinux_2_35_x86_64", tmp_path / "out")  # fmt: skip
+    prefix = tmp_path / "prefix"
+    done = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-deps", "--no-index", "--no-compile",
+         "--disable-pip-version-check", "--ignore-requires-python", "--ignore-installed",
+         "--prefix", str(prefix), str(made)],  # fmt: skip
+        capture_output=True, text=True,
+    )  # fmt: skip
+    if "is not a supported wheel on this platform" in done.stderr:
+        pytest.skip("not a Linux x86-64 with glibc 2.35 or newer")
+    assert done.returncode == 0, done.stderr
+    bin_ = prefix / "bin"
+    assert (bin_ / "libre-panel").read_bytes() == b"\x7fELF app"
+    assert os.access(bin_ / "libre-panel", os.X_OK)
+    assert (bin_ / "tools" / "libre-panel-engine").read_bytes() == b"\x7fELF engine"
+    assert (prefix / "lib" / "libre-panel" / "libjpeg-9c8d.so.62").is_file()
+    assert (prefix / "share" / "libre-panel" / "themes" / "a.json").is_file()
+    assert (bin_ / "libre-panel-plugins").is_file()
+    assert len(list(prefix.glob("lib/python*/site-packages/libre_panel/__init__.py"))) == 1
+
+
+def test_the_windows_command_runs_the_app_of_its_environment(tmp_path, monkeypatch):
+    """libre_panel/launch.py: the app in ``libre-panel`` of the environment, else where the
+    package's list of files says (a user's install); run with the arguments given."""
+    from types import SimpleNamespace
+
+    from libre_panel import launch
+
+    app = tmp_path / "env" / "libre-panel" / launch.PROGRAM
+    app.parent.mkdir(parents=True)
+    app.write_bytes(b"app")
+    monkeypatch.setattr(launch.sys, "prefix", str(tmp_path / "env"))
+    assert launch.program() == app
+    # a user's install: not under the environment, found from the package's files
+    monkeypatch.setattr(launch.sys, "prefix", str(tmp_path / "elsewhere"))
+    listed = SimpleNamespace(name=launch.PROGRAM, parent=SimpleNamespace(name="libre-panel"),
+                             locate=lambda: app)  # fmt: skip
+    other = SimpleNamespace(name="x.py", parent=SimpleNamespace(name="libre_panel"),
+                            locate=lambda: tmp_path)  # fmt: skip
+    import importlib.metadata
+
+    monkeypatch.setattr(importlib.metadata, "distribution",
+                        lambda name: SimpleNamespace(files=[other, listed]))  # fmt: skip
+    assert launch.program() == app
+    monkeypatch.setattr(importlib.metadata, "distribution",
+                        lambda name: SimpleNamespace(files=[other]))  # fmt: skip
+    with __import__("pytest").raises(SystemExit, match="not here"):
+        launch.program()
+    monkeypatch.setattr(launch.sys, "prefix", str(tmp_path / "env"))
+    monkeypatch.setattr(launch.sys, "argv", ["libre-panel", "render", "--demo"])
+    ran = []
+    monkeypatch.setattr(launch.os, "execv", lambda path, args: ran.append(("exec", path, args)))
+    monkeypatch.setattr(launch.subprocess, "call", lambda args: ran.append(("call", args)) or 3)
+    result = launch.main()
+    if launch.os.name == "nt":
+        assert result == 3 and ran == [("call", [str(app), "render", "--demo"])]
+    else:
+        assert ran[0] == ("exec", app, [str(app), "render", "--demo"])
+
+
+def test_ci_builds_and_tries_both_wheels_and_the_release_carries_them():
+    """Both wheels are built in the jobs that build the downloads, installed into an
+    environment of their own and tried (a frame, the version, the engine, the plugin host);
+    the release attaches them, not the Python package's own, and nothing goes to PyPI."""
+    ci = read(".github", "workflows", "ci.yml")
+    for name, platform in (("appimage", "-o dist"), ("try", "--platform win_amd64 -o dist")):
+        steps = job(ci, name)
+        made = steps.index("python packaging/platform_wheel.py")
+        assert platform in steps[made : made + 200], name
+        tries = ("render --demo --theme lumen", '"$app" version', 'grep "engine here"',
+                 'python packaging/check_plugin_host.py --app "$app"')  # fmt: skip
+        for tried in tries:
+            assert made < steps.index(tried, made), (name, tried)
+    assert "name: wheel-linux" in job(ci, "appimage") and "name: wheel-windows" in job(ci, "try")
+    assert '! -iname "ffmpeg*"' in job(ci, "try") and '! -name "ffmpeg*"' in job(ci, "appimage")
+    release = read(".github", "workflows", "release.yml")
+    assert "python-package" not in release
+    for name in ("libre-panel-rust-setup", "libre-panel-rust-appimage", "wheel-linux",
+                 "wheel-windows"):  # fmt: skip
+        assert f"name: {name}\n" in job(release, "github-release"), name
+    assert "pypi" not in release.lower()
+    assert "py3-none-win_amd64.whl" in job(release, "github-release")
+
+
+# -- Waveshare's udev rule ------------------------------------------------------------------------
+
+
+RULES = Path(__file__).parents[1] / "data/assets/60-libre-panel.rules"
+
+
+def test_the_udev_rule_gives_the_display_s_interfaces_to_cdc_acm(tmp_path):
+    """Units with the placeholder ids are taken by usbtouchscreen; once it has the display's
+    data interface (class 0a, which no touchscreen has), both go to cdc_acm. The rule's command
+    is run here as udev runs it (its %k, %% and $$ replaced), on a folder for /sys."""
+    text = RULES.read_text(encoding="utf-8")
+    line = next(line for line in text.splitlines() if "RUN+=" in line)
+    for part in ('DRIVER=="usbtouchscreen"', 'ATTRS{idVendor}=="1234"', 'ATTRS{idProduct}=="5678"',
+                 'ATTR{bInterfaceClass}=="0a"', 'ENV{DEVTYPE}=="usb_interface"'):  # fmt: skip
+        assert part in line
+    assert 'SUBSYSTEM=="tty", ATTRS{idVendor}=="1234", ATTRS{idProduct}=="5678"' in text
+    if sys.platform == "win32":
+        pytest.skip("runs a shell")
+    command = re.search(r'RUN\+="(.*)"\s*$', line).group(1)
+    replaced = re.sub(r"%k|%%|\$\$", lambda m: {"%k": "8-6.3:1.1", "%%": "%", "$$": "$"}[m[0]],
+                      command)  # fmt: skip
+    drivers = tmp_path / "drivers"
+    for name in ("usbtouchscreen", "cdc_acm"):
+        (drivers / name).mkdir(parents=True)
+    (drivers / "usbtouchscreen" / "8-6.3:1.0").write_text("")  # it has the control interface too
+    script = re.match(r"/bin/sh -c '(.*)'$", replaced).group(1)
+    # (each write to a file of /sys is one of its own: here they are kept one after the other)
+    script = script.replace("/sys/bus/usb/drivers", str(drivers)).replace("> ", ">> ")
+    subprocess.run(["/bin/sh", "-c", script], check=True)
+    assert (drivers / "usbtouchscreen" / "unbind").read_text() == "8-6.3:1.0" + "8-6.3:1.1"
+    assert (drivers / "cdc_acm" / "bind").read_text() == "8-6.3:1.0"
+
+
+# -- the mark of the internet ---------------------------------------------------------------------
+
+
+def test_the_dotnet_sensor_service_lets_dotnet_load_marked_libraries_too():
+    config = Path(__file__).resolve().parent.parent / "sensorhost" / "App.config"
+    node = ET.parse(config).getroot().find("runtime/loadFromRemoteSources")
+    assert node is not None and node.get("enabled") == "true"

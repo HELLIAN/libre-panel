@@ -10,7 +10,7 @@ my-theme/
     Inter-Regular.ttf
 ```
 
-Built-in themes live in `src/libre_panel/themes/`; your own go into the user
+Built-in themes live in `data/themes/`; your own go into the user
 themes folder (`libre-panel config path` shows the config folder, themes are in
 its `themes/` subfolder), and so do the themes you import or install from the
 community ([Sharing a theme](#sharing-a-theme)). A user theme with the same name as a
@@ -39,6 +39,7 @@ short). Every theme moves to any other panel from the panel button at the top of
 | **Column** | 3.5" portrait | the clock, a row per resource and the network |
 | **Pico** | 0.96" (160×80) | CPU with its temperature, and memory |
 | **Companions** | a panel beside the first, 9.2" either way up and 12.3" | Lumen Companion (every core, the temperatures with the fans, the drives, the processes), Arena Companion, Encore Companion and Almanac Companion: what the first panel's screen leaves out, while it leaves out what they show ([more panels at once](CONFIGURATION.md#more-panels-at-once)) |
+| **Lumen v2, Arena v2, Encore v2** | every size and version Lumen, Arena and Encore have, the companions too | the same screens over a light that drifts slowly across all your panels as one, cool at rest and warmer under load (*The light flows*, *The light follows the load*), their cards a little more see-through so it shows; Encore v2's light takes the colours of the cover that plays, in place of the blurred cover |
 | **High Contrast** | every size from 2.1" to 12.3", upright too | white on black in very large digits, to read from across the room: the temperatures of the processor and the graphics card, orange when warm and red when hot, and the time |
 
 Also built in: the round report after a game ([Libre Panel's screens](#libre-panels-screens)).
@@ -81,6 +82,22 @@ Also built in: the round report after a game ([Libre Panel's screens](#libre-pan
   panel would otherwise show its few levels as stripes (Libre Panel's own themes keep the
   editor's dot grid as their `image` over `["#0A0E13", "#06090D"]`). A gradient baked into
   the picture keeps its levels as it has them.
+- Optional: `background.field` puts a light under the theme: soft pools of light that drift
+  slowly across all the panels standing together, as one (each panel shows its part of it,
+  where it stands in *Settings → More panels*; by itself, its own size), calm and cool at rest,
+  warmer and brighter while the computer works (the higher of the CPU's and the GPU's load over
+  the last ten readings).
+  `{"look": "lumen", "moves": "switch.light_flows", "load": "switch.light_load"}`: `look` is
+  `lumen` or `arena` (the pools in the CPU, GPU and memory colours of Lumen's or Arena's look);
+  `moves` and `load` are conditions as a widget's `needs`, under which it drifts and follows the
+  load (always, where left out); `"colours": "@media.cover"` gives the pools that picture's
+  colours while it is there (its three that carry it most, as bright as they can be, the light
+  stronger), gliding over two seconds from one picture's colours to the next. The light is the
+  ground: `color` is what it shines on, and an `image` or `gradient` is not drawn under it.
+  It is made at an eighth of the panel, 6.25 times a second, and moves only where the frames
+  stream to the panel (video mode); on a panel sent a whole picture at each change it stands
+  and takes each reading's load. Lumen v2, Arena v2 and Encore v2 are made with it
+  (`python tools/themes_v2.py --write` makes them from Lumen's, Arena's and Encore's versions).
 - `font` is the default for all text; `builtin:Barlow-Regular`, `-Medium`,
   `-SemiBold`, `-Bold`, `builtin:BarlowCondensed-Medium`, `-SemiBold`,
   `builtin:JetBrainsMono-Medium`, `-Bold`, `builtin:LiberationSans-Regular`,
@@ -114,6 +131,19 @@ Also built in: the round report after a game ([Libre Panel's screens](#libre-pan
   `"per_frame": true` (older themes) means a point a pixel apart, `w / 25`
   seconds. Without video mode a graph shows `history` readings. While its
   sensor has no value, a graph in video mode moves on with a gap.
+- Optional: `animation.shine` names the kinds of moving light the theme shows, of
+  `"rings"`, `"graphs"`, `"music"`, `"downloads"` and `"sun"` (`["rings", "sun"]`);
+  `true` or left out: all of them, `false`: none. The light falls on the widgets as
+  they are: a ring gauge's end breathes in its colour and a light runs along its
+  arc (past 80 % its end glows wider), a graph's newest point beats once a reading,
+  an album cover (`"src": "@media.cover"`, not blurred) glows round about in its own
+  colours while a track plays, with three bars after the `media.state` text and a
+  light on the `media.progress` bar, a download's progress has a sheen, and a
+  `sunpath` sun or moon glows with a glint along the day gone. The user turns each
+  kind on or off (`[shine]`, *Settings → Panel → Moving light*); a panel shows the
+  kinds both allow. It costs little: each light is made once per strength (12) and
+  only laid anew where it moves; a widget turned with `rotate` has none, and a calm
+  panel or the editor's pictures none at all.
 - Optional: `"collection"` names a set the theme belongs to (themes made to
   go together), and galleries keep the set apart, at their end. Leave it out
   for a theme on its own.
@@ -329,8 +359,7 @@ faces away darker. `"flat"` is the default and draws as ever.
   single-band ridge.
 
 Every shape is built once per font, size and colour and kept, so a gliding
-bar or a changing number costs no more than a flat one (`tools/motion_bench.py
---finish facet` compares).
+bar or a changing number costs no more than a flat one.
 
 The milled groove a value lies in is there for other finishes to use, in
 `libre_panel.render.facets`: `groove_bar(w, h, color, vertical=False)` and
@@ -605,7 +634,7 @@ processor's name, temperature and power; 3×1 or 2×2 a history graph.
 | `mic` | whether the microphone is muted: the crossed symbol and "Muted" in the critical colour while it is, calm while it is on, "No microphone" where there is none (`audio.mic.muted`) | |
 | `power` | the watts the PC draws now; the energy of today and of the month and what they cost, where there is room; the history when long ([Power use](CONFIGURATION.md#power-use)) | |
 | `ups` | the battery of the UPS in large numbers; its runtime, load, power and state where there is room; the history when long ([the UPS](CONFIGURATION.md#more-sensor-sources)) | |
-| `ai` | what Claude Code and Codex do: the sign of each (working, waiting for you, idle, not running), the tool at work or the model, what the session is called where there is room for it, and the plan's limits of five hours and of the week with the time until they begin anew; side by side when wide; of both, while one is not running, the other alone across the module; one alone (Claude Code) also how full its context is ([AI activity](CONFIGURATION.md#ai-activity)) | `agent` (`both`, `claude` or `codex`) |
+| `ai` | what Claude Code and Codex do: the sign of each (working, waiting for you, idle, not running), the tool at work or the model, what the session is called where there is room for it, and the plan's limits of five hours and of the week with the time until they begin anew; side by side when wide; of both, while one is not running, the other alone across the module; one alone (Claude Code) also how full its context is; `local`: a model server of your own (llama.cpp's, Ollama) with its model and the tokens of the day ([AI activity](CONFIGURATION.md#ai-activity), [a model server of your own](CONFIGURATION.md#a-model-server-of-your-own)) | `agent` (`both`, `claude`, `codex` or `local`) |
 | `playback` | the playback card of SPUR II's Studio screen: cover, state, title, artist, app and progress ([Cards](#cards)); the music module where it is small | |
 | `forecast` | the weather card of the Studio screen: a moving symbol, the temperature and the day's range, the details, the rain and the sun, the next hours ([Cards](#cards)); the weather module where it is small | |
 | `download` | the download card: the Studio's inset for a download ([Cards](#cards)); "No download running" otherwise | |
@@ -779,13 +808,14 @@ theme's own frames are cards; what is on them stays as it is. Libre Panel's
 own themes let a little of it through, just enough to be seen (Terra 0.6, Lumen,
 Almanac and Nimbus 0.7, Arena and the round report 0.8, Studio and Agents 0.85,
 Encore 0.9, whose cards lie over the cover; the contrast of the text against
-what is behind it falls by 3 % at most); High Contrast covers it.
+what is behind it falls by 3 % at most), the v2 screens more, so their light shows (Lumen v2
+0.58, Arena v2 0.68, Encore v2 0.78); High Contrast covers it.
 The person's `card_opacity` in config.toml (*Settings → Panel → Card
 opacity*) holds for every theme and goes before the theme's. The editor's
 looks (Arctic, Libre, Neon, Graphite, Paper, Sunset, Mono, High Contrast) set
 palette and style in one go.
 
-**One design.** The looks are in `src/libre_panel/design.py`, and with them the
+**One design.** The looks are in `rust/theme/src/design.rs`, and with them the
 look each family of built-in themes wears and what it has of its own: Lumen,
 Encore, Almanac, Nimbus, Terra (its accent the blue of the sea), Libre Default,
 Column, Orbit, Slate and Pico wear Libre, the app's own colours; Arena, the round
@@ -914,9 +944,15 @@ kept.
 | `{value:duration}` | `3d 5h` |
 | `{value:clock}` | `3:07` (a song's length) |
 | `{value:gb}` | `13.5` (a size in GB, whatever unit the reading comes in) |
+| `{value:mb} MB/s`, `{value:mb} MB` | `2.4` and `6234` (a rate or a size in MB, whatever unit the reading comes in: of a count of bytes the MB `{value:bytes}` says, a decimal below 100) |
 | `{value:rate}` and `{value:rate_unit}` | `519` and `KB/s`, from 1 MB/s `1.2` and `MB/s` (a data rate: the number and its unit apart, so each can have its own font) |
+| `{value:count}` | `987`, `48.2k`, `2.4M` (a count said short, the same in every language: in thousands and millions from a thousand on, a decimal below 100) |
 | `{value:upper}` | `ROUND REPORT` (a text in capitals; `{label:upper}` does so for a reading's name) |
 | `{label}: {value:.0f}` | `CPU load: 38` |
+
+Where the app says amounts of data in MB alone (`data_unit = "mb"`, Settings → Panel →
+Amounts of data), `{value:bytes}` says a count of bytes in MB (`0.4 MB`, `2400 MB`) and
+`{value:rate}` with `{value:rate_unit}` a rate in MB/s; a reading that comes in GB stays in GB.
 
 For safety, attribute or index access (`{value.x}`, `{value[0]}`), other field
 names and huge widths are rejected; the widget then shows its `fallback`.
@@ -937,7 +973,7 @@ names and huge widths are rejected; the widget then shows its `fallback`.
 | `mem.temp`, `mem.speed` | °C, MT/s | the memory: the temperature of its hottest module (from the module's own thermal sensor, DDR4 and DDR5: LibreHardwareMonitor with administrator rights and the PawnIO driver as for the CPU's temperature; on Linux the `spd5118` and `jc42` drivers) and the speed it runs at (the firmware's SMBIOS table, the slowest module's: see [Configuration](CONFIGURATION.md#hardware-names)) |
 | `disk.load`, `disk.used`, `disk.total`, `disk.read`, `disk.write` | %, GiB, B/s | psutil |
 | `net.down`, `net.up` | B/s | psutil |
-| `fan.<device>.<name>`, `temp.<device>.<name>` | RPM, °C | every fan and temperature: the `linux` source (`temp.k10temp.tctl`, `temp.nvme.composite`, `fan.amdgpu.0`, and the mainboard's fans as `fan.lpc.fan_1` ...), LibreHardwareMonitor (e.g. `temp.cpu.package`, `fan.gpu.gpu_fan_1`) |
+| `fan.<device>.<name>`, `temp.<device>.<name>` | RPM, °C | every fan and temperature: the `linux` source (`temp.k10temp.tctl`, `temp.nvme.composite`, `fan.amdgpu.0`, and the mainboard's fans as `fan.lpc.fan_1` ...), LibreHardwareMonitor (e.g. `temp.cpu.package`, `fan.gpu.gpu_fan_1`), Dell Command \| Monitor on Dell PCs (`fan.dell.processor_fan`, the [`dell` source](CONFIGURATION.md#more-sensor-sources)) |
 | `cpu.core.<n>.load` | % | each core (thread), from 1; ten times a second from `load`, over the last 0.3 s |
 | `cpu.pcore.<n>.load` | % | each physical core, the mean of its threads; from `load`, where a core has two and Windows or Linux tells which |
 | `disk.<n>.name`, `.load`, `.used`, `.free`, `.total` | text, %, GiB | each drive, the system drive first |
@@ -967,7 +1003,7 @@ names and huge widths are rejected; the widget then shows its `fallback`.
 | `game.time` | s | how long the game has been played, each second, from when its program started (where that can be told, else from when it was found); from the `game` service, while it finds the game. `{value:clock}` shows it as 1:07:32 |
 | `session.time`, `session.fps`, `session.level.<n>`, `session.<peak>_max` | s, fps, %, °C / W / GB | the game being played, added up while it is: how long, the mean frame rate, the share of the time at each frame-rate range, the highest temperature, power and video memory since it began; published by the `memory` service ([Plugins](PLUGINS.md#the-round-under-way)) |
 | `cpu.name`, `gpu.name`, `mem.name` | text | the names of the processor, graphics card and memory, shortened for a panel ("Ryzen 5 7600", "GeForce RTX 4070", "Kingston DDR5-5600 32 GB"; `mem.name` is the size, "32 GB", where the modules cannot be read): found by Libre Panel itself, or the text you give under `[hardware]`, see [Configuration](CONFIGURATION.md#hardware-names); LibreHardwareMonitor's two fill in where nothing is found |
-| `weather.temperature`, `.apparent_temperature`, `.humidity`, `.wind_speed`, `.code`, `.description`, `.is_day` | °C, %, km/h | Open-Meteo, when enabled |
+| `weather.temperature`, `.apparent_temperature`, `.humidity`, `.wind_speed`, `.code`, `.description`, `.is_day` | °C, %, km/h | Open-Meteo or OpenWeatherMap, when enabled |
 | `weather.hour.<n>.temperature`, `.code`, `.rain`, `.day`, `.time` | °C, %, 1/0, "15:00" | the hour `n` hours ahead (1 = the next full hour, up to 24) |
 | `weather.day.<n>.high`, `.low`, `.code`, `.rain`, `.name` | °C, % | day `n` (0 = today, up to 6); `name` is "Today" or the short weekday |
 | `weather.rain.minutes`, `weather.rain.text` | min, text | the rain of the next two hours: `minutes` counts to the rain starting (dry now) or stopping (raining now), and is absent when neither happens in those two hours; `text` says it in the language: "Rain in 20 min", "Rain stops in 40 min", "No rain for the next 2 h" |
@@ -1038,6 +1074,8 @@ To share yours with everyone: *Share with everyone…* (the globe on its card, o
 themes) asks what it is called, who made it and what it shows, saves it as a `.zip` and opens
 GitHub's *Share a theme* form, filled in, for the file to be dragged in. A workflow checks it
 in a job that may write nothing, draws its picture with the demo readings and opens the pull
-request; someone looks at it before it is merged. By hand: export it, add the zip and a
+request; someone looks at it before it is merged. A new version of one that is listed already:
+share it the same way and write the listed theme's name under *Replaces*; it then takes that
+one's place in the list instead of being added beside it. By hand: export it, add the zip and a
 picture under `community/themes/` in a pull request, with an entry in `index.json`. How, and
 the format of the list, are in [community/themes/README.md](../community/themes/README.md).

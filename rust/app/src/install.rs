@@ -507,7 +507,7 @@ impl Install {
         let version = latest
             .map(|latest| text(latest, "version"))
             .unwrap_or_default();
-        let Some(latest) = latest.filter(|_| newer(&version, lp_py::VERSION)) else {
+        let Some(latest) = latest.filter(|_| newer(&version, crate::updates::running())) else {
             return Err(t("There is no newer version to update to."));
         };
         let asset =

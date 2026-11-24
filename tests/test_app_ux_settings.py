@@ -2,7 +2,9 @@
 needs attention, the plain words of each section, the report of a panel and Status's line. In a
 real browser, as test_app_browser.py; skipped when Playwright or Chromium are missing."""
 
+import contextlib
 import json
+import os
 
 import pytest
 
@@ -18,6 +20,7 @@ from test_app_browser import (  # noqa: E402, F401
     browser_page,
     choose_theme,
     no_setup_card,
+    server_language,
     settings_config,
     unlock_route,
     waits_for,
@@ -44,7 +47,8 @@ def health(page):
 
 HEALTH_OF = """async (facts) => {
   const { healthOf } = await import("/app/views/settings/health.js");
-  const base = { app: { available: true, panel: { state: "showing", stats: {} } }, themes: [],
+  const panel = { state: "showing", on_panel: true, stats: {} };
+  const base = { app: { available: true, panel }, themes: [],
     panelInfo: null, unlockInfo: null, settings: null, settingsError: null, sourceStates: null,
     serviceStates: null, clipQuestion: null };
   const { ready, items, good } = healthOf({ ...base, ...facts });
@@ -93,8 +97,11 @@ def test_the_overview_tells_each_thing_with_what_mends_it(app_url):  # noqa: F81
         waiting = {"available": True, "panel": {"state": "waiting", "stats": {}}}
         missing = [["no-panel", "warn", "Report a panel"]]
         assert of(panelInfo=PANEL, app=waiting)["items"] == missing
-        # (a panel the background app shows a theme on is there, whatever the bus said here)
+        # (a panel the background app's frames go to is there, whatever the bus said here)
         assert of(panelInfo=PANEL)["items"] == []
+        # (the PNG file that stands in for one is no panel)
+        on_file = {"available": True, "panel": {"state": "showing", "on_panel": False, "stats": {}}}
+        assert of(panelInfo=PANEL, app=on_file)["items"] == missing
         chosen = {**found, "model": {**TURING, "id": "turing-8.8-usb", "label": 'Turing 8.8"'}}
         assert of(panelInfo=chosen)["items"] == [["other-panel", "warn", "Use the Turing 9.2″"]]
         # the panel paused, or stopped with a fault
@@ -193,12 +200,11 @@ def test_the_overview_mends_what_it_can_with_one_click(
     """Settings opens on the overview: another panel than the one chosen is mended with one
     click, a theme that shows the weather leads to the place, and the count beside the overview
     says how much is left while another section is open."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     choose_theme(isolated_home, "nimbus")
     set_config_value("device.model", "turing-8.8-usb")
     routes = {"**/api/app": a_panel_app()}  # the app runs: no "not in the background"
@@ -242,12 +248,11 @@ def test_the_overview_says_all_good_calmly_and_the_short_form_says_nothing(
     isolated_home,
     monkeypatch,
 ):
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     choose_theme(isolated_home, "almanac")  # (no weather on it)
     set_config_value("video.local_clip", "usr/data/standby.h264")
     with browser_page(
@@ -260,6 +265,39 @@ def test_the_overview_says_all_good_calmly_and_the_short_form_says_nothing(
         page.wait_for_function("window.libre.store.get().serviceStates !== null")
         page.wait_for_timeout(500)
         assert page.locator("#short-form").inner_text() == ""  # nothing while all is well
+
+
+def test_a_panel_the_app_draws_on_is_connected_though_no_search_finds_it(
+    app_url,  # noqa: F811
+    isolated_home,
+    monkeypatch,
+):
+    """The JONSBO DS339 chosen by hand (a USB display chip no search finds) while the app's
+    frames go to it: the overview and Settings → Panel say it is connected, nothing that it is
+    not."""
+    from test_app_browser import panel_on_the_bus
+
+    from libre_panel.config import set_config_value
+
+    panel_on_the_bus(monkeypatch)  # the search finds none
+    set_config_value("device.model", "jonsbo-ds339")
+
+    def driven(route, request):
+        answer = route.fetch().json()
+        assert answer["found"] is None
+        answer["running"] = {"state": "showing", "detail": "", "size": [376, 960], "more": [],
+                             "on_panel": True}  # fmt: skip
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
+
+    routes = {"**/api/app": a_panel_app(target="JONSBO DS339"), "**/api/panel": driven}
+    with browser_page(app_url, "settings/overview", routes=routes, allow=PICTURE) as page:
+        glance = page.locator("[data-glance='panel']")
+        expect(glance).to_contain_text("DS339")
+        expect(glance).to_contain_text(", connected")
+        expect(page.locator("[data-health='no-panel']")).to_have_count(0)
+        page.goto(f"{app_url}#/settings/panel")
+        expect(page.locator(".panel-found-name")).to_contain_text("DS339")
+        expect(page.locator(".panel-found-detail")).to_contain_text("Connected")
 
 
 # The short form of the card, as Start is to show it, drawn into a box of its own.
@@ -279,7 +317,7 @@ def test_the_short_form_lists_what_needs_attention_with_its_clicks(
     monkeypatch,
 ):
     """For Start: what needs attention (no suggestions), each with its click."""
-    from test_editor_settings import panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     panel_on_the_bus(monkeypatch)  # none
     choose_theme(isolated_home, "nimbus")
@@ -301,10 +339,9 @@ def test_the_short_form_lists_what_needs_attention_with_its_clicks(
 
 
 def test_the_overview_speaks_german(app_url, isolated_home):  # noqa: F811
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "nimbus")
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "settings", allow=PICTURE) as page:
         expect(page.locator("#settings-title")).to_have_text("Übersicht")
         page.wait_for_selector("[data-health='background']")
@@ -324,7 +361,7 @@ def test_the_overview_speaks_german(app_url, isolated_home):  # noqa: F811
 def test_report_a_panel_is_three_steps_with_what_is_connected_listed(app_url, monkeypatch):  # noqa: F811
     """The app lists what is connected itself (no command to run for it), says how to run the
     doctor step by step, and the form opens with the list filled in."""
-    from test_editor_settings import panel_on_the_bus, plugged_in
+    from test_app_browser import panel_on_the_bus, plugged_in
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
     plugged_in(monkeypatch, usb=[{"vid": "1cbe", "pid": "0092"}])
@@ -372,6 +409,7 @@ NEWER = {
     "published": "2026-11-01T10:00:00Z",
     "asset": {"name": SETUP_FILE, "url": FILES_OF + SETUP_FILE, "size": 100_000_000},
     "sums": FILES_OF + "SHA256SUMS",
+    "wheel": "",
 }
 
 
@@ -388,9 +426,9 @@ class InstallRoute:
     download would), and what a POST makes of it (``answers``: by its action)."""
 
     def __init__(self, **answers):
-        from libre_panel.editor.updates import IDLE
-
-        self.idle = {**IDLE}
+        # (the state before anything is fetched, as the app's install.rs says it)
+        self.idle = {"state": "idle", "version": "", "how": "", "file": "", "where": "",
+                     "done": 0, "total": 0, "checked": False, "error": ""}  # fmt: skip
         self.state, self.answers, self.posts = self.idle, answers, []
 
     def at(self, state, **more):
@@ -468,13 +506,20 @@ def test_the_linux_tarball_is_downloaded_and_its_folder_shown(app_url):  # noqa:
 
 
 def test_installed_with_pip_about_gives_the_command_and_no_button(app_url):  # noqa: F811
-    pip = {**NEWER, "download": "", "asset": None, "sums": ""}
+    wheel = FILES_OF + "libre_panel-9.1.0-py3-none-manylinux_2_35_x86_64.whl"
+    pip = {**NEWER, "download": "", "asset": None, "sums": "", "wheel": wheel}
     routes = {"**/api/update*": newer_out("python", pip)}
     with browser_page(app_url, "settings/about", routes=routes) as page:
         row = page.locator("[data-about-update]")
-        expect(row.locator("code")).to_contain_text("libre-panel@v9.1.0")
+        expect(row.locator("code")).to_have_text(f'pipx install --force "libre-panel @ {wheel}"')
         expect(row.get_by_role("button", name="Update to 9.1.0")).to_have_count(0)
         expect(row.get_by_role("link", name="What is new")).to_be_visible()
+    # a release without a wheel for this platform: no command, the page
+    routes = {"**/api/update*": newer_out("python", {**pip, "wheel": ""})}
+    with browser_page(app_url, "settings/about", routes=routes) as page:
+        row = page.locator("[data-about-update]")
+        expect(row.get_by_role("link", name="What is new")).to_be_visible()
+        expect(row.locator("code")).to_have_count(0)
 
 
 def test_start_s_card_of_the_new_version_has_the_button_too(app_url, isolated_home):  # noqa: F811
@@ -500,11 +545,9 @@ def test_smooth_motion_asks_for_the_clip_and_takes_the_panels_own_name_on_a_clic
     """Settings → Panel calls the video mode smooth motion; while it lacks the standby clip's
     name the row offers the one the panel's own app gives it (written only on the click), and
     once it is set the name is under Advanced, which an address opens."""
-    from test_app_browser import radio
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel") as page:
         expect(page.locator(".settings-lead")).to_contain_text("smooth motion")
         card = page.locator("#panel-video")
@@ -548,8 +591,7 @@ def test_a_turzx_usb_panel_takes_its_stills_as_chosen_under_advanced(
     """Settings → Panel → Advanced: how a TURZX USB panel takes its stills, automatic (JPEG on
     the 5.2", which shows no PNG), PNG or JPEG, written on the click; a serial panel has no
     such row."""
-    from test_app_browser import radio
-    from test_editor_settings import panel_on_the_bus
+    from test_app_browser import panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-5.2-usb")
     with browser_page(app_url, "settings/panel/panel-advanced") as page:
@@ -632,13 +674,10 @@ def test_game_mode_and_more_leads_with_game_mode_and_the_place_comes_first(app_u
 
 
 def test_the_sections_speak_german(app_url, monkeypatch):  # noqa: F811
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
-
-    from libre_panel import i18n
+    from test_app_browser import panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "settings/panel") as page:
         card = page.locator("#panel-video")
         expect(card.locator(".settings-row-title").first).to_have_text("Flüssige Bewegung")
@@ -668,8 +707,7 @@ def test_a_udisp_display_has_its_frames_a_second_in_the_app(
     """Waveshare's USB display (#30) takes whole pictures at [video] fps: Settings → Panel
     offers them as for a TURZX panel in video mode, 60 the most, with a word of their own; and
     how much detail its JPEGs keep (#33)."""
-    from test_app_browser import radio
-    from test_editor_settings import panel_on_the_bus
+    from test_app_browser import panel_on_the_bus, radio
 
     from libre_panel.config import edit_config
 
@@ -694,12 +732,11 @@ def test_the_panel_s_fine_tuning_waits_folded_until_it_is_wanted(
     """Settings → Panel: the video experiment and the colour check are for trying things out and
     finding faults, not for setting a panel up, so they wait under one row; it opens on a
     click, and by itself where one of the experiment's settings is not the default."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel") as page:
         fold = page.locator("#panel-tinkering")
         expect(fold).to_contain_text("Fine-tuning for experiments")
@@ -720,11 +757,9 @@ def test_the_video_experiment_writes_each_choice_at_once_and_leads_back(
     """Settings → Panel → Video experiment: the cap, the quality, the speed, the profile, the
     encoder and the keyframes, each written on the click; Status's tiles and the log's lines
     about the video under them; and a way back to what was measured, greyed while it holds."""
-    from test_app_browser import radio
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus, radio
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         expect(card).to_contain_text("Video experiment")
@@ -760,10 +795,9 @@ def test_the_video_experiment_switches_what_the_engine_does(
     """With Libre Panel's engine as the encoder: whether it sends the pictures and whether it
     composes the frames too, each a switch (composing only while it sends), written on the
     click; back to the defaults turns both on again. Other encoders show neither."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         sends = card.get_by_role("switch", name="The engine sends the pictures")
@@ -789,16 +823,15 @@ def test_auto_shows_what_the_engine_does_where_the_download_carries_it(
     app_url,  # noqa: F811
     isolated_home,
     monkeypatch,
+    tmp_path,
 ):
     """Where the download carries Libre Panel's engine, "auto" (the default) encodes with it:
     its switches show with "auto" as with "native"."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
-
-    from libre_panel.devices import h264
+    from test_app_browser import as_download, panel_on_the_bus
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
-    monkeypatch.setattr(h264, "auto_engine", lambda: "/the/download/libre-panel-engine")
+    # (the Rust app's server started as a download has it)
+    as_download(app_url, tmp_path / "download")
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
         expect(card.get_by_role("switch", name="The engine sends the pictures")).to_be_checked()
@@ -815,12 +848,11 @@ def test_the_video_experiment_chooses_the_engines_own_encoder(
     with the panels), x264 or the graphics card's encoder (Windows' Media Foundation), written
     on the click. Off Windows the choice shows only while the card's is set (from the file), to
     set x264 back; back to the defaults is auto again."""
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus
 
     from libre_panel.config import set_config_value
 
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     set_config_value("video.encoder", "native")
     set_config_value("video.engine_encoder", "card")
     with browser_page(app_url, "settings/panel/panel-video-experiment") as page:
@@ -848,14 +880,9 @@ def test_the_video_experiment_runs_every_step_by_itself_on_the_running_app(
     """With the background app: the run tries every step in turn (shortened here), a table
     says the outcome per step and panel (a PNG file takes no video), and the settings from
     before the run (quality 20) are back at the end."""
-    from test_app_browser import radio
-    from test_editor_settings import lacking_ffmpeg, panel_on_the_bus
+    from test_app_browser import panel_on_the_bus, radio
 
-    from libre_panel.editor import experiment
-
-    monkeypatch.setattr(experiment.Experiment, "scale", 0.002)
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    lacking_ffmpeg(monkeypatch, found=True)
     _app, url = background
     with browser_page(url, "settings/panel/panel-video-experiment") as page:
         card = page.locator("#panel-video-experiment")
@@ -870,241 +897,132 @@ def test_the_video_experiment_runs_every_step_by_itself_on_the_running_app(
         expect(card.get_by_role("button", name="Copy the table")).to_be_visible()
 
 
-def colour_check_on(monkeypatch, works=lambda ffmpeg, encoder: False, command=None,
-                    controls=None):  # fmt: skip
-    """Settings → Panel → Check the colours with this machine's ffmpeg; the graphics card's
-    encoders as ``works`` says (none: the same on every machine), the display's ffmpeg command
-    as ``command`` makes it, the running panels as ``controls`` has them (else the app's)."""
-    import shutil
+def colour_check_on(monkeypatch):
+    """Settings → Panel → Check the colours with a 9.2" on the bus."""
+    from test_app_browser import panel_on_the_bus
 
-    from test_editor_settings import panel_on_the_bus
-
-    from libre_panel.devices import h264
-    from libre_panel.editor import server
-    from libre_panel.editor.colours import ColourCheck
-
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        pytest.skip("needs ffmpeg with libx264")
     panel_on_the_bus(monkeypatch, "turing-9.2-usb")
-    monkeypatch.setattr(h264, "find_ffmpeg", lambda configured="": ffmpeg)
-    monkeypatch.setattr(h264, "encoder_works", works)
-
-    def colours(state):
-        if state._colours is None:
-            state._colours = ColourCheck(state.config_path,
-                                         state.controls if controls is None else controls,
-                                         works=works,
-                                         command=command or h264.ffmpeg_command)  # fmt: skip
-        return state._colours
-
-    monkeypatch.setattr(server.EditorState, "colours", colours)
 
 
-def card_s(extra=""):
-    """AMD's encoder with x264 in its place (no card here): its card's way the processor's
-    conversion with ``extra`` filters after it, which the test may change (``.extra``)."""
-    from dataclasses import replace
+@contextlib.contextmanager
+def panel_showing_video(home, config, panel=1):
+    """The Rust app in the background on ``config`` with the simulated 9.2" (test_rust_app.py's
+    Rig, behind the engine's test link) as panel ``panel``, once that shows the engine's
+    video: the address of the app and its API."""
+    from test_app_browser import AppUrl, _rust_env
+    from test_rust_app import Rig, _background, _until
 
-    from libre_panel.devices import h264
-
-    def command(ffmpeg, size, rotate, settings):
-        card = h264.passes_through(settings)
-        if settings.encoder == "h264_amf":
-            settings = replace(settings, encoder="libx264", card=False)
-        found = h264.ffmpeg_command(ffmpeg, size, rotate, settings)
-        if card and command.extra:
-            # (said to be what the stream says, so that an ffmpeg that converts to what its
-            # output is told, as 8.x does, leaves the card's own conversion as it is)
-            at = found.index("-color_range") + 1
-            told = f"setparams=range={found[at]}:colorspace=smpte170m"
-            extra = command.extra.format(range=found[at])
-            found[found.index("-vf") + 1] += f",{extra},{told}"
-        return found
-
-    command.extra = extra
-    return command
-
-
-def panels_running(*encoders):
-    """The running app as the colour card asks it: panel 1 (and the panels beside it) showing
-    video with these encoders, the processor converting."""
-    from types import SimpleNamespace
-
-    def status(encoder):
-        return SimpleNamespace(stats={"streaming": True, "encoder": f"{encoder}, rgb0"},
-                               model="turing-9.2-usb", size=(1920, 480))  # fmt: skip
-
-    first = status(encoders[0])
-    first.more = {n: status(encoder) for n, encoder in enumerate(encoders[1:])}
-    return SimpleNamespace(panel=SimpleNamespace(status=first))
+    home.mkdir(parents=True, exist_ok=True)
+    rig = Rig(home)
+    try:
+        rig.config(config)
+        # (the browser tests' own environment; the panel is the rig's, not one on a test bus)
+        env = {key: value for key, value in _rust_env().items()
+               if key not in ("LIBRE_PANEL_HOME", "LP_TEST_BUS")}  # fmt: skip
+        with _background(rig, **env) as (api, said):
+            check = f"/api/colour-check?panel={panel}"
+            assert _until(lambda: api("GET", check)[1]["video"]), said
+            url = AppUrl(api.url)
+            url.token = api.token
+            yield url, api
+            assert "panicked" not in "".join(said)
+    finally:
+        rig.close()
 
 
 def test_the_colour_check_measures_each_encoder_and_says_who_converts(
     app_url,  # noqa: F811
     monkeypatch,
 ):
-    """One click: every encoder in a row of its own, those of the graphics card that are not
-    here said so, x264's two rows of swatches the same, measured in the panel's range, and with
-    x264 the processor converts; the result copies as text; the picture on the panel and the
-    range's comparison need the background app."""
+    """One click: the engine converts every video's colours itself (colours.rs), so there is no
+    graphics card's conversion to compare, and the card says so."""
     colour_check_on(monkeypatch)
     with browser_page(app_url, "settings/panel/panel-colour-check") as page:
         card = page.locator("#panel-colour-check")
         expect(card.locator("h2")).to_have_text("Check the colours")
         expect(card.get_by_role("button", name="Copy as text")).to_have_count(0)  # nothing yet
         card.get_by_role("button", name="Check the colours").click()
-        x264 = card.locator(".colour-encoder[data-encoder='libx264']")
-        expect(x264).to_have_attribute("data-verdict", "identical", timeout=30000)
-        expect(x264).to_contain_text("Identical")
-        for name in ("h264_amf", "h264_nvenc", "h264_qsv"):
-            block = card.locator(f".colour-encoder[data-encoder='{name}']")
-            expect(block).to_have_attribute("data-verdict", "unavailable")
-            expect(block).to_contain_text("Not available here")
-        rows = x264.locator(".colour-row")
-        expect(rows).to_have_count(2)
-        expect(rows.nth(0)).to_contain_text("Four bytes a pixel")
-        expect(rows.nth(1)).to_contain_text("Three bytes a pixel")
-        expect(rows.nth(0).locator(".colour-swatch")).to_have_count(14)
-        new, old = (rows.nth(i).locator(".colour-swatch").evaluate_all(
-            "cells => cells.map((c) => c.style.background)") for i in (0, 1))  # fmt: skip
-        assert new == old and len(set(new)) == 14  # the same colours, each patch its own
-        expect(card.get_by_text("Measured for limited range (16-235), as panel 1 gets its video."))
-        choice = card.locator(".colour-advice")
-        expect(choice).to_have_attribute("data-why", "x264")
-        expect(choice).to_have_text("The processor converts the colours for x264 (processor).")
-        expect(card.locator(".colour-now")).to_contain_text("x264 (processor)")
-        expect(card.locator(".colour-pick")).to_have_text("Automatic picks x264 (processor).")
-        passed = card.locator("[data-passed='h264_amf']")  # the card's encoder "auto" passed over
-        expect(passed).to_contain_text("AMD (h264_amf) was passed over:")
-        expect(card.get_by_role("button", name="Copy as text")).to_be_visible()
-        expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
-        expect(card.locator(".colour-ab").first).to_contain_text("running in the background")
-        range_ = card.locator(".colour-range")
-        expect(range_).to_have_attribute("data-range", "full")  # (a 9.2" is on the bus)
-        expect(range_.locator(".colour-range-now")).to_have_text(
-            "Panel 1 gets its video in full range (0-255). Automatic: as its model is known "
-            "to show video."
-        )
-        compare = card.get_by_role("button", name="Is black too light on the panel? Compare")
-        expect(compare).to_be_disabled()
-        expect(range_).to_contain_text("running in the background")
-        expect(card.get_by_role("button", name="A looks right")).to_have_count(0)
+        expect(card).to_contain_text("there is no graphics card's conversion to compare",
+                                     timeout=30000)  # fmt: skip
 
 
-def test_the_card_converts_where_the_check_found_it_identical_and_the_processor_where_not(
-    app_url,  # noqa: F811
-    monkeypatch,
-):
-    """AMD's encoder (x264 in its place) converting the card's way as the processor does: the
-    card says the graphics card converts, checked identical on the day; checked again with
-    BT.709 (as AMD's own converter made it), the processor converts and the card says why; a
-    way video.pixels forces comes with the way back to the automatic choice."""
-    from libre_panel.config import edit_config
+def test_the_range_s_a_and_b_on_a_panel_showing_video_and_its_answer(isolated_home):
+    """Panel 1, the simulated 9.2", shows the engine's video: no A/B of a card's conversion
+    (the processor converts either way); *Is black too light on the panel? Compare* shows the
+    test picture in limited (A) and full range (B) on it, one picture at a time, and *B looks
+    right* writes the panel's video_range, the picture ends and the card says the range set."""
+    from test_rust_app import VIDEO
 
-    command = card_s()
-    colour_check_on(monkeypatch, works=lambda ffmpeg, encoder: encoder == "h264_amf",
-                    command=command)  # fmt: skip
-    with browser_page(app_url, "settings/panel/panel-colour-check") as page:
-        card = page.locator("#panel-colour-check")
-        choice = card.locator(".colour-advice")
-        expect(choice).to_have_attribute("data-why", "unchecked")
-        expect(choice).to_contain_text("has not been checked yet")
-        card.get_by_role("button", name="Check the colours").click()
-        amd = card.locator(".colour-encoder[data-encoder='h264_amf']")
-        expect(amd).to_have_attribute("data-verdict", "identical", timeout=30000)
-        expect(amd.locator(".colour-row").nth(0)).to_contain_text("Graphics card")
-        expect(amd.locator(".colour-row").nth(1)).to_contain_text("Processor")
-        expect(choice).to_have_attribute("data-why", "identical")
-        expect(choice).to_contain_text(
-            "The graphics card converts the colours: checked identical on"
-        )
-        expect(card.locator(".colour-now")).to_contain_text("it would start AMD (h264_amf)")
-        # (a new driver, say: BT.709's matrix, the range as it was, whatever ffmpeg's version)
-        command.extra = "scale=in_range={range}:out_range={range}:out_color_matrix=bt709"
-        card.get_by_role("button", name="Check again").click()
-        expect(amd).to_have_attribute("data-verdict", "matrix", timeout=30000)
-        expect(choice).to_have_attribute("data-why", "differs")
-        expect(choice).to_contain_text("The processor converts the colours: the card's differ "
-                                       "(matrix shift, checked on")  # fmt: skip
-        expect(choice).to_contain_text("Largest difference:")
-        edit_config(("value", "video.pixels", "card"))
-        expect(choice).to_have_attribute("data-why", "card", timeout=10000)
-        expect(choice).to_contain_text('video.pixels is "card"')
-        expect(choice).to_contain_text("The check found the card's colours differing")
-        card.get_by_role("button", name="Back to the automatic choice").click()
-        waits_for(page, lambda: settings_config().device.video.pixels == "auto")
-        expect(choice).to_have_attribute("data-why", "differs")
+    with panel_showing_video(isolated_home, VIDEO) as (url, api):
+        with browser_page(url, "settings/panel/panel-colour-check") as page:
+            card = page.locator("#panel-colour-check")
+            expect(card.locator(".colour-now")).to_have_text(
+                "Panel 1 now: Libre Panel's engine, its colours converted on the processor"
+            )
+            expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
+            expect(card.locator(".colour-ab").first).to_contain_text(
+                "the processor converts for it either way, so A and B would be the same"
+            )
+            range_ = card.locator(".colour-range")
+            expect(range_).to_have_attribute("data-range", "full")  # (as a 9.2" shows video)
+            expect(range_.locator(".colour-range-now")).to_have_text(
+                "Panel 1 gets its video in full range (0-255). Automatic: as its model is known "
+                "to show video."
+            )
+            range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
+            expect(range_).to_contain_text("On panel 1: A: limited range (16-235)")
+            show = api("GET", "/api/colour-check?panel=1")[1]["show"]
+            assert (show["running"], show["panel"], show["kind"]) == (True, 1, "range")
+            range_.get_by_role("button", name="B looks right").click()
+            written = isolated_home / "config.toml"
+            waits_for(page, lambda: 'video_range = "full"' in written.read_text(encoding="utf-8"))
+            waits_for(
+                page, lambda: not api("GET", "/api/colour-check?panel=1")[1]["show"]["running"]
+            )
+            expect(range_.locator(".colour-range-now")).to_have_text(
+                "Panel 1 gets its video in full range (0-255). Set for this panel.", timeout=10000
+            )
+            expect(range_.get_by_role("button", name="B looks right")).to_have_count(0)
 
 
-def test_the_colour_check_shows_its_picture_on_the_panel_and_the_range_s_answer_is_written(
-    app_url,  # noqa: F811
-    monkeypatch,
-):
-    """Panel 1 shows video with AMD's encoder: the A/B of the card's conversion against the
-    processor's says A and B with the seconds left, and Stop ends it; *Is black too light on the
-    panel? Compare* shows limited (A) against full range (B), and *B looks right* writes the
-    panel's video_range, the picture ends and the card says the range set."""
-    from libre_panel import colour_show
-
-    colour_check_on(monkeypatch, controls=panels_running("h264_amf"))
-    with browser_page(app_url, "settings/panel/panel-colour-check") as page:
-        card = page.locator("#panel-colour-check")
-        show = card.get_by_role("button", name="Show it on the panel")
-        expect(show).to_be_enabled(timeout=10000)
-        show.click()
-        expect(card.locator(".colour-ab").first).to_contain_text(
-            "On panel 1: A: the card's conversion")  # fmt: skip
-        assert colour_show.now(1) == ("A", "feed", "card")
-        card.get_by_role("button", name="Stop showing it").click()
-        expect(show).to_be_visible(timeout=10000)
-        waits_for(page, lambda: colour_show.state() is None)
-        range_ = card.locator(".colour-range")
-        range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
-        expect(range_).to_contain_text("On panel 1: A: limited range (16-235)")
-        assert colour_show.now(1) == ("A", "range", "limited")
-        expect(show).to_be_disabled()  # (one picture at a time)
-        range_.get_by_role("button", name="B looks right").click()
-        waits_for(page, lambda: settings_config().device.video_range == "full")
-        waits_for(page, lambda: colour_show.state() is None)
-        expect(range_).to_have_attribute("data-range", "full", timeout=10000)
-        expect(range_.locator(".colour-range-now")).to_have_text(
-            "Panel 1 gets its video in full range (0-255). Set for this panel.")  # fmt: skip
-        expect(range_.get_by_role("button", name="B looks right")).to_have_count(0)
-
-
-def test_the_range_s_answer_for_a_panel_beside_the_first_is_its_own(
-    app_url,  # noqa: F811
-    isolated_home,
-    monkeypatch,
-):
-    """Panel 2 chosen at the top, showing video with x264: no A/B of the card's conversion (the
-    processor converts either way), the range's comparison on panel 2, and *A looks right*
-    writes its own video_range, in its [[panels]] table; the first panel's stays automatic."""
-    from libre_panel import colour_show
-
-    isolated_home.mkdir(parents=True, exist_ok=True)
-    isolated_home.joinpath("config.toml").write_text(
-        '[[panels]]\nmodel = "turing-9.2-usb"\nvideo = { mode = "on" }\n', encoding="utf-8"
-    )
-    colour_check_on(monkeypatch, controls=panels_running("h264_amf", "libx264"))
-    with browser_page(app_url, "settings/panel/panel-colour-check") as page:
-        page.wait_for_function("(window.libre.store.get().settings?.config?.panels || []).length")
-        page.evaluate("() => { const s = window.libre.store;"
-                      " s.set({ prefs: { ...s.get().prefs, target: 2 } }); }")  # fmt: skip
-        card = page.locator("#panel-colour-check")
-        expect(card.locator(".colour-now")).to_contain_text("Panel 2 now: x264 (processor)")
-        expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
-        expect(card.locator(".colour-ab").first).to_contain_text("so A and B would be the same")
-        range_ = card.locator(".colour-range")
-        range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
-        expect(range_).to_contain_text("On panel 2: A: limited range (16-235)")
-        assert colour_show.now(2) == ("A", "range", "limited") and colour_show.now(1) is None
-        range_.get_by_role("button", name="A looks right").click()
-        waits_for(page, lambda: settings_config().panels[0].device.video_range == "limited")
-        assert settings_config().device.video_range == "auto"  # the first panel's: its own
-        waits_for(page, lambda: colour_show.state() is None)
-        expect(range_.locator(".colour-range-now")).to_contain_text("Set for this panel.")
+def test_the_range_s_answer_for_a_panel_beside_the_first_is_its_own(isolated_home):
+    """Panel 2 chosen at the top, the simulated 9.2" in [[panels]] showing the engine's video
+    beside a first panel without video: the range's comparison on panel 2 only, and *A looks
+    right* writes its own video_range, in its [[panels]] table; the first panel's stays
+    automatic."""
+    config = ('[device]\ndriver = "virtual"\noutput = ""\n[video]\nfps = 25\n'
+              '[[panels]]\ntheme = "lumen"\ndriver = "turzx"\nmodel = "turing-9.2-usb"\n'
+              'video = { mode = "on", local_clip = "usr/data/clip.h264" }\n')  # fmt: skip
+    with panel_showing_video(isolated_home, config, panel=2) as (url, api):
+        with browser_page(url, "settings/panel/panel-colour-check") as page:
+            page.wait_for_function(
+                "(window.libre.store.get().settings?.config?.panels || []).length"
+            )
+            page.evaluate("() => { const s = window.libre.store;"
+                          " s.set({ prefs: { ...s.get().prefs, target: 2 } }); }")  # fmt: skip
+            card = page.locator("#panel-colour-check")
+            expect(card.locator(".colour-now")).to_have_text(
+                "Panel 2 now: Libre Panel's engine, its colours converted on the processor"
+            )
+            expect(card.get_by_role("button", name="Show it on the panel")).to_be_disabled()
+            range_ = card.locator(".colour-range")
+            range_.get_by_role("button", name="Is black too light on the panel? Compare").click()
+            expect(range_).to_contain_text("On panel 2: A: limited range (16-235)")
+            assert api("GET", "/api/colour-check?panel=2")[1]["show"]["panel"] == 2
+            range_.get_by_role("button", name="A looks right").click()
+            written = isolated_home / "config.toml"
+            waits_for(
+                page, lambda: 'video_range = "limited"' in written.read_text(encoding="utf-8")
+            )
+            device, panels = written.read_text(encoding="utf-8").split("[[panels]]")
+            assert "video_range" not in device  # the first panel's: its own, automatic
+            assert 'video_range = "limited"' in panels
+            waits_for(
+                page, lambda: not api("GET", "/api/colour-check?panel=2")[1]["show"]["running"]
+            )
+            expect(range_.locator(".colour-range-now")).to_contain_text(
+                "Set for this panel.", timeout=10000
+            )
 
 
 def test_live_says_how_the_panel_runs_in_a_calm_sentence(app_url):  # noqa: F811
@@ -1177,6 +1095,24 @@ def test_live_names_things_as_settings_does(app_url, isolated_home):  # noqa: F8
         assert note["y"] >= name["y"] + name["height"] - 1
 
 
+def test_how_the_panel_is_mounted_is_asked_only_where_a_screen_has_a_version_for_it(
+    app_url,  # noqa: F811
+    isolated_home,
+):
+    """How the panel is mounted shows a screen in its version for a bar on end (Lumen Vertical).
+    A 3.5″'s screens are each made one way (Column upright, Libre Default on its side), so there
+    Settings → Panel offered a choice that did nothing; it leaves it out, as Start does."""
+    from libre_panel.config import set_config_value
+
+    choose_theme(isolated_home, "libre-default")
+    mounted = ".settings-row:has-text('How the panel is mounted')"
+    for model, rows in (("turing-3.5", 0), ("turing-9.2-usb", 1)):
+        set_config_value("device.model", model)
+        with browser_page(app_url, "settings/panel") as page:
+            expect(page.get_by_role("switch", name="Upside down")).to_have_count(1)
+            expect(page.locator(mounted)).to_have_count(rows)
+
+
 def test_a_late_read_of_the_settings_does_not_undo_a_click(app_url, isolated_home):  # noqa: F811
     """Settings → Panel reads config.toml as it opens. On a busy machine that answer came after a
     quick click's write and put the old value back: the choice jumped back, and a click on it
@@ -1210,7 +1146,11 @@ def test_a_late_read_of_the_settings_does_not_undo_a_click(app_url, isolated_hom
 
 
 def test_other_programs_get_a_key_and_an_address_once_it_is_switched_on(app_url, isolated_home):  # noqa: F811
-    from libre_panel import notify
+    def read_key():  # (the notify key the app keeps beside config.toml, in notify.json)
+        try:
+            return json.loads((isolated_home / "notify.json").read_text(encoding="utf-8"))["key"]
+        except OSError:
+            return ""
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url, "settings/services") as page:
@@ -1221,15 +1161,15 @@ def test_other_programs_get_a_key_and_an_address_once_it_is_switched_on(app_url,
         waits_for(page, lambda: settings_config().allow_notify is True)
         address = card.locator("[data-notify-address]")
         expect(address).to_contain_text("/api/notify?key=")
-        expect(address).to_contain_text(f"/api/notify?key={notify.read_key()}&text=")
+        expect(address).to_contain_text(f"/api/notify?key={read_key()}&text=")
         expect(card.locator("[data-notify-command]")).to_contain_text('notify "Render finished"')
         card.get_by_role("button", name="Try it").click()  # no background app: it says so
         expect(page.locator(".toast").last).to_contain_text("Not shown")
-        old = notify.read_key()
+        old = read_key()
         card.get_by_role("button", name="New key").click()
         page.locator(".dialog").get_by_role("button", name="New key").click()
         expect(address).not_to_contain_text(old)
-        assert notify.read_key() != old
+        assert read_key() != old
 
 
 def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
@@ -1238,18 +1178,47 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
     tmp_path,
     monkeypatch,
 ):
-    from libre_panel import agents
     from libre_panel.config import set_config_value
 
     home = tmp_path / "user"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    monkeypatch.setattr(agents, "program", lambda name: "/bin/claude" if name == "claude" else None)
-    monkeypatch.setattr(agents, "BOARD", agents.Board())  # (nothing heard from anyone yet)
+    # (the Rust app looks for the program on PATH as it starts, with the page)
+    programs = tmp_path / "bin"
+    programs.mkdir()
+    (programs / "claude").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (programs / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{programs}{os.pathsep}{os.environ.get('PATH', '')}")
     choose_theme(isolated_home, "lumen")
     set_config_value("services.enabled", ["agents"])
     settings = home / ".claude" / "settings.json"
+
+    def written():  # (Claude Code's settings, as the app wrote them)
+        return json.loads(settings.read_text(encoding="utf-8")) if settings.is_file() else {}
+
+    def port_of(text):  # (the port Libre Panel's hooks call, in a text of the settings)
+        import re
+
+        found = re.search(r"127\.0\.0\.1:(\d+)/api/ai/", text)
+        return int(found.group(1)) if found else None
+
+    def port():
+        return port_of(json.dumps(written().get("hooks", {})))
+
+    def told(what, data):
+        """What Claude Code's hook (``what`` "hook") or status line ("status") tells the app:
+        the Rust app's server is sent it as the command written into its settings sends it."""
+        import re
+        import urllib.request
+
+        key = re.search(r"key=([A-Za-z0-9_-]+)", settings.read_text(encoding="utf-8")).group(1)
+        address = f"{app_url}api/ai/{what}?agent=claude&key={key}"
+        sent = urllib.request.Request(address, data=json.dumps(data).encode("utf-8"),
+                                      headers={"Content-Type": "application/json"})  # fmt: skip
+        with urllib.request.urlopen(sent, timeout=10) as answered:
+            answered.read()
+
     with browser_page(app_url, "settings/services") as page:
         card = page.locator("[data-service='agents']")
         expect(card).to_contain_text("AI activity")
@@ -1263,12 +1232,13 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         assert not settings.exists()  # not before it is confirmed
         page.locator(".dialog").get_by_role("button", name="Set up").click()
         expect(claude.get_by_role("button", name="Remove")).to_be_visible()
-        assert agents.installed(agents.read_settings(settings))["status_line"]
+        assert "/api/ai/" in written()["statusLine"]["command"]  # the status line is ours
+        plan = settings.read_text(encoding="utf-8")
         # set up, nothing heard yet: where it reports from
         expect(claude.locator(".settings-row-status")).to_have_text("Set up; no report from it yet")
         expect(claude.locator("[data-agents-waiting]")).to_contain_text("or the desktop app")
         expect(card.locator("[data-agent='cloud']")).to_have_count(0)  # (only the agents here)
-        agents.BOARD.hook("claude", {"hook_event_name": "SessionStart", "session_id": "s"})
+        told("hook", {"hook_event_name": "SessionStart", "session_id": "s"})
         expect(claude.locator(".settings-row-status")).to_contain_text(
             "its last report came", timeout=10_000
         )  # (the card asks again every few seconds)
@@ -1281,16 +1251,16 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         expect(usage).to_contain_text("asked every few minutes while a theme shows")
         expect(hint).to_contain_text("only while Claude Code runs in a terminal")
         expect(card.locator("[data-agent='codex'] [data-agents-usage]")).to_have_count(0)
-        agents.BOARD.usage_failed("claude", "too old", "old", "2.1.100")
-        expect(usage).to_contain_text("Claude Code 2.1.100 is too old", timeout=10_000)
-        agents.BOARD.status("claude", {"rate_limits": {"five_hour": {"used_percentage": 12}}})
+        told("status", {"rate_limits": {"five_hour": {"used_percentage": 12}}})
         expect(usage).to_contain_text("from its status line", timeout=10_000)
         expect(hint).to_have_count(0)
         claude.get_by_role("button", name="Remove").click()
         expect(claude).to_contain_text("Not set up yet")
-        assert agents.read_settings(settings) == {}
+        assert written() == {}
         # set up for the address Libre Panel had before its port was taken: set it up again
-        agents.write_settings(settings, agents.claude_plan({}, 1, agents.key(create=True), True))
+        settings.write_text(plan.replace(f"127.0.0.1:{port_of(plan)}/", "127.0.0.1:1/"),
+                            encoding="utf-8")  # fmt: skip
+        assert port() == 1
         page.reload()
         claude = page.locator("[data-service='agents'] [data-agent='claude']")
         expect(claude.locator(".settings-row-status")).to_have_text(
@@ -1299,7 +1269,7 @@ def test_ai_activity_shows_what_it_adds_then_sets_up_and_takes_it_out(
         claude.get_by_role("button", name="Set up again").click()
         page.locator(".dialog").get_by_role("button", name="Set up").click()
         expect(claude.get_by_role("button", name="Set up again")).to_have_count(0)
-        assert agents.installed(agents.read_settings(settings))["port"] != 1
+        assert port() not in (None, 1)
 
 
 def test_a_shortcut_is_set_by_pressing_the_keys_and_taken_away_again(app_url, isolated_home):  # noqa: F811
@@ -1450,7 +1420,8 @@ def test_an_older_serial_panel_says_what_it_cannot_do(app_url, isolated_home, mo
 
 def test_a_panel_written_from_notes_says_what_it_cannot_do(app_url, isolated_home):  # noqa: F811
     """Settings → Panel: what the panel cannot do under its name, in place of what an older
-    serial panel says (the DS916 is on a serial port too, but takes whole pictures)."""
+    serial panel says (the DS916 is on a serial port too, but takes whole pictures); seen on
+    the hardware since an owner's report, it no longer says it was not."""
     isolated_home.mkdir(parents=True, exist_ok=True)
     (isolated_home / "config.toml").write_text(
         'theme = "libre-default"\n\n[device]\nmodel = "jonsbo-ds916"\n', encoding="utf-8"
@@ -1458,8 +1429,9 @@ def test_a_panel_written_from_notes_says_what_it_cannot_do(app_url, isolated_hom
     with browser_page(app_url, "settings/panel") as page:
         page.wait_for_selector("#panel-found")
         note = page.locator("#panel-found [data-limits-note]")
-        expect(note).to_contain_text("Not yet seen on the hardware")
+        expect(note).to_contain_text("It takes whole JPEG pictures")
         expect(note).to_contain_text("no backlight control")
+        expect(note).not_to_contain_text("Not yet seen on the hardware")
         expect(page.locator("#panel-found [data-serial-note]")).to_have_count(0)
 
 

@@ -6,7 +6,9 @@
 #
 # Plugins import what they need from libre_panel.plugins and draw with Pillow: Libre Panel's
 # Python package goes in whole (its own parts are imported by name), with the standard library
-# parts plugins commonly need, as the Python downloads carried them.
+# parts plugins commonly need and psutil and NumPy, as the Python downloads carried them. Libre Panel's files (fonts,
+# translations, themes) are not copied in: it takes the download's share/libre-panel beside
+# its folder, which the app reads too (src/libre_panel/datadir.py).
 import re
 import sys
 from importlib.metadata import version
@@ -20,6 +22,8 @@ ROOT = HERE.parent.parent
 datas = collect_data_files("libre_panel") + copy_metadata("libre-panel")
 hiddenimports = collect_submodules("libre_panel")
 hiddenimports += [
+    "numpy",
+    "psutil",
     "asyncio",
     "concurrent.futures",
     "csv",

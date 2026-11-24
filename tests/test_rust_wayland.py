@@ -1,5 +1,5 @@
 """The screen on Wayland in Rust (rust/app/src/wayland.rs, wayland_feed.rs) against the stand-ins
-of test_wayland.py on a session bus of the test's own, as wayland.py and wayland_feed.py do it:
+of wayland_bus.py on a session bus of the test's own, as wayland.py and wayland_feed.py did it:
 the capture program with GNOME's own monitor and a monitor by its connector, the session
 stopped as GStreamer ends; through the portal with the PipeWire connection handed to
 GStreamer and the dialog's choice kept for the next time; a cancelled dialog; GNOME's
@@ -15,9 +15,10 @@ from pathlib import Path
 
 import pytest
 from test_rust_app import DATA, _libraries, _program
-from test_wayland import DisplayConfig, Mutter, Portal, bus  # noqa: F401 - the fixture
 
-from libre_panel import wayland_feed
+jeepney = pytest.importorskip("jeepney")
+
+from wayland_bus import DisplayConfig, Mutter, Portal  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux" or not shutil.which("dbus-daemon"), reason="a session bus of its own"
@@ -48,7 +49,7 @@ def _feed(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[bytes]
                           env=env, timeout=30)  # fmt: skip
 
 
-def test_gnome_gives_its_own_monitor_and_a_monitor_by_its_connector(bus, tmp_path):  # noqa: F811
+def test_gnome_gives_its_own_monitor_and_a_monitor_by_its_connector(bus, tmp_path):
     env, said = _gst(tmp_path)
     mutter = Mutter()
     try:
@@ -61,8 +62,14 @@ def test_gnome_gives_its_own_monitor_and_a_monitor_by_its_connector(bus, tmp_pat
     assert own.returncode == 0, own.stderr
     assert own.stdout == b"BGRxBGRx"  # its output is the frames alone
     assert b"wayland-feed: stream 42\n" in own.stderr
-    assert pipeline == wayland_feed.gst_command("gst", 42, None, None, (1920, 720), 30,
-                                                "contain", True)[1:]  # fmt: skip
+    # (as wayland_feed.py's gst_command made it: the stream's node, scaled to fit, the cursor in)
+    assert pipeline == ["-q", "pipewiresrc", "path=42", "do-timestamp=true",
+                        "keepalive-time=1000", "always-copy=true", "!",
+                        "video/x-raw,width=1920,height=720", "!", "videoconvert", "!",
+                        "videoscale", "add-borders=true", "!",
+                        "video/x-raw,format=BGRx,width=1920,height=720,pixel-aspect-ratio=1/1",
+                        "!", "videorate", "!", "video/x-raw,framerate=30/1", "!", "fdsink",
+                        "fd=1", "sync=false"]  # fmt: skip
     assert by_name.returncode == 0, by_name.stderr
     assert [call[0] for call in mutter.calls] == ["CreateSession", "RecordVirtual", "Start",
                                                  "Stop", "CreateSession", "RecordMonitor",
@@ -71,7 +78,7 @@ def test_gnome_gives_its_own_monitor_and_a_monitor_by_its_connector(bus, tmp_pat
     assert mutter.calls[5][1] == ("DP-1", {"cursor-mode": ("u", 0)})
 
 
-def test_the_portal_hands_over_the_pipewire_connection_and_asks_once(bus, tmp_path):  # noqa: F811
+def test_the_portal_hands_over_the_pipewire_connection_and_asks_once(bus, tmp_path):
     env, said = _gst(tmp_path)
     home = tmp_path / "home"
     env["LIBRE_PANEL_HOME"] = str(home)
@@ -88,9 +95,16 @@ def test_the_portal_hands_over_the_pipewire_connection_and_asks_once(bus, tmp_pa
     assert first.stdout == b"pw"  # the portal's descriptor, read by GStreamer
     assert b"wayland-feed: stream 77 (1920x1080)\n" in first.stderr
     fd = int(pipeline.split(" fd=")[1].split()[0])
-    expected = wayland_feed.gst_command("gst", 77, fd, (1920, 1080), (1920, 720), 30, "cover",
-                                        False)  # fmt: skip
-    assert pipeline.split() == expected[1:]
+    # (as wayland_feed.py's gst_command made it: the portal's connection, cut to cover)
+    assert pipeline.split() == ["-q", "pipewiresrc", "path=77", "do-timestamp=true",
+                                "keepalive-time=1000", "always-copy=true", f"fd={fd}", "!",
+                                "videoconvert", "!", "videocrop", "left=0", "right=0",
+                                "top=180", "bottom=180", "!", "videoscale",
+                                "add-borders=false", "!",
+                                "video/x-raw,format=BGRx,width=1920,height=720,"
+                                "pixel-aspect-ratio=1/1", "!", "videorate", "!",
+                                "video/x-raw,framerate=30/1", "!", "fdsink", "fd=1",
+                                "sync=false"]  # fmt: skip
     chosen = [body[1] for member, body in portal.calls if member == "SelectSources"]
     assert chosen[0]["types"] == ("u", 4) and chosen[0]["persist_mode"] == ("u", 2)
     assert chosen[0]["cursor_mode"] == ("u", 2) and "restore_token" not in chosen[0]
@@ -100,7 +114,7 @@ def test_the_portal_hands_over_the_pipewire_connection_and_asks_once(bus, tmp_pa
     assert [member for member, _ in portal.calls].count("Close") == 2
 
 
-def test_a_cancelled_dialog_gives_no_screen(bus, tmp_path):  # noqa: F811
+def test_a_cancelled_dialog_gives_no_screen(bus, tmp_path):
     env, _ = _gst(tmp_path)
     env["LIBRE_PANEL_HOME"] = str(tmp_path / "home")
     portal = Portal(answer_code=1)
@@ -113,7 +127,7 @@ def test_a_cancelled_dialog_gives_no_screen(bus, tmp_path):  # noqa: F811
     assert _feed(env, "--kind", "monitor").returncode == 2  # (no size)
 
 
-def test_gnomes_monitors_are_listed_as_wayland_py_lists_them(bus, tmp_path):  # noqa: F811
+def test_gnomes_monitors_are_listed_as_wayland_py_lists_them(bus, tmp_path):
     (tmp_path / "config.toml").write_text(
         'theme = "slate"\nfps = 2\n[device]\ndriver = "virtual"\noutput = "panel.png"\n'
         "[sensors]\nproviders = []\n",

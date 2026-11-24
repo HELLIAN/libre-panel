@@ -1,7 +1,8 @@
 //! The plugins (plugins/loader.py, docs/PLUGINS.md): Python packages, which the Rust app runs
 //! in a process of their own, the plugin host (src/libre_panel/plugin_host.py; the program
-//! libre-panel-plugins in the downloads). It is started only when plugin folders are
-//! installed (`<settings>/plugins/<name>/plugin.toml`), once per process, and asked over its
+//! libre-panel-plugins in the downloads). It is started only when plugins are installed (a
+//! folder `<settings>/plugins/<name>/plugin.toml`, or a package installed with pip beside the
+//! plugin host), once per process, and asked over its
 //! standard input and output: a message is a length (4 bytes, little-endian), that many bytes
 //! of JSON and, where the JSON has `"blob": n`, n bytes of data after it. A request has an
 //! `id` and its answer the same; what plugins do on their own comes as a message with `event`.
@@ -22,8 +23,8 @@ pub const PLUGIN_FILENAME: &str = "plugin.toml";
 pub const BUILT_IN: &str = "built in";
 /// how long a request may take before the host is taken for hung
 const ANSWER_S: u64 = 30;
-/// what opens a drawing, a transition, a toast's style or a page may wait for the first import
-/// of Python's renderer in the host (long where a virus scanner reads every file)
+/// what opens a drawing, a transition, a toast's style or a page may wait for the host's first
+/// imports, the plugin's and Pillow's (long where a virus scanner reads every file)
 const OPENING_S: u64 = 120;
 
 /// What the app does with the plugin host, on the standard error, where
@@ -46,7 +47,7 @@ fn answer_s(op: &str) -> u64 {
 
 /// loader.py's BUILT_IN_PARTS: what Libre Panel brings itself, by kind (a plugin cannot use
 /// these names).
-pub const BUILT_IN_PARTS: [(&str, &[&str]); 2] = [
+pub const BUILT_IN_PARTS: [(&str, &[&str]); 3] = [
     (
         "services",
         &[
@@ -56,6 +57,7 @@ pub const BUILT_IN_PARTS: [(&str, &[&str]); 2] = [
             "devices",
             "downloads",
             "game",
+            "lightring",
             "memory",
             "notices",
             "power",
@@ -64,6 +66,8 @@ pub const BUILT_IN_PARTS: [(&str, &[&str]); 2] = [
         ],
     ),
     ("editor_pages", &["autopilot", "control"]),
+    // (display.rs's DRIVERS)
+    ("devices", &["auto", "hongtai", "turzx", "virtual"]),
 ];
 
 /// The plugin folders installed in `settings` (each with its plugin.toml), by name.
@@ -82,7 +86,9 @@ pub fn folders(settings: &Path) -> Vec<PathBuf> {
 
 /// The plugin host's program and the arguments before its own: LIBRE_PANEL_PLUGIN_HOST (and
 /// LIBRE_PANEL_PLUGIN_HOST_ARGS, split at blanks: `-m libre_panel.plugin_host` for a Python),
-/// else the downloads' libre-panel-plugins in "plugin-host" beside this program.
+/// else the downloads' libre-panel-plugins in "plugin-host" beside this program, else an
+/// install's (pip, pipx: the plugin host's command of the Python environment the app is in,
+/// see [`install_commands`]).
 pub fn program() -> Option<(PathBuf, Vec<String>)> {
     if let Some(named) = std::env::var_os("LIBRE_PANEL_PLUGIN_HOST").filter(|v| !v.is_empty()) {
         let args = std::env::var("LIBRE_PANEL_PLUGIN_HOST_ARGS").unwrap_or_default();
@@ -95,8 +101,119 @@ pub fn program() -> Option<(PathBuf, Vec<String>)> {
     } else {
         "libre-panel-plugins"
     };
-    let beside = exe.parent()?.join("plugin-host").join(name);
-    beside.is_file().then(|| (beside, Vec::new()))
+    let folder = exe.parent()?;
+    std::iter::once(folder.join("plugin-host"))
+        .chain(install_commands(folder))
+        .map(|commands| commands.join(name))
+        .find(|file| file.is_file())
+        .map(|file| (file, Vec::new()))
+}
+
+/// Where an install keeps its commands, seen from the folder of the app's program: that
+/// folder itself (on Linux the programs are the environment's commands, in its `bin`); on
+/// Windows, where the app is in `libre-panel` of the environment (packaging/platform_wheel.py),
+/// `Scripts` beside it, or, for a user's install, `Python3XY\Scripts` beside it (the newest
+/// first).
+fn install_commands(folder: &Path) -> Vec<PathBuf> {
+    let beside = vec![folder.to_path_buf()];
+    let Some(root) = folder.parent().filter(|_| cfg!(windows)) else {
+        return beside;
+    };
+    let mut users: Vec<PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("Python"))
+        })
+        .map(|path| path.join("Scripts"))
+        .collect();
+    users.sort_by_key(|path| std::cmp::Reverse(python_number(path)));
+    beside
+        .into_iter()
+        .chain(std::iter::once(root.join("Scripts")))
+        .chain(users)
+        .collect()
+}
+
+/// Whether a package installed beside the plugin host `host` (pip, `pipx inject`) brings
+/// plugins: an entry point of a `libre_panel.` group in its metadata, Libre Panel's own aside
+/// (loader.py's _installed). Read from the files, without starting Python. The environment is
+/// the folder above the host's (its `bin` or `Scripts`), or that folder itself (a Python on
+/// Windows, `python.exe` in it, as a test names it).
+fn packages_bring_plugins(host: &Path) -> bool {
+    let commands = host.parent();
+    [commands, commands.and_then(Path::parent)]
+        .into_iter()
+        .flatten()
+        .filter(|prefix| !prefix.as_os_str().is_empty())
+        .flat_map(site_packages)
+        .any(|folder| folder_brings_plugins(&folder))
+}
+
+/// Where the Python of the environment (or the user's install) at `prefix`, the folder above
+/// its commands, keeps its packages: `lib/python3.X/site-packages` (Debian's
+/// `dist-packages`), `Lib/site-packages` (Windows), `site-packages` (a user's on Windows).
+fn site_packages(prefix: &Path) -> Vec<PathBuf> {
+    let mut found = vec![
+        prefix.join("Lib").join("site-packages"),
+        prefix.join("site-packages"),
+    ];
+    for lib in ["lib", "lib64"] {
+        for entry in std::fs::read_dir(prefix.join(lib))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if entry.file_name().to_string_lossy().starts_with("python") {
+                found.push(entry.path().join("site-packages"));
+                found.push(entry.path().join("dist-packages"));
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    found.retain(|folder| folder.is_dir());
+    found
+}
+
+/// Whether a package in `folder` (site-packages) declares an entry point of a plugin group.
+fn folder_brings_plugins(folder: &Path) -> bool {
+    std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(stem) = name
+                .strip_suffix(".dist-info")
+                .or_else(|| name.strip_suffix(".egg-info"))
+            else {
+                return false;
+            };
+            // (the distribution's name before its version, as packaging normalizes it)
+            let distribution: String = stem.split('-').next().unwrap_or("").to_lowercase();
+            if distribution.replace(['_', '.'], "-") == "libre-panel" {
+                return false;
+            }
+            std::fs::read_to_string(entry.path().join("entry_points.txt")).is_ok_and(|text| {
+                text.lines()
+                    .any(|line| line.trim_start().starts_with("[libre_panel."))
+            })
+        })
+}
+
+/// The number of a `Python3XY` folder's version (312 of Python312), to take the newest first.
+fn python_number(scripts: &Path) -> u32 {
+    scripts
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("Python"))
+        .and_then(|digits| digits.parse().ok())
+        .unwrap_or(0)
 }
 
 type Answer = (Dict, Vec<u8>);
@@ -121,10 +238,14 @@ impl PluginHost {
     /// The host for the plugin folders of `settings`; none where none is installed. An error
     /// where plugins are installed but there is no host to run them, or it does not start.
     pub fn start(settings: &Path) -> Result<Option<PluginHost>, String> {
-        if folders(settings).is_empty() {
+        let found = program();
+        let packages = found
+            .as_ref()
+            .is_some_and(|(host, _)| packages_bring_plugins(host));
+        if !packages && folders(settings).is_empty() {
             return Ok(None);
         }
-        let Some((program, mut args)) = program() else {
+        let Some((program, mut args)) = found else {
             return Err(
                 "plugins are installed, but this Libre Panel has no plugin host \
                         (libre-panel-plugins) to run them"
@@ -138,6 +259,11 @@ impl PluginHost {
                 .to_string_lossy()
                 .into_owned(),
         );
+        // (where the app's clock began on the computer's: libre_panel.clock() counts from it)
+        if let Some(zero) = crate::company::clock_zero() {
+            args.push("--clock-zero".into());
+            args.push(format!("{zero}"));
+        }
         // (on Windows its three pipes the only handles it inherits: spawn.rs)
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         trace(|| format!("starting {} {}", program.display(), args.join(" ")));
@@ -350,16 +476,18 @@ impl Inner {
             message.insert("blob".into(), Value::Int((blob.len() as u64).into()));
         }
         let body = lp_py::json::dumps(&Value::Dict(message), &lp_py::json::Dumps::default());
-        let mut out = Vec::with_capacity(4 + body.len() + blob.len());
-        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        out.extend_from_slice(body.as_bytes());
-        out.extend_from_slice(blob);
+        let mut head = Vec::with_capacity(4 + body.len());
+        head.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        head.extend_from_slice(body.as_bytes());
         let mut stdin = self
             .stdin
             .lock()
             .map_err(|_| "the plugin host's lock is broken")?;
+        // (the pixels written as they are: a frame for a plugin's driver is megabytes, each
+        // frame)
         stdin
-            .write_all(&out)
+            .write_all(&head)
+            .and_then(|()| stdin.write_all(blob))
             .and_then(|()| stdin.flush())
             .map_err(|why| format!("the plugin host does not listen: {why}"))
     }
@@ -1076,6 +1204,288 @@ impl Drop for PluginSource {
     }
 }
 
+/// A display driver a plugin brings (`[device] driver`), run in the plugin host: each frame
+/// goes there as its pixels, and what the driver says of itself comes back with the answer.
+pub struct PluginDisplay {
+    host: Arc<PluginHost>,
+    /// the host's number for it
+    display: Value,
+    streaming: bool,
+    stream_fps: i64,
+    slow: bool,
+    picture: String,
+    jpeg_layout: Option<String>,
+    describe: String,
+    model: Option<&'static lp_devices::models::PanelModel>,
+    counters: lp_devices::base::Counters,
+    closed: bool,
+}
+
+/// The display drivers the plugins bring, by name (none without plugins).
+pub fn driver_names(settings: &Path) -> Vec<String> {
+    match shared(settings) {
+        Some(Ok(host)) => host.names("devices"),
+        _ => Vec::new(),
+    }
+}
+
+/// `[device]` (or a `[[panels]]` table) as config.toml writes it, for a plugin's driver
+/// (config.py's DeviceConfig, made by _parse_device).
+fn device_table(device: &lp_config::DeviceConfig) -> Dict {
+    let mut table = Dict::default();
+    for (key, value) in [
+        ("model", &device.model),
+        ("driver", &device.driver),
+        ("orientation", &device.orientation),
+        ("motion", &device.motion),
+        ("still", &device.still),
+        ("video_range", &device.video_range),
+        ("jpeg", &device.jpeg),
+        ("night_from", &device.night_from),
+        ("night_to", &device.night_to),
+        ("output", &device.output),
+        ("port", &device.port),
+    ] {
+        table.insert(key.into(), Value::from(value.as_str()));
+    }
+    for (key, value) in [
+        ("brightness", device.brightness),
+        ("rotate", device.rotate),
+        ("jpeg_quality", device.jpeg_quality),
+        ("night_brightness", device.night_brightness),
+        ("away_brightness", device.away_brightness),
+    ] {
+        table.insert(key.into(), Value::int(value));
+    }
+    for (key, value) in [
+        ("dark_on_quit", device.dark_on_quit),
+        ("dark_on_sleep", device.dark_on_sleep),
+        ("night", device.night),
+        ("dark_when_away", device.dark_when_away),
+    ] {
+        table.insert(key.into(), Value::Bool(value));
+    }
+    if let Some((x, y)) = device.at {
+        table.insert("at".into(), Value::List(vec![Value::int(x), Value::int(y)]));
+    }
+    table
+}
+
+impl PluginDisplay {
+    /// The plugin's driver `device.driver`, made for the panel of `device` and opened; None
+    /// where no plugin brings a driver of that name.
+    pub fn open(
+        settings: &Path,
+        device: &lp_config::DeviceConfig,
+    ) -> Option<Result<PluginDisplay, String>> {
+        let host = match shared(settings)? {
+            Ok(host) => host,
+            Err(why) => return Some(Err(why)),
+        };
+        if !host.names("devices").contains(&device.driver) {
+            return None;
+        }
+        let mut fields = Dict::default();
+        fields.insert("driver".into(), Value::from(device.driver.as_str()));
+        fields.insert("device".into(), Value::Dict(device_table(device)));
+        let opened = host.request("display.open", fields, &[]).map(|(told, _)| {
+            let mut display = PluginDisplay {
+                host: Arc::clone(&host),
+                display: field(&told, "display").clone(),
+                streaming: field(&told, "streaming") == &Value::Bool(true),
+                stream_fps: int_of(field(&told, "stream_fps")),
+                slow: field(&told, "slow") == &Value::Bool(true),
+                picture: text(&told, "picture"),
+                jpeg_layout: opt_text(field(&told, "jpeg_layout")),
+                describe: String::new(),
+                model: None,
+                counters: lp_devices::base::Counters::default(),
+                closed: false,
+            };
+            display.learn(&told);
+            display
+        });
+        Some(
+            opened.map_err(|why| format!("display driver {:?} did not open: {why}", device.driver)),
+        )
+    }
+
+    /// What the driver said of itself with an answer: what frames go to, the panel it is,
+    /// its counters.
+    fn learn(&mut self, told: &Dict) {
+        if let Some(Value::Str(describe)) = told.get("describe") {
+            self.describe.clone_from(describe);
+        }
+        if let Some(model) = told.get("model") {
+            self.model = model.as_str().and_then(lp_devices::models::find_model);
+        }
+        if let Value::Dict(counted) = field(told, "counters") {
+            let count = |key: &str| u64::try_from(int_of(field(counted, key))).unwrap_or(0);
+            self.counters = lp_devices::base::Counters {
+                bytes: count("bytes"),
+                usb_errors: count("usb_errors"),
+                blocks: count("blocks"),
+                waits: count("waits"),
+                drops: count("drops"),
+                max_depth: count("max_depth"),
+                slow_blocks: count("slow_blocks"),
+                panel_restarts: count("panel_restarts"),
+            };
+        }
+    }
+
+    fn ask(&self, op: &str, mut fields: Dict, blob: &[u8]) -> lp_devices::base::Result<Answer> {
+        fields.insert("display".into(), self.display.clone());
+        self.host
+            .request(op, fields, blob)
+            .map_err(lp_devices::base::DeviceError)
+    }
+}
+
+impl lp_devices::driver::Driver for PluginDisplay {
+    fn model(&self) -> Option<&'static lp_devices::models::PanelModel> {
+        self.model
+    }
+
+    fn describe(&self) -> String {
+        self.describe.clone()
+    }
+
+    fn show(
+        &mut self,
+        frame: &lp_pixels::Image,
+        region: Option<lp_devices::driver::Region>,
+    ) -> lp_devices::base::Result<()> {
+        self.show_parts(frame, &[region])
+    }
+
+    /// The frame goes once, and of it only the box around the parts that changed: outside it
+    /// the frame is the one before, which the host keeps (a frame the panel did not take is
+    /// followed by a whole one: display.rs keeps none before it then). The driver is handed
+    /// the whole frame for each part, as the Python app's loop handed it.
+    fn show_parts(
+        &mut self,
+        frame: &lp_pixels::Image,
+        parts: &[Option<lp_devices::driver::Region>],
+    ) -> lp_devices::base::Result<()> {
+        let converted;
+        let frame = match frame.mode() {
+            lp_pixels::Mode::RGB => frame,
+            _ => {
+                converted = frame.convert(lp_pixels::Mode::RGB)?;
+                &converted
+            }
+        };
+        let (w, h) = (frame.width() as i64, frame.height() as i64);
+        let corners = |(x0, y0, x1, y1): lp_devices::driver::Region| {
+            Value::List([x0, y0, x1, y1].map(Value::int).to_vec())
+        };
+        let mut fields = Dict::default();
+        fields.insert(
+            "size".into(),
+            Value::List(vec![Value::int(w), Value::int(h)]),
+        );
+        fields.insert("mode".into(), Value::from("RGB"));
+        let regions = parts
+            .iter()
+            .map(|part| part.map_or(Value::None, corners))
+            .collect();
+        fields.insert("regions".into(), Value::List(regions));
+        // (the box around them all, within the frame; the whole where a part is the whole)
+        let boxed =
+            parts
+                .iter()
+                .try_fold(None, |held: Option<lp_devices::driver::Region>, part| {
+                    let (x0, y0, x1, y1) = (*part)?;
+                    let (x0, y0, x1, y1) = (x0.max(0), y0.max(0), x1.min(w), y1.min(h));
+                    Some(Some(match held {
+                        Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+                        None => (x0, y0, x1, y1),
+                    }))
+                });
+        let piece = match boxed.flatten() {
+            Some(part) if part != (0, 0, w, h) && part.0 < part.2 && part.1 < part.3 => {
+                let (x0, y0, x1, y1) = part;
+                fields.insert(
+                    "at".into(),
+                    Value::List(vec![Value::int(x0), Value::int(y0)]),
+                );
+                fields.insert(
+                    "piece".into(),
+                    Value::List(vec![Value::int(x1 - x0), Value::int(y1 - y0)]),
+                );
+                Some(frame.crop(x0, y0, x1, y1))
+            }
+            _ => None,
+        };
+        let pixels = piece.as_ref().unwrap_or(frame).as_bytes();
+        let (told, _) = self.ask("display.show", fields, pixels)?;
+        self.learn(&told);
+        match told.get("skipped") {
+            Some(Value::Str(why)) => {
+                let error = lp_devices::base::DeviceError(why.clone());
+                Err(match error.is_frame() {
+                    true => error,
+                    false => {
+                        lp_devices::base::DeviceError(format!("{}{why}", lp_devices::base::SKIPPED))
+                    }
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn set_brightness(&mut self, percent: i64) -> lp_devices::base::Result<()> {
+        let mut fields = Dict::default();
+        fields.insert("percent".into(), Value::int(percent));
+        self.ask("display.brightness", fields, &[]).map(|_| ())
+    }
+
+    fn counters(&self) -> lp_devices::base::Counters {
+        self.counters
+    }
+
+    fn streaming(&self) -> bool {
+        self.streaming
+    }
+
+    fn stream_fps(&self) -> i64 {
+        self.stream_fps
+    }
+
+    fn slow(&self) -> bool {
+        self.slow
+    }
+
+    fn picture(&self) -> String {
+        self.picture.clone()
+    }
+
+    fn jpeg_layout(&self) -> Option<String> {
+        self.jpeg_layout.clone()
+    }
+
+    fn set_jpeg(&mut self, layout: &str) -> lp_devices::base::Result<()> {
+        let mut fields = Dict::default();
+        fields.insert("layout".into(), Value::from(layout));
+        let (told, _) = self.ask("display.jpeg", fields, &[])?;
+        self.jpeg_layout = opt_text(field(&told, "jpeg_layout"));
+        Ok(())
+    }
+
+    fn close(&mut self) {
+        if !std::mem::replace(&mut self.closed, true) {
+            let _ = self.ask("display.close", Dict::default(), &[]);
+        }
+    }
+}
+
+impl Drop for PluginDisplay {
+    fn drop(&mut self) {
+        lp_devices::driver::Driver::close(self);
+    }
+}
+
 /// What Settings lists of the plugins (editor/settings.py's _catalog): `services` (each with
 /// its `source`, `error` and declared `options`, `{key, type, default}`) and `sensors` (each
 /// with its `source`); none without plugins.
@@ -1145,7 +1555,7 @@ fn rgb_or_rgba(frame: &lp_pixels::Image) -> Option<Vec<u8>> {
 }
 
 /// What the installed plugins draw for a renderer (lp_render::Plugins): their widget types and
-/// the theme's screen, drawn by the plugin host with Python's renderer for the theme as this app
+/// the theme's screen, drawn by the plugin host (plugins/drawing.py) for the theme as this app
 /// has it, their pieces handed back.
 pub struct PluginDrawing {
     host: Arc<PluginHost>,
@@ -1940,4 +2350,87 @@ pub fn page_request(
                 }
             }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder for a test, empty.
+    fn folder(name: &str) -> PathBuf {
+        let folder = std::env::temp_dir().join(format!("lp-plugins-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    fn package(site: &Path, dist_info: &str, entry_points: &str) {
+        let meta = site.join(dist_info);
+        std::fs::create_dir_all(&meta).unwrap();
+        std::fs::write(meta.join("entry_points.txt"), entry_points).unwrap();
+    }
+
+    #[test]
+    fn a_package_with_a_plugin_beside_the_host_is_found() {
+        // (an environment as pip and pipx make them: Linux's, Windows', a user's on Windows)
+        for (name, site, commands) in [
+            ("linux", "lib/python3.12/site-packages", "bin"),
+            ("debian", "lib/python3.12/dist-packages", "bin"),
+            ("windows", "Lib/site-packages", "Scripts"),
+            ("user", "site-packages", "Scripts"),
+        ] {
+            let prefix = folder(name);
+            let site = prefix.join(site);
+            let host = prefix.join(commands).join("libre-panel-plugins");
+            // Libre Panel's own entry points, and a package's of other groups, are no plugins
+            package(
+                &site,
+                "libre_panel-0.9.5.dist-info",
+                "[libre_panel.devices]\nauto = x:Y\n",
+            );
+            package(
+                &site,
+                "Libre.Panel-0.9.5.dist-info",
+                "[libre_panel.services]\na = x:Y\n",
+            );
+            package(
+                &site,
+                "pytest-9.0.dist-info",
+                "[console_scripts]\npytest = x:main\n",
+            );
+            std::fs::create_dir_all(site.join("numpy")).unwrap();
+            assert!(!packages_bring_plugins(&host), "{name}");
+            package(
+                &site,
+                "lp_demo-1.0.dist-info",
+                "[console_scripts]\na = b:c\n\n [libre_panel.devices]\ndemo = lp_demo:Panel\n",
+            );
+            assert!(packages_bring_plugins(&host), "{name}");
+            let _ = std::fs::remove_dir_all(&prefix);
+        }
+    }
+
+    #[test]
+    fn the_app_s_drivers_are_its_own() {
+        let mut drivers = crate::display::DRIVERS;
+        drivers.sort_unstable();
+        let own = BUILT_IN_PARTS.iter().find(|(kind, _)| *kind == "devices");
+        assert_eq!(own.map(|(_, names)| *names), Some(&drivers[..]));
+    }
+
+    #[test]
+    fn an_egg_info_counts_and_a_host_without_packages_finds_none() {
+        let prefix = folder("egg");
+        let host = prefix.join("plugin-host").join("libre-panel-plugins");
+        // (the downloads' host: beside the app, no packages)
+        assert!(!packages_bring_plugins(&host));
+        assert!(!packages_bring_plugins(Path::new("libre-panel-plugins")));
+        package(
+            &prefix.join("lib/python3.13/site-packages"),
+            "lp_old.egg-info",
+            "[libre_panel.sensors]\nold = lp_old:Old\n",
+        );
+        assert!(packages_bring_plugins(&prefix.join("bin").join("python3")));
+        let _ = std::fs::remove_dir_all(&prefix);
+    }
 }

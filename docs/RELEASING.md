@@ -1,23 +1,16 @@
 # Releasing
 
-Libre Panel ships three ways; one git tag produces all of them.
+Libre Panel ships as the downloads of a GitHub Release; one git tag produces all of them. It
+is not on PyPI: pip and pipx install the release's wheel by its link.
 
 | Channel | For | Built by |
 |---|---|---|
-| PyPI (`pipx install libre-panel`) | Linux users, developers | `release.yml` → trusted publishing |
-| GitHub Release downloads | everyone, no Python needed | `release.yml`: Windows setup + portable zip, Linux AppImage + tarball |
+| GitHub Release downloads | everyone, no Python needed | `release.yml`: Windows setup + portable zip, Linux AppImage + tarball, the wheels for pip and pipx (Linux, Windows) |
 | Distribution packages (winget, Flathub, AUR) | later | community / follow-up |
 
 ## One-time setup
 
-1. **PyPI:** create the project on pypi.org and add a *trusted publisher* for
-   this repository, workflow `release.yml`, environment `pypi`. No API token
-   is stored in GitHub.
-2. **GitHub:** create the environment `pypi` (Settings → Environments), ideally
-   with a required reviewer so every upload is approved, and the repository
-   variable `PYPI_UPLOAD` = `true` (Settings → Secrets and variables →
-   Actions → Variables). Without it, releases skip PyPI.
-3. **Code signing (Windows, recommended):** unsigned `.exe` files trigger
+1. **Code signing (Windows, recommended):** unsigned `.exe` files trigger
    SmartScreen warnings, and Defender's machine learning takes them for malware
    more readily (0.7.10's setup was taken for `Trojan:Win32/Bearfoos.A!ml`).
    Free signing for open source is available through
@@ -27,9 +20,12 @@ Libre Panel ships three ways; one git tag produces all of them.
 ## Cutting a release
 
 ```bash
-# 1. set the version in pyproject.toml and src/libre_panel/__init__.py
+# 1. set the version in pyproject.toml (the one place it is set); from a candidate to a
+#    release or back, the update check's kept answers change with it (a release sees no
+#    pre-release): LP_GOLDEN=record pytest tests/test_rust_server.py -k update_check
 # 2. CHANGELOG.md: a section "## 0.1.0 — <date>"
-# 3. the pictures and clips of this release (see below), looked at one by one
+# 3. the pictures and clips of this release (see below), looked at one by one; Libre Panel in
+#    Rust draws them (cargo build --release in rust/: lp-check and libre-panel)
 python tools/readme_images.py && python tools/readme_media.py && python tools/check_pages.py
 git add docs/images docs/media
 git commit -am "Release 0.1.0"
@@ -68,6 +64,29 @@ panel whose room ends before the file does (42 for the file that ended early) is
 for that state: it ships untried by us, and the protocol notes say what is known of it from
 the panel of issue 52.
 
+0.9.5 makes the files finer in the same room (every whole JPEG quality, the clip's crf in
+quarter steps), so its candidate 0.9.5rc4 was run the same way on 2026-11-24, on Windows, on
+the same 9.2" (mounted on end) and 12.3": both files put on the panel, the clip written again,
+a smaller clip (Dark's) over a larger one (Aurora's), the factory logo again and the logo anew,
+and the panels switched off and on; both started with what was written. Nothing 0.9.5 sends to
+a panel changed after that candidate.
+
+Two exceptions are the project owner's decisions, and are said wherever they apply. **The
+8.8"** is written to with the 9.2"'s room although no 8.8" was at hand (0.9.5): its maker
+sells the two as one, with the same framebuffer. **Models no one has tried** (the family's
+1.6" to 8" and JONSBO's TF3 pump screen) are written to only by their owners, each time on *Write at my own risk*, after
+the app has said what happened to issue 52's panel; the files are made for the 9.2"'s room and
+sent and checked as on the 9.2". Such a write is its owner's, not a release's: it does not
+count as tried. A model goes into `ROOM` (written to without the question) only after a report
+from a real panel of it, with the firmware and what was written, and into `CONFIRMED` (the card
+no longer asks to share how it went) after a report that it started with both files; the
+changelog names the report. A report that it did not work takes the model's question back to
+a refusal until it is understood.
+
+Once it is published: the pipx lines of the README (both languages) and of the website name
+its wheels (`pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.1.0/libre_panel-0.1.0-py3-none-<platform>.whl"`,
+`<platform>` as the release names its Linux and its Windows wheel), on `main`.
+
 Without git: on github.com, *Releases → Draft a new release*, tag `v0.1.0`
 (*Create new tag on publish*, target `main`), then *Publish release*; the
 workflow fills that release in.
@@ -77,20 +96,23 @@ that CHANGELOG.md has its section, then runs CI (`ci.yml`) whole: every test, ev
 comparison of the Rust app with the Python app, and the Rust app's downloads built and
 tried as on every push (the Windows setup installed, run and uninstalled, the portable
 zip, the AppImage started with and without a tray, the Linux archive unpacked and drawn
-from). The downloads are the Rust app's; the Python package is built beside them for
-PyPI. Only when all of that passed, it publishes
+from) and the wheels for pip and pipx (packaging/platform_wheel.py: the Rust app as the
+downloads carry it, for Linux and for Windows), each installed into an environment of its own
+and tried. The downloads and the wheels are the Rust app's, not the Python package's own wheel or
+source (pip would make the Python app of them). Only when all of that passed, it publishes
 the GitHub Release with all files and `SHA256SUMS`, the SHA-256 of each (the
 app's *Update to* checks its download against it), its notes taken from the
 CHANGELOG section (a hotfix's, such as 0.9.1's, followed by the sections down to
-the release it fixes, each under its heading, so that who updates from an older
-version reads all that is new; the app's update card shows the first paragraph),
+the release it fixes, and a candidate's, such as 0.9.5rc3's, by those of the
+candidates before it, which were drafts no one else saw, each under its heading,
+so that who updates from an older version reads all that is new; the app's update
+card shows the first paragraph),
 and GitHub's signed attestation for each file that this
 workflow built it from this commit (`gh attestation verify FILE --repo
-syntensa/libre-panel`). Then the PyPI upload, after approval, if it is set up.
+syntensa/libre-panel`).
 The Windows programs carry a version resource (who made them, which version), an
 icon and a manifest (rust/winres.rs; CI reads them back): an antivirus program's
-guess is less likely to take them for malware. (The sections below on PyInstaller
-are the Python app's, which builds no download any more.)
+guess is less likely to take them for malware.
 
 After a release, submit its Windows setup and the programs of its portable zip
 to Microsoft as a software developer
@@ -100,8 +122,7 @@ Microsoft looks at them, and Defender learns them before people download them.
 
 A version like `0.7.0rc1` (with a section `## 0.7.0rc1` in CHANGELOG.md) is a
 pre-release to try before everyone has it: it becomes a **draft**, which only
-those who may write to the repository see, with all its files, and PyPI is left
-out. Without git: *Actions → Release → Run workflow* on `main`, with the version
+those who may write to the repository see, with all its files. Without git: *Actions → Release → Run workflow* on `main`, with the version
 (`0.7.0rc1`) in *Version for a draft release*; a pushed tag `v0.7.0rc1` does the
 same. Not *Draft a new release → Publish release* on github.com: that publishes
 it for everyone. *Publish release* on the draft's page makes it a public
@@ -133,42 +154,48 @@ Every download is tested on its own system before it is attached:
 with two panels and look at what it did:
 
 ```bash
-python tools/soak.py --hours 24          # --video for the video mode (needs ffmpeg)
+python tools/soak.py --hours 24          # --video: the first panel in video mode (needs pyusb)
 ```
 
-It starts the background app in a settings folder of its own (two virtual 9.2" bars, Lumen and
-Lumen Companion, on the demo readings, with the notices, the timer and the power service), notes
-its memory, threads, open files and the panels' frame times every minute, and writes
-`soak/soak.md` with a chart: it passes when the memory grows by less than 5 MB an hour after
-the first ten minutes, the threads and the open files stay level and every panel kept showing.
+It starts the background app (the program built in `rust/`; `LIBRE_PANEL_PROGRAM` names
+another) in a settings folder of its own (two 9.2" bars, Lumen and Lumen Companion, on the demo
+readings, with the notices, the timer and the power service; virtual ones, or with `--video` the
+first a simulated TURZX whose video goes through the engine, every packet checked), notes its
+memory and its engine's, threads, open files and the panels' frame times every minute, and
+writes `soak/soak.md` with a chart: it passes when the memory of neither grows by 5 MB an hour
+or more after the first ten minutes, the threads and the open files stay level and every panel
+kept showing.
 
-How much two panels in video mode slow each other down (they share one interpreter):
+What a frame costs, and what a second panel beside it costs the first:
 
 ```bash
-python tools/panels_bench.py             # Lumen on a 12.3" and Lumen Companion on end
-python tools/panels_bench.py --slow-scan # with a scan of the processes as slow as on Windows
+python tests/frame_load.py --app rust/target/release/libre-panel \
+    --engine engine/target/release/libre-panel-engine --demo \
+    --beside lumen-companion@turing-12.3-usb  # Lumen on a 12.3", Lumen Companion on end
 ```
 
-It prints each panel's frame time alone and beside the other (median and slowest); a frame
-beside the other should stay well below 20 ms (50 frames a second) on the machines it is made
-for.
+It runs Lumen on a simulated 12.3" in video mode, first alone, then with the panels of
+`--beside` (virtual, each in its thread as the app runs them), and prints for each run the
+processor and memory of the app and its engine, where a frame's time goes (the app's profile)
+and how many pictures reached the panel late; a frame beside the other should stay well below
+its time (40 ms at 25 frames a second) on the machines it is made for.
 
 **Dry run:** start *Release* by hand (Actions → Release → Run workflow) with the
 version left empty. It builds and tests everything but publishes nothing and
 keeps no files.
 
-The bundles are built from `packaging/pyinstaller/libre-panel.spec`. The icons
-come from `packaging/make_icons.py` (the logo is drawn in
-`src/libre_panel/branding.py`); rerun it after changing the logo.
+The icons come from `packaging/make_icons.py` (the logo is drawn in
+`rust/render/src/branding.rs`); rerun it after changing the logo.
 
 ## LibreHardwareMonitor's libraries (Windows)
 
-The Windows bundle carries LibreHardwareMonitor's .NET libraries, so that the
-GPU, temperatures, power and fans need no other program. They are not in the
-repository: the Windows job runs `packaging/windows/fetch_lhm.py` before
-PyInstaller, which downloads the pinned packages from NuGet, checks each against
-the SHA-256 written into the script and takes out the .NET Framework build. The
-spec bundles the result as `lhm`; the job then loads it from the bundle.
+The Windows downloads carry LibreHardwareMonitor's .NET libraries beside the sensor service
+(`sensorhost/`), so that the GPU, temperatures, power and fans need no other program. They are
+not in the repository: CI's job `sensor-host` runs `packaging/windows/fetch_lhm.py` before it
+builds the sensor service, which downloads the pinned packages from NuGet, checks each against
+the SHA-256 written into the script and takes out the .NET Framework build. The build puts the
+result beside the service as `lhm` (`sensorhost/LibrePanel.Sensors.csproj`), and the job has
+the service read the hardware through it (`--check`).
 
 To move to other versions:
 
@@ -181,34 +208,37 @@ To move to other versions:
    to: its assembly references (read them from the file, e.g. with `dnfile`),
    not only the dependencies in its `.nuspec`. Whatever it asks for beyond the
    .NET Framework itself has to be in the set, in the version it asks for. Change
-   `LIBRARIES` in `fetch_lhm.py` and in `libre_panel/sensors/lhm_inprocess.py`
-   (the order is the load order).
+   `LIBRARIES` in `fetch_lhm.py` and `Libraries.All` in `sensorhost/src/Program.cs`
+   (the order is the load order; `tests/test_fetch_lhm.py` holds the two to each other).
 3. Change the versions in the table, run
    `python packaging/windows/fetch_lhm.py --print-pins` and copy the SHA-256 it
    prints for each package and library into the table. Run the script as the job
-   does, and `libre-panel sensors --check-lhm` on a Windows machine.
+   does, build the sensor service and run `libre-panel-sensors.exe --check` on a Windows
+   machine.
 
 ## ffmpeg, PresentMon and PawnIO's installer
 
 Every download carries ffmpeg, which the video mode encodes with; the Windows ones also
 PresentMon (game frame rates) and the installer of the PawnIO driver (the CPU's sensors). They
-are in a `tools` folder next to the program, and not in the repository: the job runs
-`packaging/fetch_tools.py` before PyInstaller. It downloads the pinned files from their
+are in a `tools` folder next to the program, and not in the repository: the jobs that put the
+downloads together (`try`, `appimage`) run `packaging/fetch_tools.py` first. It downloads the pinned files from their
 projects' release pages, checks each against the SHA-256 written into the script, takes only the
 program out of ffmpeg's archive (it holds ffprobe, ffplay and documentation too) and checks that
 ffmpeg is the GPL build with libx264 and without the non-free parts, with its licence text. The
-spec copies the result next to the program as `tools`; `libre_panel/bundled.py` is where the
-app looks, before the `PATH` (`video.ffmpeg` and `[sensors.presentmon] path` still win).
+jobs copy the result next to the program as `tools`, where the app looks before the `PATH`
+(`rust/devices/src/h264.rs`, `rust/sensors/src/presentmon.rs`; `video.ffmpeg` and
+`[sensors.presentmon] path` still win).
 CI's jobs run it with `--cache`, in a folder GitHub keeps between runs: a file a run before
 downloaded is taken again where it is the one the table pins (its SHA-256), else downloaded
 anew, so a release page that fails for a while fails no tests. The release downloads them all.
 
-`packaging/check_tools.py` proves it on the PyInstaller folder, on what the Windows setup
-installed and on the files of the AppImage: every file listed in `tools/SOURCES.txt` is the one
-that was fetched, the app started from that folder finds ffmpeg and PresentMon there and not on
-the `PATH`, ffmpeg lists libx264 and encodes the video mode's own command to a stream with one
-slice per picture, and PresentMon starts and says its version. PawnIO's installer is checked
-for its hash and not run. `packaging/smoke_test.py --tools` also asks the running app whether
+`packaging/check_tools.py` proves it on what the Windows setup installed and on the files of
+the AppImage: every file listed in `tools/SOURCES.txt` is the one that was fetched, the program
+started from that folder finds its programs there and not on the `PATH` (`libre-panel tools`),
+ffmpeg lists libx264, makes the standby clip with the app's own command (`libre-panel tools
+clip`) to a stream with one slice per picture and reads it back, the engine encodes frames as
+the video mode feeds it, and PresentMon starts and says its version. PawnIO's installer is
+checked for its hash (the program finds it only as the file it has pinned) and not run. `packaging/smoke_test.py --tools` also asks the running app whether
 its video mode lacks anything.
 
 ffmpeg is FFmpeg-Builds' `win64-gpl` and `linux64-gpl` build, from the last build of a month:
@@ -223,18 +253,18 @@ To move to other versions:
 1. Read the licences again: an ffmpeg that is built `--enable-gpl --enable-version3` and not
    `--enable-nonfree`, PresentMon's `LICENSE.txt` and `THIRD_PARTY.txt` of the new tag, the
    licence of PawnIO's driver and what its release page says about the installer. Update
-   NOTICE.md (and its copy in `src/libre_panel/assets`) and the texts in
+   NOTICE.md (and its copy in `data/assets`) and the texts in
    `packaging/tools-licenses`. Do not ship what is unclear or does not go with the GPL.
 2. Change the addresses, versions and source addresses in the table of `fetch_tools.py`, run
    `python packaging/fetch_tools.py --print-pins` and copy the SHA-256 it prints (a release of
    FFmpeg-Builds has the same in its `checksums.sha256`, PresentMon's page shows them next to
    the files). PawnIO's installer has its SHA-256 a second time, as `PAWNIO_SETUP_SHA256` in
-   `libre_panel/bundled.py`: the app checks the file against it before it is run with
-   administrator rights, and a test says if the two differ.
-3. Run `python packaging/fetch_tools.py` as the job does, build, and run
-   `python packaging/check_tools.py dist/libre-panel`. A new PresentMon may name its CSV
-   columns differently: `sensors/presentmon.py` reads the names of 2.3 and of 2.6 for the
-   waits, and the test with the header of the version that is carried says what changed.
+   `rust/app/src/system_setup.rs`: the app checks the file against it before it is run with
+   administrator rights, and a test there says if the two differ.
+3. Run `python packaging/fetch_tools.py` as the jobs do, build, and run
+   `python packaging/check_tools.py` on the program's folder. A new PresentMon may name its CSV
+   columns differently: `rust/sensors/src/frames.rs` reads the names of 2.3 and of 2.6 for
+   the waits, and the test with the header of the version that is carried says what changed.
 
 ## Versioning
 
@@ -280,13 +310,13 @@ one.
 
 The GIFs of the README and of forum posts, and the small videos of the website, are made by
 `python tools/readme_media.py` into `docs/media` (`--list` says what there is). A clip is a
-recipe: the panel in video mode in `tools/media_panel.py` (the real main loop, frame by frame on a
-clock of its own, so a clip is the same on every run), the app in a browser in
-`tools/media_app.py`, or a scene drawn round them in `tools/media_scene.py`: the README's top (the
-website's headline over Lumen in video mode, in English and German) and the panel as a monitor of
-its own (the desktop's monitor, the panel below it, the app and the website in their windows). The
-Player's clip plays made-up videos, drawn frame by frame in `tools/media_samples.py`, so that
-nothing of anybody else's is in it. Each clip gives a GIF (960 px wide, 25 frames a second, under 4 MB, and
+recipe: the panel in video mode in `tools/media_panel.py` (Libre Panel's own main loop,
+`libre-panel clip`, frame by frame on a clock of its own, so a clip is the same on every run), the
+app in a browser in `tools/media_app.py`, or a scene drawn round them in `tools/media_scene.py`:
+the README's top (the website's headline over Lumen in video mode, in English and German) and the
+panel as a monitor of its own (the desktop's monitor, the panel below it, the app and the website in
+their windows). The Player's clip plays made-up videos, drawn frame by frame in
+`tools/media_samples.py`, so that nothing of anybody else's is in it. Each clip gives a GIF (960 px wide, 25 frames a second, under 4 MB, and
 the run stops if one cannot be made smaller than 8 MB, what a forum takes), an MP4 and a WebM
 for the website, and a poster. ffmpeg makes the videos and the best GIFs (without it Pillow writes
 the GIFs); the app's clips and the scenes need `pip install playwright` and `playwright install

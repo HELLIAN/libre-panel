@@ -29,7 +29,7 @@
 <link rel="icon" type="image/png" href="images/icon.png">
 <link rel="preload" href="fonts/Barlow-Regular.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="preload" href="fonts/Barlow-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="preload" href="media/video-mode.png" as="image">
+<link rel="preload" href="media/light.png" as="image">
 <link rel="stylesheet" href="site.css">
 <script>document.documentElement.className = "js";</script>
 <script src="site.js" defer></script>
@@ -88,14 +88,14 @@
     <div class="stage">
       <div class="wrap">
         <figure class="media media-hero">
-          <video autoplay loop muted playsinline preload="auto" width="2000" height="580" poster="media/video-mode.png" aria-label="Lumen, Libre Panel's own theme, in video mode on a 9.2-inch panel: what is playing with its cover, the time with the load scrolling past as light, fans turning, and lit rings for CPU, GPU and RAM">
-            <source src="media/video-mode.webm" type="video/webm">
-            <source src="media/video-mode.mp4" type="video/mp4">
-            <img src="media/video-mode.gif" width="960" height="278" alt="Lumen in video mode on a 9.2-inch panel">
+          <video autoplay loop muted playsinline preload="auto" width="2000" height="580" poster="media/light.png" aria-label="Lumen v2, Libre Panel's own theme, in video mode on a 9.2-inch panel, with soft light drifting behind its cards: what is playing with its cover, the time with the load scrolling past as light, fans turning, and lit rings for CPU, GPU and RAM">
+            <source src="media/light.webm" type="video/webm">
+            <source src="media/light.mp4" type="video/mp4">
+            <img src="media/light.gif" width="960" height="278" alt="Lumen v2 in video mode on a 9.2-inch panel">
           </video>
           <button class="toggle" type="button" data-playing="true" data-pause="Pause the clip" data-play="Play the clip" aria-label="Pause the clip"><svg class="icon i-pause" aria-hidden="true"><use href="#i-pause"/></svg><svg class="icon i-play" aria-hidden="true"><use href="#i-play"/></svg></button>
         </figure>
-        <p class="caption">Lumen, Libre Panel's own theme, in video mode on a 9.2" panel, with demo values.</p>
+        <p class="caption">Lumen v2, Libre Panel's own theme, with its light, in video mode on a 9.2" panel, with demo values.</p>
         <ul class="facts" aria-label="At a glance">
           <li><span class="dot" style="background: var(--accent)"></span>Works out of the box</li>
           <li><span class="dot" style="background: var(--cpu)"></span>Up to 50 fps on TURZX USB panels</li>
@@ -220,14 +220,14 @@
       <div class="head">
         <p class="kicker">A 30-second tour</p>
         <h2 id="tour-title">A panel that moves with your PC</h2>
-        <p>Every clip here is Libre Panel itself, recorded frame by frame with demo values: Lumen on the 9.2" bar, Studio for the notice, Encore, Nimbus and Almanac, two bars at once, Libre Default on a 3.5" panel, and the panel's own start screen as Libre Panel draws it.</p>
+        <p>Every clip here is Libre Panel itself, recorded frame by frame with demo values: Lumen and Lumen v2 on the 9.2" bar, Morph from Lumen v2 to Arena v2, Studio for the notice, Encore, Nimbus and Almanac, two bars at once, Libre Default on a 3.5" panel, and the panel's own start screen as Libre Panel draws it.</p>
       </div>
 
       <article class="feature" id="video-mode">
         <div class="feature-copy">
           <span class="label">Video mode</span>
           <h3>Up to 50 frames a second</h3>
-          <p>TURZX USB panels have a video decoder, and Libre Panel feeds it up to 50 frames a second (30 by default, which looks smooth and asks far less of the PC): numbers count to each new reading, rings and bars glide, graphs scroll a little on every frame, and fans turn at their real speed.</p>
+          <p>TURZX USB panels have a video decoder, and Libre Panel feeds it up to 50 frames a second (25 by default, which looks smooth and asks far less of the PC): numbers count to each new reading, rings and bars glide, graphs scroll a little on every frame, and fans turn at their real speed.</p>
           <details class="more">
             <summary>More<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
             <p>The downloads carry the ffmpeg it needs, and it turns itself on on the 9.2". Panels without a decoder get still frames, sent where something changed.</p>
@@ -246,7 +246,27 @@
         </figure>
       </article>
 
-      <article class="feature flip" id="look">
+      <article class="feature flip" id="light">
+        <div class="feature-copy">
+          <span class="label">Moving light</span>
+          <h3>One light across all your panels</h3>
+          <p>Lumen, Arena and Encore come in a second version with a light of their own: soft pools that drift behind the cards, across all your panels as one, and warm while the PC works. Encore's take the colours of the cover that plays.</p>
+          <details class="more">
+            <summary>More<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+            <p>On every theme the light moves a little: the end of a ring breathes, the newest point of a curve beats with each reading, and the cover glows in its own colours. Each kind can be turned off in Settings → Panel → Moving light, and a calm panel shows none of it. Your own themes can use the same light.</p>
+          </details>
+        </div>
+        <figure class="media">
+          <video loop muted playsinline preload="none" width="2430" height="1726" data-lazy data-poster="media/panels-light.png" aria-label="Two 9.2-inch bars one above the other: Lumen v2 with the track, the time and the rings, and Lumen v2 Companion below it with every core, the temperatures, the drives and the processes; one soft light drifts across both as over one screen, and a burst of work goes up on both in the same beat and warms it">
+            <source src="media/panels-light.webm" type="video/webm">
+            <source src="media/panels-light.mp4" type="video/mp4">
+          </video>
+          <noscript><img src="media/panels-light.gif" width="960" height="682" loading="lazy" alt="One light across two panels: Lumen v2 and Lumen v2 Companion"></noscript>
+          <button class="toggle" type="button" data-playing="false" data-pause="Pause the clip" data-play="Play the clip" aria-label="Play the clip"><svg class="icon i-pause" aria-hidden="true"><use href="#i-pause"/></svg><svg class="icon i-play" aria-hidden="true"><use href="#i-play"/></svg></button>
+        </figure>
+      </article>
+
+      <article class="feature" id="look">
         <div class="feature-copy">
           <span class="label">The look</span>
           <h3>Values drawn as light</h3>
@@ -377,17 +397,22 @@
 
       <article class="feature feature-wide" id="transitions">
         <div class="feature-copy">
-          <div><span class="label">Transitions</span><h3>The next screen opens in a line of light</h3></div>
+          <div><span class="label">Transitions</span><h3>What both screens show flies to its new place</h3></div>
           <div class="copy">
-            <p>One theme for the desk, another while music plays, a third at night: the autopilot picks the theme by rules you write.</p>
+            <p>With Morph, the time, a ring, the cover or a game's logo flies to its new place and size, even from one panel to the other. Cascade lets the new cards rise in one after another, a Comet flies across, a Portal opens, and slides, wipes and the line of light run across all your panels as over one screen.</p>
             <details class="more">
               <summary>More<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-            <p>A line ignites at mid-height and opens onto the next screen, already live. The autopilot is a service too, off until you switch it on.</p>
+            <p>One theme for the desk, another while music plays, a third at night: the autopilot picks the theme by rules you write. It is a service too, off until you switch it on.</p>
             </details>
           </div>
         </div>
         <figure class="media">
-          <img src="images/studio.png" width="1920" height="480" loading="lazy" decoding="async" alt="Studio: a large clock, the weather card with the next hours, and lit rings for CPU, RAM and GPU">
+          <video loop muted playsinline preload="none" width="2000" height="580" data-lazy data-poster="media/morph.png" aria-label="Morph on a 9.2-inch panel: Lumen v2 gives way to Arena v2, and what both show flies to its new place and size: the time shrinks into the corner, the CPU and GPU rings move over, and the rest of Arena comes up around them; then the same way back">
+            <source src="media/morph.webm" type="video/webm">
+            <source src="media/morph.mp4" type="video/mp4">
+          </video>
+          <noscript><img src="media/morph.gif" width="960" height="278" loading="lazy" alt="Morph from Lumen v2 to Arena v2 and back"></noscript>
+          <button class="toggle" type="button" data-playing="false" data-pause="Pause the clip" data-play="Play the clip" aria-label="Play the clip"><svg class="icon i-pause" aria-hidden="true"><use href="#i-pause"/></svg><svg class="icon i-play" aria-hidden="true"><use href="#i-play"/></svg></button>
         </figure>
       </article>
 
@@ -419,7 +444,7 @@
             <p>TURZX USB panels show a logo of their own when they are switched on and play a clip when the PC starts. Libre Panel draws both for the size of your panel and gives you their files. <b>On the 9.2" and the 12.3" it puts them on the panel</b>, on a click: the files are made for a room that is known to be there, and every write is checked before and after.</p>
             <details class="more">
               <summary>More<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-            <p>Both show before any app talks to the panel. Settings → Panel → Start screen shows the looks and what is on your panel, writes the boot logo and the standby clip, and takes a boot logo off again: the factory logo stays on the panel and comes back. One 9.2" ran out of room for its start screen with 0.9.1 and has kept restarting since, so nothing on a panel is deleted to make room any more, and for the family's other panels writing stays off: how much room they have is not known.</p>
+            <p>Both show before any app talks to the panel. Settings → Panel → Start screen shows the looks and what is on your panel, writes the boot logo and the standby clip, and takes a boot logo off again: the factory logo stays on the panel and comes back. One 9.2" ran out of room for its start screen with 0.9.1 and has kept restarting since, so nothing on a panel is deleted to make room any more. The 8.8" gets the 9.2"'s room; on the family's other panels, whose room is not known, it writes only where you agree to try it at your own risk, after a plain warning, and asks you to share how it went.</p>
             </details>
           </div>
         </div>
@@ -825,6 +850,8 @@
             <li><b>Turing Smart Screen</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5", 8.8"</span></li>
             <li><b>JONSBO ZC-360</b><span class="chip chip-quiet">USB</span><span class="desc">each screen its own panel</span></li>
             <li><b>JONSBO DS339</b><span class="chip chip-quiet">USB</span><span class="desc">3.39"</span></li>
+            <li><b>JONSBO DS916</b><span class="chip chip-quiet">COM port</span><span class="desc">9.16"</span></li>
+            <li><b>Lian Li</b><span class="chip chip-quiet">USB</span><span class="desc">Universal Screen 8.8"</span></li>
             <li><b>WeAct Display FS V1</b><span class="chip chip-quiet">COM port</span><span class="desc">0.96"</span></li>
             <li><b>Waveshare USB Monitor</b><span class="chip chip-quiet">USB</span><span class="desc">2.8", as a USB display</span></li>
           </ul>
@@ -839,10 +866,10 @@
             <li><b>XuanFang</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5"</span></li>
             <li><b>Kipye Qiye</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5"</span></li>
             <li><b>WeAct Display FS V1</b><span class="chip chip-quiet">COM port</span><span class="desc">3.5"</span></li>
-            <li><b>JONSBO</b><span class="chip chip-quiet">USB</span><span class="desc">ZC-360 as one picture, TF3-360SC, DS916</span></li>
+            <li><b>JONSBO</b><span class="chip chip-quiet">USB</span><span class="desc">ZC-360 as one picture, TF3-360SC</span></li>
             <li><b>VMAX</b><span class="chip chip-quiet">USB</span><span class="desc">4.6"</span></li>
             <li><b>Hongtai / Jungle Leopard</b><span class="chip chip-quiet">COM port</span><span class="desc">Chill Arc 360, MSI EZ Display and more</span></li>
-            <li><b>Lian Li</b><span class="chip chip-quiet">USB</span><span class="desc">Universal Screen, HydroShift II, OLED Curve</span></li>
+            <li><b>Lian Li</b><span class="chip chip-quiet">USB</span><span class="desc">Universal Screen 9.2", HydroShift II, OLED Curve</span></li>
             <li><b>Thermalright</b><span class="chip chip-quiet">USB</span><span class="desc">Trofeo Vision</span></li>
             <li><b>BeadaPanel</b><span class="chip chip-quiet">USB</span><span class="desc">every model</span></li>
             <li><b>NZXT Kraken</b><span class="chip chip-quiet">USB</span><span class="desc">with an LCD</span></li>
@@ -953,7 +980,8 @@
       </ol>
       <div class="python">
         <p>With Python instead:</p>
-<pre><code>pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.4"
+<pre><code>pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-manylinux_2_35_x86_64.whl"   <span class="c"># Linux</span>
+pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-win_amd64.whl"   <span class="c"># Windows</span>
 libre-panel tray               <span class="c"># the background app with its tray icon</span>
 libre-panel doctor             <span class="c"># check your panel, write a report</span></code></pre>
       </div>

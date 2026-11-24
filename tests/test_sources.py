@@ -1,13 +1,16 @@
-import json
-from pathlib import Path
-
 import pytest
+from PIL import Image
 
-from libre_panel.config import WeatherConfig
-from libre_panel.sensors.base import Reading, SensorHub, SensorProvider
-from libre_panel.sensors.librehardwaremonitor import parse_value, readings_from_tree
-from libre_panel.sensors.psutil_provider import PsutilProvider
-from libre_panel.weather.open_meteo import build_params, describe_weather_code, parse_current
+from libre_panel.config import (
+    Config,
+)
+from libre_panel.sensors import base
+from libre_panel.sensors.base import (
+    Reading,
+    SensorHub,
+    SensorProvider,
+    available_providers,
+)
 
 
 class Fixed(SensorProvider):
@@ -111,425 +114,85 @@ def test_a_snapshots_history_is_read_as_a_dict_its_lists_made_when_asked():
         del history["cpu.load"]
 
 
-def test_psutil_provider_reads_basics():
-    provider = PsutilProvider()
-    provider.read()
-    values = provider.read()
-    for key in ("cpu.load", "mem.load", "sys.uptime", "net.down"):
-        assert key in values
-
-
-def test_lhm_value_parsing():
-    assert parse_value("45,5 °C") == (45.5, "°C")
-    assert parse_value("1234 RPM") == (1234.0, "RPM")
-    assert parse_value("NaN MHz") == (None, "")
-    assert parse_value("-") == (None, "")
-
-
-def lhm_fixture():
-    # Real LibreHardwareMonitor output, see tests/data/README.md
-    return json.loads((Path(__file__).parent / "data" / "lhm_data.json").read_text("utf-8"))
-
-
-def test_lhm_real_output():
-    out = readings_from_tree(lhm_fixture())
-    expected = {
-        "cpu.temp": (40.0, "°C"),  # "Core (Tctl/Tdie)" on AMD
-        "cpu.load": (0.4, "%"),
-        "cpu.power": (25.6, "W"),
-        "gpu.temp": (27.0, "°C"),
-        "gpu.hotspot": (35.3, "°C"),  # "GPU Hot Spot"
-        "gpu.load": (0.0, "%"),
-        "gpu.power": (10.9, "W"),  # "GPU Package" = board power
-        "gpu.freq": (210.0, "MHz"),
-        "gpu.mem.load": (3.5, "%"),
-        "gpu.mem.used": (577.0, "MB"),
-        "gpu.fan": (0.0, "RPM"),  # a stopped fan is a valid reading
-    }
-    for key, (value, unit) in expected.items():
-        assert (out[key].value, out[key].unit) == (value, unit), key
-    # No average clock in this version: mean of the cores that report one ("NaN" skipped).
-    assert round(out["cpu.freq"].value, 1) == round((4724.9 * 5 + 3149.9 * 2) / 7, 1)
-    # the names, tidied as the hardware source tidies the ones it finds (sensors/hwnames.py)
-    assert out["cpu.name"].value == "Ryzen 5 7600"
-    assert out["gpu.name"].value == "GeForce RTX 4070"
-    assert out["lhm:/gpu-nvidia/0/throughput/0"].unit == "MB/s"  # no raw value: as displayed
-    raw = out["lhm:/gpu-nvidia/0/throughput/1"]  # raw value present: bytes per second
-    assert (raw.value, raw.unit) == (307200.5, "B/s")
-    assert "lhm:/gpu-nvidia/0/throughput/2" not in out  # value "-"
-
-
-def test_lhm_prefers_the_dedicated_gpu():
-    tree = lhm_fixture()
-    computer = tree["Children"][0]
-    igpu = {
-        "Text": "AMD Radeon(TM) Graphics",
-        "HardwareId": "/gpu-amd/1",
-        "ImageURL": "images_icon/ati.png",
-        "Children": [
-            {
-                "Text": "Temperatures",
-                "Children": [
-                    {
-                        "Text": "GPU Core",
-                        "Value": "45,0 °C",
-                        "SensorId": "/gpu-amd/1/temperature/0",
-                        "Type": "Temperature",
-                        "Children": [],
-                    }
-                ],
-            }
-        ],
-    }
-    computer["Children"].insert(0, igpu)  # listed first, still not chosen
-    assert readings_from_tree(tree)["gpu.temp"].value == 27.0
-    assert readings_from_tree(tree, gpu="radeon")["gpu.temp"].value == 45.0
-    assert "lhm:/gpu-amd/1/temperature/0" in readings_from_tree(tree)
-
-
-def memory_modules(*temperatures):
-    """Memory modules as LibreHardwareMonitor lists them (its DimmMemory): each is a piece of
-    hardware under /memory/dimm/<n>, its thermal sensor is "DIMM #<n>" and the limits it tells
-    are temperatures too (which never change). The Total Memory beside them has none."""
-
-    def sensor(n, index, label, value):
-        return {
-            "Text": label,
-            "Value": f"{value:.1f} °C".replace(".", ","),
-            "SensorId": f"/memory/dimm/{n}/temperature/{index}",
-            "Type": "Temperature",
-            "Children": [],
-        }
-
-    return [
-        {
-            "Text": f"Maker - PART-{n} (#{n})",
-            "HardwareId": f"/memory/dimm/{n}",
-            "Children": [
-                {
-                    "Text": "Temperatures",
-                    "Children": [
-                        sensor(n, 0, f"DIMM #{n}", value),
-                        sensor(n, 3, "Thermal Sensor High Limit", 85.0),
-                        sensor(n, 5, "Thermal Sensor Critical High Limit", 95.0),
-                    ],
-                }
-            ],
-        }
-        for n, value in enumerate(temperatures, start=1)
-    ]
-
-
-def test_lhm_memory_temperature_is_the_hottest_module_and_never_a_limit():
-    tree = lhm_fixture()
-    tree["Children"][0]["Children"] += memory_modules(41.5, 44.0, 43.0)
-    out = readings_from_tree(tree)
-    hottest = out["mem.temp"]
-    assert (hottest.value, hottest.unit, hottest.label) == (44.0, "°C", "Memory temperature")
-    assert hottest.origin == "lhm:/memory/dimm/2/temperature/0"
-    assert out["temp.memory1.dimm_1"].value == 41.5  # (the modules are told apart by number)
-    assert out["temp.memory2.thermal_sensor_high_limit"].value == 85.0  # a limit, not heat
-    one = lhm_fixture()
-    one["Children"][0]["Children"] += memory_modules(39.0)
-    alone = readings_from_tree(one)
-    assert alone["mem.temp"].value == 39.0
-    assert alone["temp.memory.dimm_1"].origin == "lhm:/memory/dimm/1/temperature/0"
-    # no module with a thermal sensor (DDR3, no driver, a laptop): no reading, not a zero
-    assert "mem.temp" not in readings_from_tree(lhm_fixture())
-
-
-def test_lhm_memory_temperature_is_made_from_every_module_so_all_are_read():
-    from libre_panel.sensors.librehardwaremonitor import readings_from_sensors, sensors_from_tree
-
-    tree = lhm_fixture()
-    tree["Children"][0]["Children"] += memory_modules(41.5, 44.0)
-    sources = {}
-    readings_from_sensors(sensors_from_tree(tree), None, sources)
-    assert sources["mem.temp"] == (
-        "/memory/dimm/1/temperature/0",
-        "/memory/dimm/2/temperature/0",
-    )  # whichever is the hottest next time: both have to be updated
-    assert sources["cpu.temp"] == ("/amdcpu/0/temperature/2",)  # the others are as they were
-
-
-def wireview(port="COM5", pins=(8.2, 8.4, 9.9, 8.1, 8.3, 8.0)):
-    """Thermal Grizzly's WireView Pro II as LibreHardwareMonitor lists it (its power monitors,
-    WireViewPro2.cs): /gpu-powermonitor/<port>, on the graphics card's 12V-2x6 cable."""
-    at = f"/gpu-powermonitor/{port}"
-
-    def group(name, *sensors):
-        return {"Text": name, "Children": list(sensors)}
-
-    def sensor(kind, index, label, value, unit):
-        return {
-            "Text": label,
-            "Value": f"{value:.1f} {unit}".replace(".", ","),
-            "SensorId": f"{at}/{kind.lower()}/{index}",
-            "Type": kind,
-            "Children": [],
-        }
-
-    return {
-        "Text": "WireView Pro II",
-        "HardwareId": at,
-        "Children": [
-            group("Temperatures", sensor("Temperature", 0, "Onboard Temperature In", 38.5, "°C"),
-                  sensor("Temperature", 1, "Onboard Temperature Out", 41.0, "°C")),
-            group("Voltages", *(sensor("Voltage", 10 + n, f"Pin {n + 1} Voltage", 12.1, "V")
-                                for n in range(6))),
-            group("Currents", sensor("Current", 20, "Total Current", sum(pins), "A"),
-                  *(sensor("Current", 21 + n, f"Pin {n + 1} Current", value, "A")
-                    for n, value in enumerate(pins))),
-            group("Powers", sensor("Power", 30, "Total Power", 12.1 * sum(pins), "W")),
-            group("Fans", sensor("Fan", 40, "Fan", 1450, "RPM")),
-        ],
-    }  # fmt: skip
-
-
-def test_lhm_a_wireview_on_the_gpus_cable_is_no_gpu_and_gives_the_cables_readings():
-    """Discussion #38: LibreHardwareMonitor's id for it begins with "gpu", which made it a second
-    graphics card here: the real one's temperatures were renamed (temp.gpu1.*)."""
-    from libre_panel.sensors.librehardwaremonitor import readings_from_sensors, sensors_from_tree
-
-    plain = readings_from_tree(lhm_fixture())
-    tree = lhm_fixture()
-    tree["Children"][0]["Children"].insert(0, wireview())
-    out = readings_from_tree(tree)
-    for key in ("gpu.temp", "gpu.power", "gpu.load", "gpu.name"):
-        assert out[key] == plain[key]  # the graphics card's, as before
-    gpu_keys = {k for k in plain if k.startswith(("temp.gpu", "fan.gpu"))}
-    assert gpu_keys and gpu_keys <= set(out) and not any(k.startswith("temp.gpu1") for k in out)
-    power = out["gpu.cable.power"]
-    assert (power.value, power.unit, power.label) == (615.9, "W", "GPU cable power")
-    assert power.origin == "lhm:/gpu-powermonitor/COM5/power/30"
-    assert out["gpu.cable.current"].value == pytest.approx(50.9)
-    assert (out["gpu.cable.pin3.current"].value, out["gpu.cable.pin3.current"].unit) == (9.9, "A")
-    assert out["gpu.cable.pin6.voltage"].value == 12.1
-    most = out["gpu.cable.pin.max"]  # the pin that carries the most
-    assert (most.value, most.origin) == (9.9, "lhm:/gpu-powermonitor/COM5/current/23")
-    inside = out["temp.powermonitor.onboard_temperature_in"]
-    assert (inside.value, inside.label) == (38.5, "WireView Pro II Onboard Temperature In")
-    assert out["fan.powermonitor.fan"].value == 1450
-    # on another port: the same keys
-    moved = lhm_fixture()
-    moved["Children"][0]["Children"].append(wireview("COM9"))
-    assert readings_from_tree(moved)["gpu.cable.power"].origin.startswith(
-        "lhm:/gpu-powermonitor/COM9"
-    )
-    # whichever pin carries the most next time: all six are read
-    sources = {}
-    readings_from_sensors(sensors_from_tree(tree), None, sources)
-    assert sources["gpu.cable.pin.max"] == tuple(
-        f"/gpu-powermonitor/COM5/current/{21 + n}" for n in range(6)
-    )
-    assert "gpu.cable.power" not in plain  # without one: none
-
-
-def test_lhm_throughput_uses_raw_bytes():
-    leaf = {
-        "Text": "Download Speed",
-        "Type": "Throughput",
-        "Value": "1,2 MB/s",
-        "RawValue": 1234567.0,
-        "SensorId": "/nic/0/throughput/1",
-    }
-    out = readings_from_tree({"Children": [leaf]})
-    assert (out["lhm:/nic/0/throughput/1"].value, out["lhm:/nic/0/throughput/1"].unit) == (
-        1234567.0,
-        "B/s",
-    )
-
-
-def test_weather_parsing_and_params():
-    cfg = WeatherConfig(enabled=True, latitude=1.5, longitude=2.5, units="imperial")
-    params = build_params(cfg)
-    assert params["temperature_unit"] == "fahrenheit" and params["latitude"] == 1.5
-    data = {
-        "current_units": {"temperature_2m": "°F", "wind_speed_10m": "mp/h"},
-        "current": {"temperature_2m": 57.1, "weather_code": 61, "wind_speed_10m": 9.0},
-    }
-    out = parse_current(data)
-    assert out["weather.temperature"].unit == "°F"
-    assert out["weather.description"].value == "Light rain"
-    assert describe_weather_code(None) == ""
-
-
-def test_psutil_memory_used_free_and_total_add_up():
-    values = PsutilProvider().read()
-    used, free, total = (values[f"mem.{part}"] for part in ("used", "free", "total"))
-    assert (free.unit, free.label) == ("GiB", "Memory free") and 0 < free.value <= total.value
-    assert used.value + free.value == pytest.approx(total.value)
-
-
-def test_psutil_provider_without_cpu_freq(monkeypatch):
-    import psutil
-
-    monkeypatch.delattr(psutil, "cpu_freq", raising=False)
-    values = PsutilProvider().read()
-    assert "cpu.freq" not in values and "cpu.load" in values
-
-
-def _forecast_data():
-    hours = [f"2026-10-08T{h:02d}:00" for h in range(24)] + [
-        f"2026-10-09T{h:02d}:00" for h in range(24)
-    ]
-    return {
-        "utc_offset_seconds": 7200,
-        "hourly": {
-            "time": hours,
-            "temperature_2m": list(range(48)),
-            "weather_code": [61] * 48,
-            "precipitation_probability": [40] * 48,
-            "is_day": [0] * 7 + [1] * 12 + [0] * 29,
-        },
-        "hourly_units": {"temperature_2m": "°C", "precipitation_probability": "%"},
-        "daily": {
-            "time": ["2026-10-08", "2026-10-09"],
-            "temperature_2m_max": [17, 18],
-            "temperature_2m_min": [9, None],
-            "weather_code": [3, 0],
-            "precipitation_probability_max": [20, 0],
-        },
-        "daily_units": {"temperature_2m_max": "°C"},
-    }
-
-
-def test_weather_forecast_follows_the_clock():
-    from datetime import UTC, datetime
-
-    from libre_panel.weather.open_meteo import forecast_readings
-
-    params = build_params(WeatherConfig(enabled=True, latitude=1, longitude=2))
-    assert "temperature_2m" in params["hourly"] and "temperature_2m_max" in params["daily"]
-    data = _forecast_data()
-    at_1430 = datetime(2026, 10, 8, 12, 30, tzinfo=UTC).timestamp()  # 14:30 at the place
-    out = forecast_readings(data, at_1430)
-    assert out["weather.hour.1.time"].value == "15:00"
-    assert out["weather.hour.1.temperature"].value == 15
-    assert out["weather.hour.1.temperature"].unit == "°C"
-    assert out["weather.hour.5.day"].value == 0  # 19:00: night
-    assert out["weather.day.0.name"].value == "Today"
-    assert out["weather.day.1.high"].value == 18 and "weather.day.1.low" not in out
-    # an hour later the same answer says "in 1 hour" about 16:00
-    later = forecast_readings(data, at_1430 + 3600)
-    assert later["weather.hour.1.time"].value == "16:00"
-    # past the data: nothing left to say
-    assert forecast_readings(data, at_1430 + 3 * 86400) == {}
-    assert forecast_readings({}, at_1430) == {}
-
-
-def test_weather_forecast_day_names_in_german():
-    from datetime import UTC, datetime
-
-    from libre_panel import i18n
-    from libre_panel.weather.open_meteo import forecast_readings
-
-    i18n.set_language("de")
-    try:
-        out = forecast_readings(_forecast_data(), datetime(2026, 10, 8, 12, tzinfo=UTC).timestamp())
-    finally:
-        i18n.set_language("en")
-    assert out["weather.day.0.name"].value == "Heute"
-    assert out["weather.day.1.name"].value == "Fr"
-
-
-def _minutely(amounts):
-    """Open-Meteo's 15-minute precipitation (mm) from 14:00 local time on; a step is the sum
-    of the 15 minutes up to its time (the step of 14:45 is the rain from 14:30 to 14:45)."""
-    from datetime import datetime, timedelta
-
-    start = datetime(2026, 10, 8, 14)
-    times = [
-        (start + timedelta(minutes=15 * i)).isoformat(timespec="minutes")
-        for i in range(len(amounts))
-    ]
-    return {"minutely_15": {"time": times, "precipitation": amounts}}
-
-
-def test_weather_params_ask_for_the_rain_and_the_hours():
-    params = build_params(WeatherConfig(enabled=True, latitude=1, longitude=2))
-    assert params["minutely_15"] == "precipitation"
-    assert {"weather_code", "precipitation_probability", "is_day"} <= set(
-        params["hourly"].split(",")
-    )
-
-
-def test_weather_rain_starts_and_stops():
-    from datetime import UTC, datetime
-
-    from libre_panel.weather.open_meteo import forecast_readings
-
-    data = {**_forecast_data(), **_minutely([0, 0, 0, 0, 0.4, 1.2, 0.8, 0.5, 0, 0, 0, 0])}
-    # 14:32 local (the place is UTC+2): dry, rain from 14:45, counted from now
-    out = forecast_readings(data, datetime(2026, 10, 8, 12, 32, tzinfo=UTC).timestamp())
-    assert out["weather.rain.minutes"].value == 13 and out["weather.rain.minutes"].unit == "min"
-    assert out["weather.rain.text"].value == "Rain in 13 min"
-    # 15:10 local: raining, dry from 15:45
-    out = forecast_readings(data, datetime(2026, 10, 8, 13, 10, tzinfo=UTC).timestamp())
-    assert out["weather.rain.minutes"].value == 35
-    assert out["weather.rain.text"].value == "Rain stops in 35 min"
-    # the hours keep their code, chance of rain and day or night
-    assert out["weather.hour.1.code"].value == 61
-    assert out["weather.hour.1.rain"].value == 40
-    assert out["weather.hour.1.day"].value == 1  # 16:00: day
-
-
-def test_weather_rain_steps_hold_the_quarter_hour_before_their_time():
-    """Open-Meteo's 15-minute precipitation is the sum of the preceding 15 minutes: the step of
-    14:45 is the rain from 14:30 to 14:45. At 14:32 that is the quarter hour under way, and the
-    step of 14:30 is over."""
-    from datetime import UTC, datetime
-
-    from libre_panel.weather.open_meteo import forecast_readings
-
-    at_1432 = datetime(2026, 10, 8, 12, 32, tzinfo=UTC).timestamp()
-    # rain from 14:30 to 15:00 (the steps of 14:45 and 15:00): it rains now, until 15:00
-    now = {**_forecast_data(), **_minutely([0, 0, 0, 0.6, 0.6] + [0] * 7)}
-    assert forecast_readings(now, at_1432)["weather.rain.text"].value == "Rain stops in 28 min"
-    # the rain until 14:30 is over; it rains again from 14:45 (the step of 15:00)
-    over = {**_forecast_data(), **_minutely([0.6, 0.6, 0.6, 0, 0.6] + [0] * 7)}
-    assert forecast_readings(over, at_1432)["weather.rain.text"].value == "Rain in 13 min"
-
-
-def test_weather_rain_when_nothing_changes():
-    from datetime import UTC, datetime
-
-    from libre_panel.weather.open_meteo import forecast_readings
-
-    at_1432 = datetime(2026, 10, 8, 12, 32, tzinfo=UTC).timestamp()
-    dry = forecast_readings({**_forecast_data(), **_minutely([0] * 12)}, at_1432)
-    assert "weather.rain.minutes" not in dry
-    assert dry["weather.rain.text"].value == "No rain for the next 2 h"
-    wet = forecast_readings({**_forecast_data(), **_minutely([1.0] * 12)}, at_1432)
-    assert "weather.rain.minutes" not in wet
-    assert wet["weather.rain.text"].value == "Rain for the next 2 h"
-    # the window ends at 16:45: rain from 16:30 counts, rain from 16:45 does not
-    edge = forecast_readings({**_forecast_data(), **_minutely([0] * 11 + [1.0])}, at_1432)
-    assert edge["weather.rain.minutes"].value == 118
-    assert edge["weather.rain.text"].value == "Rain in 118 min"
-    late = forecast_readings({**_forecast_data(), **_minutely([0] * 12 + [1.0])}, at_1432)
-    assert "weather.rain.minutes" not in late
-    assert late["weather.rain.text"].value == "No rain for the next 2 h"
-    # an answer that ends before the two hours do says nothing about the rain
-    short = forecast_readings({**_forecast_data(), **_minutely([0, 0, 0])}, at_1432)
-    assert "weather.rain.text" not in short
-    assert "weather.rain.text" not in forecast_readings(_forecast_data(), at_1432)
-
-
-def test_weather_rain_text_in_german():
-    from datetime import UTC, datetime
-
-    from libre_panel import i18n
-    from libre_panel.weather.open_meteo import forecast_readings
-
-    at_1432 = datetime(2026, 10, 8, 12, 32, tzinfo=UTC).timestamp()
-    i18n.set_language("de")
-    try:
-        stops = forecast_readings({**_forecast_data(), **_minutely([0.5] * 4 + [0] * 8)}, at_1432)
-        starts = forecast_readings({**_forecast_data(), **_minutely([0] * 4 + [0.4] * 8)}, at_1432)
-        dry = forecast_readings({**_forecast_data(), **_minutely([0] * 12)}, at_1432)
-    finally:
-        i18n.set_language("en")
-    assert stops["weather.rain.text"].value == "Regen endet in 13 min"
-    assert starts["weather.rain.text"].value == "Regen in 13 min"
-    assert dry["weather.rain.text"].value == "Kein Regen in den nächsten 2 Std."
+# -- sources with names of their own --------------------------------------------------------------
+
+
+class Other(SensorProvider):
+    """A source that has names of its own (LibreHardwareMonitor has two of them)."""
+
+    name = "other"
+
+    def __init__(self, **values):
+        super().__init__()
+        self.values = values
+
+    def read(self):
+        return {key: Reading(key, value, "", key) for key, value in self.values.items()}
+
+
+def test_a_source_that_does_not_override_comes_second_as_ever():
+    first, second = Other(**{"cpu.name": "first"}), Other(**{"cpu.name": "second"})
+    assert SensorHub([first, second]).snapshot().value("cpu.name") == "first"
+    assert SensorProvider.overrides == ()
+
+
+def test_the_hub_tells_the_sources_the_config_and_a_broken_one_does_not_stop_the_rest(caplog):
+    heard = []
+
+    class Listens(Other):
+        def follow_config(self, config):
+            heard.append(config)
+
+    class Breaks(Other):
+        name = "breaks"
+
+        def follow_config(self, config):
+            raise RuntimeError("no")
+
+    class Bare:  # written without the base class
+        name = "bare"
+
+        def read(self):
+            return {}
+
+    config = Config()
+    SensorHub([Breaks(), Bare(), Listens()]).follow_config(config)
+    assert heard == [config]
+    assert "sensor provider breaks failed" in caplog.text
+    assert SensorProvider().follow_config(config) is None  # a source with no settings of this kind
+
+
+# -- pictures of the sources that follow every frame ----------------------------------------------
+
+
+class Player(base.SensorProvider):
+    """A source that follows on every frame, as the media source does, with its cover."""
+
+    name = "player"
+    every_frame = True
+
+    def __init__(self):
+        super().__init__({})
+        self.title, self.cover = "Song A", Image.new("RGB", (4, 4), "red")
+
+    def read(self):
+        return {"media.title": base.Reading("media.title", self.title)}
+
+    def images(self):
+        return {"media.cover": self.cover} if self.cover is not None else {}
+
+
+def test_the_hub_hands_on_the_pictures_of_the_sources_that_follow_every_frame():
+    player = Player()
+    hub = SensorHub([player])
+    assert hub.fresh_images() == {"media.cover": player.cover}
+    player.cover = None  # a track without one: gone, not the old one
+    assert hub.fresh_images() == {"media.cover": None}
+    assert hub.fresh_images() == {}
+
+
+# -- sources to choose ----------------------------------------------------------------------------
+
+
+def test_nut_is_a_source_to_choose():
+    assert "nut" in available_providers()

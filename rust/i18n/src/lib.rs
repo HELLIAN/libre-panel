@@ -119,6 +119,22 @@ pub fn set_language(language: Language) {
     *current().write().unwrap_or_else(|e| e.into_inner()) = Arc::new(language);
 }
 
+/// Whether this process says amounts of data in MB alone (config.toml's `data_unit = "mb"`):
+/// a rate counted in bytes (a network's, a drive's) and the graphics card's memory, instead of
+/// the unit that fits each (KB/s, MB/s, GB/s; GB). As the language, the process's.
+static DATA_IN_MB: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// set_data_in_mb: amounts of data in MB alone from now on (true), or each in the unit that
+/// fits it (false).
+pub fn set_data_in_mb(on: bool) {
+    DATA_IN_MB.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether amounts of data are said in MB alone.
+pub fn data_in_mb() -> bool {
+    DATA_IN_MB.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The language of this process.
 pub fn language() -> Arc<Language> {
     current().read().unwrap_or_else(|e| e.into_inner()).clone()

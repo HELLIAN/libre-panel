@@ -23,6 +23,20 @@ use crate::settings::{Restart, Settings};
 /// a change: the panel opens again, the encoder starts, the meter's first second
 const SETTLE_S: f64 = 6.0;
 const SAMPLE_S: f64 = 1.0;
+/// the tests' own: every wait of a run times this (Python's Experiment.scale), 1 otherwise
+pub const SCALE_ENV: &str = "LP_EXPERIMENT_SCALE";
+
+/// What every wait of a run is timed by (SCALE_ENV, a number above 0; else 1).
+fn scale() -> f64 {
+    static SCALE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let named = std::env::var(SCALE_ENV).ok();
+        let number = named.and_then(|text| text.trim().parse::<f64>().ok());
+        number
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+            .unwrap_or(1.0)
+    })
+}
 /// what is worse than what, for a step's verdict
 const WORST: [&str; 5] = ["no video", "ok", "pc", "stutter", "failed"];
 
@@ -464,9 +478,9 @@ fn changes_of(changes: &[(&'static str, Value)]) -> Dict {
         .collect()
 }
 
-/// Waits `seconds`, or until stopped.
+/// Waits `seconds` (times the tests' scale), or until stopped.
 fn wait(stop: &AtomicBool, seconds: f64) {
-    let until = Instant::now() + Duration::from_secs_f64(seconds);
+    let until = Instant::now() + Duration::from_secs_f64(seconds * scale());
     while !stop.load(Ordering::Relaxed) && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -529,12 +543,13 @@ fn measure(context: &Context, run: &Mutex<Run>, stop: &AtomicBool, step: &Step) 
     let first = context.snapshot();
     let mut samples: IndexMap<usize, Vec<Dict>> = first.keys().map(|n| (*n, Vec::new())).collect();
     let began = Instant::now();
+    let total = step.seconds * scale();
     while !stop.load(Ordering::Relaxed) {
         let gone = began.elapsed().as_secs_f64();
         if let Ok(mut run) = run.lock() {
-            run.left_s = (step.seconds - gone).max(0.0);
+            run.left_s = ((total - gone) / scale()).max(0.0); // (in the step's own seconds)
         }
-        if gone >= step.seconds {
+        if gone >= total {
             break;
         }
         wait(stop, SAMPLE_S);

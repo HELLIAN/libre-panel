@@ -2,6 +2,7 @@
 //! them and the main loop (plugins/host.py).
 
 pub mod agents;
+pub mod agents_local;
 pub mod agents_service;
 pub mod agents_setup;
 pub mod agents_usage;
@@ -18,6 +19,7 @@ pub mod fancontrol;
 pub mod game;
 pub mod host;
 pub mod launchers;
+pub mod lightring;
 pub mod machine;
 pub mod manager;
 pub mod memory;

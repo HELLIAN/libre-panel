@@ -12,6 +12,11 @@ pub trait Link: Send {
     fn read(&mut self, size: usize) -> Result<Vec<u8>>;
     /// What came in and was not read yet, thrown away.
     fn drain_input(&mut self);
+    /// How many bytes came in and wait to be read, without waiting; None where the link
+    /// cannot tell.
+    fn waiting(&mut self) -> Option<usize> {
+        None
+    }
     /// The link let go (where it is the panel's place, another may take it).
     fn close(&mut self);
 }

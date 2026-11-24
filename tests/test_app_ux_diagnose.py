@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 
 from playwright.sync_api import expect  # noqa: E402
-from test_app_browser import app_url, browser_page  # noqa: E402, F401
+from test_app_browser import app_url, browser_page, server_language  # noqa: E402, F401
 
 FORM = "https://github.com/syntensa/libre-panel/issues/new?template=panel_support.yml&doctor=x"
 
@@ -193,9 +193,8 @@ class Load:
 def test_the_load_card_has_a_title_of_its_own_that_german_words_as_utilisation(app_url):  # noqa: F811
     """The card is titled by what it measures, not by "Load" (a word that German has twice: the
     load of the processor is its Auslastung, a burden its Last)."""
-    from libre_panel import i18n
 
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "live/diagnose", routes={"**/api/load": Load(LOAD).route}) as page:
         expect(page.locator(".diagnose-load #diagnose-load-title")).to_have_text(
             "Auslastung dieses PCs"

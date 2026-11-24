@@ -12,6 +12,8 @@ mod backup;
 mod beside;
 mod capture;
 mod client;
+mod clip;
+mod clock;
 mod colour_show;
 mod colours;
 mod community;
@@ -66,6 +68,7 @@ mod start_screen;
 mod switch;
 mod system;
 mod system_setup;
+mod tools;
 mod transition_show;
 mod tray;
 mod updates;
@@ -117,9 +120,11 @@ Libre Panel
                                 as administrator: what the sensors need (Windows), and on
                                 Linux the panel's access, the fan chip's driver and, with
                                 --rapl, the processor's power (--linux, --dry-run, --json)
-  libre-panel config [path | init [--force]]
+  libre-panel config [path | init [--force] | language [CODE] [--if-auto]]
                                 where config.toml is, and whether it is right (path: where
-                                it belongs; init: a new one with the defaults)
+                                it belongs; init: a new one with the defaults; language: the
+                                app's language, auto or en, de, ...; --if-auto: only where
+                                it follows the system's)
   libre-panel quit [--timeout S]  quit the running app (and wait until it is gone)
   libre-panel notify TEXT [--title T] [--seconds S] [--icon NAME] [--level info|warning|error]
                                 a notice on the panel of the running app
@@ -135,6 +140,10 @@ Libre Panel
                                 several are connected (turing-12.3-usb);
                                 --wait: up to S seconds (600) for the panel, acting the
                                 moment it comes (one that keeps restarting)
+  libre-panel tools [clip OUT [--model ID]]
+                                the programs it uses beside itself and where it finds them
+                                (ffmpeg, its engine, PresentMon, PawnIO's installer); clip:
+                                a TURZX USB panel's standby clip as it makes it, into OUT
   libre-panel udev-rules        the Linux udev rule for the panels' access
   libre-panel location NAME     latitude and longitude for the weather
   libre-panel version
@@ -182,6 +191,7 @@ fn preview_command(args: &[String]) -> Result<(), String> {
     let home = Home::find()?;
     let file = config.unwrap_or_else(|| home.config_file());
     let config = lp_config::load_config(&file, lp_config::platform()).map_err(|e| e.msg)?;
+    say_data_as(&config);
     let theme = theme.unwrap_or_else(|| "libre-default".into());
     let folder = if std::path::Path::new(&theme).is_dir() {
         PathBuf::from(&theme)
@@ -372,8 +382,7 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
                 "{:<18} {:<42} {:>10} {:>10}  {:<12} protocol",
                 "model", "panel", "landscape", "portrait", "driver"
             );
-            let majesty = std::iter::once(&lp_devices::hongtai::MAJESTY);
-            for model in lp_devices::models::MODELS.iter().chain(majesty) {
+            for model in lp_devices::models::MODELS {
                 let (lw, lh) = model.size("landscape");
                 let (pw, ph) = model.size("portrait");
                 let label = model.label();
@@ -419,9 +428,14 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             // (_cmd_config's actions: `path`, where it belongs, and `init [--force]`, a new
             // one with the defaults; with neither, where it is and what it says)
             let (action, args) = match args.split_first() {
-                Some((first, rest)) if first == "path" || first == "init" => (first.as_str(), rest),
+                Some((first, rest)) if ["path", "init", "language"].contains(&first.as_str()) => {
+                    (first.as_str(), rest)
+                }
                 _ => ("", args),
             };
+            if action == "language" {
+                return config_language(args);
+            }
             if action == "path" {
                 println!(
                     "{}",
@@ -603,6 +617,16 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
         "devices" => devices_command(),
         "start-screen" => std::process::exit(start_screen_command(args)?),
         "udev-rules" => print!("{}", linux_setup::udev_rules_text()),
+        "share" => {
+            let home = Home::find()?;
+            let env = lp_theme::Env {
+                fonts_dir: home.fonts(),
+            };
+            std::process::exit(share::command(args, &home.places(), &env));
+        }
+        "tools" => std::process::exit(tools::command(args)?),
+        // (tools/media_panel.py's: the README's clips of the panels)
+        "clip" => std::process::exit(clip::command(args)?),
         "location" => std::process::exit(location_command(args)?),
         // (the app's own: its capture program on Wayland, wayland.rs)
         "wayland-feed" => std::process::exit(wayland_feed::run(args)),
@@ -642,10 +666,13 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             follow_signals();
             let home = Home::find()?;
             let file = asked.config.clone().unwrap_or_else(|| home.config_file());
-            // (the app's language as config.toml sets it; a file that cannot be read: the
-            // system's)
-            let setting = lp_config::load_config(&file, lp_config::platform())
-                .map_or_else(|_| "auto".to_string(), |config| config.language);
+            // (the app's language as config.toml sets it, a file that cannot be read: the
+            // system's; and how it says amounts of data)
+            let config = lp_config::load_config(&file, lp_config::platform());
+            if let Ok(config) = &config {
+                say_data_as(config);
+            }
+            let setting = config.map_or_else(|_| "auto".to_string(), |config| config.language);
             let code = lp_i18n::resolve(Some(&setting), lp_i18n::system_language_here);
             match lp_i18n::Language::load(&home.locale(), &code) {
                 Ok(language) => lp_i18n::set_language(language),
@@ -996,11 +1023,20 @@ impl TrayFollower {
     }
 }
 
+/// How this process says amounts of data, as config.toml's `data_unit` sets it: in MB alone
+/// ("mb"), or each in the unit that fits it. Set with the language, wherever that is.
+pub fn say_data_as(config: &lp_config::Config) {
+    lp_i18n::set_data_in_mb(config.data_unit == "mb");
+}
+
 /// The app's language as config.toml sets it ("auto", or a file that cannot be read: the
-/// system's), for what the command line says.
+/// system's), for what the command line says; and how it says amounts of data.
 fn speak(home: &Home, file: &std::path::Path) {
-    let setting = lp_config::load_config(file, lp_config::platform())
-        .map_or_else(|_| "auto".to_string(), |config| config.language);
+    let config = lp_config::load_config(file, lp_config::platform());
+    if let Ok(config) = &config {
+        say_data_as(config);
+    }
+    let setting = config.map_or_else(|_| "auto".to_string(), |config| config.language);
     let code = lp_i18n::resolve(Some(&setting), lp_i18n::system_language_here);
     match lp_i18n::Language::load(&home.locale(), &code) {
         Ok(language) => lp_i18n::set_language(language),
@@ -1377,6 +1413,65 @@ fn location_command(args: &[String]) -> Result<i32, String> {
     Ok(0)
 }
 
+/// `config language [CODE] [--if-auto]`: the language config.toml gives the app (what
+/// Settings → Language sets: "auto", the system's, or a code of lp_i18n::LANGUAGES), or with
+/// no code which it is and what the app speaks. `--if-auto`: only where the app follows the
+/// system's language (no config.toml yet, or "auto"), so that a language chosen in the app is
+/// kept: the Windows installer gives a new install the language chosen in it that way.
+fn config_language(args: &[String]) -> Result<(), String> {
+    let mut code = None;
+    let mut if_auto = false;
+    let mut rest = Vec::new();
+    let mut given = args.iter();
+    while let Some(arg) = given.next() {
+        match arg.as_str() {
+            "--if-auto" => if_auto = true,
+            "--config" => rest.extend([arg.clone(), given.next().cloned().unwrap_or_default()]),
+            other if other.starts_with('-') => rest.push(arg.clone()),
+            _ if code.is_none() => code = Some(arg.clone()),
+            other => return Err(format!("config language: one language, not also {other:?}")),
+        }
+    }
+    let asked = asked(&rest)?;
+    let file = match asked.config {
+        Some(file) => file,
+        None => Home::find()?.config_file(),
+    };
+    let Some(code) = code else {
+        // (the setting as the app reads it: a file that cannot be read is the system's)
+        let setting = lp_config::load_config(&file, lp_config::platform())
+            .map_or_else(|_| "auto".to_string(), |config| config.language);
+        let speaks = lp_i18n::resolve(Some(&setting), lp_i18n::system_language_here);
+        println!("language: {setting} (the app speaks {speaks})");
+        return Ok(());
+    };
+    let known = code == "auto" || lp_i18n::LANGUAGES.iter().any(|(c, _)| *c == code);
+    if !known {
+        let codes: Vec<&str> = lp_i18n::LANGUAGES.iter().map(|(c, _)| *c).collect();
+        return Err(format!(
+            "config language: auto or one of {}, not {code:?}",
+            codes.join(", ")
+        ));
+    }
+    if if_auto && file.exists() {
+        // (a config.toml that cannot be read is left as it is: its own error says why)
+        let config = lp_config::load_config(&file, lp_config::platform()).map_err(|e| e.msg)?;
+        if config.language != "auto" {
+            println!("language: {} (kept)", config.language);
+            return Ok(());
+        }
+    }
+    lp_config::edit::set_config_value(
+        "language",
+        lp_py::toml::Toml::Str(code.clone()),
+        &file,
+        lp_config::platform(),
+    )
+    .map_err(|why| why.msg)?;
+    println!("language: {code}");
+    Ok(())
+}
+
 /// `autostart enable|disable|status [--elevated]` (cli.py's _cmd_autostart).
 fn autostart(args: &[String]) -> Result<(), String> {
     let mut action = None;
@@ -1632,7 +1727,60 @@ fn own_handles() {
     }
 }
 
+/// The libraries of C that draw as Pillow draws (FreeType, HarfBuzz, libjpeg, libwebp: Pillow's
+/// own), named to the program where it carries them and nothing names them yet: in `lib`
+/// beside it (the AppImage's and the Linux archive's folder) or in `lib/libre-panel` beside
+/// its `bin` (an install's: pip and pipx put them there). Nothing goes into LD_LIBRARY_PATH, so
+/// that the window and the tray icon use the system's GTK with the system's libraries. Done
+/// first, before a thread is started; on Windows the DLLs beside the program are found by
+/// their names.
+fn name_own_libraries() {
+    const OWN: [(&str, &str); 6] = [
+        ("LP_LIBFREETYPE", "libfreetype"),
+        ("LP_LIBHARFBUZZ", "libharfbuzz"),
+        ("LP_LIBJPEG", "libjpeg"),
+        ("LP_LIBWEBPDEMUX", "libwebpdemux"),
+        ("LP_LIBWEBPMUX", "libwebpmux"),
+        ("LP_LIBWEBP", "libwebp-"),
+    ];
+    if cfg!(windows) {
+        return;
+    }
+    let Ok(program) = std::env::current_exe() else {
+        return;
+    };
+    let program = std::fs::canonicalize(&program).unwrap_or(program);
+    let Some(beside) = program.parent() else {
+        return;
+    };
+    let mut folders = vec![beside.join("lib")];
+    if let Some(above) = beside.parent() {
+        folders.push(above.join("lib").join("libre-panel"));
+    }
+    for folder in folders {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        files.sort();
+        for (variable, prefix) in OWN {
+            if std::env::var_os(variable).is_some() {
+                continue;
+            }
+            let named = |file: &&PathBuf| {
+                file.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(prefix))
+            };
+            if let Some(file) = files.iter().find(named) {
+                std::env::set_var(variable, file);
+            }
+        }
+    }
+}
+
 pub fn main(default: &str) -> ExitCode {
+    name_own_libraries();
     own_handles();
     logs::log_panics();
     let mut args: Vec<String> = std::env::args().skip(1).collect();

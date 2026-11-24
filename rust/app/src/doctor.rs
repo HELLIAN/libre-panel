@@ -91,7 +91,7 @@ impl Report {
 
     /// The report as text, for an issue.
     pub fn text(&self) -> String {
-        let [year, month, day, hour, minute, _] = crate::share::local_time(crate::share::now());
+        let [year, month, day, hour, minute, _] = crate::share::local_time(crate::clock::now());
         let (system, release, machine) = crate::settings::platform();
         let panel = match self.model {
             Some(model) => format!("{} — {}", model.id, model.label()),
@@ -286,6 +286,8 @@ pub struct Options {
     pub brightness: i64,
     pub device: Option<lp_config::DeviceConfig>,
     pub settings: PathBuf,
+    /// config.toml, where what the test found is kept (the layout of JPEG that shows)
+    pub config_file: PathBuf,
     pub frames: usize,
     pub seconds_per_card: f64,
     pub speed_seconds: f64,
@@ -362,6 +364,84 @@ impl<'a> Doctor<'a> {
         Ok(Some(seen))
     }
 
+    /// A screen that takes JPEG and stayed black: the test card once more in the other
+    /// layout of JPEG (a decoder may show only one: #30), and where it shows, that layout from
+    /// now on (`[device] jpeg` in config.toml), and the card's step passed with it.
+    fn other_jpeg(&mut self, card: &Image, name: &str) -> Result<(), Stop> {
+        let Some(questions) = self.questions else {
+            return Ok(());
+        };
+        let Some(Opened::Serial(display)) = &self.panel else {
+            return Ok(());
+        };
+        let Some(layout) = display.jpeg_layout() else {
+            return Ok(());
+        };
+        let (black, _) = questions.confirm(
+            "card-black",
+            "Did the panel stay black, without anything of the test card?",
+        )?;
+        if !black {
+            return Ok(());
+        }
+        let layouts = lp_devices::udisp::JPEG_LAYOUTS;
+        let other = layouts
+            .iter()
+            .find(|name| **name != layout)
+            .unwrap_or(&layouts[0]);
+        self.set_jpeg(other)?;
+        self.send(card)?;
+        if self.options.said {
+            println!("\nThe panel should now show the test card as JPEG {other}.");
+        }
+        let (seen, note) = questions.confirm(
+            "card-jpeg",
+            &format!("The test card once more, as JPEG {other}: do you see it now?"),
+        )?;
+        if !seen {
+            self.set_jpeg(&layout)?;
+            let note = if note.is_empty() {
+                note
+            } else {
+                format!(": {note}")
+            };
+            self.step(
+                "JPEG layout",
+                "fail",
+                &format!("{other} stayed black too{note}"),
+            );
+            return Ok(());
+        }
+        use lp_config::edit::{edit_config, Change};
+        use lp_py::toml::Toml;
+        let change = Change::Value("device.jpeg".into(), Toml::Str(other.to_string()));
+        let file = &self.options.config_file;
+        let kept = match edit_config(&[change], file, lp_config::platform()) {
+            Ok(()) => format!("[device] jpeg = \"{other}\" written to config.toml"),
+            Err(why) => format!("set [device] jpeg = \"{other}\" in config.toml ({why})"),
+        };
+        if let Some(step) = self
+            .report
+            .steps
+            .iter_mut()
+            .rev()
+            .find(|step| step.name == name)
+        {
+            step.result = "ok";
+            step.detail = format!("as JPEG {other} (as {layout}: black)");
+        }
+        let detail = format!("{other} shows where {layout} stayed black; {kept}");
+        self.step("JPEG layout", "ok", &detail);
+        Ok(())
+    }
+
+    fn set_jpeg(&mut self, layout: &str) -> Result<(), Stop> {
+        match self.panel.as_mut() {
+            Some(Opened::Serial(display)) => display.set_jpeg(layout).map_err(Stop::Device),
+            _ => Ok(()),
+        }
+    }
+
     /// Show a whole frame; (seconds it took, bytes sent).
     fn send(&mut self, image: &Image) -> Result<(f64, usize), Stop> {
         match self.panel.as_mut() {
@@ -376,6 +456,7 @@ impl<'a> Doctor<'a> {
             Some(Opened::Serial(display)) => {
                 let started = Instant::now();
                 let now = lp_render::video::monotonic();
+                let sent = display.counters().bytes;
                 display
                     .show(std::rc::Rc::new(image.clone()), now)
                     .map_err(|why| match why {
@@ -383,10 +464,15 @@ impl<'a> Doctor<'a> {
                             why
                         }
                     })?;
-                Ok((
-                    started.elapsed().as_secs_f64(),
-                    image.width() * image.height() * 2,
-                ))
+                // (what the driver counted it sent, else the size of the frame in RGB565)
+                let sent = display.counters().bytes.saturating_sub(sent);
+                let size = usize::try_from(sent).unwrap_or(0);
+                let size = if size == 0 {
+                    image.width() * image.height() * 2
+                } else {
+                    size
+                };
+                Ok((started.elapsed().as_secs_f64(), size))
             }
             None => Err(Stop::Device("no panel".into())),
         }
@@ -474,42 +560,73 @@ impl<'a> Doctor<'a> {
         true
     }
 
-    /// The serial panel of config.toml's `[device]` (a panel of the Hongtai family), opened.
-    fn find_serial(&mut self) -> bool {
-        let Some(device) = self.options.device.clone() else {
-            self.no_panel();
-            return false;
-        };
+    /// The panel of config.toml's `[device]` as the app finds one (doctor.py's open_serial):
+    /// the model named, else any panel there is (another maker's USB screen, a panel on a serial
+    /// port of whichever family); and whether config.toml names it.
+    fn panel_device(&self) -> (lp_config::DeviceConfig, bool) {
+        let device = self.options.device.clone().unwrap_or_default();
+        let named = lp_devices::models::find_model(&device.model).is_some();
+        // ("turzx": the model named, else every kind of panel in turn, as "auto" looks)
         let device = lp_config::DeviceConfig {
-            driver: "hongtai".into(),
+            driver: "turzx".into(),
             ..device
         };
+        (device, named)
+    }
+
+    /// The panel of config.toml's `[device]` (panel_device), opened: named as doctor.py names
+    /// it, a serial panel's step or a USB panel's.
+    fn find_serial(&mut self) -> bool {
+        let (device, named) = self.panel_device();
         let now = lp_render::video::monotonic();
-        match crate::display::Display::open(
+        let opened = crate::display::Display::open(
             &device,
             &self.options.settings,
             self.options.brightness,
             false,
             now,
-        ) {
+        );
+        let serial = |model: Option<&PanelModel>| {
+            model.is_none_or(|model| model.protocol.starts_with("serial"))
+        };
+        match opened {
             Ok(display) if display.on_panel() => {
-                self.report.model = display.model();
-                let label = display
-                    .model()
-                    .map_or_else(|| display.describe(), PanelModel::label);
+                let model = display.model();
+                self.report.model = model;
+                let label = model.map_or_else(|| display.describe(), PanelModel::label);
                 self.panel = Some(Opened::Serial(Box::new(display)));
-                self.step(
-                    "find and open a USB serial panel (virtual COM port)",
-                    "ok",
-                    &label,
-                );
+                let step = match serial(model) {
+                    true => "find and open a USB serial panel (virtual COM port)",
+                    false => "find and open a USB panel",
+                };
+                self.step(step, "ok", &label);
                 true
+            }
+            // (a panel config.toml names, or one on a port by its USB ids, that does not open:
+            // why, named by its model; nothing there at all: what was looked for)
+            Err(why) if named || self.panel_port(&device).is_some() => {
+                let model = lp_devices::models::find_model(&device.model)
+                    .or_else(|| self.panel_port(&device));
+                self.report.model = model;
+                let step = match serial(model) {
+                    true => "open a USB serial panel (virtual COM port)",
+                    false => "find and open a USB panel",
+                };
+                self.step(step, "fail", &why);
+                self.report_serial_ports();
+                false
             }
             _ => {
                 self.no_panel();
                 false
             }
         }
+    }
+
+    /// The model of the serial panel a port has the USB ids of (looked for as the app looks).
+    fn panel_port(&self, device: &lp_config::DeviceConfig) -> Option<&'static PanelModel> {
+        let found = lp_devices::ports::find_port(None, &device.port).ok()??;
+        Some(found.model)
     }
 
     fn no_panel(&mut self) {
@@ -656,12 +773,15 @@ impl<'a> Doctor<'a> {
             };
             let card = test_card(w, h, "Libre Panel", &subtitle, round_panel, hidden)?;
             self.send(&card)?;
-            self.question(
+            let seen = self.question(
                 &format!("card-{way}"),
                 &format!("test card, {way}"),
                 "Is the white frame visible on all four edges, is 'UP' at the top edge, is the \
                  text readable (not mirrored) and are RED/GREEN/BLUE the right colours?",
             )?;
+            if n == 1 && seen == Some(false) {
+                self.other_jpeg(&card, &format!("test card, {way}"))?;
+            }
         }
         if !round_panel {
             self.ruler(model, 2)?;
@@ -683,6 +803,16 @@ impl<'a> Doctor<'a> {
             "brightness"
         };
         self.question("brightness", name, "Did the panel go dark and then bright?")?;
+        if model.protocol == "usb-udisp" {
+            // (Waveshare's USB display: #33)
+            self.step(
+                "backlight",
+                "info",
+                "not set over USB: the brightness dims the picture. The backlight is set on the \
+                 display's card, at full by the script in docs/HARDWARE.md (Waveshare USB \
+                 Monitor)",
+            );
+        }
         let (w, h) = model.size("landscape");
         let cards = [
             test_card(
@@ -714,7 +844,10 @@ impl<'a> Doctor<'a> {
         if !times.is_empty() {
             let average = times.iter().sum::<f64>() / times.len() as f64;
             let worst = times.iter().copied().fold(0.0, f64::max);
-            let kind = if usb { "PNG" } else { "RGB565" };
+            let kind = match &self.panel {
+                Some(Opened::Serial(display)) => display.picture(),
+                _ => "PNG".to_string(),
+            };
             let kilobytes = sizes.iter().sum::<usize>() / sizes.len() / 1024;
             self.step(
                 &format!("speed ({} full frames)", times.len()),
@@ -759,11 +892,7 @@ impl<'a> Doctor<'a> {
             }
             Some(Opened::Serial(mut display)) => {
                 display.close();
-                let device = self.options.device.clone().unwrap_or_default();
-                let device = lp_config::DeviceConfig {
-                    driver: "hongtai".into(),
-                    ..device
-                };
+                let (device, _) = self.panel_device();
                 let now = lp_render::video::monotonic();
                 let display = crate::display::Display::open(
                     &device,
@@ -1157,6 +1286,7 @@ fn run(shared: Arc<Shared>, answers: Receiver<Dict>, mut start: Start) {
         brightness: device.as_ref().map_or(60, |device| device.brightness),
         device,
         settings,
+        config_file: start.config_file.clone(),
         frames: FRAMES,
         seconds_per_card: 6.0,
         speed_seconds: 20.0,
@@ -1257,6 +1387,7 @@ pub fn run_doctor(
         brightness: device.as_ref().map_or(60, |device| device.brightness),
         device,
         settings,
+        config_file: config_file.to_path_buf(),
         frames,
         seconds_per_card: 6.0,
         speed_seconds: 20.0,
@@ -1356,6 +1487,138 @@ mod tests {
         let (_, said) = check("this is = not [valid", Err("refused".into()));
         assert!(said.contains("does not answer"));
         assert_eq!(sensors_check(Path::new("none.toml"), "darwin", None), None);
+    }
+
+    /// A screen that takes JPEG and shows only 4:2:0 (#30): its layout and what it was sent.
+    struct OnlyHalf(Arc<std::sync::Mutex<(String, Vec<String>)>>);
+
+    impl lp_devices::driver::Driver for OnlyHalf {
+        fn model(&self) -> Option<&'static PanelModel> {
+            None
+        }
+        fn describe(&self) -> String {
+            "udisp".into()
+        }
+        fn show(
+            &mut self,
+            frame: &Image,
+            region: Option<lp_devices::driver::Region>,
+        ) -> lp_devices::base::Result<()> {
+            let mut held = self.0.lock().unwrap();
+            let all = (0, 0, frame.width() as i64, frame.height() as i64);
+            let whole = region.is_none_or(|region| region == all);
+            let shown = format!("{} {}", held.0, if whole { "whole" } else { "part" });
+            held.1.push(shown);
+            Ok(())
+        }
+        fn set_brightness(&mut self, _percent: i64) -> lp_devices::base::Result<()> {
+            Ok(())
+        }
+        fn counters(&self) -> lp_devices::base::Counters {
+            lp_devices::base::Counters::default()
+        }
+        fn streaming(&self) -> bool {
+            false
+        }
+        fn jpeg_layout(&self) -> Option<String> {
+            Some(self.0.lock().unwrap().0.clone())
+        }
+        fn set_jpeg(&mut self, layout: &str) -> lp_devices::base::Result<()> {
+            self.0.lock().unwrap().0 = layout.to_string();
+            Ok(())
+        }
+        fn close(&mut self) {}
+    }
+
+    /// The person's answers by the questions' keys (yes where none is given).
+    struct Answers(Vec<(&'static str, bool, &'static str)>);
+
+    impl Questions for Answers {
+        fn confirm(&self, key: &str, _question: &str) -> Result<(bool, String), Stop> {
+            let found = self.0.iter().find(|(asked, ..)| *asked == key);
+            Ok(found.map_or((true, String::new()), |(_, yes, note)| {
+                (*yes, note.to_string())
+            }))
+        }
+        fn number(&self, _key: &str, _question: &str) -> Result<Option<i64>, Stop> {
+            Ok(None)
+        }
+        fn wait(&self, _key: &str, _text: &str) -> Result<(), Stop> {
+            Ok(())
+        }
+    }
+
+    fn other_jpeg(answers: &Answers) -> (Report, Vec<String>, String, PathBuf) {
+        let folder = std::env::temp_dir().join(format!(
+            "lp-doctor-jpeg-{}-{}",
+            std::process::id(),
+            answers.0.len()
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let held = Arc::new(std::sync::Mutex::new(("4:4:4".to_string(), Vec::new())));
+        let display = crate::display::Display::of_driver(Box::new(OnlyHalf(held.clone())));
+        let options = Options {
+            brightness: 60,
+            device: None,
+            settings: folder.clone(),
+            config_file: folder.join("config.toml"),
+            frames: 2,
+            seconds_per_card: 0.0,
+            speed_seconds: 0.0,
+            sensors: None,
+            said: false,
+        };
+        let mut doctor = Doctor::new(Some(answers), options);
+        doctor.panel = Some(Opened::Serial(Box::new(display)));
+        let card = Image::new(lp_pixels::Mode::RGB, 480, 480, &[10, 14, 19]);
+        doctor.send(&card).unwrap();
+        doctor.step("test card, landscape", "fail", "not as expected");
+        doctor.other_jpeg(&card, "test card, landscape").unwrap();
+        let (layout, shown) = held.lock().unwrap().clone();
+        (doctor.report, shown, layout, folder)
+    }
+
+    #[test]
+    fn a_screen_that_stays_black_gets_the_card_as_the_other_jpeg_and_keeps_what_shows() {
+        let (report, shown, layout, folder) = other_jpeg(&Answers(vec![]));
+        // (the card once more, whole, as 4:2:0)
+        assert_eq!(shown, ["4:4:4 whole", "4:2:0 whole"]);
+        assert_eq!(layout, "4:2:0");
+        let card = &report.steps[0];
+        assert_eq!(
+            (card.result, card.detail.as_str()),
+            ("ok", "as JPEG 4:2:0 (as 4:4:4: black)")
+        );
+        let kept = &report.steps[1];
+        assert_eq!(kept.name, "JPEG layout");
+        let said = "4:2:0 shows where 4:4:4 stayed black; [device] jpeg = \"4:2:0\" written to \
+                    config.toml";
+        assert_eq!((kept.result, kept.detail.as_str()), ("ok", said));
+        let config = lp_config::load_config(&folder.join("config.toml"), lp_config::platform());
+        assert_eq!(config.unwrap().device.jpeg, "4:2:0");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_jpeg_is_kept_where_the_other_shows_nothing_either_and_nothing_where_it_was_not_black() {
+        let answers = Answers(vec![("card-jpeg", false, "still nothing")]);
+        let (report, shown, layout, folder) = other_jpeg(&answers);
+        assert_eq!(shown, ["4:4:4 whole", "4:2:0 whole"]);
+        assert_eq!(layout, "4:4:4"); // (back to the first)
+        assert_eq!(report.steps[0].result, "fail");
+        let kept = &report.steps[1];
+        let said = ("fail", "4:2:0 stayed black too: still nothing");
+        assert_eq!((kept.result, kept.detail.as_str()), said);
+        assert!(!folder.join("config.toml").exists());
+        std::fs::remove_dir_all(&folder).unwrap();
+        // (wrong, but not black: nothing more is asked)
+        let (report, shown, layout, folder) = other_jpeg(&Answers(vec![("card-black", false, "")]));
+        assert_eq!(
+            (shown.len(), layout.as_str(), report.steps.len()),
+            (1, "4:4:4", 1)
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 
     #[test]

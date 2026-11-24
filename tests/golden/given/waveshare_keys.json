@@ -1,0 +1,23 @@
+[
+ "cpu.load",
+ "cpu.temp",
+ "cpu.freq",
+ "cpu.power",
+ "cpu.name",
+ "gpu.load",
+ "gpu.temp",
+ "gpu.freq",
+ "gpu.power",
+ "gpu.fan",
+ "gpu.mem.used",
+ "gpu.name",
+ "mem.load",
+ "mem.used",
+ "mem.free",
+ "mem.name",
+ "net.down",
+ "net.up",
+ "audio.volume",
+ "weather.temperature",
+ "weather.description"
+]

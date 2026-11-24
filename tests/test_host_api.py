@@ -7,15 +7,10 @@ import time
 
 import pytest
 from fake_sensors import wait_for
-from PIL import Image
 
-from libre_panel import app
-from libre_panel.config import Config, SensorsConfig
-from libre_panel.plugins import PluginHost, RenderContext
+from libre_panel.plugins import PluginHost
 from libre_panel.plugins.host import EVENTS, ServiceHost
-from libre_panel.render.renderer import Renderer
-from libre_panel.sensors.base import Reading, SensorHub, SensorProvider, Snapshot, wanted
-from libre_panel.theme.model import find_theme, load_theme
+from libre_panel.sensors.base import Reading, SensorHub, Snapshot, wanted
 
 
 class Clock:
@@ -214,40 +209,6 @@ def test_a_stopped_service_hears_no_more_fresh_readings(host):
     assert heard == []
 
 
-def config_for(isolated_home, refresh_ms=100):
-    config = Config(theme="libre-default", fps=20, sensors=SensorsConfig(providers=["demo"]))
-    config.refresh_ms = refresh_ms
-    config.device.driver = "virtual"
-    config.device.output = str(isolated_home / "frame.png")
-    return config
-
-
-def run_loop(config, host):
-    stop = threading.Event()
-    thread = threading.Thread(target=app.run, args=(config,), kwargs={"stop": stop, "host": host})
-    thread.start()
-
-    def finish():
-        stop.set()
-        thread.join(10)
-        host.close()
-
-    return finish
-
-
-def test_the_main_loop_emits_every_new_snapshot(isolated_home):
-    host = PluginHost()
-    seen = []
-    ServiceHost(host, "svc").on("sample", lambda snapshot: seen.append(snapshot))
-    finish = run_loop(config_for(isolated_home), host)
-    try:
-        assert wait_for(lambda: len(seen) >= 3, timeout=10)
-    finally:
-        finish()
-    assert len({id(s) for s in seen}) == len(seen)  # a new snapshot each time
-    assert all(s.value("cpu.load") is not None for s in seen)  # with the readings in it
-
-
 # -- readings that reach the next frame -----------------------------------------------------
 
 
@@ -264,136 +225,6 @@ def test_a_published_reading_reaches_the_next_frame_not_only_the_next_sample(hos
     snapshot.readings = {**snapshot.readings, **hub.fresh()}
     assert snapshot.value("demo.x") == 7
     assert len(hub.snapshot().history["demo.x"]) == 1  # graphs: one point a sample
-
-
-def test_the_main_loop_shows_a_publish_before_the_next_sample(isolated_home):
-    host = PluginHost()
-    config = config_for(isolated_home, refresh_ms=60_000)  # one sample in this test
-    finish = run_loop(config, host)
-    try:
-        assert wait_for(lambda: host.latest is not None)
-        first = host.latest
-        ServiceHost(host, "svc").publish("demo.late", 42)
-        assert wait_for(lambda: host.latest.value("demo.late") == 42, timeout=5)
-        assert host.latest is first  # the same sample, its readings brought up to date
-    finally:
-        finish()
-
-
-def test_the_main_loop_tells_a_change_between_two_samples_on_the_frame_it_shows_in(
-    isolated_home,
-):
-    """A source that follows on every frame (the volume) moves between two samples: the
-    services hear of it on that frame, and of nothing else. No sample is taken for it."""
-    from test_app_cli import MemoryStream, StepClock
-
-    class Level(SensorProvider):
-        name = "level"
-        every_frame = True
-        value = 30.0
-
-        def read(self):
-            return {"zz.level": Reading("zz.level", self.value, "%", "Level")}
-
-    clock, level, host = StepClock(1000.0), Level(), PluginHost()
-    config = config_for(isolated_home, refresh_ms=60_000)  # one sample in this test
-    hub = SensorHub([level])
-    loop = app.MainLoop(config, host=host, hub=hub, display=MemoryStream(), clock=clock)
-    told, samples = [], []
-    service = ServiceHost(host, "svc")
-    service.on("fresh", lambda snapshot, keys: told.append((snapshot.value("zz.level"), keys)))
-    service.on("sample", lambda snapshot: samples.append(snapshot))
-    try:
-        for _ in range(10):  # the first frame takes the sample; the others change nothing
-            clock.now += 0.02
-            loop.step(clock.now)
-        assert wait_for(lambda: len(samples) == 1)
-        time.sleep(0.05)
-        assert told == []  # nothing moved, so nobody was woken
-        level.value = 35.0
-        clock.now += 0.02
-        loop.step(clock.now)
-        assert wait_for(lambda: told)  # on this frame, not at the next sample
-        assert told == [(35.0, frozenset({"zz.level"}))] and len(samples) == 1
-        clock.now += 0.02
-        loop.step(clock.now)  # it stays at 35: nothing new
-        time.sleep(0.05)
-        assert len(told) == 1
-    finally:
-        loop.close()
-        host.close()
-
-
-def test_messages_wait_for_a_panel_that_is_away_without_piling_up(isolated_home):
-    """While the panel is unplugged the loop goes on, and the messages of the services wait
-    for it: the newest ``MAX_TOASTS`` of them, not every one of hours (a music message
-    carries its cover). When the panel is back they show."""
-    from test_app_cli import StepClock
-
-    from libre_panel.devices.base import DeviceError, Display
-
-    class Panel(Display):
-        away = True
-        shown = 0
-
-        def open(self):
-            if self.away:
-                raise DeviceError("unplugged")
-
-        def show(self, frame, region=None):
-            self.shown += 1
-
-    clock, host, panel = StepClock(1000.0), PluginHost(), Panel(None)
-    loop = app.MainLoop(config_for(isolated_home), host=host, display=panel, clock=clock)
-    music = ServiceHost(host, "music")
-    try:
-        for track in range(200):
-            cover = Image.new("RGB", (64, 64))
-            # (a kind the screen does not show itself: its music would be left out, see shown_by)
-            music.notify(f"Track {track}", kind="device", key=f"t{track}", payload={"image": cover})
-            clock.now += 0.05
-            loop.step(clock.now)
-        assert panel.shown == 0
-        waiting = len(loop.toasts.inbox) + len(loop.toasts.queue) + len(host.take_toasts())
-        assert waiting <= PluginHost.MAX_TOASTS
-        music.notify("Track 200", kind="device")
-        panel.away = False
-        clock.now += 60  # the next try to open it
-        loop.step(clock.now)
-        assert panel.shown == 1
-        assert loop.toasts.current is not None  # a message waited for it
-    finally:
-        loop.close()
-        host.close()
-
-
-def test_a_theme_a_service_asks_for_that_is_broken_leaves_the_panel_its_own(isolated_home):
-    """The autopilot or game mode asks for a theme whose file has the wrong shape (a colour
-    where the background's object belongs): the panel keeps the theme it shows, at once and
-    after a new start, instead of the loop failing and starting over every few seconds."""
-    from test_app_cli import MemoryStream, StepClock
-
-    from libre_panel.config import user_themes_dir
-
-    folder = user_themes_dir() / "broken"
-    folder.mkdir(parents=True)
-    theme = {"format": "libre-panel-theme/1", "display": {"width": 480, "height": 320},
-             "background": "#101418", "widgets": []}  # fmt: skip
-    (folder / "theme.json").write_text(json.dumps(theme), encoding="utf-8")
-    clock, host, config = StepClock(1000.0), PluginHost(), config_for(isolated_home)
-    loops = [app.MainLoop(config, host=host, display=MemoryStream(), clock=clock)]
-    try:
-        ServiceHost(host, "autopilot").show_theme("broken")
-        for _ in range(3):
-            clock.now += 0.1
-            loops[0].step(clock.now)
-        assert (loops[0].shown, loops[0].refused) == ("libre-default", "broken")
-        loops.append(app.MainLoop(config, host=host, display=MemoryStream()))
-        assert loops[1].shown == "libre-default"  # the panel loop started anew
-    finally:
-        for loop in loops:
-            loop.close()
-        host.close()
 
 
 # -- states -------------------------------------------------------------------------------
@@ -482,18 +313,6 @@ def test_a_state_reaches_the_next_frame_and_goes_with_its_service(host):
     assert snapshot.state("svc.s") == [1]
     host.forget("svc")
     assert "svc.s" not in host.published()
-
-
-def test_screens_and_styles_read_states_through_the_context(isolated_home):
-    renderer = Renderer(load_theme(find_theme("libre-default")))
-    context = RenderContext(renderer)
-    assert context.state("svc.s", "nothing") == "nothing"  # nothing drawn yet
-    host = PluginHost()
-    ServiceHost(host, "svc").publish_state("svc.s", {"a": 1})
-    renderer.snapshot = SensorHub([host.provider()]).snapshot()
-    assert context.state("svc.s") == {"a": 1}
-    assert context.state("svc.other", []) == []
-    host.close()
 
 
 # -- asking for readings that work on demand ------------------------------------------------------

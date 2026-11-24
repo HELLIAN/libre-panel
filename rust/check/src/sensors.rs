@@ -1080,6 +1080,52 @@ fn plain(value: &lp_py::Value) -> Value {
     }
 }
 
+/// A value as lp-check takes a reading's (tools/lp_check.py's `typed`): its type said, a
+/// float by its bits.
+fn typed_out(value: &lp_py::Value) -> Value {
+    match value {
+        lp_py::Value::None => json!({"n": null}),
+        lp_py::Value::Bool(b) => json!({"b": b}),
+        lp_py::Value::Int(n) => json!({"i": n.to_string()}),
+        lp_py::Value::Float(f) => json!({"f": format!("{:016x}", f.to_bits())}),
+        lp_py::Value::Str(s) => json!({"s": s}),
+        lp_py::Value::List(items) => json!({"l": items.iter().map(typed_out).collect::<Vec<_>>()}),
+        lp_py::Value::Dict(items) => {
+            let items: serde_json::Map<String, Value> = items
+                .iter()
+                .map(|(k, v)| (k.clone(), typed_out(v)))
+                .collect();
+            json!({ "d": items })
+        }
+    }
+}
+
+/// clip_demo: the demo's readings at each of `seconds` after `when`, as a clip of the README
+/// has them (lp_services::demo::clip_readings, `period` its length if it loops), each
+/// `[key, typed value, unit, label]`; and the round report the memory service tells after a
+/// game at `when` (`report`).
+fn clip_demo(case: &Value) -> Result<Value, String> {
+    let utc = lp_py::zones::Zone::utc();
+    let zone = lp_py::zones::local().unwrap_or(&utc);
+    let when = case["when"].as_f64().unwrap_or(0.0);
+    let period = case["period"].as_f64();
+    let told = |readings: &lp_sensors::lhm::Readings| -> Vec<Value> {
+        (readings.iter())
+            .map(|(key, r)| json!([key, typed_out(&r.value), r.unit, r.label]))
+            .collect()
+    };
+    let frames: Vec<Value> = (case["seconds"].as_array().into_iter().flatten())
+        .map(|s| {
+            let s = s.as_f64().unwrap_or(0.0);
+            Value::Array(told(&lp_services::demo::clip_readings(
+                when, s, period, zone,
+            )))
+        })
+        .collect();
+    let report = lp_services::demo::demo_report(when, 7)?;
+    Ok(json!({"frames": frames, "report": told(&report)}))
+}
+
 /// weather: the forecast's address for each [latitude, longitude, imperial], the present
 /// weather and the forecast of each [answer, now] in the case's language, and what
 /// datetime.fromisoformat makes of each text.
@@ -1317,25 +1363,31 @@ fn calendar(case: &Value) -> Result<Value, String> {
         let ics = case[0].as_str().unwrap_or("");
         let days = case[2].as_i64().unwrap_or(14);
         let name = case[3].as_str().unwrap_or("");
-        found.push(
-            match calendar::events_from_ics(ics, &now, days, name, local) {
-                Err(why) => json!({"error": why}),
-                Ok(events) => {
-                    let readings = calendar::calendar_readings(&events, &now, local);
-                    json!({
-                        "events": events
-                            .iter()
-                            .map(|e| json!([e.title, stamp(&e.start), stamp(&e.end), e.all_day,
-                                            e.location, e.calendar]))
-                            .collect::<Vec<_>>(),
-                        "readings": readings
-                            .iter()
-                            .map(|(key, r)| json!([key, plain(&r.value), r.unit, r.label]))
-                            .collect::<Vec<_>>(),
-                    })
-                }
-            },
-        );
+        // (several calendars' texts: their events together, as the source lists them)
+        let made = match case[0].as_array() {
+            Some(texts) => {
+                let texts = texts.iter().filter_map(Value::as_str);
+                Ok(calendar::events_of_calendars(texts, &now, days, local).0)
+            }
+            None => calendar::events_from_ics(ics, &now, days, name, local),
+        };
+        found.push(match made {
+            Err(why) => json!({"error": why}),
+            Ok(events) => {
+                let readings = calendar::calendar_readings(&events, &now, local);
+                json!({
+                    "events": events
+                        .iter()
+                        .map(|e| json!([e.title, stamp(&e.start), stamp(&e.end), e.all_day,
+                                        e.location, e.calendar]))
+                        .collect::<Vec<_>>(),
+                    "readings": readings
+                        .iter()
+                        .map(|(key, r)| json!([key, plain(&r.value), r.unit, r.label]))
+                        .collect::<Vec<_>>(),
+                })
+            }
+        });
     }
     lp_i18n::set_language(lp_i18n::Language::english());
     Ok(json!({"cases": found}))
@@ -1620,6 +1672,32 @@ fn power(case: &Value) -> Result<Value, String> {
         runs.push(json!([steps, core.kept()]));
     }
     Ok(json!({"runs": runs}))
+}
+
+/// dell: Dell Command | Monitor's sensors (each case a JSON text of rows, as WMI gives them)
+/// as readings: each `[key, value, unit, label, device]`.
+fn dell(case: &Value) -> Value {
+    let mut out = Vec::new();
+    for text in case["rows"].as_array().into_iter().flatten() {
+        let rows: Vec<lp_sensors::dell::Row> = match loaded(text) {
+            lp_py::Value::List(list) => list
+                .iter()
+                .filter_map(|row| match row {
+                    lp_py::Value::Dict(row) => {
+                        Some(row.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let readings = lp_sensors::dell::readings_from_rows(&rows);
+        out.push(json!(readings
+            .iter()
+            .map(|(key, r)| json!([key, plain(&r.value), r.unit, r.label, r.device]))
+            .collect::<Vec<_>>()));
+    }
+    json!({"readings": out})
 }
 
 /// A JSON text as Python's value (none for one that is no JSON).
@@ -3216,6 +3294,7 @@ pub fn run(op: &str, case: &Value) -> Result<Value, String> {
         "web_sources" => web_sources(case)?,
         "nut" => nut(case)?,
         "mqtt" => mqtt(case)?,
+        "dell" => dell(case),
         "calendar" => calendar(case)?,
         "shared_memory" => shared_memory(case)?,
         "services_host" => services_host(case)?,
@@ -3230,11 +3309,19 @@ pub fn run(op: &str, case: &Value) -> Result<Value, String> {
         "game" => game(case)?,
         "downloads" => downloads(case)?,
         "memory" => memory(case)?,
+        // the tables of the memory's database and the columns of its minutes, for a test that
+        // makes one up as the app keeps it
+        "memory_schema" => json!({
+            "schema": lp_services::memory_store::schema(),
+            "means": lp_services::memory_store::MEANS,
+            "peaks": lp_services::memory_store::PEAKS,
+        }),
         "cooling" => cooling(case)?,
         "devices" => devices(case)?,
         "waveshare" => waveshare(case)?,
         "ports" => ports(case)?,
         "demo" => demo(case)?,
+        "clip_demo" => clip_demo(case)?,
         "autopilot" => autopilot(case)?,
         "mangohud" => mangohud(case)?,
         "media" => media(case),

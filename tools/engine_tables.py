@@ -1,12 +1,12 @@
-"""Write engine/src/tables.rs: Pillow's tables for RGB to YCbCr and yuv.py's for the range.
+"""Write engine/src/tables.rs: Pillow's tables for RGB to YCbCr and those of the panel's range.
 
     python tools/engine_tables.py PATH/TO/Pillow/src/libImaging/ConvertYCbCr.c
 
-The engine makes the panel's YUV byte for byte as devices/yuv.py does, which converts with
-Pillow; Pillow does it with integer tables (ConvertYCbCr.c, read here as data). They are
-checked on all 2^24 colours against the Pillow installed here before they are written, and so
-is Pillow's 2x2 average (reduce(2)). tests/test_native_engine.py checks the written file
-against Pillow again.
+The engine makes the panel's YUV byte for byte as Pillow converts (and as the Python app's
+devices/yuv.py made it); Pillow does it with integer tables (ConvertYCbCr.c, read here as
+data). They are checked on all 2^24 colours against the Pillow installed here before they are
+written, and so is Pillow's 2x2 average (reduce(2)). tests/test_engine_program.py checks the
+written file against Pillow again.
 """
 
 from __future__ import annotations
@@ -22,8 +22,11 @@ import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
 NAMES = ("Y_R", "Y_G", "Y_B", "Cb_R", "Cb_G", "Cb_B", "Cr_G", "Cr_B")
+# the panel's limited range: light 16-235, colours 16-240 about 128 (Pillow's YCbCr is JPEG's,
+# full range)
+LIMITED_Y = [16 + round(v * 219 / 255) for v in range(256)]
+LIMITED_C = [128 + round((v - 128) * 224 / 255) for v in range(256)]
 
 
 def tables_of(source: str) -> dict[str, np.ndarray]:
@@ -47,8 +50,6 @@ def converted(t: dict[str, np.ndarray], rgb: np.ndarray) -> np.ndarray:
 
 
 def main() -> int:
-    from libre_panel.devices.yuv import LIMITED_C, LIMITED_Y
-
     t = tables_of(Path(sys.argv[1]).read_text())
     v = np.arange(1 << 24, dtype=np.uint32)
     rgb = np.stack([(v >> 16) & 255, (v >> 8) & 255, v & 255], axis=-1).astype(np.uint8)

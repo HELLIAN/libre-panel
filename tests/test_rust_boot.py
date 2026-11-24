@@ -1,110 +1,44 @@
 """rust/render's screens of the panel's own against Python's (docs/RUST.md): render/bootscreen.py's
 boot logo, standby clip and pictures of Libre Panel's own look for every panel of the catalog,
 in both orientations, at the panel's size and smaller for the app, and render/bootlooks.py's
-looks for panels of every shape, as numpy draws them on a processor without AVX-512 (with it,
-numpy on Linux takes SVML's power, a unit in the last place apart now and then): to the bit,
-and each look's canvases to the bit of their floats before they are made pictures; where
-Python's raises (a look there is not), Rust's fails."""
+looks for panels of every shape, as numpy drew them on a processor without AVX-512: to the
+bit, and each look's canvases to the bit of their floats before they are made pictures; where
+Python's raised (a look there is not), Rust's fails. What Python drew is kept (golden.py), on
+each system as its CI drew it: lp-check's answers are checked against it."""
 
 from __future__ import annotations
 
-import json
 import os
 import random
-import subprocess
-import sys
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 
+import golden
+import pytest
 from rust_check import run
 
 from libre_panel import fonts
 from libre_panel.devices.models import MODELS
 
-_PYTHON = r"""
-import dataclasses, hashlib, json, sys
-import numpy as np
-from libre_panel.devices.models import MODELS
-from libre_panel.render import bootscreen
-out = []
-for case in json.loads(open(sys.argv[1]).read()):
-    model = next(m for m in MODELS if m.id == case["model"])
-    if "hidden" in case:  # (other hidden strips)
-        clear = case.get("clear")
-        model = dataclasses.replace(model, hidden=tuple(case["hidden"]),
-                                    portrait_clear=tuple(clear) if clear else None)
-    o, design, scale = case["orientation"], case["design"], case.get("scale", 1.0)
-    canvases = []  # (a look's canvases: the digests of their floats, a zero's sign aside)
-    try:
-        if case["kind"] == "look":
-            where = bootscreen.room(model, o, scale)
-            look = bootscreen.design_of(design).make(where)
-            pictures = []
-            for p in [None] + case["phases"]:
-                canvas = look.still() if p is None else look.frame(p)
-                floats = (canvas + np.float32(0)).astype("<f4").tobytes()
-                canvases.append(hashlib.sha256(floats).hexdigest())
-                pictures.append(bootscreen.finish(canvas, where, dither=scale == 1.0))
-        elif case["kind"] == "logo":
-            pictures = [bootscreen.boot_logo(model, o, design, scale=scale)]
-        elif case["kind"] == "clip":
-            pictures = bootscreen.standby_frames(model, case.get("count"), o, design, scale)
-        else:
-            pictures = [bootscreen.picture(model, case.get("phase"), o, design)]
-    except Exception as e:
-        out.append({"error": type(e).__name__})
-        continue
-    made = {"pictures": [{"size": list(p.size), "sha256": hashlib.sha256(p.tobytes()).hexdigest()}
-                         for p in pictures]}
-    if canvases:
-        made["canvases"] = canvases
-    out.append(made)
-open(sys.argv[2], "w").write(json.dumps(out))
-"""
+pytestmark = pytest.mark.kept  # (what bootscreen.py and bootlooks.py drew: tests/golden)
+
 # points of the loop: its ends, just past its start and short of its end, the wave's turns, and
 # past the loop both ways
 PHASES = [0.0, 1e-9, 0.1, 0.125, 0.25, 0.3, 0.5, 2 / 3, 0.75, 0.999999, 1.0, -0.25, 1.5]
 
 
-def _avx512() -> list[str]:
-    """The AVX-512 features numpy found here (to be left unused)."""
-    from numpy._core._multiarray_umath import __cpu_features__ as features
-
-    return [name for name in ("X86_V4", "AVX512_ICL", "AVX512_SPR") if features.get(name)]
-
-
-def _python(cases: list[dict[str, Any]]) -> list[Any]:
-    """Each case's pictures (their sizes and digests) as Python draws them, in a process told to
-    leave numpy's AVX-512 paths unused."""
-    if not cases:
-        return []
-    env = dict(os.environ)
-    if _avx512():
-        env["NPY_DISABLE_CPU_FEATURES"] = " ".join(_avx512())
-    with tempfile.TemporaryDirectory() as folder:
-        asked, made = Path(folder) / "cases.json", Path(folder) / "made.json"
-        asked.write_text(json.dumps(cases), encoding="utf-8")
-        subprocess.run([sys.executable, "-c", _PYTHON, str(asked), str(made)], env=env,
-                       check=True, timeout=1800)  # fmt: skip
-        return json.loads(made.read_text(encoding="utf-8"))
-
-
-def _both(cases: list[dict[str, Any]]) -> tuple[list[Any], list[Any]]:
-    """Each case's pictures as Python draws them and as Rust does (lp-check), the cases dealt
-    out to as many processes of each as the processor has cores (four at most), all at once."""
+def _drawn(cases: list[dict[str, Any]]) -> list[Any]:
+    """Each case's pictures (their sizes and digests) as lp-check draws them: the cases dealt
+    out to as many processes as the processor has cores (four at most), all at once, and the
+    answers checked against those kept in the cases' order."""
+    asked = [dict(case, op="boot", fonts_dir=str(fonts.FONT_DIR)) for case in cases]
     ways = max(1, min(4, os.cpu_count() or 1))
-    parts = [cases[k::ways] for k in range(ways)]
-    asked = [[dict(case, op="boot", fonts_dir=str(fonts.FONT_DIR)) for case in part]
-             for part in parts]  # fmt: skip
-    with ThreadPoolExecutor(max_workers=2 * ways) as pool:
-        theirs = [pool.submit(_python, part) for part in parts]
-        mine = [pool.submit(run, part) if part else None for part in asked]
-        want = [future.result() for future in theirs]
-        got = [future.result() if future else [] for future in mine]
-    order = lambda done: [done[n % ways][n // ways] for n in range(len(cases))]  # noqa: E731
-    return order(want), order(got)
+    parts = [asked[k::ways] for k in range(ways)]
+    with ThreadPoolExecutor(max_workers=ways) as pool:
+        done = list(pool.map(lambda part: run(part, checked=False) if part else [], parts))
+    answers = [done[n % ways][n // ways] for n in range(len(cases))]
+    golden.answered(answers)
+    return answers
 
 
 def _cases(rng: random.Random) -> list[dict[str, Any]]:
@@ -163,17 +97,13 @@ def _strips(rng: random.Random, designs: list[str]) -> list[dict[str, Any]]:
 
 
 def test_the_panel_s_own_screens_as_python_draws_them() -> None:
-    cases = _cases(random.Random(0xB007))
-    want, got = _both(cases)
     drawn, refused, sizes = 0, 0, set()
-    for case, mine, theirs in zip(cases, got, want, strict=True):
-        if "error" in theirs:
-            assert "error" in mine, (case, mine)
+    for answer in _drawn(_cases(random.Random(0xB007))):
+        if "error" in answer:
             refused += 1
             continue
-        assert mine == theirs, case
-        drawn += len(theirs["pictures"])
-        sizes.update(tuple(p["size"]) for p in theirs["pictures"])
+        drawn += len(answer["pictures"])
+        sizes.update(tuple(p["size"]) for p in answer["pictures"])
     assert drawn > 350 and len(sizes) > 60 and refused >= 1, (drawn, len(sizes), refused)
 
 
@@ -233,13 +163,11 @@ def _every_room(rng: random.Random) -> list[dict[str, Any]]:
 
 def test_every_look_of_the_panel_s_screens_as_python_draws_it() -> None:
     cases = _look_cases(random.Random(0xB00715)) + _every_room(random.Random(0xB00716))
-    want, got = _both(cases)
     drawn: dict[str, int] = {}
     floats = 0
-    for case, mine, theirs in zip(cases, got, want, strict=True):
-        assert mine == theirs, case
-        drawn[case["design"]] = drawn.get(case["design"], 0) + len(theirs["pictures"])
-        floats += len(theirs.get("canvases", []))
+    for case, answer in zip(cases, _drawn(cases), strict=True):
+        drawn[case["design"]] = drawn.get(case["design"], 0) + len(answer["pictures"])
+        floats += len(answer.get("canvases", []))
     assert len(drawn) == len(DESIGNS) and min(drawn.values()) > 180 and floats > 1300, (
         drawn,
         floats,

@@ -474,6 +474,14 @@ pub struct Cut {
 pub enum Ground<'a> {
     Colour([u8; 3]),
     Picture(&'a Rc<Image>),
+    /// a light field (render/field.py's Light) the engine draws up: its points, `fw` x `fh`
+    /// (RGB, row by row), and what keeps it alive (the same light: the same Rc)
+    Light {
+        fw: u32,
+        fh: u32,
+        levels: &'a [u8],
+        keep: Rc<dyn Any>,
+    },
 }
 
 /// A piece of the frame, in its order: one the engine has (its key), or one it has not, with
@@ -491,6 +499,7 @@ pub enum Entry<'a> {
 enum Kept {
     Colour([u8; 3]),
     Picture(usize),
+    Light(usize),
 }
 
 /// A piece the engine has: kept alive (its key stays its own), its layers, the pictures they
@@ -519,7 +528,8 @@ type MadeSources = HashMap<usize, (Rc<MadePicture>, u32)>;
 /// What one stream of the engine has of the frames' layers. Used by the stream's writer alone.
 #[derive(Default)]
 pub struct SceneSender {
-    ground: Option<(Kept, Option<Rc<Image>>)>,
+    /// the ground the engine has, and what keeps it alive (its key stays its own)
+    ground: Option<(Kept, Option<Rc<dyn Any>>)>,
     /// each piece's layers by its key
     pieces: HashMap<usize, Had>,
     /// the pictures layers are cut from, while the frames' layers are (the engine forgets the
@@ -535,12 +545,14 @@ pub struct SceneSender {
     rotors: Vec<((String, usize), u32)>,
     /// whether the engine cuts layers from pictures it keeps ("views"), grows a picture from
     /// one it keeps ("grown"), makes lit rings ("rings") and lit bars ("bars"), and lays layers
-    /// of a fan's pictures it makes itself ("laid", "fans")
+    /// of a fan's pictures it makes itself ("laid", "fans"); draws a light field up and lays a
+    /// frame's layers in front of it ("lights")
     views: bool,
     grown: bool,
     makes_rings: bool,
     makes_bars: bool,
     makes_fans: bool,
+    draws_lights: bool,
     next: u32,
     /// layers sent, and their bytes (pictures to cut from with them)
     pub layers: u64,
@@ -585,6 +597,18 @@ impl SceneSender {
     pub fn with_fans(mut self, fans: bool) -> SceneSender {
         self.makes_fans = fans;
         self
+    }
+
+    /// The same for an engine that draws a light field up and lays a frame's layers in front of
+    /// it (`lights`: GROUND records of kind 2).
+    pub fn with_lights(mut self, lights: bool) -> SceneSender {
+        self.draws_lights = lights;
+        self
+    }
+
+    /// Whether the engine draws a light field up (GROUND records of kind 2).
+    pub fn lights(&self) -> bool {
+        self.draws_lights
     }
 
     /// Whether the engine lays layers of a fan's pictures it makes itself.
@@ -1087,6 +1111,7 @@ impl SceneSender {
         let kept = match ground {
             Ground::Colour(rgb) => Kept::Colour(*rgb),
             Ground::Picture(picture) => Kept::Picture(Rc::as_ptr(picture) as usize),
+            Ground::Light { keep, .. } => Kept::Light(Rc::as_ptr(keep) as *const () as usize),
         };
         if self.ground.as_ref().map(|(k, _)| k) != Some(&kept) {
             match ground {
@@ -1110,7 +1135,24 @@ impl SceneSender {
                     parts.push(head(GROUND, 1, data.len() as u32));
                     parts.push(data.to_vec());
                     self.bytes += data.len() as u64;
-                    self.ground = Some((kept, Some(Rc::clone(picture))));
+                    let keep: Rc<dyn Any> = Rc::clone(picture) as Rc<dyn Any>;
+                    self.ground = Some((kept, Some(keep)));
+                }
+                Ground::Light {
+                    fw,
+                    fh,
+                    levels,
+                    keep,
+                } => {
+                    // (a light the engine draws up from its points)
+                    let mut data = Vec::with_capacity(8 + levels.len());
+                    data.extend_from_slice(&fw.to_le_bytes());
+                    data.extend_from_slice(&fh.to_le_bytes());
+                    data.extend_from_slice(levels);
+                    parts.push(head(GROUND, 2, data.len() as u32));
+                    self.bytes += data.len() as u64;
+                    parts.push(data);
+                    self.ground = Some((kept, Some(Rc::clone(keep))));
                 }
             }
         }
@@ -1365,6 +1407,39 @@ mod tests {
         // the same ground picture: not sent again
         let parts = sender.records(&Ground::Picture(&ground), vec![], 2, None, false);
         assert_eq!(kinds(&parts), vec![(SCENE, 2, 0)]);
+    }
+
+    #[test]
+    fn a_light_goes_as_its_points_once_and_again_when_it_is_another() {
+        // (render/field.py's Light: its points at an eighth, which the engine draws up; kind 2,
+        // its width and height first; the same light, kept alive, is not sent again)
+        let mut sender = SceneSender::new().with_lights(true);
+        let levels: Vec<u8> = (0..2 * 3 * 3).map(|i| i as u8).collect();
+        let keep: Rc<dyn Any> = Rc::new(1u8);
+        let light = |keep: &Rc<dyn Any>| Ground::Light {
+            fw: 2,
+            fh: 3,
+            levels: &levels,
+            keep: Rc::clone(keep),
+        };
+        let parts = sender.records(&light(&keep), vec![], 1, None, false);
+        assert_eq!(kinds(&parts), vec![(GROUND, 2, 8 + 18), (SCENE, 1, 0)]);
+        let mut want = vec![2, 0, 0, 0, 3, 0, 0, 0];
+        want.extend_from_slice(&levels);
+        assert_eq!(&parts[1], &want);
+        let parts = sender.records(&light(&keep), vec![], 2, None, false);
+        assert_eq!(kinds(&parts), vec![(SCENE, 2, 0)]);
+        // another light (the one before gone: its address may come back)
+        drop(keep);
+        let other: Rc<dyn Any> = Rc::new(2u8);
+        let parts = sender.records(&light(&other), vec![], 3, None, false);
+        assert_eq!(kinds(&parts), vec![(GROUND, 2, 26), (SCENE, 3, 0)]);
+        // a colour after it, and the light again
+        let parts = sender.records(&Ground::Colour([1, 2, 3]), vec![], 4, None, false);
+        assert_eq!(kinds(&parts), vec![(GROUND, 0, 3), (SCENE, 4, 0)]);
+        let parts = sender.records(&light(&other), vec![], 5, None, false);
+        assert_eq!(kinds(&parts), vec![(GROUND, 2, 26), (SCENE, 5, 0)]);
+        assert!(sender.lights() && !SceneSender::new().lights());
     }
 
     /// A picture of `w` x `h` whose pixels are their place: no two alike.

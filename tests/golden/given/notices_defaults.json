@@ -1,0 +1,11 @@
+{
+ "volume": true,
+ "volume_look": "",
+ "music": true,
+ "microphone": true,
+ "appointments": 10,
+ "restarted": true,
+ "warnings": [],
+ "quiet_s": 120.0,
+ "alarm": true
+}

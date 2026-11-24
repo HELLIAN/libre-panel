@@ -8,7 +8,8 @@ the smoke test's and check_tools.py's for a build that is not the Python app's.
 It installs for all users with every task, the sensor service among them (CI's runner is an
 administrator), and proves that the service runs, that its folder and its pipe let others
 only read, that Libre Panel reads through it (as a plain user too, where this runner can
-start one), and that the uninstaller stops and removes it.
+start one), and that the uninstaller stops and removes it. The language chosen in the setup
+becomes the app's on the new install, and the update after it leaves the app's as it is.
 """
 
 import ctypes
@@ -51,6 +52,21 @@ def run_value():
             return winreg.QueryValueEx(key, "Libre Panel")[0]
     except FileNotFoundError:
         return None
+
+
+def app_config():
+    """The config.toml the app reads for this user."""
+    home = os.environ.get("LIBRE_PANEL_HOME")
+    if home:
+        return Path(home) / "config.toml"
+    return Path(os.environ["APPDATA"]) / "LibrePanel" / "config.toml"
+
+
+def offered_language():
+    """The language the setup offers on this Windows, as Inno Setup picks it: German where
+    Windows speaks it, else English (the first of its [Languages])."""
+    german = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x07
+    return "de" if german else "en"
 
 
 def check(condition, message):
@@ -337,8 +353,9 @@ def check_sensor_service():
     check(code == 0 and "read through the sensor service" in said, "a plain user reads too")
 
 
-def install(setup, tasks):
-    """The setup, silent, for all users, with the boxes ``tasks`` checked (the rest not)."""
+def install(setup, tasks, language):
+    """The setup, silent, for all users, in ``language``, with the boxes ``tasks`` checked
+    (the rest not)."""
     log = Path(tempfile.gettempdir()) / "libre-panel-setup.log"
     subprocess.run(
         [
@@ -347,6 +364,7 @@ def install(setup, tasks):
             "/SUPPRESSMSGBOXES",
             "/NORESTART",
             "/ALLUSERS",
+            f"/LANG={language}",
             f"/TASKS={tasks}",
             f"/LOG={log}",
         ],
@@ -356,7 +374,16 @@ def install(setup, tasks):
 
 
 def main(setup, rust=False):
-    install(setup, TASKS)
+    # The language chosen in the setup (the one it does not offer here) becomes the app's on a
+    # new install; the user's own config.toml is put back once the update has been tried.
+    config = app_config()
+    kept = config.read_bytes() if config.is_file() else None
+    config.unlink(missing_ok=True)
+    chosen = "en" if offered_language() == "de" else "de"
+    install(setup, TASKS, chosen)
+    written = config.read_text(encoding="utf-8") if config.is_file() else ""
+    check(f'\nlanguage = "{chosen}"\n' in written, f"the setup's language ({chosen}) is the app's")
+    config.unlink()
     check((APP / "LibrePanel.exe").is_file(), "LibrePanel.exe installed")
     check((APP / "libre-panel.exe").is_file(), "libre-panel.exe installed")
     check((APP / "sensors" / "libre-panel-sensors.exe").is_file(), "the sensor service installed")
@@ -376,11 +403,10 @@ def main(setup, rust=False):
     check(lhm.returncode == 0, "the installed program loads its LibreHardwareMonitor libraries")
 
     # It carries ffmpeg, PresentMon and PawnIO's installer next to the program, so that the
-    # video mode, the game frame rates and the CPU's sensors need no other download: here they
-    # are as installed, ffmpeg encodes the video mode's stream, PresentMon starts, and the
-    # app finds them first (packaging/check_tools.py).
-    other = ["--no-discovery"] if rust else []
-    subprocess.run([sys.executable, str(CHECK_TOOLS), str(APP), *other], check=True, timeout=300)
+    # videos, the game frame rates and the CPU's sensors need no other download: here they
+    # are as installed, the app finds them first, ffmpeg makes the standby clip as the app
+    # makes it and PresentMon starts (packaging/check_tools.py).
+    subprocess.run([sys.executable, str(CHECK_TOOLS), str(APP)], check=True, timeout=300)
     check((APP / "tools" / "PawnIO_setup.exe").is_file(), "PawnIO's installer is carried")
 
     check_sensor_service()
@@ -400,9 +426,17 @@ def main(setup, rust=False):
 
     # PresentMon is a box of its own: the same setup without it leaves it out (an update clears
     # the tools folder first), and the rest stays.
-    install(setup, TASKS.replace("presentmon,", ""))
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text('language = "auto"\n', encoding="utf-8")
+    install(setup, TASKS.replace("presentmon,", ""), chosen)
     check(not (APP / "tools" / "PresentMon.exe").exists(), "without its box, no PresentMon")
     check((APP / "tools" / "ffmpeg.exe").is_file(), "and ffmpeg is still there")
+    said = config.read_text(encoding="utf-8")
+    check(said == 'language = "auto"\n', "an update leaves the app's language as it is")
+    if kept is None:
+        config.unlink()
+    else:
+        config.write_bytes(kept)
 
     # Uninstalling quits a running Libre Panel and removes everything it added.
     with tempfile.TemporaryDirectory() as home:

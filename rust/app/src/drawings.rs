@@ -90,11 +90,7 @@ fn png(frame: &lp_pixels::Image) -> Answer<Vec<u8>> {
 
 /// The demo's readings at `t` (now where None), with its pictures.
 fn demo(t: Option<f64>, fonts: &Path) -> Answer<Snapshot> {
-    let t = t.unwrap_or_else(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64())
-    });
+    let t = t.unwrap_or_else(crate::clock::now);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     let mut snapshot =
@@ -286,9 +282,7 @@ pub fn probes(look: &str) -> IndexMap<&'static str, (String, Toast)> {
 }
 
 fn moment_now() -> (lp_py::datetime::DateTime, bool) {
-    let since = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    let since = crate::clock::now();
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     lp_py::zones::fromtimestamp(zone, since)
@@ -365,30 +359,61 @@ fn boxes_value(boxes: &IndexMap<String, [i64; 4]>) -> Value {
     )
 }
 
-/// The readings and their history, live, laid over the demo's.
-pub type Live = (
-    IndexMap<String, lp_render::Reading>,
-    IndexMap<String, Vec<f64>>,
-);
+/// Every text of a theme's JSON.
+fn texts<'a>(raw: &'a Value, found: &mut Vec<&'a str>) {
+    match raw {
+        Value::Str(text) => found.push(text),
+        Value::List(items) => items.iter().for_each(|item| texts(item, found)),
+        Value::Dict(d) => d.values().for_each(|item| texts(item, found)),
+        _ => {}
+    }
+}
+
+/// This PC's readings over the demo's, with their history where it has more than one value:
+/// all of them (`all`: Design's "With this PC's sensors"), or else only those of the sensors
+/// the theme `raw` names that the demo has no sample of (lp_render::unsampled).
+fn lay_over(snapshot: &mut Snapshot, raw: &Value, live: &Snapshot, all: bool) {
+    let history = std::sync::Arc::make_mut(&mut snapshot.history);
+    let long = |values: &&Vec<f64>| values.len() > 1;
+    if all {
+        let readings = live.readings.iter().map(|(k, v)| (k.clone(), v.clone()));
+        snapshot.readings.extend(readings);
+        let histories = live.history.iter().filter(|(_, v)| long(v));
+        history.extend(histories.map(|(k, v)| (k.clone(), v.clone())));
+        return;
+    }
+    let mut found = Vec::new();
+    texts(raw, &mut found);
+    for key in lp_render::unsampled(found, &snapshot.readings, &live.readings) {
+        if let Some(values) = live.history.get(&key).filter(long) {
+            history.insert(key.clone(), values.clone());
+        }
+        if let Some(reading) = live.readings.get(&key) {
+            snapshot.readings.insert(key, reading.clone());
+        }
+    }
+}
 
 /// render: Design's and Look's picture of the theme `raw` (its JSON; `root`: the folder its
-/// assets come from), with the demo values and, `live`, the readings and their history over
-/// them; with the test message `notice` on it: the PNG (base64), the boxes, the warnings, the
-/// grid and the modules' boxes.
+/// assets come from), with the demo values and, `live`, this PC's readings and their history
+/// over them (all of them, or only those the demo has no sample of: lay_over); with the test
+/// message `notice` on it: the PNG (base64), the boxes, the warnings, the grid and the modules'
+/// boxes.
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     raw: &Value,
     root: Option<&Path>,
     config: &Config,
-    live: Option<Live>,
+    live: Option<&Snapshot>,
+    all: bool,
     notice: &Value,
     look: &Value,
     env: &Env,
 ) -> Answer<Value> {
     let theme = lp_theme::parse_theme(raw, root, env).map_err(theme_error)?;
     let mut snapshot = demo(None, &env.fonts_dir)?;
-    if let Some((readings, history)) = live {
-        snapshot.readings.extend(readings);
-        std::sync::Arc::make_mut(&mut snapshot.history).extend(history);
+    if let Some(live) = live {
+        lay_over(&mut snapshot, raw, live, all);
     }
     let dressed = lp_theme::modules::slots::with_cards(&theme, &config.cards, "first", "light")
         .unwrap_or_else(|| theme.clone());
@@ -732,6 +757,56 @@ pub fn adapt(payload: &Value, env: &Env) -> Answer<Value> {
 
 #[cfg(test)]
 mod tests {
+    use lp_py::{Dict, Value};
+    use lp_render::{Reading, Snapshot};
+
+    fn snapshot(keys: &[(&str, f64)]) -> Snapshot {
+        let mut made = Snapshot::default();
+        for (key, value) in keys {
+            made.readings
+                .insert(key.to_string(), Reading::of(Value::Float(*value)));
+            std::sync::Arc::make_mut(&mut made.history)
+                .insert(key.to_string(), vec![*value, *value]);
+        }
+        made
+    }
+
+    fn widget(items: &str) -> Value {
+        let mut list = Dict::default();
+        list.insert("type".into(), Value::Str("list".into()));
+        list.insert("items".into(), Value::Str(items.into()));
+        let mut theme = Dict::default();
+        theme.insert("widgets".into(), Value::List(vec![Value::Dict(list)]));
+        Value::Dict(theme)
+    }
+
+    #[test]
+    fn design_shows_the_sensors_the_demo_has_no_sample_of_with_this_pcs_readings() {
+        // (issue 54: a fan of a JSON file named in "Which fans" was missing from the picture)
+        let live = snapshot(&[
+            ("json.dell.rpm", 1830.0),
+            ("fan.lpc.fan_2", 900.0),
+            ("cpu.temp", 61.0),
+            ("mqtt.DellFans.rpm", 1500.0),
+            ("json.other", 3.0),
+        ]);
+        let theme = widget("json.dell.rpm = CPU\nfan.*\nmqtt.DellFans.*\n!json.other\ncpu.temp");
+        let mut shown = snapshot(&[("fan.cpu", 1200.0), ("cpu.temp", 50.0)]);
+        super::lay_over(&mut shown, &theme, &live, false);
+        let keys: Vec<&str> = shown.readings.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            ["fan.cpu", "cpu.temp", "json.dell.rpm", "mqtt.DellFans.rpm"]
+        );
+        assert_eq!(shown.readings["cpu.temp"].value, Value::Float(50.0)); // (the demo's)
+        assert_eq!(shown.history["json.dell.rpm"], vec![1830.0, 1830.0]);
+        // with "With this PC's sensors" every reading is this PC's
+        let mut shown = snapshot(&[("fan.cpu", 1200.0), ("cpu.temp", 50.0)]);
+        super::lay_over(&mut shown, &theme, &live, true);
+        assert_eq!(shown.readings.len(), 6);
+        assert_eq!(shown.readings["cpu.temp"].value, Value::Float(61.0));
+    }
+
     #[test]
     fn base64_is_the_standard_alphabet_with_padding() {
         assert_eq!(super::base64(b""), "");

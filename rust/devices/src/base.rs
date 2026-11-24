@@ -21,11 +21,14 @@ impl std::error::Error for DeviceError {}
 /// How the message of a frame that cannot be shown begins (FrameError): the frame is
 /// skipped, the panel stays open.
 pub const FRAME_ERROR: &str = "frame too detailed for the panel";
+/// How a frame a plugin's driver cannot show is told (its FrameError's words after it).
+pub const SKIPPED: &str = "its driver cannot show it: ";
 /// How the drivers' FrameErrors begin, each as its driver says it (the USB screens' too).
-const FRAME_ERRORS: [&str; 3] = [
+const FRAME_ERRORS: [&str; 4] = [
     FRAME_ERROR,
     "frame too detailed for the display",
     "a picture of ",
+    SKIPPED,
 ];
 
 impl DeviceError {

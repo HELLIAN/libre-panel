@@ -21,12 +21,18 @@ const OURS: [&str; 2] = [BOOT_LOGO, STANDBY_CLIP];
 /// A file on the panel is at most this large (what the command takes).
 pub const MAX_FILE: usize = 1024 * 1024;
 /// The boot logo's JPEG: its quality in turn until the file fits its room, every pixel with
-/// its own colour. A look that would need less than the last would show it: not made.
-const JPEG_STEPS: [i64; 5] = [95, 92, 90, 88, 85];
+/// its own colour; every whole quality from 95 down (panel_files.py JPEG_STEPS, since 0.9.5).
+/// A look that would need less than the last would show it: not made.
+const JPEG_STEPS: [i64; 11] = [95, 94, 93, 92, 91, 90, 89, 88, 87, 86, 85];
 /// The standby clip's x264 crf: the finest first, then coarser until the clip fits its room,
 /// up to the coarsest that does not show; a look that needs more is not made.
 const CLIP_CRF: i64 = 20;
 const CLIP_CRF_MAX: i64 = 26;
+/// Below a whole step that fits, where the next finer one does not: these quarters of a step,
+/// made at once (each encoder has one thread), and the finest that fits is the clip
+/// (panel_files.py CLIP_QUARTERS, since 0.9.5: a whole step left up to 13 % of the room
+/// unused).
+const CLIP_QUARTERS: [f64; 3] = [0.75, 0.5, 0.25];
 /// How much smaller a clip gets with each step of the crf, in thousandths: the first guess at
 /// the crf that fits.
 const CLIP_STEP: usize = 870;
@@ -35,15 +41,28 @@ const CLIP_STEP: usize = 870;
 /// much room there is cannot be asked, and one 9.2" was full at about 718,000 bytes of these
 /// files. So the two together stay well below what a panel of the model is known to hold: on
 /// the 9.2" two thirds of that; on the 12.3" four fifths of the 817,587 one has held for weeks.
-pub const ROOM: [(&str, (usize, usize)); 2] = [
+/// The 8.8" gets the 9.2"'s: its maker sells the two as one, with the same framebuffer, and
+/// the panel's own start screen was first read from the 8.8"'s firmware (SPUR II). (The first
+/// is the 9.2"'s: a panel of another model gets it by its pixels.)
+pub const ROOM: [(&str, (usize, usize)); 3] = [
     ("turing-9.2-usb", (360_000, 120_000)),
+    ("turing-8.8-usb", (360_000, 120_000)),
     ("turing-12.3-usb", (500_000, 150_000)),
 ];
 /// The looks that do not fit that room finely on a model, known before anything is made
-/// (panel_files.py UNFIT): the card says so and offers no writing.
-pub const UNFIT: [(&str, &[&str]); 2] = [
+/// (panel_files.py UNFIT): the card says so and offers no writing. For a model no one has
+/// tried, measured in its room by the pixels, both files and both ways mounted.
+pub const UNFIT: [(&str, &[&str]); 10] = [
+    ("turing-1.6-usb", &["aurora", "circuit", "levels"]),
+    ("turing-2.1-usb", &["aurora", "levels"]),
+    ("turing-2.8-usb", &["aurora", "levels"]),
+    ("turing-4.6-usb", &["aurora", "pulse", "levels"]),
+    ("turing-5.2-usb", &["levels"]),
+    ("turing-8-usb", &["levels"]),
+    ("turing-8.8-usb", &["levels"]),
     ("turing-9.2-usb", &["levels"]),
     ("turing-12.3-usb", &["levels"]),
+    ("jonsbo-tf3-pump", &["aurora", "levels"]),
 ];
 /// A write that happens takes its time (the 9.2" of issue 52: 1.2 to 2.9 s for 700 KB; a sound
 /// 9.2" and 12.3" wrote 45 to 485 KB at 0.94 MB a second at the most, 0.9.4rc1), one the panel
@@ -55,13 +74,22 @@ const WRITE_RATE_MOST: usize = 4_000_000;
 /// larger: the smallest, Dark's on the 9.2", has about 44,000 bytes; only Dark's boot logos
 /// are smaller, and after a logo nothing is saved on the panel)
 const WRITE_TIMED_FROM: usize = 32 * 1024;
-/// Files are written to the models it has been done on (ROOM). Who looks into it on another
-/// panel of their own sets this in the environment, at their own risk (panel_files.py
-/// WRITES_ENV): the files are then made for the 9.2"'s room, by the pixels.
+/// Files are written to the models it has been done on (ROOM). Another is written to only
+/// where its owner agrees to try it (the app asks each time: `untested`), or where this is set
+/// in the environment (panel_files.py WRITES_ENV): the files are then made for the 9.2"'s
+/// room, by the pixels.
 pub const WRITES_ENV: &str = "LIBRE_PANEL_PANEL_WRITES";
 pub const WRITES_WORD: &str = "at-my-own-risk";
+/// The models whose start screens have been written on a panel of theirs and seen at its next
+/// start; the 8.8" is written as the 9.2" without that yet (panel_files.py CONFIRMED).
+pub const CONFIRMED: [&str; 2] = ["turing-9.2-usb", "turing-12.3-usb"];
+/// Where an owner who tried it says how it went: the start screen's issue form, which the app
+/// fills in with the model, the version, the look and what it wrote.
+pub const REPORT_FORM: &str =
+    "https://github.com/syntensa/libre-panel/issues/new?template=start_screen.yml";
 
-/// tried: whether start screens have been written to panels of `model`.
+/// tried: whether start screens are written to panels of `model` by what is known of its room
+/// (ROOM: the models it has been done on, and the 8.8" as the 9.2").
 pub fn tried(model: Option<&PanelModel>) -> bool {
     model.is_some_and(|model| ROOM.iter().any(|(id, _)| *id == model.id))
 }
@@ -84,16 +112,18 @@ pub fn room(model: Option<&PanelModel>) -> (usize, usize) {
 }
 
 /// writes_on: whether files are written to a panel of `model`: to the models it has been
-/// done on, and to any for who asks for it in the environment.
-pub fn writes_on(model: Option<&PanelModel>) -> bool {
-    tried(model) || std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
+/// done on; to another where its owner agreed to try it (`untested`: the app asked, naming
+/// what may happen); and to any for who asks for it in the environment.
+pub fn writes_on(model: Option<&PanelModel>, untested: bool) -> bool {
+    tried(model) || untested || std::env::var(WRITES_ENV).is_ok_and(|word| word == WRITES_WORD)
 }
 
-/// writes_off: why nothing is written to a panel of another model, as the app says it.
+/// writes_off: why nothing is written to a panel of another model without its owner's word,
+/// as the app says it.
 pub fn writes_off() -> String {
     lp_i18n::t(
-        "Writing to this panel is switched off: Libre Panel has written start screens to the \
-         9.2\" and the 12.3\" only, and how much room another panel has for them is not known.",
+        "No one has tried start screens on this panel yet: they are written to it only where \
+         you agree to try it, at your own risk, in Settings → Panel → Start screen.",
     )
 }
 
@@ -378,7 +408,7 @@ fn logo_jpeg(picture: &Image, most: usize) -> Result<Vec<u8>, String> {
 pub fn clip_command(
     ffmpeg: &std::path::Path,
     size: (usize, usize),
-    crf: i64,
+    crf: f64,
     full: bool,
 ) -> Vec<String> {
     use lp_devices::h264::{colour_tags, stamp, FULL_RANGE};
@@ -420,7 +450,7 @@ pub fn clip_command(
         ]
         .map(String::from),
     );
-    command.push(crf.to_string());
+    command.push(crf.to_string()); // (as Python's "{:g}": 20, 24.25)
     command.extend(colour_tags(full));
     command.push("-x264-params".into());
     command.push(
@@ -433,9 +463,24 @@ pub fn clip_command(
     command
 }
 
+/// standby_clip: the standby clip of `model` (landscape, Libre Panel's own look, its range) as
+/// the app writes it to the panel, made with `ffmpeg`, and how many pictures went into it:
+/// `libre-panel tools clip`, the check of the ffmpeg a download carries.
+pub fn standby_clip(
+    env: &lp_theme::Env,
+    model: &PanelModel,
+    ffmpeg: &std::path::Path,
+) -> Result<(Vec<u8>, usize), String> {
+    let frames = boot::standby_frames(env, model, None, "landscape", "", 1.0).map_err(|e| e.0)?;
+    let full = lp_devices::turzx::full_range("auto", Some(model));
+    let clip = clip_h264(ffmpeg, &frames, full, room(Some(model)).0)?;
+    Ok((clip, frames.len()))
+}
+
 /// clip_h264: the standby clip's pictures turned into the framebuffer and encoded as finely
 /// as fits the clip's room (`most` bytes): at crf CLIP_CRF, coarser where that is too much,
-/// up to CLIP_CRF_MAX. A clip that would have to be coarser is not made.
+/// up to CLIP_CRF_MAX, and then a quarter of a step at a time finer where that still fits
+/// (CLIP_QUARTERS). A clip that would have to be coarser is not made.
 fn clip_h264(
     ffmpeg: &std::path::Path,
     frames: &[Image],
@@ -451,7 +496,8 @@ fn clip_h264(
         .iter()
         .flat_map(|f| f.as_bytes().iter().copied())
         .collect();
-    let encoded = |crf: i64| -> Result<Vec<u8>, String> {
+    let raw = raw.as_slice();
+    let encoded = |crf: f64| -> Result<Vec<u8>, String> {
         let command = clip_command(ffmpeg, size, crf, full);
         let failed = |why: String| format!("ffmpeg could not make the standby clip: {why}");
         let mut child = crate::capture::quiet(&mut std::process::Command::new(&command[0]))
@@ -462,15 +508,15 @@ fn clip_h264(
             .spawn()
             .map_err(|e| failed(e.to_string()))?;
         let mut stdin = child.stdin.take().expect("(piped)");
-        let input = raw.clone();
-        let writer = std::thread::spawn(move || {
-            use std::io::Write;
-            let _ = stdin.write_all(&input);
-        });
-        let done = child
-            .wait_with_output()
-            .map_err(|e| failed(e.to_string()))?;
-        let _ = writer.join();
+        // (the pictures are written while their clip is read: neither pipe fills up)
+        let done = std::thread::scope(|scope| {
+            scope.spawn(move || {
+                use std::io::Write;
+                let _ = stdin.write_all(raw);
+            });
+            child.wait_with_output()
+        })
+        .map_err(|e| failed(e.to_string()))?;
         if !done.status.success() || done.stdout.is_empty() {
             let tail = &done.stderr[done.stderr.len().saturating_sub(300)..];
             return Err(failed(bytes_repr(tail)));
@@ -478,7 +524,7 @@ fn clip_h264(
         Ok(done.stdout)
     };
     let mut crf = CLIP_CRF;
-    let mut data = encoded(crf)?;
+    let mut data = encoded(crf as f64)?;
     if data.len() > most {
         let mut guess = data.len();
         while guess > most && crf < CLIP_CRF_MAX {
@@ -486,12 +532,12 @@ fn clip_h264(
             crf += 1;
             guess = guess * CLIP_STEP / 1000;
         }
-        data = encoded(crf)?;
+        data = encoded(crf as f64)?;
         if data.len() > most {
             // the guess was too fine: coarser, a step at a time
             while data.len() > most && crf < CLIP_CRF_MAX {
                 crf += 1;
-                data = encoded(crf)?;
+                data = encoded(crf as f64)?;
             }
             if data.len() > most {
                 return Err(too_fine());
@@ -499,13 +545,25 @@ fn clip_h264(
         } else {
             // or too coarse: the finest that fits
             while crf - 1 > CLIP_CRF {
-                let finer = encoded(crf - 1)?;
+                let finer = encoded((crf - 1) as f64)?;
                 if finer.len() > most {
                     break;
                 }
                 crf -= 1;
                 data = finer;
             }
+        }
+        // (the whole step finer is too large) the finest quarter between the two that fits
+        let made = std::thread::scope(|scope| {
+            let encodes: Vec<_> = (CLIP_QUARTERS.iter())
+                .map(|quarter| scope.spawn(move || encoded(crf as f64 - quarter)))
+                .collect();
+            (encodes.into_iter())
+                .map(|encode| encode.join().expect("(an encode does not panic)"))
+                .collect::<Result<Vec<_>, String>>()
+        })?;
+        if let Some(finer) = made.into_iter().find(|finer| finer.len() <= most) {
+            data = finer;
         }
     }
     if lp_devices::h264::slice_count(&data) != native.len() {
@@ -618,6 +676,8 @@ pub fn names_in(listing: &[u8]) -> Vec<String> {
 struct PanelFiles<'a> {
     link: &'a lp_devices::turzx::FileLink,
     model: Option<&'static PanelModel>,
+    /// its owner agreed to try a model that has not been (writes_on)
+    untested: bool,
 }
 
 impl PanelFiles<'_> {
@@ -705,8 +765,19 @@ impl PanelFiles<'_> {
     /// file that ended early is taken off again, so that the panel is not left full, and
     /// said so. Nothing is ever taken away in order to write it a second time.
     fn write(&self, name: &str, data: &[u8]) -> Result<(), String> {
-        if !writes_on(self.model) {
+        if !writes_on(self.model, self.untested) {
             return Err(writes_off());
+        }
+        if !tried(self.model) {
+            crate::logs::log(
+                crate::logs::Level::Warning,
+                "libre_panel.devices.panel_files",
+                &format!(
+                    "start screen: writing {name} to a {}, which has not been tried, as its \
+                     owner chose",
+                    self.model.map_or("panel", |model| model.id)
+                ),
+            );
         }
         let raw = checked_name(name)?;
         if !OURS.contains(&name) {
@@ -818,6 +889,7 @@ pub struct Where<'a> {
 fn with_panel(
     model: Option<&'static PanelModel>,
     place: &Where,
+    untested: bool,
     job: impl FnOnce(&PanelFiles, &'static PanelModel) -> Result<Dict, String>,
 ) -> Result<Dict, String> {
     let setup = crate::display::files_setup(model, place.beside)?;
@@ -828,6 +900,7 @@ fn with_panel(
     let files = PanelFiles {
         link: &link,
         model: Some(found),
+        untested,
     };
     job(&files, found)
 }
@@ -851,7 +924,7 @@ fn room_told(model: &PanelModel) -> Value {
 
 /// StartScreen.state: what is on the panel.
 pub fn panel_state(model: Option<&'static PanelModel>, place: &Where) -> Result<Dict, String> {
-    with_panel(model, place, |files, found| {
+    with_panel(model, place, false, |files, found| {
         let names = files.noted_listing().map_or(Value::None, |names| {
             Value::List(names.into_iter().map(Value::Str).collect())
         });
@@ -876,7 +949,8 @@ fn as_mounted(picture: Image, turned: bool) -> Image {
 }
 
 /// StartScreen.write_logo: the boot logo written and shown (it shows at the next cold start);
-/// turned round for a panel mounted upside down (`turned`), as its frames are.
+/// turned round for a panel mounted upside down (`turned`), as its frames are; to a model not
+/// tried only where its owner agreed (`untested`).
 pub fn write_logo(
     env: &lp_theme::Env,
     model: Option<&'static PanelModel>,
@@ -884,12 +958,13 @@ pub fn write_logo(
     turned: bool,
     place: &Where,
     design: &str,
+    untested: bool,
 ) -> Result<Dict, String> {
-    if model.is_some() && !writes_on(model) {
+    if model.is_some() && !writes_on(model, untested) {
         return Err(writes_off()); // (said before the panel is opened)
     }
-    with_panel(model, place, |files, found| {
-        if !writes_on(Some(found)) {
+    with_panel(model, place, untested, |files, found| {
+        if !writes_on(Some(found), untested) {
             return Err(writes_off());
         }
         let picture = boot::boot_logo(env, found, way, design, 1.0).map_err(|e| e.0)?;
@@ -907,7 +982,7 @@ pub fn write_logo(
 
 /// StartScreen.remove_logo: the boot logo taken away (the factory logo shows again).
 pub fn remove_logo(model: Option<&'static PanelModel>, place: &Where) -> Result<Dict, String> {
-    with_panel(model, place, |files, found| {
+    with_panel(model, place, false, |files, found| {
         files.delete(BOOT_LOGO)?;
         Ok(told(vec![
             ("model", Value::Str(found.id.into())),
@@ -918,7 +993,8 @@ pub fn remove_logo(model: Option<&'static PanelModel>, place: &Where) -> Result<
 
 /// StartScreen.write_clip: the standby clip written, played and saved as what the panel
 /// starts with; in the range of values its decoder shows; turned round for a panel mounted
-/// upside down (`turned`), as its frames are.
+/// upside down (`turned`), as its frames are; to a model not tried only where its owner
+/// agreed (`untested`).
 #[allow(clippy::too_many_arguments)]
 pub fn write_clip(
     env: &lp_theme::Env,
@@ -929,13 +1005,14 @@ pub fn write_clip(
     place: &Where,
     design: &str,
     video_range: &str,
+    untested: bool,
 ) -> Result<Dict, String> {
-    if model.is_some() && !writes_on(model) {
+    if model.is_some() && !writes_on(model, untested) {
         return Err(writes_off()); // (said before the panel is opened)
     }
     let ffmpeg = lp_devices::h264::find_ffmpeg("")?;
-    with_panel(model, place, |files, found| {
-        if !writes_on(Some(found)) {
+    with_panel(model, place, untested, |files, found| {
+        if !writes_on(Some(found), untested) {
             return Err(writes_off());
         }
         let frames = boot::standby_frames(env, found, None, way, design, 1.0).map_err(|e| e.0)?;
@@ -1008,7 +1085,11 @@ pub fn state(told: &Told) -> Value {
             one.insert("measured".into(), Value::Bool(MEASURED.contains(&m.id)));
             // whether its files are written (the models it has been done on), and how large
             // they are at most there
-            one.insert("writes".into(), Value::Bool(writes_on(Some(m))));
+            one.insert("writes".into(), Value::Bool(writes_on(Some(m), false)));
+            // (another is written to where its owner agrees to try it; one that has been seen
+            // to start with them is confirmed)
+            one.insert("tried".into(), Value::Bool(tried(Some(m))));
+            one.insert("confirmed".into(), Value::Bool(CONFIRMED.contains(&m.id)));
             one.insert("room".into(), room_told(m));
             // (the looks known not to fit there finely: not offered for writing)
             let unfit = UNFIT.iter().find(|(id, _)| *id == m.id);
@@ -1034,6 +1115,9 @@ pub fn state(told: &Told) -> Value {
         "designs".into(),
         Value::List(boot::DESIGNS.iter().map(|d| text(d)).collect()),
     );
+    // (where an owner who tried a model says how it went, and this version)
+    answer.insert("report".into(), text(REPORT_FORM));
+    answer.insert("version".into(), text(lp_py::VERSION));
     Value::Dict(answer)
 }
 
@@ -1049,7 +1133,7 @@ mod tests {
 
     #[test]
     fn the_clips_command_is_panel_files_pys() {
-        let command = clip_command(std::path::Path::new("ffmpeg"), (480, 1920), 20, true);
+        let command = clip_command(std::path::Path::new("ffmpeg"), (480, 1920), 20.0, true);
         let joined = command.join(" ");
         assert!(joined.starts_with("ffmpeg -hide_banner -loglevel error -f rawvideo"));
         assert!(joined.contains("-s 480x1920 -framerate 30 -i - -an -vf scale=out_range=full"));
@@ -1061,10 +1145,20 @@ mod tests {
     fn the_room_is_panel_files_pys() {
         let nine = model_of("turing-9.2-usb").expect("the 9.2\"");
         let twelve = model_of("turing-12.3-usb").expect("the 12.3\"");
+        let eight = model_of("turing-8.8-usb").expect("the 8.8\"");
         assert_eq!(room(Some(nine)), (360_000, 120_000));
         assert_eq!(room(Some(twelve)), (500_000, 150_000));
+        assert_eq!(room(Some(eight)), room(Some(nine))); // (the 9.2"'s sibling)
         assert_eq!(room(None), (360_000, 120_000));
-        assert!(tried(Some(nine)) && tried(Some(twelve)) && !tried(None));
+        assert!(tried(Some(nine)) && tried(Some(twelve)) && tried(Some(eight)) && !tried(None));
+        let written: Vec<&str> = models().filter(|m| tried(Some(m))).map(|m| m.id).collect();
+        assert_eq!(
+            written,
+            ["turing-8.8-usb", "turing-9.2-usb", "turing-12.3-usb"]
+        );
+        for (id, _) in ROOM {
+            assert!(UNFIT.iter().any(|(unfit, _)| *unfit == id), "{id}");
+        }
         for model in models() {
             let (clip, logo) = room(Some(model));
             // no panel gets more than the 12.3", and none that was not tried more than the 9.2"

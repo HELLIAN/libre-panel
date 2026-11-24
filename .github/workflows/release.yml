@@ -42,28 +42,13 @@ jobs:
           fi
           grep -q "^## $version" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section $version"; exit 1; }
 
-  python-package:
-    timeout-minutes: 15
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: pip install build
-      - run: python -m build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-package
-          path: dist/*
-
   app:
     # Libre Panel in Rust, built and tried as CI builds and tries it on every push (ci.yml): the
     # Windows setup and portable zip (its job `try`: the setup installed for all users with every
     # box, run and uninstalled), the Linux AppImage and archive (its job `appimage`: started as
-    # autostart starts it, with and without a tray; the archive unpacked and drawn from), after
-    # every comparison with the Python app and every test
+    # autostart starts it, with and without a tray; the archive unpacked and drawn from), and the
+    # wheels pip and pipx install, one for Linux and one for Windows (installed and tried in
+    # both jobs), after every comparison with the Python app and every test
     needs: test
     # (not where a draft carries the downloads of a CI run that built and tried them: from_run)
     if: ${{ !inputs.from_run }}
@@ -71,15 +56,15 @@ jobs:
 
   github-release:
     timeout-minutes: 15
-    needs: [python-package, app]
+    needs: [test, app]
     if: >-
-      !cancelled() && needs.python-package.result == 'success' &&
+      !cancelled() && needs.test.result == 'success' &&
       (needs.app.result == 'success' || (inputs.from_run && needs.app.result == 'skipped')) &&
       (startsWith(github.ref, 'refs/tags/v') || inputs.draft != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: read  # (the downloads of the CI run a draft carries: from_run)
+      actions: read  # (the downloads, of this run or of the CI run a draft carries: from_run)
       id-token: write  # (GitHub's signature on where each file was built: the attestations)
       attestations: write
     env:
@@ -87,34 +72,31 @@ jobs:
       DRAFT: ${{ inputs.draft }}
     steps:
       - uses: actions/checkout@v5
+      # the downloads this run built and tried (its job `app`: ci.yml's jobs `try` and
+      # `appimage`), or, for a draft, those of the CI run named (from_run)
       - uses: actions/download-artifact@v4
-        with:
-          name: python-package
-          path: artifacts
-      - uses: actions/download-artifact@v4
-        if: ${{ !inputs.from_run }}
         with:
           name: libre-panel-rust-setup
           path: artifacts
-      - uses: actions/download-artifact@v4
-        if: ${{ !inputs.from_run }}
-        with:
-          name: libre-panel-rust-appimage
-          path: artifacts
-      # (a draft of the downloads a CI run built and tried: its jobs `try` and `appimage`)
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.from_run }}
-        with:
-          name: libre-panel-rust-setup
-          path: artifacts
-          run-id: ${{ inputs.from_run }}
+          run-id: ${{ inputs.from_run || github.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.from_run }}
         with:
           name: libre-panel-rust-appimage
           path: artifacts
-          run-id: ${{ inputs.from_run }}
+          run-id: ${{ inputs.from_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux
+          path: artifacts
+          run-id: ${{ inputs.from_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-windows
+          path: artifacts
+          run-id: ${{ inputs.from_run || github.run_id }}
           github-token: ${{ github.token }}
       - name: The files under the names the app's "Update to" looks for
         # (updates.py and rust/app's updates: -windows-x64-setup.exe, -windows-x64-portable.zip,
@@ -125,21 +107,34 @@ jobs:
           for end in windows-x64-setup.exe windows-x64-portable.zip linux-x64.tar.gz; do
             test -f "artifacts/libre-panel-$version-$end"
           done
+          # (and the wheels pip and pipx install, whose command the app shows: its updates)
+          test -f "artifacts/libre_panel-$version-py3-none-win_amd64.whl"
+          ls artifacts/libre_panel-"$version"-py3-none-manylinux_*_x86_64.whl
           ls -l artifacts
       - name: Release notes from CHANGELOG.md
         # the version's section; a hotfix's (0.9.1) goes on with the sections of the releases
-        # it follows down to the one it fixes (0.9.0), each under its heading, so that who comes
-        # from an older version reads all that is new (the app shows the first paragraph)
+        # it follows down to the one it fixes (0.9.0), and a candidate's (0.9.5rc3) with those of
+        # the candidates before it (0.9.5rc2, 0.9.5rc1: drafts no one else saw), each under its
+        # heading, so that who comes from an older version reads all that is new (the app shows
+        # the first paragraph)
         run: |
           version="${TAG#v}"
           base="https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA"
           minor=""
+          release=""
           case "$version" in
-            *[!0-9.]* | *.*.*.*) ;;
+            *[!0-9.]*) release="${version%%[!0-9.]*}"; release="${release%.}" ;;
+            *.*.*.*) ;;
             *.*.*) [ "${version##*.}" = 0 ] || minor="${version%.*}" ;;
           esac
-          awk -v v="$version" -v m="$minor" '
+          awk -v v="$version" -v m="$minor" -v r="$release" '
             function heading(line, w) { return index(line, "## " w " ") == 1 || line == "## " w }
+            function candidate(line, rest) {
+              if (r == "" || index(line, "## " r) != 1) return 0
+              rest = substr(line, length("## " r) + 1)
+              sub(/ .*/, "", rest)
+              return rest ~ /^(a|b|rc|\.?dev)[0-9]+$/
+            }
             function of_minor(line, rest) {
               if (m == "" || index(line, "## " m ".") != 1) return 0
               rest = substr(line, length("## " m ".") + 1)
@@ -148,6 +143,7 @@ jobs:
             }
             /^## / {
               if (found && !last && of_minor($0)) { last = heading($0, m ".0"); print; next }
+              if (found && candidate($0)) { print; next }
               if (found) exit
               if (heading($0, v)) { found = 1; next }
             }
@@ -209,32 +205,12 @@ jobs:
               --verify-tag --title "$title" --notes-file notes.md "${flags[@]}"
           fi
 
-  pypi:
-    # Only once PyPI is set up (docs/RELEASING.md): repository variable PYPI_UPLOAD = true.
-    timeout-minutes: 15
-    needs: [python-package, app]
-    # (not a pre-release: on PyPI everyone would have it)
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') && vars.PYPI_UPLOAD == 'true' &&
-      !contains(github.ref_name, 'a') && !contains(github.ref_name, 'b') &&
-      !contains(github.ref_name, 'rc') && !contains(github.ref_name, 'dev')
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write  # trusted publishing, no stored token
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: python-package
-          path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
   forget-the-files:
     # The files are only ever in a release: a run keeps none of them. (On a public repository
     # anyone signed in to GitHub may download a run's files, a release candidate's too.) After
-    # the release and PyPI, whether they ran or not.
+    # the release, whether it ran or not.
     if: always()
-    needs: [test, python-package, app, github-release, pypi]
+    needs: [test, app, github-release]
     timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:

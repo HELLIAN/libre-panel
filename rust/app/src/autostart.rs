@@ -8,6 +8,11 @@
 //! `enable(..., elevated=true)` sets up a Task Scheduler task that starts Libre Panel at
 //! login with the highest rights, instead of the Run value; setting it up and removing it
 //! needs an administrator and is never done without being asked.
+//!
+//! LP_TEST_AUTOSTART is the tests' own: a folder that stands in for Windows' Run key and Task
+//! Scheduler on any system, so that what the app makes of them can be tried anywhere: a file
+//! `run` holds the Run value, `task.xml` the task as `schtasks /Query /XML` gives it, and while
+//! a file `admin` is there this process counts as an administrator.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -74,7 +79,6 @@ pub fn launch_command(config: Option<&Path>) -> Vec<String> {
 }
 
 /// subprocess.list2cmdline: a command line as the Microsoft C runtime reads it back.
-#[cfg_attr(not(windows), allow(dead_code))] // (Windows' Run value and task)
 pub fn list2cmdline(args: &[String]) -> String {
     let mut line = String::new();
     for arg in args {
@@ -118,7 +122,6 @@ pub struct TaskInfo {
 }
 
 /// The text of the first element `name` within `xml` (without a namespace prefix).
-#[cfg_attr(not(windows), allow(dead_code))] // (Windows' Run value and task)
 fn element<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
     let open = xml.find(&format!("<{name}"))?;
     let rest = &xml[open + name.len() + 1..];
@@ -131,7 +134,6 @@ fn element<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// XML's own five entities and character references, as a parser reads them.
-#[cfg_attr(not(windows), allow(dead_code))] // (Windows' Run value and task)
 fn unescape(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
@@ -172,7 +174,6 @@ fn unescape(text: &str) -> String {
 
 /// parse_task: a task's state from its XML (`schtasks /Query /XML`): `Settings/Enabled`
 /// (true when not given) and the program of its first `Exec`.
-#[cfg_attr(not(windows), allow(dead_code))] // (Windows' Run value and task)
 pub fn parse_task(xml: &str) -> TaskInfo {
     let enabled = element(xml, "Settings").and_then(|settings| element(settings, "Enabled"));
     let enabled = enabled.map_or("true".to_string(), unescape);
@@ -255,13 +256,22 @@ pub fn same_program(one: &str, other: &str) -> bool {
     !lp_py::strip(one).is_empty() && norm(one) == norm(other)
 }
 
+/// LP_TEST_AUTOSTART's folder, where the tests give one (see the module's description).
+fn stand_in() -> Option<PathBuf> {
+    std::env::var_os("LP_TEST_AUTOSTART")
+        .filter(|folder| !folder.is_empty())
+        .map(PathBuf::from)
+}
+
 /// Whether this process runs with administrator rights (Windows).
 pub fn is_admin() -> bool {
-    cfg!(windows) && lp_devices::rights::elevated()
+    match stand_in() {
+        Some(folder) => folder.join("admin").is_file(),
+        None => cfg!(windows) && lp_devices::rights::elevated(),
+    }
 }
 
 /// XML's escape of `&`, `<` and `>` (xml.sax.saxutils.escape).
-#[cfg_attr(not(windows), allow(dead_code))] // (Windows' Run value and task)
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -270,7 +280,6 @@ fn escape(text: &str) -> String {
 
 /// task_xml: a task that starts `command` when `user` logs in, with the highest rights, at
 /// normal priority and without a time limit.
-#[cfg_attr(not(windows), allow(dead_code))] // (Windows' Run value and task)
 pub fn task_xml(command: &[String], user: &str) -> String {
     let program = escape(&command[0]);
     let arguments = escape(&list2cmdline(&command[1..]));
@@ -482,7 +491,7 @@ impl Autostart {
 
     /// "windows", "xdg" (Linux, the BSDs) or "unsupported".
     pub fn kind(&self) -> &'static str {
-        if cfg!(windows) {
+        if cfg!(windows) || stand_in().is_some() {
             "windows"
         } else if cfg!(any(
             target_os = "linux",
@@ -497,16 +506,21 @@ impl Autostart {
         }
     }
 
-    #[cfg(windows)]
     fn query(&self) -> Option<TaskInfo> {
-        let output = schtasks(&["/Query", "/TN", WINDOWS_TASK, "/XML"]).ok()?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        output.status.success().then(|| parse_task(&text))
-    }
-
-    #[cfg(not(windows))]
-    fn query(&self) -> Option<TaskInfo> {
-        None
+        if let Some(folder) = stand_in() {
+            let text = std::fs::read_to_string(folder.join("task.xml")).ok()?;
+            return Some(parse_task(&text));
+        }
+        #[cfg(windows)]
+        {
+            let output = schtasks(&["/Query", "/TN", WINDOWS_TASK, "/XML"]).ok()?;
+            let text = String::from_utf8_lossy(&output.stdout);
+            output.status.success().then(|| parse_task(&text))
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
 
     /// task_state: the task named like Libre Panel's elevated start (Windows): "none";
@@ -586,25 +600,47 @@ impl Autostart {
 
     /// The command Windows' Run key starts at login for Libre Panel (Windows), where it has
     /// one.
-    #[cfg(windows)]
     pub fn run_value(&self) -> Option<String> {
-        windows::get(WINDOWS_RUN_KEY, APP_NAME)
-    }
-
-    #[cfg(not(windows))]
-    pub fn run_value(&self) -> Option<String> {
-        None
+        if let Some(folder) = stand_in() {
+            return std::fs::read_to_string(folder.join("run")).ok();
+        }
+        #[cfg(windows)]
+        {
+            windows::get(WINDOWS_RUN_KEY, APP_NAME)
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
 
     /// The Run key's command for Libre Panel set to `value` (Windows).
-    #[cfg(windows)]
     pub fn set_run_value(&self, value: &str) -> std::io::Result<()> {
-        windows::set(WINDOWS_RUN_KEY, APP_NAME, value)
+        if let Some(folder) = stand_in() {
+            return std::fs::write(folder.join("run"), value);
+        }
+        #[cfg(windows)]
+        {
+            windows::set(WINDOWS_RUN_KEY, APP_NAME, value)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = value;
+            Ok(())
+        }
     }
 
-    #[cfg(not(windows))]
-    pub fn set_run_value(&self, _value: &str) -> std::io::Result<()> {
-        Ok(())
+    /// The Run key's value for Libre Panel taken away (Windows).
+    fn delete_run_value(&self) {
+        match stand_in() {
+            Some(folder) => {
+                let _ = std::fs::remove_file(folder.join("run"));
+            }
+            #[cfg(windows)]
+            None => windows::delete(WINDOWS_RUN_KEY, APP_NAME),
+            #[cfg(not(windows))]
+            None => {}
+        }
     }
 
     pub fn is_enabled(&self) -> Result<bool> {
@@ -646,8 +682,7 @@ impl Autostart {
                      first run as administrator: libre-panel autostart disable",
                 )));
             }
-            #[cfg(windows)]
-            windows::set(WINDOWS_RUN_KEY, APP_NAME, &list2cmdline(command))
+            self.set_run_value(&list2cmdline(command))
                 .map_err(|why| AutostartError(why.to_string()))?;
             return Ok(self.location());
         }
@@ -694,15 +729,27 @@ impl Autostart {
                  terminal with 'Run as administrator' and run the command there.",
             )));
         }
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        let domain = std::env::var("USERDOMAIN").unwrap_or_default();
+        let user = match domain.is_empty() {
+            true => user,
+            false => format!("{domain}\\{user}"),
+        };
+        self.create_task(&task_xml(command, &user))?;
+        self.forget_task();
+        self.delete_run_value(); // one start at login, not two
+        Ok(self.location())
+    }
+
+    /// The elevated start's task made from `xml`, in place of one of its name (schtasks
+    /// /Create).
+    fn create_task(&self, xml: &str) -> Result<()> {
+        if let Some(folder) = stand_in() {
+            let written = std::fs::write(folder.join("task.xml"), xml);
+            return written.map_err(|why| AutostartError(why.to_string()));
+        }
         #[cfg(windows)]
         {
-            let user = std::env::var("USERNAME").unwrap_or_default();
-            let domain = std::env::var("USERDOMAIN").unwrap_or_default();
-            let user = match domain.is_empty() {
-                true => user,
-                false => format!("{domain}\\{user}"),
-            };
-            let xml = task_xml(command, &user);
             // (UTF-16 with its mark, as the XML declares)
             let mut bytes = vec![0xFF, 0xFE];
             bytes.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
@@ -715,15 +762,40 @@ impl Autostart {
             let output = schtasks(&["/Create", "/TN", WINDOWS_TASK, "/XML", &place, "/F"]);
             let _ = std::fs::remove_dir_all(&folder);
             let output = output.map_err(|why| AutostartError(why.to_string()))?;
-            if !output.status.success() {
-                return Err(AutostartError(said_by(&output)));
+            match output.status.success() {
+                true => Ok(()),
+                false => Err(AutostartError(said_by(&output))),
             }
-            self.forget_task();
-            windows::delete(WINDOWS_RUN_KEY, APP_NAME); // one start at login, not two
         }
         #[cfg(not(windows))]
-        let _ = command;
-        Ok(self.location())
+        {
+            Err(not_supported())
+        }
+    }
+
+    /// The elevated start's task taken away (schtasks /Delete): what went wrong, if anything.
+    /// It needs an administrator.
+    fn delete_task(&self) -> Option<String> {
+        if let Some(folder) = stand_in() {
+            if !is_admin() {
+                return Some("ERROR: Access is denied.".into());
+            }
+            return std::fs::remove_file(folder.join("task.xml"))
+                .err()
+                .map(|why| why.to_string());
+        }
+        #[cfg(windows)]
+        {
+            match schtasks(&["/Delete", "/TN", WINDOWS_TASK, "/F"]) {
+                Ok(output) if output.status.success() => None,
+                Ok(output) => Some(said_by(&output)),
+                Err(why) => Some(why.to_string()),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
 
     /// Remove the entry; whether there was one.
@@ -732,25 +804,15 @@ impl Autostart {
             "unsupported" => Err(not_supported()),
             "windows" => {
                 let mut existed = self.run_value().is_some();
-                #[cfg(windows)]
-                windows::delete(WINDOWS_RUN_KEY, APP_NAME);
+                self.delete_run_value();
                 if self.elevated(true) {
-                    #[cfg(windows)]
-                    {
-                        let output = schtasks(&["/Delete", "/TN", WINDOWS_TASK, "/F"]);
-                        let failed = match &output {
-                            Ok(output) if output.status.success() => None,
-                            Ok(output) => Some(said_by(output)),
-                            Err(why) => Some(why.to_string()),
-                        };
-                        if let Some(reason) = failed {
-                            return Err(AutostartError(said(
-                                "The start with the highest rights can only be removed by an \
-                                 administrator ({reason}): open a terminal with 'Run as \
-                                 administrator' and run: libre-panel autostart disable",
-                                &[("reason", &reason)],
-                            )));
-                        }
+                    if let Some(reason) = self.delete_task() {
+                        return Err(AutostartError(said(
+                            "The start with the highest rights can only be removed by an \
+                             administrator ({reason}): open a terminal with 'Run as \
+                             administrator' and run: libre-panel autostart disable",
+                            &[("reason", &reason)],
+                        )));
                     }
                     self.forget_task();
                     existed = true;

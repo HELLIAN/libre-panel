@@ -450,6 +450,17 @@ MODELS: tuple[PanelModel, ...] = (
         notes="the strip of the Hongtai / Jungle Leopard family",
     ),
     PanelModel(
+        "majesty-9.16",
+        "MAJESTY",
+        "MAJESTY AIO monitor",
+        9.16,
+        462,
+        1920,
+        "serial-hongtai",
+        usb_ids=((0x33C3, 0x7792),),
+        notes='the Hongtai strip on firmware of its own (also sold as TZMRIT 9.16")',
+    ),
+    PanelModel(
         "lianli-universal-8.8",
         "Lian Li",
         "Lian Li Universal Screen",
@@ -709,12 +720,12 @@ MODELS: tuple[PanelModel, ...] = (
         "usb-udisp",
         shape="round",
         usb_ids=((0x303A, 0x2986), (0x303A, 0x2987)),
-        # (its product string says 480x480: devices/udisp.py takes the model by that)
+        # (its product string says 480x480: rust/devices/src/udisp.rs takes the model by that)
         notes="Waveshare's round USB Monitor with the card image that makes it a USB display",
     ),
 )
 
-# Families with a driver (devices/turzx.py lists them); the rest is planned.
+# Families with a driver (the Rust app's, rust/devices); the rest is planned.
 _DRIVER_STATUS = {
     protocol: "unverified"
     for protocol in (
@@ -752,9 +763,15 @@ _CONFIRMED: set[str] = {
     "waveshare-2.8-udisp",
     # pictures and its brightness: an owner's report (0.9.0, Windows)
     "weact-0.96",
+    # Lumen with live readings and its brightness, on an owner's desk (#54, 0.9, Windows)
+    "majesty-9.16",
     # runs since 0.9.0 with the start its owner found for it (#46), on Windows once both of
     # its USB interfaces have the WinUSB driver: the owner's report
     "jonsbo-ds339",
+    # runs and "works great": its owner's report in the TURZX forum (0.9.5)
+    "lianli-universal-8.8",
+    # shows the theme as it should, with 0.9.4 on Windows: its owner's report (#64, 0.9.5)
+    "jonsbo-ds916",
 }
 # What the panels whose drivers were written from other projects' notes cannot do (their
 # drivers say why); each begins with what all of them share: nobody has run them yet.
@@ -805,7 +822,7 @@ _LIMITS = {
         "motion."
     ),
     "jonsbo-ds916": (
-        "Not yet seen on the hardware. It takes whole JPEG pictures: no smooth motion, and "
+        "It takes whole JPEG pictures: no smooth motion, and "
         "fine detail may soften. It has no backlight control: dimming darkens the picture. "
         "When Libre Panel quits, the panel shows its own animation again."
     ),
@@ -813,7 +830,13 @@ _LIMITS = {
     "vmax-4.6": f"{_UNSEEN} {_MS9132}",
     "hongtai-480x960": _JPEG_SERIAL,
     "hongtai-1920x462": _JPEG_SERIAL,
-    "lianli-universal-8.8": _LIANLI,
+    "majesty-9.16": (
+        "It takes whole JPEG pictures over a USB serial port: a few a second, no smooth motion, "
+        "and a busy picture loses detail. Its brightness goes into the picture: dimming darkens "
+        "it, its backlight stays at 95. When Libre Panel quits, the panel shows its own "
+        "animation again."
+    ),
+    "lianli-universal-8.8": _LIANLI.removeprefix(f"{_UNSEEN} "),
     "lianli-universal-9.2": _LIANLI,
     "lianli-hydroshift2-lcd": _LIANLI,
     "lianli-hydroshift2-oled": _LIANLI,

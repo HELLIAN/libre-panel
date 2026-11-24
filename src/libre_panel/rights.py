@@ -1,6 +1,6 @@
 """Running with administrator rights (Windows) or as root: what Libre Panel then holds back.
 
-Started with the highest rights (the elevated start of autostart.py, or "Run as
+Started with the highest rights (the elevated start of rust/app/src/autostart.rs, or "Run as
 administrator"), Libre Panel would hand them to whatever it loads or starts from a place that
 programs without those rights can change. On Windows every program the same user runs may
 write to the user's profile, where config.toml and the plugin folders lie; one of them could
@@ -42,11 +42,19 @@ _WINDOWS_FOLDERS = (
 )
 
 
+def is_admin() -> bool:
+    """Whether this process runs with administrator rights (Windows)."""
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
 def elevated() -> bool:
     """Whether this program runs with administrator rights (Windows) or as root (elsewhere)."""
     if sys.platform == "win32":
-        from libre_panel.autostart import is_admin
-
         return is_admin()
     geteuid = getattr(os, "geteuid", None)
     return geteuid is not None and geteuid() == 0

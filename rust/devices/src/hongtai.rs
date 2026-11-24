@@ -27,6 +27,7 @@
 //! Never sent: 01 (restart), 0C (firmware update), 14, 15 (but the MAJESTY's setting up), 20
 //! (the region preset), 23 (the serial number), 25 (the pump's motor), 26.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -37,7 +38,6 @@ use lp_py::{Dict, Value};
 
 use crate::base::{dimmed, Counters, DeviceError, Result};
 use crate::link::Link;
-use crate::models::{Inch, PanelModel};
 
 pub const CMD_LIGHT: u8 = 0x03;
 pub const CMD_INFO: u8 = 0x06;
@@ -60,33 +60,6 @@ pub const BY_SIZE: [((i64, i64), &str); 2] = [
 pub const FAMILY_USB: (u16, u16) = (0x33C3, 0x7788);
 pub const MAJESTY_USB: (u16, u16) = (0x33C3, 0x7792);
 pub const MAJESTY_MODEL: &str = "majesty-9.16";
-/// The MAJESTY 9.16" (issue #40). Kept here, beside the catalog, while the catalog is the
-/// Python app's (themes are checked against it, R3); it joins it when the Rust app drives the
-/// panels.
-pub static MAJESTY: PanelModel = PanelModel {
-    id: MAJESTY_MODEL,
-    vendor: "MAJESTY",
-    name: "MAJESTY AIO monitor",
-    size_inch: Inch::Float(9.16),
-    native_width: 462,
-    native_height: 1920,
-    protocol: "serial-hongtai",
-    shape: "rect",
-    usb_ids: &[MAJESTY_USB],
-    serial_numbers: &[],
-    driver: "unverified",
-    notes: "the Hongtai strip on firmware of its own; its owner ran it with a driver of their \
-            own (issue #40)",
-    limits: "Not yet seen on the hardware with this driver. It takes whole JPEG pictures over a \
-             USB serial port: a few a second, no smooth motion, and a busy picture loses detail. \
-             Its brightness goes into the picture: dimming darkens it, its backlight stays at 95. \
-             When Libre Panel quits, the panel shows its own animation again.",
-    hidden: [0, 0, 0, 0],
-    portrait_clear: None,
-    video: false,
-    video_range: "limited",
-    video_range_seen: false,
-};
 /// What the MAJESTY is set up with (after 15), and the backlight it is kept at.
 pub const MAJESTY_SETUP: [u8; 2] = [0x00, 0x03];
 pub const MAJESTY_LIGHT: u8 = 95;
@@ -288,6 +261,97 @@ struct State<L> {
     fault: Option<DeviceError>,
     stop: bool,
     counters: Counters,
+    heard: Heard,
+}
+
+/// The longest frame of the panel's that is waited for (and the most read at once).
+const HEARD_KEPT: usize = 16 * 1024;
+/// How much of a frame the log shows.
+const HEARD_SHOWN: usize = 24;
+
+/// What the panel sends while it is shown pictures, when it is asked nothing (issue #54: the
+/// MAJESTY went dark now and then with nothing in the log): read as it comes, so that it
+/// never fills the port's buffer; its frames counted by their command, each new one noted for
+/// the log with its first bytes, and bytes that are no frame noted once.
+#[derive(Default)]
+struct Heard {
+    /// the start of a frame not yet whole
+    pending: Vec<u8>,
+    /// the frames by their command, and bytes that were no frame
+    counts: BTreeMap<u8, u64>,
+    stray: u64,
+    /// for the log, not yet said
+    notes: Vec<String>,
+}
+
+fn hex(data: &[u8]) -> String {
+    let shown: Vec<String> = data
+        .iter()
+        .take(HEARD_SHOWN)
+        .map(|b| format!("{b:02X}"))
+        .collect();
+    let more = if data.len() > HEARD_SHOWN { " …" } else { "" };
+    format!("{}{more}", shown.join(" "))
+}
+
+impl Heard {
+    /// `data`, as it came from the panel on `port`, taken in.
+    fn take_in(&mut self, data: &[u8], port: &str) {
+        self.pending.extend_from_slice(data);
+        loop {
+            let start = (self.pending.windows(2)).position(|two| two == [0x55, 0xAA]);
+            // (with no start, a last 55 may be the first byte of one)
+            let kept = usize::from(self.pending.last() == Some(&0x55));
+            let skipped = start.unwrap_or(self.pending.len() - kept);
+            if skipped > 0 {
+                self.stray(skipped, port);
+            }
+            if start.is_none() || self.pending.len() < 5 {
+                break;
+            }
+            let length = usize::from(u16::from_le_bytes([self.pending[2], self.pending[3]]));
+            if !(7..=HEARD_KEPT).contains(&length) {
+                self.stray(1, port); // (no frame's length: its 55 is no frame's start)
+                continue;
+            }
+            if self.pending.len() < length {
+                break;
+            }
+            let command = self.pending[4];
+            let count = self.counts.entry(command).or_default();
+            *count += 1;
+            if *count == 1 {
+                self.notes.push(format!(
+                    "the panel on {port} said {command:02X} unasked ({length} bytes: {})",
+                    hex(&self.pending[..length])
+                ));
+            }
+            self.pending.drain(..length);
+        }
+    }
+
+    fn stray(&mut self, n: usize, port: &str) {
+        if self.stray == 0 {
+            let said = hex(&self.pending[..n]);
+            self.notes.push(format!(
+                "the panel on {port} sent bytes that are no frame: {said}"
+            ));
+        }
+        self.stray += n as u64;
+        self.pending.drain(..n);
+    }
+
+    /// What was heard in all, for the log when the panel is let go; None for nothing.
+    fn summary(&self, port: &str) -> Option<String> {
+        let mut parts: Vec<String> = (self.counts.iter())
+            .map(|(command, n)| format!("{command:02X} ×{n}"))
+            .collect();
+        if self.stray > 0 {
+            parts.push(format!("{} bytes that were no frame", self.stray));
+        }
+        (!parts.is_empty())
+            .then(|| format!("the panel on {port} said unasked: {}", parts.join(", ")))
+    }
 }
 
 struct Shared<L> {
@@ -336,6 +400,8 @@ pub struct HongtaiDisplay<L: Link + 'static> {
     /// the MAJESTY's last picture as it went out before it was dimmed
     last: Option<Image>,
     keeper: Option<thread::JoinHandle<()>>,
+    /// its port, for the log
+    port: String,
 }
 
 impl<L: Link + 'static> HongtaiDisplay<L> {
@@ -356,6 +422,7 @@ impl<L: Link + 'static> HongtaiDisplay<L> {
                 fault: None,
                 stop: false,
                 counters: Counters::default(),
+                heard: Heard::default(),
             }),
             wake: Condvar::new(),
         });
@@ -367,6 +434,7 @@ impl<L: Link + 'static> HongtaiDisplay<L> {
             brightness: None,
             last: None,
             keeper: None,
+            port: port.to_string(),
         };
         let identity = match display.identify(port) {
             Ok(identity) => identity,
@@ -454,6 +522,7 @@ impl<L: Link + 'static> HongtaiDisplay<L> {
 
     fn start_keeper(&mut self) {
         let shared = Arc::clone(&self.shared);
+        let port = self.port.clone();
         let every = self.timing.live_every;
         let tick = (every / 2).min(Duration::from_millis(250));
         let live = frame(CMD_LIVE, &[]).expect("(11 is sent)");
@@ -471,6 +540,19 @@ impl<L: Link + 'static> HongtaiDisplay<L> {
                     .unwrap_or_else(|e| e.into_inner());
                 if state.stop {
                     return;
+                }
+                // what the panel sent, read (the read takes what came: it does not wait)
+                let State { link, heard, .. } = &mut *state;
+                if let Some(link) = link.as_mut() {
+                    if let Some(n) = link.waiting().filter(|n| *n > 0) {
+                        match link.read(n.min(HEARD_KEPT)) {
+                            Ok(data) => heard.take_in(&data, &port),
+                            Err(e) => {
+                                state.fault = Some(e);
+                                return;
+                            }
+                        }
+                    }
                 }
                 if state.last_sent.elapsed() < every || state.link.is_none() {
                     continue;
@@ -555,6 +637,11 @@ impl<L: Link + 'static> HongtaiDisplay<L> {
         self.shared.lock().counters
     }
 
+    /// What it noted for the log since it was last asked (what the panel sent unasked).
+    pub fn notes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.shared.lock().heard.notes)
+    }
+
     fn stop_keeper(&mut self) {
         self.shared.lock().stop = true;
         self.shared.wake.notify_all();
@@ -578,6 +665,11 @@ impl<L: Link + 'static> HongtaiDisplay<L> {
             if let Some(link) = state.link.as_mut() {
                 let _ = link.write(&frame(CMD_CLOSE, &[]).expect("(21 is sent)"));
             }
+            if let Some(summary) = state.heard.summary(&self.port) {
+                state.heard.notes.push(summary);
+                state.heard.counts.clear();
+                state.heard.stray = 0;
+            }
         }
         self.let_go();
         self.last = None;
@@ -589,5 +681,40 @@ impl<L: Link + 'static> Drop for HongtaiDisplay<L> {
         if self.keeper.is_some() || self.shared.lock().link.is_some() {
             self.close();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Heard;
+
+    #[test]
+    fn what_the_panel_sends_unasked_is_taken_in_frame_by_frame() {
+        let mut heard = Heard::default();
+        let live = [0x55, 0xAA, 0x07, 0x00, 0x11, 0x17, 0x01];
+        // (a frame in two parts, after bytes that are no frame)
+        heard.take_in(&[0x01, 0x02], "COM6");
+        heard.take_in(&live[..3], "COM6");
+        assert_eq!(heard.counts.len(), 0);
+        heard.take_in(&live[3..], "COM6");
+        heard.take_in(&live, "COM6");
+        assert_eq!(heard.counts.get(&0x11), Some(&2));
+        assert_eq!(heard.stray, 2);
+        assert_eq!(
+            heard.notes,
+            [
+                "the panel on COM6 sent bytes that are no frame: 01 02",
+                "the panel on COM6 said 11 unasked (7 bytes: 55 AA 07 00 11 17 01)",
+            ]
+        );
+        // (a length no frame has: its 55 AA is no frame's start)
+        heard.take_in(&[0x55, 0xAA, 0x02, 0x00, 0x11], "COM6");
+        assert_eq!(heard.stray, 7);
+        assert!(heard.pending.is_empty());
+        assert_eq!(
+            heard.summary("COM6").as_deref(),
+            Some("the panel on COM6 said unasked: 11 ×2, 7 bytes that were no frame")
+        );
+        assert_eq!(Heard::default().summary("COM6"), None);
     }
 }

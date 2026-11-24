@@ -16,6 +16,28 @@ use lp_render::Renderer;
 const HOLD_S: f64 = 1.2;
 /// a request not taken up by then is forgotten
 const GIVE_UP_S: f64 = 30.0;
+/// A morph shown to see it turns the screen into another of Libre Panel's themes and back, as
+/// a switch between two screens does (the card shows nothing the screen shows): Lumen's and
+/// Arena's share the time, the rings and the readings, and each turns into the other.
+pub const MORPH_PAIR: (&str, &str) = ("lumen", "arena");
+
+/// morph_partner: the theme a morph shown to see it turns the screen `shown` into: Arena's
+/// version of the same kind from Lumen's ("arena-pair" from "lumen-pair-1920x720"), Lumen's
+/// from Arena's, Lumen from any other (its version for the panel: theme_for).
+pub fn morph_partner(shown: &str, places: &lp_theme::versions::Places) -> String {
+    let stem = lp_theme::versions::version_stem(shown);
+    let (lumen, arena) = MORPH_PAIR;
+    for (one, other) in [(lumen, arena), (arena, lumen)] {
+        if stem == one || stem.starts_with(&format!("{one}-")) {
+            let kind = format!("{other}{}", &stem[one.len()..]);
+            return match lp_theme::versions::find_theme(&kind, places) {
+                Ok(_) => kind,
+                Err(_) => other.to_string(),
+            };
+        }
+    }
+    lumen.to_string()
+}
 
 /// The request on now: its number, the transition's name, its words for the card, when.
 static ASKED: Mutex<Option<(u64, String, String, Instant)>> = Mutex::new(None);
@@ -40,6 +62,21 @@ pub fn asked() -> Option<(u64, String, String)> {
         return None;
     }
     Some((*number, name.clone(), label.clone()))
+}
+
+/// a show over all the panels as one begins this long after it was asked for, on each
+pub const LEAD_S: f64 = 0.4;
+
+/// lead: how long from now a show over all the panels as one begins (each panel takes the
+/// request in its own time): [`LEAD_S`] after it was asked for; 0 for one not asked.
+pub fn lead(number: u64) -> f64 {
+    let Ok(asked) = ASKED.lock() else {
+        return 0.0;
+    };
+    match asked.as_ref() {
+        Some((n, _, _, when)) if *n == number => (LEAD_S - when.elapsed().as_secs_f64()).max(0.0),
+        _ => 0.0,
+    }
 }
 
 /// done: the panel has shown request `number`: it ends (a newer one stays).
@@ -80,6 +117,16 @@ impl Show {
         }
     }
 
+    /// Whether it goes over all the panels as one (render/canvas.py).
+    pub fn on_canvas(&self) -> bool {
+        self.out.as_ref().is_some_and(Transition::on_canvas)
+    }
+
+    /// It begins at `at` (on the loop's clock): every panel from the same moment.
+    pub fn begin_at(&mut self, at: f64) {
+        self.began = Some(at);
+    }
+
     /// How long a way takes (seconds; 0 for a cut).
     fn duration(&self) -> f64 {
         self.out.as_ref().map_or(0.0, |out| out.duration)
@@ -117,5 +164,42 @@ impl Show {
             return made.map(Some).map_err(|why| why.0);
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_show_over_all_the_panels_begins_on_each_from_when_it_was_asked() {
+        let number = show("wipe", "Wipe");
+        let wait = lead(number);
+        assert!((wait - LEAD_S).abs() < 0.05, "{wait}");
+        assert_eq!(lead(number + 1), 0.0);
+        done(number);
+        assert_eq!(lead(number), 0.0);
+    }
+
+    #[test]
+    fn a_morph_shown_turns_lumen_into_arena_and_any_other_into_lumen() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let places = lp_theme::versions::Places {
+            user: root.join("no-such-folder"),
+            plugins: Vec::new(),
+            builtin: root.join("data/themes"),
+        };
+        for (shown, partner) in [
+            ("lumen-1920x720", "arena"),
+            ("lumen", "arena"),
+            ("lumen-pair-1920x720", "arena-pair"),
+            ("arena-vertical", "lumen"),
+            ("arena-companion-1920x720", "lumen-companion"),
+            ("lumen-clock-640x180", "arena"),
+            ("encore-1920x720", "lumen"),
+            ("", "lumen"),
+        ] {
+            assert_eq!(morph_partner(shown, &places), partner, "{shown}");
+        }
     }
 }

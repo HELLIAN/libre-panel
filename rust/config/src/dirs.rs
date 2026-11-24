@@ -16,7 +16,8 @@ pub fn portable_dir(program: Option<&Path>) -> Option<PathBuf> {
         Some(program) => program.to_path_buf(),
         None => std::env::current_exe().ok()?,
     };
-    let program = std::fs::canonicalize(&program).unwrap_or(program);
+    // (as a person writes it: the settings folder is said, and on Windows not `\\?\D:\...`)
+    let program = std::fs::canonicalize(&program).map_or(program, lp_devices::rights::plain);
     let folder = program.parent()?;
     folder
         .join(PORTABLE_MARK)

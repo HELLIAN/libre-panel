@@ -505,7 +505,7 @@ const ROUTES: &[Route] = &[
         let themes = lp_config::dirs::user_themes_dir();
         match crate::backup::make_backup(&s.config_file, &themes) {
             Ok(data) => {
-                let at = crate::share::local_time(crate::share::now());
+                let at = crate::share::local_time(crate::clock::now());
                 let name = format!(
                     "libre-panel-backup-{:04}-{:02}-{:02}.zip",
                     at[0], at[1], at[2]
@@ -976,9 +976,7 @@ fn history(state: &State, exchange: &mut Exchange, url: &Url) {
         Ok(config) => config,
         Err(why) => return exchange.error(&why.msg, 409, ""),
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    let now = crate::clock::now();
     let path = crate::history::database(&config);
     let mut found = match crate::history::history(&path, span, now) {
         Ok(found) => found,
@@ -1376,7 +1374,9 @@ fn drawing(
 }
 
 /// _render: Design's and Look's picture of the theme it is given (drawings.rs), live readings
-/// over the demo's where it asks for them.
+/// over the demo's where it asks for them; else the panel's readings of the sensors the theme
+/// names that the demo has no sample of (where the background app runs: no sources started
+/// for it).
 fn render(state: &State, exchange: &mut Exchange) {
     drawing(state, exchange, |payload, state, env, config| {
         let get = |key: &str| match payload {
@@ -1387,21 +1387,17 @@ fn render(state: &State, exchange: &mut Exchange) {
             ))),
         };
         let root = base_folder(state, Some(&get("base")?));
-        let live = match get("live")?.truthy() {
-            true => live_snapshot(state).map(|current| {
-                let history = std::sync::Arc::unwrap_or_clone(current.history)
-                    .into_iter()
-                    .filter(|(_, values)| values.len() > 1)
-                    .collect();
-                (current.readings, history)
-            }),
-            false => None,
+        let all = get("live")?.truthy();
+        let live = match all {
+            true => live_snapshot(state).map(std::sync::Arc::new),
+            false => (state.controls.upgrade()).and_then(|app| app.latest()),
         };
         crate::drawings::render(
             &get("theme")?,
             root.as_deref(),
             config,
-            live,
+            live.as_deref(),
+            all,
             &get("notice")?,
             &get("look")?,
             env,
@@ -1518,8 +1514,9 @@ fn theme_preview(state: &State, exchange: &mut Exchange, theme_id: &str, url: &U
         card_opacity: config.card_opacity,
         light: config.light_colours,
     };
+    // (and how amounts of data are said, as the language: the process's)
     let key = format!(
-        "{theme_id}\0{stamp:?}\0{width}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{size:?}\0{}",
+        "{theme_id}\0{stamp:?}\0{width}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{size:?}\0{}\0{}",
         lp_i18n::language().code(),
         asked.symbols,
         asked.chosen,
@@ -1527,6 +1524,7 @@ fn theme_preview(state: &State, exchange: &mut Exchange, theme_id: &str, url: &U
         asked.cards,
         asked.card_opacity,
         asked.light,
+        lp_i18n::data_in_mb(),
     );
     let env = lp_theme::Env {
         fonts_dir: state.home.fonts(),
@@ -1630,10 +1628,9 @@ const PICTURES: [(&str, &str); 3] = [
 
 /// The local time of now, and its fold.
 fn moment() -> (lp_render::Moment, bool) {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
-    lp_py::zones::fromtimestamp(zone, since.map_or(0.0, |since| since.as_secs_f64()))
+    lp_py::zones::fromtimestamp(zone, crate::clock::now())
         .unwrap_or((lp_render::Moment::date(1970, 1, 1), false))
 }
 
@@ -1685,10 +1682,9 @@ fn live_snapshot(state: &State) -> Option<Snapshot> {
 
 /// The demo's snapshot of now.
 fn demo_snapshot() -> Option<Snapshot> {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
-    let t = since.map_or(0.0, |since| since.as_secs_f64());
+    let t = crate::clock::now();
     lp_services::demo::demo_snapshot(t, lp_services::demo::HISTORY_SAMPLES, zone).ok()
 }
 
@@ -2965,7 +2961,12 @@ fn start_screen_action(state: &State, exchange: &mut Exchange) {
     let way = mounted(state, n);
     // (a panel mounted upside down gets its start screen turned round, as its frames)
     let turned = device.rotate == 180;
-    if ["logo", "clip"].contains(&action.as_str()) && model.is_some() && !screen::writes_on(model) {
+    // (a model that has not been tried: its owner agreed in the app, told what may happen)
+    let untested = matches!(payload.get("untested"), Some(Value::Bool(true)));
+    if ["logo", "clip"].contains(&action.as_str())
+        && model.is_some()
+        && !screen::writes_on(model, untested)
+    {
         // (nothing is written to this model: said before the themes are paused for it)
         let mut told = lp_py::Dict::default();
         told.insert("error".into(), Value::Str(screen::writes_off()));
@@ -2986,7 +2987,7 @@ fn start_screen_action(state: &State, exchange: &mut Exchange) {
     };
     let done = match action.as_str() {
         "state" => screen::panel_state(model, &place),
-        "logo" => screen::write_logo(&env, model, way, turned, &place, design),
+        "logo" => screen::write_logo(&env, model, way, turned, &place, design, untested),
         "remove-logo" => screen::remove_logo(model, &place),
         _ => screen::write_clip(
             &env,
@@ -2997,6 +2998,7 @@ fn start_screen_action(state: &State, exchange: &mut Exchange) {
             &place,
             design,
             &device.video_range,
+            untested,
         )
         .and_then(|written| {
             // the video mode names the clip it plays: the panel's own, where it went there
@@ -3245,7 +3247,7 @@ impl EditorServer {
         controls: Weak<BackgroundApp>,
         token: Option<String>,
     ) -> std::io::Result<EditorServer> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
+        let listener = bind_alone(port)?;
         let token = match token {
             Some(token) => token,
             None => access::new_token()?,
@@ -3378,6 +3380,74 @@ pub fn serve_until(
     Ok(())
 }
 
+/// The server's port on this computer's own address, this server's alone: on Windows another
+/// program's socket with SO_REUSEADDR could otherwise be bound to it too and take requests,
+/// the token with them (SO_EXCLUSIVEADDRUSE, as editor/server.py held it); elsewhere as std
+/// binds it (a port in use is refused).
+fn bind_alone(port: u16) -> std::io::Result<TcpListener> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::FromRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{
+            bind, closesocket, listen, setsockopt, WSAGetLastError, WSASocketW, WSAStartup,
+            AF_INET, INVALID_SOCKET, IN_ADDR, IN_ADDR_0, IPPROTO_TCP, SOCKADDR, SOCKADDR_IN,
+            SOCK_STREAM, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, WSADATA, WSA_FLAG_NO_HANDLE_INHERIT,
+            WSA_FLAG_OVERLAPPED,
+        };
+        let failed = || std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() });
+        // SAFETY: Winsock started (counted: as often as std starts it), a socket of this
+        // call's own, its address and option given as the calls take them; closed where it
+        // is not handed to the listener.
+        unsafe {
+            let mut data: WSADATA = std::mem::zeroed();
+            let started = WSAStartup(0x0202, &mut data);
+            if started != 0 {
+                return Err(std::io::Error::from_raw_os_error(started));
+            }
+            let flags = WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT;
+            let socket = WSASocketW(
+                i32::from(AF_INET),
+                SOCK_STREAM,
+                IPPROTO_TCP,
+                std::ptr::null(),
+                0,
+                flags,
+            );
+            if socket == INVALID_SOCKET {
+                return Err(failed());
+            }
+            let on: i32 = 1;
+            let address = SOCKADDR_IN {
+                sin_family: AF_INET,
+                sin_port: port.to_be(),
+                sin_addr: IN_ADDR {
+                    S_un: IN_ADDR_0 {
+                        S_addr: u32::from(Ipv4Addr::LOCALHOST).to_be(),
+                    },
+                },
+                sin_zero: [0; 8],
+            };
+            let size = std::mem::size_of::<SOCKADDR_IN>() as i32;
+            let option = (&on as *const i32).cast::<u8>();
+            if setsockopt(socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, option, 4) != 0
+                || bind(
+                    socket,
+                    (&address as *const SOCKADDR_IN).cast::<SOCKADDR>(),
+                    size,
+                ) != 0
+                || listen(socket, 128) != 0
+            {
+                let why = failed();
+                closesocket(socket);
+                return Err(why);
+            }
+            Ok(TcpListener::from_raw_socket(socket as u64))
+        }
+    }
+    #[cfg(not(windows))]
+    TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3432,5 +3502,58 @@ mod tests {
             ),
             (".GZ", "", "", "")
         );
+    }
+
+    #[test]
+    fn the_port_is_this_servers_alone() {
+        let held = bind_alone(0).unwrap();
+        let port = held.local_addr().unwrap().port();
+        // (another bind of the port is refused; on Windows even with SO_REUSEADDR)
+        assert!(bind_alone(port).is_err());
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Networking::WinSock::{
+                bind, closesocket, setsockopt, socket, AF_INET, IN_ADDR, IN_ADDR_0, IPPROTO_TCP,
+                SOCKADDR, SOCKADDR_IN, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR,
+            };
+            // SAFETY: a socket of the test's own, closed at its end.
+            unsafe {
+                let other = socket(i32::from(AF_INET), SOCK_STREAM, IPPROTO_TCP);
+                let on: i32 = 1;
+                setsockopt(
+                    other,
+                    SOL_SOCKET,
+                    SO_REUSEADDR,
+                    (&on as *const i32).cast(),
+                    4,
+                );
+                let address = SOCKADDR_IN {
+                    sin_family: AF_INET,
+                    sin_port: port.to_be(),
+                    sin_addr: IN_ADDR {
+                        S_un: IN_ADDR_0 {
+                            S_addr: u32::from(Ipv4Addr::LOCALHOST).to_be(),
+                        },
+                    },
+                    sin_zero: [0; 8],
+                };
+                let size = std::mem::size_of::<SOCKADDR_IN>() as i32;
+                let bound = bind(
+                    other,
+                    (&address as *const SOCKADDR_IN).cast::<SOCKADDR>(),
+                    size,
+                );
+                closesocket(other);
+                assert_ne!(bound, 0, "another socket took the port");
+            }
+        }
+        // the server answers on it
+        let mut asked = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let (mut answering, _) = held.accept().unwrap();
+        use std::io::{Read, Write};
+        asked.write_all(b"x").unwrap();
+        let mut got = [0u8; 1];
+        answering.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"x");
     }
 }

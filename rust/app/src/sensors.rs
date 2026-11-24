@@ -41,6 +41,11 @@ pub trait Source: Send {
     }
     /// Waits until the source's first readings are in (or it gave up), `seconds` at most.
     fn wait_ready(&mut self, _seconds: f64) {}
+    /// Histories its numbers have from the start, by key, asked once (the demo's where LP_NOW
+    /// names a moment: graphs that stand still with the time); none for most.
+    fn seeds(&mut self) -> Vec<(String, Vec<f64>)> {
+        Vec::new()
+    }
     /// How LibreHardwareMonitor is read, where the source is the one that reads it.
     fn lhm_status(&self) -> Option<lp_sensors::service::LhmStatus> {
         None
@@ -356,24 +361,25 @@ impl Source for Media {
     }
 }
 
-/// The weather of the user's place, from Open-Meteo (weather/open_meteo.py).
-struct Weather(lp_sensors::weather::WeatherSource);
+/// The weather of the user's place, from Open-Meteo (weather/open_meteo.py) or from
+/// OpenWeatherMap with the user's key: its name ("open-meteo", "openweathermap") and itself.
+struct Weather(&'static str, lp_sensors::weather::WeatherSource);
 
 impl Source for Weather {
     fn name(&self) -> &'static str {
-        "open-meteo"
+        self.0
     }
 
     fn read(&mut self, out: &mut Readings) {
-        out.extend(self.0.read());
+        out.extend(self.1.read());
     }
 
     fn notes(&mut self) -> Vec<String> {
-        self.0.notes()
+        self.1.notes()
     }
 
     fn wait_ready(&mut self, seconds: f64) {
-        self.0.wait_ready(seconds);
+        self.1.wait_ready(seconds);
     }
 }
 
@@ -480,6 +486,27 @@ struct Nut(lp_sensors::nut::NutSource);
 impl Source for Nut {
     fn name(&self) -> &'static str {
         "nut"
+    }
+
+    fn read(&mut self, out: &mut Readings) {
+        out.extend(self.0.read());
+    }
+
+    fn notes(&mut self) -> Vec<String> {
+        self.0.notes()
+    }
+
+    fn wait_ready(&mut self, seconds: f64) {
+        self.0.wait_ready(seconds);
+    }
+}
+
+/// Dell's fans and temperatures, as Dell Command | Monitor reports them (sensors/dell.py).
+struct Dell(lp_sensors::dell::DellSource);
+
+impl Source for Dell {
+    fn name(&self) -> &'static str {
+        "dell"
     }
 
     fn read(&mut self, out: &mut Readings) {
@@ -802,13 +829,24 @@ pub struct Hub {
     /// when the readings were taken last, and they and their pictures, for the panels beside
     /// the first (`shared`)
     taken: Option<(Instant, Readings, Images)>,
+    /// the histories the sources' numbers have from the start (Source::seeds): they stay so
+    seeds: IndexMap<String, Vec<f64>>,
 }
 
 pub type Images = IndexMap<String, lp_pixels::Image>;
 
-/// The readings with their numbers added to `history`, as a snapshot's histories (remember).
-fn remember(history: &mut IndexMap<String, VecDeque<f64>>, readings: &Readings) -> Histories {
+/// The readings with their numbers added to `history`, as a snapshot's histories (remember);
+/// a number with a history from the start (`seeds`) keeps that one as it is.
+fn remember(
+    history: &mut IndexMap<String, VecDeque<f64>>,
+    readings: &Readings,
+    seeds: &IndexMap<String, Vec<f64>>,
+) -> Histories {
     for (key, reading) in readings {
+        if let Some(seed) = seeds.get(key) {
+            (history.entry(key.clone())).or_insert_with(|| seed.iter().copied().collect());
+            continue;
+        }
         let number = match &reading.value {
             Value::Float(f) => Some(*f),
             Value::Int(n) => lp_py::num::int_to_float(n).ok(),
@@ -845,6 +883,7 @@ impl Hub {
             names: crate::fan_names::FanNames::default(),
             wants: IndexMap::new(),
             taken: None,
+            seeds: IndexMap::new(),
         }
     }
 
@@ -907,6 +946,13 @@ impl Hub {
         self.sources.push(source);
     }
 
+    /// A clip's: no source of this computer's (the clip brings its readings, and adds them).
+    pub fn bare(config: &lp_config::Config) -> Hub {
+        let mut hub = Hub::new(Vec::new());
+        hub.names.follow_config(config);
+        hub
+    }
+
     /// Whether any source wants to be read on every frame.
     pub fn every_frame(&self) -> bool {
         self.sources
@@ -932,7 +978,7 @@ impl Hub {
     pub fn age(&self) -> Option<f64> {
         self.taken
             .as_ref()
-            .map(|(at, _, _)| at.elapsed().as_secs_f64())
+            .map(|(at, _, _)| crate::company::since(*at))
     }
 
     /// shared: for another panel (`View`), the readings and pictures taken last where they
@@ -940,7 +986,7 @@ impl Hub {
     /// two panels that draw at the same pace.
     pub fn shared(&mut self, max_age: f64) -> (Readings, Images) {
         if let Some((at, readings, images)) = &self.taken {
-            if at.elapsed().as_secs_f64() < max_age {
+            if crate::company::since(*at) < max_age {
                 return (readings.clone(), images.clone());
             }
         }
@@ -1073,6 +1119,16 @@ impl Hub {
                         notes.extend(said);
                     }
                     "hardware" => sources.push(Box::new(Hardware::of(config))),
+                    "dell" => match seconds_of(sensors.options.get(name), "update_s", 2.0) {
+                        Ok(update_s) => {
+                            let options = lp_sensors::dell::Options { update_s };
+                            sources
+                                .push(Box::new(Dell(lp_sensors::dell::DellSource::new(options))));
+                        }
+                        Err(why) => {
+                            notes.push(format!("sensor source {name:?} not started: {why}"))
+                        }
+                    },
                     "homeassistant" | "json" | "nut" | "mqtt" | "calendar" => {
                         let table = sensors.options.get(name);
                         match web_source(name, table) {
@@ -1156,17 +1212,46 @@ impl Hub {
                 config.weather.latitude,
                 config.weather.longitude,
             ) {
-                // (the tests' own: a forecast served by the test)
-                let base = std::env::var("LP_WEATHER_URL")
-                    .unwrap_or_else(|_| lp_sensors::weather::FORECAST_URL.to_string());
-                sources.push(Box::new(Weather(lp_sensors::weather::WeatherSource::new(
-                    &base,
-                    latitude,
-                    longitude,
-                    config.weather.units == "imperial",
-                    u64::try_from(&config.weather.update_minutes).unwrap_or(5),
-                    &AGENT,
-                ))));
+                let weather = &config.weather;
+                let imperial = weather.units == "imperial";
+                let minutes = u64::try_from(&weather.update_minutes).unwrap_or(5);
+                let key = weather.api_key.trim();
+                match weather.provider.as_str() {
+                    "openweathermap" if key.is_empty() => notes.push(
+                        "weather not started: OpenWeatherMap needs your API key (Settings → \
+                         Weather and place)"
+                            .to_string(),
+                    ),
+                    "openweathermap" => {
+                        // (the tests' own: answers served by the test)
+                        let base = std::env::var("LP_OPENWEATHERMAP_URL")
+                            .unwrap_or_else(|_| lp_sensors::openweathermap::BASE_URL.to_string());
+                        sources.push(Box::new(Weather(
+                            "openweathermap",
+                            lp_sensors::weather::WeatherSource::openweathermap(
+                                &base, key, latitude, longitude, imperial, minutes, &AGENT,
+                            ),
+                        )));
+                    }
+                    other => {
+                        if other != "open-meteo" {
+                            notes.push(format!(
+                                "weather.provider {}: not known, so the weather comes from \
+                                 Open-Meteo (\"open-meteo\" or \"openweathermap\")",
+                                lp_py::repr(other)
+                            ));
+                        }
+                        // (the tests' own: a forecast served by the test)
+                        let base = std::env::var("LP_WEATHER_URL")
+                            .unwrap_or_else(|_| lp_sensors::weather::FORECAST_URL.to_string());
+                        sources.push(Box::new(Weather(
+                            "open-meteo",
+                            lp_sensors::weather::WeatherSource::new(
+                                &base, latitude, longitude, imperial, minutes, &AGENT,
+                            ),
+                        )));
+                    }
+                }
             }
             if !sensors.providers.iter().any(|name| name == "sky") {
                 // the sun for the weather's place (if set), the moon everywhere
@@ -1206,7 +1291,7 @@ impl Hub {
     pub fn snapshot(&mut self, now: Moment, fold: bool) -> Snapshot {
         let (readings, images) = self.take();
         Snapshot {
-            history: Arc::new(remember(&mut self.history, &readings)),
+            history: Arc::new(remember(&mut self.history, &readings, &self.seeds)),
             readings,
             now,
             fold,
@@ -1221,6 +1306,7 @@ impl Hub {
         for (n, source) in self.sources.iter_mut().enumerate() {
             let mut found = Readings::new();
             source.read(&mut found);
+            self.seeds.extend(source.seeds());
             let overrides = source.overrides();
             for (key, reading) in found {
                 if !readings.contains_key(&key) || overrides.contains(&key.as_str()) {
@@ -1235,7 +1321,7 @@ impl Hub {
         let mut images = IndexMap::new();
         self.pictures.clear();
         self.refresh_images(&mut images, true, true);
-        self.taken = Some((Instant::now(), readings.clone(), images.clone()));
+        self.taken = Some((lp_render::clock::now(), readings.clone(), images.clone()));
         (readings, images)
     }
 }
@@ -1294,7 +1380,7 @@ impl View {
         // as it was when the shared ones were taken
         readings.extend(hub.fresh(true));
         Snapshot {
-            history: Arc::new(remember(&mut self.history, &readings)),
+            history: Arc::new(remember(&mut self.history, &readings, &hub.seeds)),
             readings,
             now,
             fold,
@@ -1308,14 +1394,78 @@ impl View {
     }
 }
 
+/// The readings a clip gives (`libre-panel clip`): those it says for the frame; with `every`
+/// those of the volume, on every frame (as the audio source has them), else the rest, with the
+/// demo's pictures.
+pub struct Given {
+    readings: Arc<std::sync::Mutex<Readings>>,
+    every: bool,
+    images: IndexMap<String, lp_pixels::Image>,
+}
+
+/// the volume's readings: they follow on every frame
+const GIVEN_EVERY: [&str; 2] = ["audio.volume", "audio.muted"];
+
+impl Given {
+    pub fn new(
+        readings: Arc<std::sync::Mutex<Readings>>,
+        every: bool,
+        images: IndexMap<String, lp_pixels::Image>,
+    ) -> Given {
+        Given {
+            readings,
+            every,
+            images,
+        }
+    }
+}
+
+impl Source for Given {
+    fn name(&self) -> &'static str {
+        match self.every {
+            true => "audio",
+            false => "demo",
+        }
+    }
+
+    fn read(&mut self, out: &mut Readings) {
+        let Ok(readings) = self.readings.lock() else {
+            return;
+        };
+        for (key, reading) in readings.iter() {
+            if GIVEN_EVERY.contains(&key.as_str()) == self.every {
+                out.insert(key.clone(), reading.clone());
+            }
+        }
+    }
+
+    fn every_frame(&self) -> Every {
+        match self.every {
+            true => Every::Frame,
+            false => Every::No,
+        }
+    }
+
+    fn images(&self) -> IndexMap<String, lp_pixels::Image> {
+        self.images.clone()
+    }
+
+    fn images_state(&self) -> u64 {
+        1 // (always the same ones)
+    }
+}
+
 /// Readings made up of the time alone, for a look at a theme without a computer's own
 /// (`--demo`): the demo's (sensors/demo.py's DemoProvider, lp-services' demo), with its
 /// pictures: an album's cover, the player's icon and a game's logo.
-pub struct Demo;
+pub struct Demo {
+    /// its histories given (seeds: once)
+    seeded: bool,
+}
 
 impl Demo {
     pub fn new() -> Demo {
-        Demo
+        Demo { seeded: false }
     }
 }
 
@@ -1325,11 +1475,21 @@ impl Source for Demo {
     }
 
     fn read(&mut self, out: &mut Readings) {
-        let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-        let t = since.map_or(0.0, |since| since.as_secs_f64());
+        // (where LP_NOW names a moment, the demo's readings stand still at it: crate::clock)
+        let t = crate::clock::named().unwrap_or_else(lp_render::clock::wall);
         let utc = lp_py::zones::Zone::utc();
         let zone = lp_py::zones::local().unwrap_or(&utc);
         out.extend(lp_services::demo::read(t, zone));
+    }
+
+    /// The graphs of its waves as the demo's history has them at LP_NOW's moment (as the
+    /// previews' snapshot has them), where it names one: still, as the time.
+    fn seeds(&mut self) -> Vec<(String, Vec<f64>)> {
+        let Some(t) = crate::clock::named().filter(|_| !self.seeded) else {
+            return Vec::new();
+        };
+        self.seeded = true;
+        lp_services::demo::wave_histories(t, lp_services::demo::HISTORY_SAMPLES)
     }
 
     /// DemoProvider.images: the panel showed the demo's title without its cover.
@@ -1342,5 +1502,154 @@ impl Source for Demo {
 
     fn images_state(&self) -> u64 {
         1 // (always the same ones)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A source of the test's own: its readings, how it follows, what it overrides, and how
+    /// often it was read.
+    struct Fixed {
+        values: Vec<(&'static str, Value)>,
+        every: Every,
+        overrides: &'static [&'static str],
+        read: Arc<AtomicUsize>,
+    }
+
+    fn fixed(values: Vec<(&'static str, Value)>) -> Fixed {
+        Fixed {
+            values,
+            every: Every::No,
+            overrides: &[],
+            read: Arc::default(),
+        }
+    }
+
+    impl Source for Fixed {
+        fn name(&self) -> &'static str {
+            "fixed"
+        }
+        fn read(&mut self, out: &mut Readings) {
+            let n = self.read.fetch_add(1, Ordering::SeqCst);
+            for (key, value) in &self.values {
+                // (a number goes up by one with each read)
+                let value = match value {
+                    Value::Float(f) => Value::Float(f + n as f64),
+                    other => other.clone(),
+                };
+                out.insert(key.to_string(), Reading::of(value));
+            }
+        }
+        fn every_frame(&self) -> Every {
+            self.every
+        }
+        fn overrides(&self) -> &'static [&'static str] {
+            self.overrides
+        }
+    }
+
+    fn number(readings: &Readings, key: &str) -> Option<f64> {
+        match readings.get(key).map(|reading| &reading.value) {
+            Some(Value::Float(f)) => Some(*f),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_first_source_with_a_key_wins_unless_a_later_one_says_it_outright() {
+        let first = fixed(vec![("cpu.temp", Value::Float(50.0))]);
+        let mut second = fixed(vec![
+            ("cpu.temp", Value::Float(70.0)),
+            ("gpu.temp", Value::Float(40.0)),
+            ("cpu.name", Value::Str("Ryzen".into())),
+        ]); // fmt: skip
+        second.overrides = &["cpu.name"];
+        let third = Fixed {
+            overrides: &["cpu.name"],
+            ..fixed(vec![("cpu.name", Value::Str("My own".into()))])
+        };
+        let mut hub = Hub::new(vec![Box::new(first), Box::new(second), Box::new(third)]);
+        let shot = hub.snapshot(Moment::date(2026, 1, 1), false);
+        assert_eq!(number(&shot.readings, "cpu.temp"), Some(50.0));
+        assert_eq!(number(&shot.readings, "gpu.temp"), Some(40.0));
+        assert_eq!(shot.readings["cpu.name"].value, Value::Str("My own".into()));
+        let counts: Vec<usize> = hub.sources().iter().map(|(_, count, _)| *count).collect();
+        assert_eq!(counts, [1, 1, 1]);
+    }
+
+    #[test]
+    fn a_history_is_each_numbers_last_six_hundred_as_the_snapshots_saw_them() {
+        let source = fixed(vec![
+            ("cpu.load", Value::Float(0.0)),
+            ("cpu.name", Value::Str("x".into())),
+        ]);
+        let mut hub = Hub::new(vec![Box::new(source)]);
+        let mut shot = Snapshot::default();
+        for _ in 0..HISTORY_LENGTH + 5 {
+            shot = hub.snapshot(Moment::date(2026, 1, 1), false);
+        }
+        let series = &shot.history["cpu.load"];
+        assert_eq!(series.len(), HISTORY_LENGTH);
+        assert_eq!((series[0], series[HISTORY_LENGTH - 1]), (5.0, 604.0));
+        assert!(!shot.history.contains_key("cpu.name")); // (a text has none)
+    }
+
+    #[test]
+    fn sources_that_follow_on_every_frame_are_read_between_snapshots_for_their_own_keys() {
+        let slow = fixed(vec![("audio.volume", Value::Float(10.0))]);
+        let frame = Fixed {
+            every: Every::Frame,
+            ..fixed(vec![
+                ("audio.volume", Value::Float(90.0)),
+                ("audio.muted", Value::Float(0.0)),
+            ])
+        };
+        let video = Fixed {
+            every: Every::Video,
+            ..fixed(vec![("cpu.load", Value::Float(1.0))])
+        };
+        let mut hub = Hub::new(vec![Box::new(slow), Box::new(frame), Box::new(video)]);
+        assert!(hub.every_frame());
+        hub.snapshot(Moment::date(2026, 1, 1), false);
+        let between = hub.fresh(false);
+        // (the volume is the first source's: not taken from the one that follows)
+        assert_eq!(number(&between, "audio.volume"), None);
+        assert_eq!(number(&between, "audio.muted"), Some(1.0)); // (read again)
+        assert_eq!(number(&between, "cpu.load"), None); // (only in video mode)
+        assert_eq!(number(&hub.fresh(true), "cpu.load"), Some(2.0));
+        let still = fixed(vec![("cpu.load", Value::Float(1.0))]);
+        assert!(!Hub::new(vec![Box::new(still)]).every_frame());
+    }
+
+    #[test]
+    fn a_panel_beside_takes_what_was_read_last_where_it_is_new_enough() {
+        let source = fixed(vec![("cpu.load", Value::Float(0.0))]);
+        let read = source.read.clone();
+        let mut hub = Hub::new(vec![Box::new(source)]);
+        assert_eq!(hub.age(), None);
+        hub.snapshot(Moment::date(2026, 1, 1), false);
+        let (readings, _) = hub.shared(View::SHARE_S);
+        assert_eq!(number(&readings, "cpu.load"), Some(0.0));
+        assert_eq!(read.load(Ordering::SeqCst), 1); // (not read twice)
+        let (readings, _) = hub.shared(0.0);
+        assert_eq!(number(&readings, "cpu.load"), Some(1.0));
+        assert!(hub.age().is_some_and(|age| age < 1.0));
+    }
+
+    #[test]
+    fn what_each_panel_reads_is_wanted_until_its_loop_ends() {
+        let mut hub = Hub::new(Vec::new());
+        hub.want(0, ["cpu.*".to_string()]);
+        hub.want(2, ["gpu.temp".to_string()]);
+        let keys = |hub: &Hub| hub.wanted.keys().iter().cloned().collect::<Vec<_>>();
+        assert_eq!(keys(&hub), ["cpu.*", "gpu.temp"]);
+        hub.forget(2);
+        assert_eq!(keys(&hub), ["cpu.*"]);
+        // (a hub made anew, config.toml's sources changed, keeps what the loops read)
+        hub.replace(Hub::new(Vec::new()));
+        assert_eq!(keys(&hub), ["cpu.*"]);
     }
 }

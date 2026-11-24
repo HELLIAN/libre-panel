@@ -1,7 +1,8 @@
 //! Where the frames go (devices/auto.py, devices/turzx.py's TurzxDisplay and
 //! devices/virtual.py): a TURZX USB panel, which Libre Panel's engine has, a panel of the
-//! Hongtai family or the MAJESTY on a serial port, or a PNG file, which stands in for a
-//! panel. With `driver = "auto"` a panel that is there is used, otherwise the frames go into
+//! Hongtai family or the MAJESTY on a serial port, a PNG file, which stands in for a
+//! panel, or the panel of a plugin's driver (in the plugin host: plugins.rs PluginDisplay).
+//! With `driver = "auto"` a panel that is there is used, otherwise the frames go into
 //! the PNG file while a panel is looked for, so that one plugged in later is picked up; a
 //! panel that was in use and is gone is not replaced by the file: it is waited for.
 
@@ -18,7 +19,8 @@ use lp_devices::serial::{ports, SerialPort};
 use lp_devices::turzx::{Setup, Turzx, Video};
 use lp_pixels::Image;
 
-/// The drivers this build has; config.toml's `driver` names one.
+/// The drivers this build has; config.toml's `driver` names one, or one a plugin brings.
+/// (A plugin cannot take these names: plugins.rs BUILT_IN_PARTS.)
 pub const DRIVERS: [&str; 4] = ["auto", "virtual", "turzx", "hongtai"];
 /// While frames go into the PNG file, a panel is looked for this often.
 const PROBE_S: f64 = 5.0;
@@ -37,7 +39,7 @@ enum Panel {
     /// a serial panel or another maker's USB screen, and the frame it was sent last
     Other {
         driver: Box<dyn Driver>,
-        previous: Option<Image>,
+        previous: Option<Rc<Image>>,
     },
 }
 
@@ -206,12 +208,8 @@ fn hongtai_port(device: &DeviceConfig) -> Option<(String, Kind, Option<&'static 
         let Some(kind) = Kind::of_usb(ids) else {
             continue;
         };
-        // (the MAJESTY is no model of the catalog yet: it is known by its USB ids)
-        let model = find_model(&device.model).or_else(|| match kind {
-            Kind::Majesty => Some(&lp_devices::hongtai::MAJESTY),
-            Kind::Family => models_for_usb(ids.0, ids.1, port.serial_number.as_deref())
-                .into_iter()
-                .next(),
+        let model = find_model(&device.model).or_else(|| {
+            (models_for_usb(ids.0, ids.1, port.serial_number.as_deref()).into_iter()).next()
         });
         return Some((port.device, kind, model));
     }
@@ -432,16 +430,23 @@ impl Display {
                     file()
                 }
             },
-            other => {
-                // (create_display's words)
-                let mut known = DRIVERS;
-                known.sort_unstable();
-                return Err(format!(
-                    "unknown display driver {} (available: {})",
-                    lp_py::repr(other),
-                    known.join(", ")
-                ));
-            }
+            other => match crate::plugins::PluginDisplay::open(settings, device) {
+                Some(opened) => Panel::Other {
+                    driver: Box::new(opened?),
+                    previous: None,
+                },
+                None => {
+                    // (create_display's words; a plugin's drivers among them)
+                    let mut known: Vec<String> = DRIVERS.map(String::from).to_vec();
+                    known.extend(crate::plugins::driver_names(settings));
+                    known.sort_unstable();
+                    return Err(format!(
+                        "unknown display driver {} (available: {})",
+                        lp_py::repr(other),
+                        known.join(", ")
+                    ));
+                }
+            },
         };
         Ok(Display {
             device: device.clone(),
@@ -454,6 +459,21 @@ impl Display {
     }
 
     /// A display that writes its frames to `path` and nothing else.
+    /// A display of a driver of the app's own: a test's, a clip's recorder (clip.rs).
+    pub(crate) fn of_driver(driver: Box<dyn Driver>) -> Display {
+        Display {
+            device: DeviceConfig::default(),
+            settings: PathBuf::new(),
+            panel: Panel::Other {
+                driver,
+                previous: None,
+            },
+            brightness: 60,
+            next_probe: 0.0,
+            notes: Vec::new(),
+        }
+    }
+
     pub fn file(device: &DeviceConfig, path: PathBuf) -> Display {
         Display {
             device: DeviceConfig {
@@ -522,6 +542,12 @@ impl Display {
     /// itself (renderer.native_fans).
     pub fn makes_fans(&self) -> bool {
         matches!(&self.panel, Panel::Turzx(panel) if panel.makes_fans())
+    }
+
+    /// Whether frames go as their layers to an engine that draws a light field up and lays
+    /// their layers in front of it (renderer.native_lights).
+    pub fn draws_lights(&self) -> bool {
+        matches!(&self.panel, Panel::Turzx(panel) if panel.draws_lights())
     }
 
     pub fn streams(&self) -> bool {
@@ -606,23 +632,20 @@ impl Display {
                 let parts: Vec<Option<lp_devices::driver::Region>> = if driver.streaming() {
                     vec![None]
                 } else if driver.slow() {
-                    let parts = changed_regions(previous.as_ref(), &frame, 24, 4);
+                    let parts = changed_regions(previous.as_deref(), &frame, 24, 4);
                     if parts.is_empty() {
                         return Ok(found);
                     }
                     parts.into_iter().map(Some).collect()
                 } else {
-                    match changed_region(previous.as_ref(), &frame) {
+                    match changed_region(previous.as_deref(), &frame) {
                         Some(region) => vec![Some(region)],
                         None => return Ok(found),
                     }
                 };
-                let shown = parts
-                    .into_iter()
-                    .try_for_each(|part| driver.show(&frame, part))
-                    .map_err(failed);
+                let shown = driver.show_parts(&frame, &parts).map_err(failed);
                 *previous = match (&shown, driver.streaming()) {
-                    (Ok(()), false) => Some(Rc::unwrap_or_clone(frame)),
+                    (Ok(()), false) => Some(frame),
                     _ => None,
                 };
                 shown
@@ -709,6 +732,12 @@ impl Display {
         let ground = match &scene.ground {
             lp_render::scene::Ground::Colour(rgb) => Ground::Colour(*rgb),
             lp_render::scene::Ground::Picture(picture) => Ground::Picture(picture),
+            lp_render::scene::Ground::Light(light) => Ground::Light {
+                fw: light.fw as u32,
+                fh: light.fh as u32,
+                levels: &light.small,
+                keep: Rc::clone(light) as Rc<dyn std::any::Any>,
+            },
         };
         let entries: Vec<Entry<'_>> = scene
             .pieces
@@ -828,6 +857,34 @@ impl Display {
         }
     }
 
+    /// The kind of picture a frame goes to the panel as (the panel test's speed names it).
+    pub fn picture(&self) -> String {
+        match &self.panel {
+            Panel::Other { driver, .. } => driver.picture(),
+            _ => "RGB565".into(),
+        }
+    }
+
+    /// The layout of JPEG the panel is sent (another maker's screen that takes JPEG), None
+    /// for a panel that is sent no JPEG of a layout to choose.
+    pub fn jpeg_layout(&self) -> Option<String> {
+        match &self.panel {
+            Panel::Other { driver, .. } => driver.jpeg_layout(),
+            _ => None,
+        }
+    }
+
+    /// set_jpeg: the panel's pictures as JPEG of `layout` from now on, the next one whole.
+    pub fn set_jpeg(&mut self, layout: &str) -> Result<(), String> {
+        match &mut self.panel {
+            Panel::Other { driver, previous } => {
+                *previous = None;
+                driver.set_jpeg(layout).map_err(|e| e.0)
+            }
+            _ => Ok(()),
+        }
+    }
+
     pub fn set_brightness(&mut self, percent: i64) -> Result<(), String> {
         self.brightness = percent;
         match &mut self.panel {
@@ -861,8 +918,10 @@ impl Display {
     /// What the panel's driver noted for the log since it was last asked.
     pub fn notes(&mut self) -> Vec<String> {
         let mut notes = std::mem::take(&mut self.notes);
-        if let Panel::Turzx(panel) = &mut self.panel {
-            notes.extend(panel.notes());
+        match &mut self.panel {
+            Panel::Turzx(panel) => notes.extend(panel.notes()),
+            Panel::Hongtai { display, .. } => notes.extend(display.notes()),
+            _ => {}
         }
         notes
     }

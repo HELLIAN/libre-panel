@@ -119,6 +119,8 @@ pub struct PageSwitch {
     asked_at: Option<f64>,
     /// the readings the pages read (the media source runs only while somebody reads it)
     pub reads: Vec<&'static str>,
+    /// how long music's page stays after a track stops
+    pub leave_s: f64,
 }
 
 impl PageSwitch {
@@ -129,7 +131,13 @@ impl PageSwitch {
             idle_s: None,
             asked_at: None,
             reads: Vec::new(),
+            leave_s: MEDIA_LEAVE_S,
         }
+    }
+
+    /// A clip's (`libre-panel clip`): this computer's time without input is not asked.
+    pub fn without_idle(&mut self) {
+        self.idle = Box::new(|| None);
     }
 
     /// The page that is due at `now` (the loop's clock), of the readings.
@@ -149,7 +157,7 @@ impl PageSwitch {
             if playing.is_some_and(|playing| playing.value.to_f64() == Some(1.0)) {
                 self.played_at = Some(now);
             }
-            if self.played_at.is_some_and(|at| now - at < MEDIA_LEAVE_S) {
+            if self.played_at.is_some_and(|at| now - at < self.leave_s) {
                 return Some(MEDIA);
             }
         }

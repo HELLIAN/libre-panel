@@ -60,3 +60,67 @@ pub fn brightness_now(device: &DeviceConfig, now: &DateTime, away: bool, sun: Op
         device.brightness
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(hour: u32, minute: u32) -> DateTime {
+        DateTime {
+            year: 2026,
+            month: 11,
+            day: 23,
+            hour,
+            minute,
+            second: 0,
+            microsecond: 0,
+        }
+    }
+
+    #[test]
+    fn away_the_panel_takes_the_brightness_for_then_and_at_night_the_nights() {
+        let device = DeviceConfig {
+            brightness: 80,
+            night: true,
+            night_from: "22:30".into(),
+            night_to: "07:00".into(),
+            night_brightness: 10,
+            dark_when_away: true,
+            away_brightness: 0,
+            ..DeviceConfig::default()
+        };
+        assert_eq!(brightness_now(&device, &at(12, 0), false, None), 80);
+        assert_eq!(brightness_now(&device, &at(23, 0), false, None), 10); // (over midnight)
+        assert_eq!(brightness_now(&device, &at(6, 59), false, None), 10);
+        assert_eq!(brightness_now(&device, &at(7, 0), false, None), 80);
+        assert_eq!(brightness_now(&device, &at(12, 0), true, None), 0); // (away: dark)
+        let told_not_to = DeviceConfig {
+            dark_when_away: false,
+            ..device.clone()
+        };
+        assert_eq!(brightness_now(&told_not_to, &at(12, 0), true, None), 80);
+        // by the sun where the place is known, and a polar night all day
+        let sunny = DeviceConfig {
+            night_from: "sunset".into(),
+            night_to: "sunrise".into(),
+            ..device.clone()
+        };
+        let sun = Sun {
+            always_night: None,
+            set: 16 * 60 + 30,
+            rise: 8 * 60,
+        };
+        assert_eq!(brightness_now(&sunny, &at(17, 0), false, Some(&sun)), 10);
+        assert_eq!(brightness_now(&sunny, &at(17, 0), false, None), 80); // (19:00 then)
+        let polar = Sun {
+            always_night: Some(true),
+            ..sun
+        };
+        assert_eq!(brightness_now(&sunny, &at(12, 0), false, Some(&polar)), 10);
+        let off = DeviceConfig {
+            night: false,
+            ..device
+        };
+        assert_eq!(brightness_now(&off, &at(23, 0), false, None), 80);
+    }
+}

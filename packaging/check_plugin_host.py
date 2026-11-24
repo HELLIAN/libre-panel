@@ -1,6 +1,8 @@
 """Whether a built plugin host (libre-panel-plugins of the downloads) runs plugins: started on
-a plugin folder made here, it says hello with the plugin's parts, loads them and reads its
-sensor source, as the Rust app asks it (src/libre_panel/plugin_host.py).
+a plugin folder made here, it says hello with the plugin's parts, loads them, reads its
+sensor source and plays its transition, which letters a word of the app's language in one of
+its fonts (Libre Panel's files, found beside it as in the downloads), as the Rust app asks it
+(src/libre_panel/plugin_host.py).
 
     python packaging/check_plugin_host.py <the program>
     python packaging/check_plugin_host.py --app <libre-panel>   (the app finds its host and
@@ -18,9 +20,11 @@ import tempfile
 from pathlib import Path
 
 PLUGIN = """
-from libre_panel.plugins import Service
+from pathlib import Path
+
+from libre_panel.plugins import Service, Transition
 from libre_panel.sensors.base import Reading, SensorProvider
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 class Fans(SensorProvider):
@@ -35,18 +39,34 @@ class Fans(SensorProvider):
 class Quiet(Service):
     name = "check.quiet"
     api = 1
+
+
+class Lettered(Transition):
+    name = "check.lettered"
+    api = 1
+
+    def frame(self, old, new, t):
+        font = self.context.font("builtin:Barlow-Bold", 20)
+        word = self.context.t("Settings")
+        if Path(getattr(font, "path", "")).name != "Barlow-Bold.ttf" or word != "Einstellungen":
+            raise RuntimeError(f"Libre Panel's files are not found: {font!r}, {word!r}")
+        picture = new.copy()
+        ImageDraw.Draw(picture).text((2, 2), word, font=font, fill="white")
+        return picture
 """
 
 
-def ask(program: subprocess.Popen, ident: int, op: str, **fields: object) -> dict:
-    body = json.dumps({"id": ident, "op": op, **fields}).encode()
-    program.stdin.write(struct.pack("<I", len(body)) + body)
+def ask(program: subprocess.Popen, ident: int, op: str, blob: bytes = b"",
+        **fields: object) -> dict:  # fmt: skip
+    """The answer to ``op``; the bytes that came with it in its ``_blob``."""
+    asked = {"id": ident, "op": op, **fields, **({"blob": len(blob)} if blob else {})}
+    body = json.dumps(asked).encode()
+    program.stdin.write(struct.pack("<I", len(body)) + body + blob)
     program.stdin.flush()
     while True:
         (size,) = struct.unpack("<I", program.stdout.read(4))
         message = json.loads(program.stdout.read(size))
-        if message.get("blob"):
-            program.stdout.read(message["blob"])
+        message["_blob"] = program.stdout.read(message["blob"]) if message.get("blob") else b""
         if message.get("id") == ident:
             if message.get("error"):
                 raise SystemExit(f"FAIL: {op}: {message['error']}")
@@ -73,7 +93,8 @@ def plugin_in(home: str) -> Path:
     (folder / "plugin.toml").write_text(
         'name = "check"\napi = 1\n[entry-points."libre_panel.sensors"]\n'
         '"check.fans" = "check_plugin:Fans"\n'
-        '[entry-points."libre_panel.services"]\n"check.quiet" = "check_plugin:Quiet"\n',
+        '[entry-points."libre_panel.services"]\n"check.quiet" = "check_plugin:Quiet"\n'
+        '[entry-points."libre_panel.transitions"]\n"check.lettered" = "check_plugin:Lettered"\n',
         encoding="utf-8",
     )
     return folder
@@ -88,7 +109,8 @@ def app(path: str) -> int:
         done = subprocess.run([path, "plugins"], env=env, capture_output=True, text=True,
                               timeout=120, check=False)  # fmt: skip
     rows = [line.split() for line in done.stdout.splitlines()]
-    ours = [row[:3] for row in rows if len(row) >= 3 and row[1].startswith("check.")]
+    ours = [row[:3] for row in rows if len(row) >= 3 and row[0] in ("sensors", "services")
+            and row[1].startswith("check.")]  # fmt: skip
     if done.returncode != 0 or ours != [["sensors", "check.fans", "ok"],
                                          ["services", "check.quiet", "ok"]]:  # fmt: skip
         raise SystemExit(f"FAIL: {path} plugins:\n{done.stdout}{done.stderr}")
@@ -111,7 +133,7 @@ def main() -> int:
         try:
             hello = ask(program, 1, "hello")
             names = sorted(part["name"] for part in hello["parts"])
-            if names != ["check.fans", "check.quiet"] or hello["errors"]:
+            if names != ["check.fans", "check.lettered", "check.quiet"] or hello["errors"]:
                 raise SystemExit(f"FAIL: the parts found: {hello}")
             checked = ask(program, 2, "check")
             if any(part["error"] for part in checked["parts"]):
@@ -129,10 +151,19 @@ def main() -> int:
                 }
             ]:
                 raise SystemExit(f"FAIL: the source's readings: {read}")
+            ask(program, 5, "specs", language="de")
+            theme = {"name": "check", "width": 64, "height": 32}
+            drawing = ask(program, 6, "draw.open", theme=theme)["drawing"]
+            opened = ask(program, 7, "transition.open", drawing=drawing, name="check.lettered")
+            black = bytes(64 * 32 * 3)
+            frame = ask(program, 8, "transition.frame", transition=opened["transition"],
+                        size=[64, 32], t=0.5, old=True, blob=black + black)  # fmt: skip
+            if frame.get("size") != [64, 32] or not any(frame.get("_blob", b"")):
+                raise SystemExit(f"FAIL: the transition's frame: {frame}")
         finally:
             program.stdin.close()
             program.wait(30)
-    print(f"plugin host {program_path}: plugins found, loaded and read")
+    print(f"plugin host {program_path}: plugins found, loaded, read and drawn with its files")
     return 0
 
 

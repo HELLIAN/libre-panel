@@ -67,8 +67,8 @@ pub fn step(progress: &Value) -> Result<Option<i64>> {
 }
 
 /// _Way: where the arc lies on a picture of w x h.
-struct Way {
-    sun: f64,
+pub(crate) struct Way {
+    pub(crate) sun: f64,
     line: f64,
     base: f64,
     a: f64,
@@ -77,7 +77,7 @@ struct Way {
 }
 
 impl Way {
-    fn new(w: i64, h: i64, thickness: f64) -> Way {
+    pub(crate) fn new(w: i64, h: i64, thickness: f64) -> Way {
         let (w, h) = (w as f64, h as f64);
         let sun = max(2.5, min(h * 0.13, w * 0.05));
         let line = max(1.0, thickness);
@@ -93,7 +93,7 @@ impl Way {
     }
 
     /// The point of the way at `p` of the day (0: sunrise, at the left).
-    fn at(&self, p: f64) -> (f64, f64) {
+    pub(crate) fn at(&self, p: f64) -> (f64, f64) {
         let angle = PI * (1.0 - p);
         (
             self.cx + self.a * angle.cos(),

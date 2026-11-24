@@ -30,8 +30,8 @@ RAW = "https://raw.githubusercontent.com/syntensa/libre-panel/"
 # the two videos.
 CLIP_FILES = ("gif", "png", "mp4", "webm")
 # What the website takes from elsewhere in the repository than docs/images and docs/media.
-ICON = "src/libre_panel/assets/libre-panel.png"
-FONTS = "src/libre_panel/fonts"
+ICON = "data/assets/libre-panel.png"
+FONTS = "data/fonts"
 
 _ATTR = re.compile(r'\b(?:src|href|poster|data-poster|srcset)="([^"]*)"')
 _CSS_URL = re.compile(r'url\(\s*["\']?([^"\')]+)["\']?\s*\)')

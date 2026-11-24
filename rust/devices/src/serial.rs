@@ -37,6 +37,15 @@ impl SerialPort {
         })
     }
 
+    /// What an open of `device` failed with, without the "cannot open <device>: " open() puts
+    /// before it: for a message that names the port itself (in the app's language).
+    pub fn cause(error: &DeviceError, device: &str) -> String {
+        let said = &error.0;
+        (said.strip_prefix(&format!("cannot open {device}: ")))
+            .unwrap_or(said)
+            .to_string()
+    }
+
     pub fn device(&self) -> &str {
         &self.device
     }
@@ -93,6 +102,10 @@ impl Link for SerialPort {
         self.port.drain_input();
     }
 
+    fn waiting(&mut self) -> Option<usize> {
+        self.port.waiting()
+    }
+
     fn close(&mut self) {
         self.port.close();
     }
@@ -100,7 +113,7 @@ impl Link for SerialPort {
 
 /// The serial ports the system has (list_ports.comports()), in its order.
 pub fn ports() -> Vec<PortInfo> {
-    imp::ports()
+    crate::testbus::ports().unwrap_or_else(imp::ports)
 }
 
 const READ_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -334,6 +347,14 @@ mod imp {
             Ok(())
         }
 
+        /// How many bytes came in and wait to be read (FIONREAD); None where it cannot tell.
+        pub fn waiting(&self) -> Option<usize> {
+            let mut count: libc::c_int = 0;
+            // SAFETY: the Port's descriptor and an int of its own
+            let done = unsafe { libc::ioctl(self.fd, libc::FIONREAD, &mut count) };
+            (done == 0).then(|| usize::try_from(count).unwrap_or(0))
+        }
+
         pub fn drain_input(&self) {
             // SAFETY: the Port's descriptor
             unsafe { libc::tcflush(self.fd, libc::TCIFLUSH) };
@@ -461,8 +482,9 @@ mod imp {
 
     use windows_sys::core::GUID;
     use windows_sys::Win32::Devices::Communication::{
-        GetCommState, PurgeComm, SetCommState, SetCommTimeouts, SetupComm, COMMTIMEOUTS, DCB,
-        NOPARITY, ONESTOPBIT, PURGE_RXABORT, PURGE_RXCLEAR, PURGE_TXABORT, PURGE_TXCLEAR,
+        ClearCommError, GetCommState, PurgeComm, SetCommState, SetCommTimeouts, SetupComm,
+        COMMTIMEOUTS, COMSTAT, DCB, NOPARITY, ONESTOPBIT, PURGE_RXABORT, PURGE_RXCLEAR,
+        PURGE_TXABORT, PURGE_TXCLEAR,
     };
     use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
         SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
@@ -654,6 +676,18 @@ mod imp {
                 sent += wrote as usize;
             }
             Ok(())
+        }
+
+        /// How many bytes came in and wait to be read (the port's COMSTAT); None where it
+        /// cannot tell.
+        pub fn waiting(&self) -> Option<usize> {
+            // SAFETY: the Port's handle and structures of its own
+            unsafe {
+                let mut errors = 0u32;
+                let mut state: COMSTAT = std::mem::zeroed();
+                let done = ClearCommError(self.handle, &mut errors, &mut state);
+                (done != 0).then_some(state.cbInQue as usize)
+            }
         }
 
         pub fn drain_input(&self) {
@@ -889,6 +923,11 @@ mod tests {
                         .write_all(&[0x55, 0xAA, 0x07, 0x00, 0x15, 0x1B, 0x01])
                         .unwrap();
                     set_up = true;
+                    // (and later, unasked, a frame of its own)
+                    std::thread::sleep(Duration::from_millis(300));
+                    panel
+                        .write_all(&[0x55, 0xAA, 0x07, 0x00, 0x11, 0x17, 0x01])
+                        .unwrap();
                 }
             }
             seen
@@ -903,6 +942,19 @@ mod tests {
         assert_eq!(identity.set_up, Some(0x15));
         let frame = lp_pixels::Image::new(lp_pixels::Mode::RGB, 1920, 462, &[200, 40, 40]);
         display.set_brightness(50).unwrap();
+        // what the panel sends unasked is read as it comes, and said for the log
+        let until = Instant::now() + Duration::from_secs(5);
+        let mut notes = Vec::new();
+        while notes.is_empty() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(50));
+            notes = display.notes();
+        }
+        assert_eq!(
+            notes,
+            [format!(
+                "the panel on {name} said 11 unasked (7 bytes: 55 AA 07 00 11 17 01)"
+            )]
+        );
         // (a JPEG wants libjpeg, loaded where it runs: LP_LIBJPEG, as the comparisons have it;
         // where there is none the pictures are left to tests/test_rust_devices.py)
         let jpegs = lp_decode::save_jpeg(&frame, 90).is_ok();
@@ -910,6 +962,10 @@ mod tests {
             display.show(&frame).unwrap();
         }
         display.close();
+        assert_eq!(
+            display.notes(),
+            [format!("the panel on {name} said unasked: 11 ×1")]
+        );
         let seen = reader.join().unwrap();
         assert!(seen.starts_with(&hongtai::RESET));
         let picture_at = seen
@@ -934,10 +990,17 @@ mod everywhere {
             "/dev/ttyLP-none"
         };
         let refused = SerialPort::open(missing, 2_000_000, false).err();
-        let message = refused.expect("no such port").0;
+        let refused = refused.expect("no such port");
+        let message = refused.0.clone();
         assert!(
             message.starts_with(&format!("cannot open {missing}: ")),
             "{message}"
+        );
+        // (the cause alone, for a message that names the port itself)
+        let cause = SerialPort::cause(&refused, missing);
+        assert!(
+            !cause.is_empty() && !cause.contains("cannot open"),
+            "{cause}"
         );
     }
 }

@@ -7,11 +7,14 @@ its stop and a hung decoder's restart, and its single pictures."""
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import os
 import re
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -20,6 +23,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import golden
 import pytest
 from PIL import Image, ImageChops, ImageStat
 from rust_check import (
@@ -29,12 +33,27 @@ from rust_check import (
     pillow_libjpeg,
     pillow_libwebp,
     python_tzdata,
+    run,
 )
 
-import libre_panel
+from libre_panel.datadir import DATA
+from libre_panel.sensors.base import Reading
 
-DATA = Path(libre_panel.__file__).resolve().parent
 BUILTIN_THEMES_DIR = DATA / "themes"
+# a comparison of what this computer has (its parts, its programs, its rights): what was kept
+# is of CI's computers, and holds there
+this_computer = pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS") != "true",
+    reason="what the Python app answered was kept on CI's computers",
+)
+# the services the Rust app has and the Python app never had (the light ring of Lian Li's
+# screen): they are left out where the two apps' lists of services are held side by side
+RUST_ONLY_SERVICES = ("lightring",)
+
+
+def python_s_services(services: list[Any]) -> list[Any]:
+    """The services of a catalog the Rust app gave, as the Python app lists them."""
+    return [one for one in services if one.get("name") not in RUST_ONLY_SERVICES]
 
 
 def _program() -> Path:
@@ -66,37 +85,88 @@ def _run(home: Path, *args: str, **more: str) -> subprocess.CompletedProcess[str
 NAMES = ("cpu.name", "gpu.name", "mem.name", "mem.speed")  # what sensors/hardware.py gives
 
 
+def _asked(
+    port: int, request: bytes, done: bool = True, wait: float = 60, left: bool = False
+) -> tuple[str, dict[str, str], bytes]:
+    """What the server on ``port`` answers to ``request``: its status line, its headers (but
+    for the server's name and the date) and its body. ``done``: the request's end said by
+    closing the way there (else it stays open, as a browser's that waits for a picture);
+    ``wait``: seconds without a word from the server before it is taken for hung. ``left``:
+    the browser has left by the time the server reads its request: the request is held back
+    until the way there is closed, so that both arrive as one (a server that read the request
+    before the end was said took the browser for waiting, now and then on a busy machine)."""
+    with socket.create_connection(("127.0.0.1", port), timeout=wait) as link:
+        if left and hasattr(socket, "TCP_CORK"):
+            link.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
+        link.sendall(request)
+        if done:
+            link.shutdown(socket.SHUT_WR)
+        answer = b""
+        while chunk := link.recv(65536):
+            answer += chunk
+    if not answer.startswith(b"HTTP/"):
+        return "", {}, answer  # (a request without a version: the body alone)
+    head, _, body = answer.partition(b"\r\n\r\n")
+    status, *lines = head.decode("latin-1").split("\r\n")
+    headers = dict(line.split(": ", 1) for line in lines)
+    assert headers.pop("Date").endswith(" GMT") and "LibrePanelEditor/" in headers.pop("Server")
+    return status, headers, body
+
+
 def _lines(done: subprocess.CompletedProcess[str]) -> list[str]:
     """What `sensors` listed, without the sky's readings (always on, and a test of their
     own)."""
     return [line for line in done.stdout.splitlines() if not line.startswith(("moon.", "sun."))]
 
 
-def _named(readings: dict, cpu: str = "", prefer: str = "") -> dict:
-    """``readings`` with the names of this computer's parts as the Python app adds them
-    (sensors/hardware.py, always on): its names win, ``cpu`` is `[hardware] cpu_name`."""
-    from libre_panel.sensors import hardware
+def _kept_readings(told: dict[str, list[Any]]) -> dict[str, Reading]:
+    """Readings the Python app made of what a test gives the program (kept: golden.told), each
+    with its value, unit and label, in their order."""
+    return {key: Reading(key, value, unit, label) for key, (value, unit, label) in told.items()}
 
-    # (the tests' computer is empty, conftest.py: this one asks the real one, as the program does)
-    parts = (hardware.windows_cpu_name, hardware.windows_adapters, hardware.windows_modules)
-    if sys.platform != "win32":
-        parts = (hardware.linux_cpu_name, hardware.linux_adapters, hardware.linux_modules)
-    provider = hardware.HardwareProvider()
-    provider._found = hardware.Found(
-        hardware._try(parts[0], "") or hardware._try(hardware._last_resort, ""),
-        tuple(hardware._try(parts[1], [])),
-        tuple(hardware._try(parts[2], [])),
-        hardware._try(hardware._visible_memory, 0),
-    )
-    provider._custom, provider._prefer = {**provider._custom, "cpu": cpu}, prefer
-    names = provider._make()
-    return {**readings, **{k: r for k, r in names.items()
-                           if k not in readings or k in provider.overrides}}  # fmt: skip
+
+def _checked_readings(rows: list[list[Any]]) -> dict[str, Reading]:
+    """Readings as lp-check gives them (a key, a value, a unit and a label each; a float as
+    Python writes it)."""
+
+    def value(given: Any) -> Any:
+        return float(given["float"]) if isinstance(given, dict) and "float" in given else given
+
+    return {key: Reading(key, value(given), unit, label) for key, given, unit, label in rows}
+
+
+def _unnamed(lines: list[str]) -> list[str]:
+    """`lines` of readings without the names of this computer's parts (NAMES)."""
+    return [line for line in lines if line.split()[0] not in NAMES]
 
 
 # (letters want FreeType, loaded where the program runs: Pillow's own, which its Windows
 # wheels have built in; docs/RUST.md, R2)
 draws = pytest.mark.skipif(pillow_libfreetype() is None, reason="needs Pillow's FreeType")
+
+
+@draws
+@pytest.mark.parametrize("theme", ["studio", "arena"])
+def test_amounts_of_data_are_said_in_mb_alone_where_config_toml_says_so(
+    tmp_path: Path, theme: str
+) -> None:
+    """data_unit = "mb" (Settings → Panel → Amounts of data): the network's rates (Studio's
+    {value:bytes}/s) and the graphics card's memory (Arena's rings) in MB alone; "auto" draws
+    as config.toml without the key, to the bit."""
+    drawn = {}
+    for unit in ("", "auto", "mb"):
+        home = tmp_path / (unit or "none")
+        home.mkdir()
+        (home / "config.toml").write_text(f'data_unit = "{unit}"\n' if unit else "",
+                                          encoding="utf-8")  # fmt: skip
+        out = home / "frame.png"
+        done = _run(home, "render", "--demo", "--theme", theme, "--output", str(out),
+                    LP_NOW="1760000000", TZ="UTC")  # fmt: skip
+        assert done.returncode == 0, done.stderr
+        with Image.open(out) as frame:
+            drawn[unit] = frame.convert("RGB").tobytes()
+    assert drawn["auto"] == drawn[""]
+    assert drawn["mb"] != drawn["auto"]
 
 
 @draws
@@ -108,15 +178,20 @@ def test_it_draws_a_theme_into_a_png_file(tmp_path: Path) -> None:
     with Image.open(out) as frame:
         assert frame.size == (1920, 480) and frame.mode == "RGB"
         assert len(frame.getcolors(1 << 24)) > 500  # (a picture, not one colour)
-        card = frame.crop((30, 30, 330, 330))
+        cover = frame.crop((87, 85, 303, 301))  # (the middle of the album's cover, 67-323)
+        below = frame.crop((67, 323, 323, 345)).convert("L")
     assert not out.with_name("frame.png.tmp").exists()
     # the demo's pictures come with its readings (DemoProvider.images): the album's cover is
-    # on the card as the preview shows it, where the loop drew the note that stands for none
+    # on the card as the preview shows it, where the loop drew the note that stands for none;
+    # round about it the loop's frame has its glow while the track plays (render/shine.py), the
+    # preview none
     assert _run(tmp_path, "preview", "lumen", "-o", str(tmp_path / "preview.png")).returncode == 0
     with Image.open(tmp_path / "preview.png") as preview:
-        shown = preview.convert("RGB").crop((30, 30, 330, 330))
-    assert len(card.getcolors(1 << 24)) > 2000
-    assert max(ImageStat.Stat(ImageChops.difference(card, shown)).mean) < 1.0
+        shown = preview.convert("RGB").crop((87, 85, 303, 301))
+        dark = preview.convert("L").crop((67, 323, 323, 345))
+    assert len(cover.getcolors(1 << 24)) > 2000
+    assert max(ImageStat.Stat(ImageChops.difference(cover, shown)).mean) < 1.0
+    assert ImageStat.Stat(below).mean[0] > ImageStat.Stat(dark).mean[0] + 10
 
 
 @draws
@@ -220,6 +295,56 @@ def test_it_follows_config_toml(tmp_path: Path) -> None:
         assert frame.mode == "RGB" and frame.width > frame.height
 
 
+def _engine() -> str:
+    """Libre Panel's engine with its panel mode (its `version` says "panel" after its x264
+    build): the one LIBRE_PANEL_ENGINE names, the one on PATH, or the one built in this
+    checkout (engine/target/release); "" without one."""
+    exe = "libre-panel-engine" + (".exe" if os.name == "nt" else "")
+    built = Path(__file__).resolve().parents[1] / "engine" / "target" / "release" / exe
+    named = os.environ.get("LIBRE_PANEL_ENGINE", "")
+    for found in (named, shutil.which("libre-panel-engine") or "", str(built)):
+        if not found or not Path(found).is_file():
+            continue
+        try:
+            done = subprocess.run([found, "version"], capture_output=True, timeout=10,
+                                  check=False)  # fmt: skip
+        except (OSError, subprocess.SubprocessError):
+            continue
+        said = done.stdout.decode("utf-8", "replace")
+        if done.returncode == 0 and "panel" in said.split("(")[-1]:
+            return found
+    return ""
+
+
+@contextlib.contextmanager
+def _running_app(path: Path) -> Iterator[None]:
+    """The lock a running Libre Panel holds on `path` (libre-panel.lock in its settings
+    folder, its process's number in it), held for as long as the block lasts."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as handle:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()).encode())
+        handle.flush()
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 class Rig:
     """A simulated TURZX panel (fake_panel.py, behind a socket) that Libre Panel's engine has,
     for the program: config.toml in a settings folder of its own, and the program run on it."""
@@ -229,11 +354,8 @@ class Rig:
         from fake_panel import FakePanel
         from panel_socket import PanelSocket
 
-        from libre_panel.devices import h264
-        from libre_panel.devices.engine import can_send
-
-        self.engine = h264.find_engine()
-        if not self.engine or not can_send(self.engine):
+        self.engine = _engine()
+        if not self.engine:
             pytest.skip("needs libre-panel-engine with its panel mode (cargo build --release)")
         self.home = home
         self.fake = FakePanel(pid=pid, native=native)
@@ -279,6 +401,8 @@ def rig(tmp_path: Path) -> Iterator[Rig]:
 # folder's listing
 LOOK = [10, 98, 98, 98, 98, 112] + [99] * 20
 SETTINGS, BOOT_SIGN = "usr/data/app.cfg", "usr/data/boot.sign"
+BOOT_LOGO, STANDBY_CLIP = "usr/data/boot.jpg", "usr/data/standby.h264"  # (a TURZX panel's files)
+BRIGHTNESS_40 = 40  # 40 % on the panel's scale of 0 to 102
 
 
 def _said(out: str) -> list[str]:
@@ -296,8 +420,6 @@ def _said(out: str) -> list[str]:
 
 def _folder(clip: int = 0, logo: int = 0, settings: int | None = 96) -> dict[str, bytes]:
     """A 9.2"'s folder as it lists it: its settings, the boot logo, boot.sign, the clip."""
-    from libre_panel.devices.panel_files import BOOT_LOGO, STANDBY_CLIP
-
     files = {SETTINGS: bytes(settings or 0), BOOT_LOGO: bytes(logo), BOOT_SIGN: bytes(4),
              STANDBY_CLIP: bytes(clip)}  # fmt: skip
     gone = [name for name, size in ((BOOT_LOGO, logo), (STANDBY_CLIP, clip)) if not size]
@@ -320,15 +442,11 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
     to work on, whatever model is named; a look is at any panel of the family, with
     `--model` at that model and no other. Nothing is written to the panel's files, and
     nothing goes while the app runs."""
-    from libre_panel.devices.panel_files import BOOT_LOGO, STANDBY_CLIP
-    from libre_panel.devices.turzx_usb import brightness_arg
-    from libre_panel.instance import InstanceLock
-
     fake = rig.fake
     fake.files = _folder(clip=2000, logo=1000)
     # (the settings are saved with the panel's brightness as config.toml has it)
     rig.config("[device]\nbrightness = 40\n")
-    saved = bytes([brightness_arg(40), 0, 0, 0, 0, 0])
+    saved = bytes([BRIGHTNESS_40, 0, 0, 0, 0, 0])
     off = f"take the standby clip off (42 {STANDBY_CLIP})"
     save = "save the settings with the start as the panel came (125, start mode 0)"
 
@@ -510,7 +628,7 @@ def test_a_turzx_panels_own_screens_are_looked_at_and_taken_off_from_the_termina
     assert wrong.returncode != 0 and fake.commands == []
     assert "start-screen: unrecognized argument write-logo" in wrong.stderr
     # not while the app runs: it has the panel
-    with InstanceLock(rig.home / "libre-panel.lock"):
+    with _running_app(rig.home / "libre-panel.lock"):
         refused = rig.run("start-screen", "remove-clip")
     assert refused.returncode == 1 and fake.commands == []
     assert "Libre Panel is running and has the panel: quit it first" in refused.stderr
@@ -572,12 +690,9 @@ def test_a_panel_that_keeps_restarting_is_met_each_time_it_comes(rig: Rig) -> No
     One that restarts at its clip's end stays once the clip is stopped, which is the first
     thing remove-clip does. Another panel of the family on the same PC
     is told and sent nothing."""
-    from libre_panel.devices.panel_files import STANDBY_CLIP
-    from libre_panel.devices.turzx_usb import brightness_arg
-
     fake = rig.fake
     rig.config("[device]\nbrightness = 40\n")
-    saved = bytes([brightness_arg(40), 0, 0, 0, 0, 0])
+    saved = bytes([BRIGHTNESS_40, 0, 0, 0, 0, 0])
     stays = (
         "the panel stays for now: it was on the bus and answering 0 s after it came. Unplug "
         "it for 10 seconds and plug it in again: if it starts and stays on, it is back."
@@ -1021,8 +1136,6 @@ VIDEO = (
 def test_it_shows_video_on_a_turzx_panel_through_the_engine(rig: Rig) -> None:
     """The video's start as devices/turzx_video.py's VideoSession sends it, pictures of the
     frames, and its stop, the last frame left on the panel as a PNG."""
-    from libre_panel.devices.turzx_usb import brightness_arg
-
     rig.config(VIDEO)
     done = rig.run("run", "--demo", "--frames", "30")
     fake = rig.fake
@@ -1034,7 +1147,7 @@ def test_it_shows_video_on_a_turzx_panel_through_the_engine(rig: Rig) -> None:
     # the start, command by command, the brightness the loop sets, pictures, then the stop
     assert fake.commands[:9] == [10, 110, 111, 112, 14, 102, 15, 17, 14], done.stderr
     assert fake.clip_names == ["usr/data/clip.h264"]
-    assert fake.brightness == [brightness_arg(70)] * 2
+    assert fake.brightness == [71] * 2  # (70 % on the panel's scale of 0 to 102)
     assert fake.fps_log == [30, 30]  # (the player's rate, and the power-on rate given back)
     # (pictures of H.264, Annex B: each begins with a start code)
     assert fake.commands.count(121) >= 1 and fake.blocks[0][:4] == b"\x00\x00\x00\x01"
@@ -1074,13 +1187,223 @@ def test_frames_go_to_the_engine_as_their_layers_and_it_composes_them_as_the_app
     assert int(summed[1]) + close == int(summed[2]), done.stderr
     went = re.search(r"video: (\d+) layers went to the engine, ([\d.]+) MB", done.stderr)
     assert went is not None, done.stderr
-    # (fewer layers than frames times pieces: those that stay go once)
-    assert 0 < int(went[1]) < 150 * 20
+    # (fewer layers than frames times pieces: those that stay go once; the moving light,
+    # render/shine.py, goes at each of its steps, a graph's beat and a ring's head where their
+    # end moves on: ~2400 without it, ~3200 with it)
+    assert 0 < int(went[1]) < 150 * 25
     assert rig.fake.commands[-1] == 102  # (the last frame left on the panel, as with pixels)
     rig.config(VIDEO + "engine_layers = false\n")
     done = rig.run("run", "--demo", "--frames", "30", LP_SCENE_CHECK="1")
     assert done.returncode == 0, done.stderr
     assert "scene check" not in done.stderr and "layers went" not in done.stderr
+
+
+@draws
+@pytest.mark.parametrize(("theme", "turned"), [
+    ("terra", False), ("arena", False), ("encore", False), ("lumen-v2", False),
+    ("almanac", False), ("nimbus", False), ("lumen", True), ("lumen-vertical", False),
+])  # fmt: skip
+def test_the_engine_composes_each_theme_as_the_app_would(
+    rig: Rig, theme: str, turned: bool
+) -> None:
+    """Every frame the engine composed of a theme's layers is the frame composed of them here
+    (LP_SCENE_CHECK): Terra's turning globe the engine makes, Arena's rings, Encore's bars and
+    its cover, Lumen v2's fans and graphs it keeps and grows, Almanac's month, Nimbus's moon;
+    to the pixel, or within two levels in a few pixels where the engine lights a ring or a bar
+    itself. Upside down (Lumen) the frame of layers is turned too."""
+    config = VIDEO.replace('theme = "lumen"', f'theme = "{theme}"')
+    rig.config(config.replace("brightness = 70\n", "brightness = 70\nrotate = 180\n") if turned
+               else config)  # fmt: skip
+    done = rig.run("run", "--demo", "--frames", "60", LP_SCENE_CHECK="1")
+    assert done.returncode == 0, done.stderr
+    assert rig.sock.errors == []
+    assert "scene check: not composed here" not in done.stderr, done.stderr
+    assert "the engine gave no frame" not in done.stderr, done.stderr
+    summed = re.search(r"scene check: (\d+) of (\d+) frames the same as composed", done.stderr)
+    assert summed is not None and int(summed[2]) >= 40, done.stderr
+    close = 0
+    for line in done.stderr.splitlines():
+        if "scene check:" not in line or "frames the same as composed here" in line:
+            continue
+        apart = re.search(r"differs in (\d+) pixels by up to (\d+),", line)
+        assert apart is not None and int(apart[1]) <= 16 and int(apart[2]) <= 2, line
+        close += 1
+    assert int(summed[1]) + close == int(summed[2]), done.stderr
+
+
+@draws
+def test_auto_finds_the_panel_and_its_video_mode_with_no_model_named(rig: Rig) -> None:
+    """`model = "auto"` (none named) and the video mode "auto" with the clip's name: the
+    panel on the bus is looked up (the tests' bus, LP_TEST_BUS: the 9.2" the simulated one
+    is), proven, and it streams; without the clip's name it shows single pictures, and the
+    log says what the video mode lacks once."""
+    bus = rig.home / "bus"
+    bus.write_text("turing-9.2-usb\n", encoding="utf-8")
+    rig.config('theme = "lumen"\n[device]\ndriver = "turzx"\n'
+               '[video]\nfps = 25\nlocal_clip = "usr/data/clip.h264"\n')  # fmt: skip
+    done = rig.run("run", "--demo", "--frames", "30", LP_TEST_BUS=str(bus))
+    assert done.returncode == 0, done.stderr
+    assert 110 in rig.fake.commands and rig.fake.commands.count(121) >= 10, done.stderr
+    rig.fake.commands.clear()
+    rig.config('theme = "lumen"\n[device]\ndriver = "turzx"\n[video]\nfps = 25\n')
+    done = rig.run("run", "--demo", "--frames", "10", LP_TEST_BUS=str(bus))
+    assert done.returncode == 0, done.stderr
+    assert 110 not in rig.fake.commands and 121 not in rig.fake.commands, done.stderr
+    assert done.stderr.count("local_clip is not set") == 1, done.stderr
+
+
+class _Api:
+    """A running app's API: ``api(method, path, body)`` asks it (the status line and the JSON);
+    ``url`` and ``token`` are where it is, for a browser."""
+
+    def __init__(self, port: int, token: str) -> None:
+        self.port, self.token, self.url = port, token, f"http://127.0.0.1:{port}/"
+
+    def __call__(self, method: str, path: str, body: Any = None) -> tuple[str, Any]:
+        text = "" if body is None else json.dumps(body)
+        request = (f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                   f"X-Libre-Panel: {self.token}\r\nContent-Type: application/json\r\n"
+                   f"Content-Length: {len(text.encode())}\r\n\r\n{text}")  # fmt: skip
+        status, _, answer = _asked(self.port, request.encode(), wait=60)
+        return status, json.loads(answer or b"null")
+
+
+@contextlib.contextmanager
+def _background(rig: Rig, **more: str) -> Iterator[tuple[_Api, list[str]]]:
+    """`libre-panel start` on the rig's settings (``more``: its environment besides): its app's
+    API and what it says on its standard error, as it comes."""
+    env = {**os.environ, **more, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          encoding="utf-8") as program:  # fmt: skip
+        assert program.stdout is not None and program.stderr is not None
+        said: list[str] = []
+        reading = threading.Thread(target=lambda: said.extend(program.stderr), daemon=True)
+        reading.start()
+        address = program.stdout.readline().split(" running at ")[1].split()[0]
+        port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
+        try:
+            yield _Api(port, token), said
+        finally:
+            if os.name == "nt":
+                program.terminate()
+            else:
+                program.send_signal(signal.SIGINT)
+            program.wait(timeout=30)
+            reading.join(10)
+
+
+def _until(done: Any, seconds: float = 60.0) -> Any:
+    """``done()`` once it is true, waited for up to ``seconds``; its last answer otherwise."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if answer := done():
+            return answer
+        time.sleep(0.2)
+    return done()
+
+
+@draws
+def test_a_panel_report_names_the_panel_the_app_shows_on(rig: Rig) -> None:
+    """Report a panel (Settings → About): a panel whose port the app has open is found by no
+    search of the bus (a JONSBO DS916 on its COM port), so the report said "Panel found: none"
+    while the app showed on it. It names the one the app shows on: here the simulated 9.2",
+    which is on no bus the search sees."""
+    rig.config(VIDEO)
+    with _background(rig) as (api, said):
+
+        def found() -> str:
+            status, told = api("GET", "/api/report")
+            assert status == "HTTP/1.0 200 OK", told
+            return told["text"] if 'Panel found: Turing 9.2"' in told["text"] else ""
+
+        text = _until(found)
+        assert text, (api("GET", "/api/report")[1], said)
+        status, told = api("GET", "/api/report")
+        assert told["product"] == 'Turing 9.2"' and "product=Turing" in told["form"]
+
+
+@draws
+def test_the_colour_check_shows_the_range_s_a_and_b_on_a_panel_showing_video(rig: Rig) -> None:
+    """Settings → Panel → Check the colours on a panel that shows video (the simulated 9.2", its
+    video made by the engine): no A/B of the card's conversion, the processor converts either
+    way; *Is black too light on the panel? Compare* shows the test picture with limited range
+    (A) and full range (B) in turn, the engine's video in each, one picture at a time; the
+    answer goes into the panel's video_range, and Stop ends the picture."""
+    rig.config(VIDEO)
+    with _background(rig) as (api, said):
+        check = "/api/colour-check?panel=1"
+        state = _until(lambda: (told := api("GET", check)[1])["video"] and told)
+        assert state, said
+        assert (state["app"], state["ab"], state["in_use"]) == (True, "x264", {
+            "encoder": "native", "feed": "boxes", "card": False, "running": True})  # fmt: skip
+        status, told = api("POST", "/api/colour-check", {"action": "show", "panel": 1})
+        refused = {"error": "panel 1 runs native: the processor converts"}
+        assert (status, told) == ("HTTP/1.0 409 Conflict", refused)
+        status, told = api("POST", "/api/colour-check", {"action": "range", "panel": 1})
+        assert status == "HTTP/1.0 200 OK", told
+        show = told["show"]
+        assert (show["running"], show["panel"], show["kind"], show["letter"], show["value"]) == (
+            True, 1, "range", "A", "limited")  # fmt: skip
+        assert _until(lambda: api("GET", check)[1]["show"]["letter"] == "B", 10)
+        assert api("GET", check)[1]["show"]["value"] == "full"
+        status, told = api("POST", "/api/colour-check", {"action": "range", "panel": 1})
+        assert (status, told) == ("HTTP/1.0 409 Conflict",
+                                  {"error": "a panel shows the test picture already"})  # fmt: skip
+        # (the engine's video in each range, while the picture is on the panel)
+        assert _until(lambda: any("limited range" in line for line in said), 20), said
+        # *B looks right*
+        status, _ = api("POST", "/api/settings", {"set": {"device.video_range": "full"}})
+        assert status == "HTTP/1.0 200 OK"
+        api("POST", "/api/colour-check", {"action": "stop", "panel": 1})
+        show = _until(lambda: (s := api("GET", check)[1]["show"])["ended"] and s, 10)
+        assert (show["running"], show["panel"], show["ended"]) == (False, None, "stopped"), show
+    assert 'video_range = "full"' in (rig.home / "config.toml").read_text(encoding="utf-8")
+    assert "panicked" not in "".join(said)
+
+
+@draws
+def test_the_colour_check_s_range_on_a_panel_beside_the_first_is_that_panel_s(rig: Rig) -> None:
+    """The range's A/B on the second panel (the simulated 9.2" in [[panels]], the first a
+    virtual one without video): the test picture goes to that panel only, and the answer is
+    written as the page writes it, video_range in that panel's own table; [device] keeps
+    "auto", and the panel's video is made again in the range chosen."""
+    rig.config('theme = "slate"\n[device]\ndriver = "virtual"\noutput = ""\n'
+               '[video]\nfps = 25\ndevice_fps = 30\n'
+               '[[panels]]\ntheme = "lumen"\ndriver = "turzx"\nmodel = "turing-9.2-usb"\n'
+               'video = { mode = "on", local_clip = "usr/data/clip.h264" }\n')  # fmt: skip
+    with _background(rig) as (api, said):
+        check = "/api/colour-check?panel=2"
+        state = _until(lambda: (told := api("GET", check)[1])["video"] and told)
+        assert state, said
+        assert (state["panel"], state["ab"], state["in_use"]["running"]) == (2, "x264", True)
+        first = api("GET", "/api/colour-check?panel=1")[1]
+        assert (first["panel"], first["video"], first["ab"]) == (1, False, "video")
+        status, told = api("POST", "/api/colour-check", {"action": "range", "panel": 2})
+        assert status == "HTTP/1.0 200 OK", told
+        show = told["show"]
+        assert (show["panel"], show["of"], show["kind"], show["letter"], show["value"]) == (
+            2, 2, "range", "A", "limited")  # fmt: skip
+        assert _until(lambda: api("GET", check)[1]["show"]["letter"] == "B", 10)
+        assert _until(lambda: any("panel 2: video: encoding with the engine, profile high, "
+                                  "limited range" in line for line in said), 20), said  # fmt: skip
+        # *A looks right*: the page's change, its [[panels]] table with the panel's answer
+        panels = api("GET", "/api/settings")[1]["config"]["panels"]
+        panels[0]["video_range"] = "limited"
+        status, _ = api("POST", "/api/settings", {"set": {"panels": panels}})
+        assert status == "HTTP/1.0 200 OK"
+        api("POST", "/api/colour-check", {"action": "stop", "panel": 2})
+        show = _until(lambda: (s := api("GET", check)[1]["show"])["ended"] and s, 10)
+        assert (show["running"], show["ended"]) == (False, "stopped"), show
+        state = _until(lambda: (told := api("GET", check)[1])["video"]
+                       and told["choice"]["range"] == "limited" and told, 30)  # fmt: skip
+        assert state and state["choice"]["full"] is False, state
+        assert api("GET", "/api/colour-check?panel=1")[1]["choice"]["range"] == "auto"
+    written = (rig.home / "config.toml").read_text(encoding="utf-8")
+    device, panel = written.split("[[panels]]")
+    assert "video_range" not in device and 'video_range = "limited"' in panel, written
+    assert "panicked" not in "".join(said)
 
 
 @draws
@@ -1180,6 +1503,117 @@ def test_a_hung_decoder_restarts_the_panel_and_the_video_starts_again(rig: Rig) 
     assert fake.commands[-3:] == [123, 15, 102]  # (and the stop at its end, as ever)
 
 
+def test_an_engine_that_ends_unasked_is_met_by_a_new_one_and_the_video_goes_on(rig: Rig) -> None:
+    """The engine ends of itself (a crash): the next frame finds it gone, as a USB error is
+    found; the program opens the panel anew through a new engine, and the video starts
+    again."""
+    psutil = pytest.importorskip("psutil")
+    rig.config(VIDEO)
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    said = rig.home / "said.txt"
+
+    def engines() -> list[Any]:
+        return [child for child in psutil.Process(program.pid).children(recursive=True)
+                if child.name().startswith("libre-panel-engine")]  # fmt: skip
+
+    with said.open("w", encoding="utf-8") as out:
+        program = subprocess.Popen([str(_program()), "run", "--demo"], env=env, stderr=out)
+        try:
+            fake = rig.fake
+
+            def wait_for(what: Any, seconds: float) -> None:
+                end = time.monotonic() + seconds
+                while not what() and time.monotonic() < end and program.poll() is None:
+                    time.sleep(0.02)
+                assert what(), said.read_text(encoding="utf-8")
+
+            wait_for(lambda: fake.commands.count(121) >= 5, 30)
+            (first,) = engines()
+            first.kill()
+            wait_for(lambda: fake.commands.count(110) == 2, 60)  # (the video's start, anew)
+            before = fake.commands.count(121)
+            wait_for(lambda: fake.commands.count(121) >= before + 5, 30)
+            (second,) = engines()
+            assert second.pid != first.pid
+        finally:
+            program.send_signal(signal.SIGINT)
+            program.wait(30)
+    text = said.read_text(encoding="utf-8")
+    assert program.returncode == 0, text
+    assert "Libre Panel's engine stopped" in text, text
+    assert fake.commands[-3:] == [123, 15, 102]  # (the stop at its end, as ever)
+
+
+def test_a_write_the_panel_does_not_take_reconnects_through_a_new_engine(rig: Rig) -> None:
+    """One write the panel does not take (the USB link failed): the engine says so, the program
+    opens the panel anew through a new engine, starts the video in full, and counts the USB
+    error."""
+    psutil = pytest.importorskip("psutil")
+    rig.config(VIDEO)
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    said = rig.home / "said.txt"
+
+    def engines() -> list[Any]:
+        return [child for child in psutil.Process(program.pid).children(recursive=True)
+                if child.name().startswith("libre-panel-engine")]  # fmt: skip
+
+    with said.open("w", encoding="utf-8") as out:
+        program = subprocess.Popen([str(_program()), "run", "--demo"], env=env, stderr=out)
+        try:
+            fake = rig.fake
+
+            def wait_for(what: Any, seconds: float) -> None:
+                end = time.monotonic() + seconds
+                while not what() and time.monotonic() < end and program.poll() is None:
+                    time.sleep(0.02)
+                assert what(), said.read_text(encoding="utf-8")
+
+            wait_for(lambda: fake.commands.count(121) >= 5, 30)
+            (first,) = engines()
+            fake.fail_next_writes = 1
+            wait_for(lambda: fake.commands.count(110) == 2, 60)  # (a full start, anew)
+            before = fake.commands.count(121)
+            wait_for(lambda: fake.commands.count(121) >= before + 5, 30)
+            (second,) = engines()
+            assert second.pid != first.pid and not first.is_running()
+        finally:
+            program.send_signal(signal.SIGINT)
+            program.wait(30)
+    text = said.read_text(encoding="utf-8")
+    assert program.returncode == 0, text
+    assert fake.commands[-3:] == [123, 15, 102]
+
+
+def test_the_cards_encoder_where_it_cannot_start_leaves_the_stream_to_x264(rig: Rig) -> None:
+    """video.engine_encoder "card": the engine encodes with the graphics card's own encoder
+    where it opens (Windows' Media Foundation); where it cannot (not Windows here, or no such
+    encoder), x264 encodes the same stream, and the log says which as a note of the
+    engine's, no error."""
+    rig.config(VIDEO + 'engine_encoder = "card"\n')
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(rig.home), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries(), **rig.env()}  # fmt: skip
+    said = rig.home / "said.txt"
+    with said.open("w", encoding="utf-8") as out:
+        program = subprocess.Popen([str(_program()), "run", "--demo"], env=env, stderr=out)
+        try:
+            end = time.monotonic() + 30
+            while rig.fake.commands.count(121) < 20 and time.monotonic() < end:
+                time.sleep(0.02)
+            assert rig.fake.commands.count(121) >= 20, said.read_text(encoding="utf-8")
+        finally:
+            program.send_signal(signal.SIGINT)
+            program.wait(30)
+    text = said.read_text(encoding="utf-8")
+    assert program.returncode == 0, text
+    notes = [line for line in text.splitlines() if "encoder" in line and "card" in line]
+    assert notes, text
+    if sys.platform != "win32":
+        assert any("x264 here" in line for line in notes), notes
+    assert "error" not in " ".join(notes).lower(), notes
+
+
 def test_a_config_that_is_wrong_is_said_in_config_py_s_words(tmp_path: Path) -> None:
     (tmp_path / "config.toml").write_text("fps = 99\n", encoding="utf-8")
     done = _run(tmp_path, "run", "--frames", "1")
@@ -1187,24 +1621,17 @@ def test_a_config_that_is_wrong_is_said_in_config_py_s_words(tmp_path: Path) -> 
     assert "fps: must be between 1 and 60" in done.stderr
 
 
-def _python(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """cli.py run with its settings in ``home``."""
-    env = {**os.environ, "LIBRE_PANEL_HOME": str(home)}
-    command = [sys.executable, "-m", "libre_panel", *args]
-    return subprocess.run(
-        command, env=env, capture_output=True, encoding="utf-8", timeout=120, check=False
-    )
-
-
 def test_it_lists_what_it_knows_as_cli_py_lists_it(tmp_path: Path) -> None:
     """`themes` (each with where it comes from and where it is), `models` (the sizes, how far
-    the driver is, the protocol) and `config path` as cli.py prints them: the program listed
-    names alone. The MAJESTY 9.16" is the program's own (it came with its drivers)."""
+    the driver is, the protocol) and `config path` as cli.py printed them (kept: the folders
+    as where they are in the data folder): the program listed names alone. The MAJESTY 9.16"
+    is in the catalog of both (issue #54)."""
     themes = _run(tmp_path, "themes").stdout.splitlines()
     assert [line.split()[0] for line in themes] == sorted(
         p.name for p in BUILTIN_THEMES_DIR.iterdir() if (p / "theme.json").is_file()
     )
-    theirs = _python(tmp_path, "themes").stdout.splitlines()
+    folder_of = str(BUILTIN_THEMES_DIR) + os.sep
+    theirs = [line.replace("<data>/themes/", folder_of) for line in golden.told("themes")]
     assert len(themes) == len(theirs)
     for mine, their in zip(themes, theirs, strict=True):
         # (the id and where it comes from in columns as wide, and the folder the same one)
@@ -1213,14 +1640,12 @@ def test_it_lists_what_it_knows_as_cli_py_lists_it(tmp_path: Path) -> None:
         assert mine[: mine.index(folder)] == their[: their.index(their_folder)], mine
         assert Path(folder).samefile(their_folder) and Path(folder).name == name, mine
     where = Path(_run(tmp_path, "config", "path").stdout.strip())
-    assert where == Path(_python(tmp_path, "config", "path").stdout.strip())
-    assert where.name == "config.toml" and where.parent.samefile(tmp_path)
+    assert where.name == "config.toml" and where.parent.samefile(tmp_path)  # (as cli.py's)
     models = _run(tmp_path, "models").stdout.splitlines()
     assert models[0].split() == ["model", "panel", "landscape", "portrait", "driver", "protocol"]
-    own = [line for line in models if line.startswith("majesty-9.16 ")]
-    assert len(own) == 1 and "1920x462" in own[0]
-    theirs = _python(tmp_path, "models").stdout.splitlines()
-    assert [line for line in models if line not in own] == theirs
+    majesty = [line for line in models if line.startswith("majesty-9.16 ")]
+    assert len(majesty) == 1 and "1920x462" in majesty[0]
+    assert models == golden.told("models")
 
 
 def test_config_init_writes_the_default_config_as_cli_py_does(tmp_path: Path) -> None:
@@ -1240,6 +1665,51 @@ def test_config_init_writes_the_default_config_as_cli_py_does(tmp_path: Path) ->
     # with no action: where it is and what it says
     told = _run(tmp_path, "config").stdout.splitlines()
     assert told[0] == str(file) and told[1].startswith("theme: ")
+
+
+def test_config_language_sets_the_apps_language_and_with_if_auto_keeps_one_chosen(
+    tmp_path: Path,
+) -> None:
+    """`config language CODE` writes config.toml's language as Settings → Language does (a new
+    config.toml with the defaults where there is none); `--if-auto` (the Windows setup's, on a
+    new install) only where the app follows the system's language; with no code, which it is.
+    A code it does not know, two codes or a config.toml it cannot read: an error, nothing
+    written."""
+    from libre_panel import i18n
+    from libre_panel.config import default_config_toml
+
+    file = tmp_path / "config.toml"
+
+    def language() -> str:
+        return re.findall(r'^language = "(\w+)"$', file.read_text("utf-8"), re.M)[-1]
+
+    done = _run(tmp_path, "config", "language", "de", "--if-auto")
+    assert (done.returncode, done.stdout) == (0, "language: de\n"), done.stderr
+    assert file.read_text("utf-8") == default_config_toml().replace(
+        'language = "auto"', 'language = "de"'
+    )
+    done = _run(tmp_path, "config", "language", "en", "--if-auto")
+    assert (done.returncode, done.stdout, language()) == (0, "language: de (kept)\n", "de")
+    assert _run(tmp_path, "config", "language", "auto").returncode == 0 and language() == "auto"
+    system = {"LANG": "fr_FR.UTF-8", "LC_ALL": "", "LANGUAGE": ""}
+    told = _run(tmp_path, "config", "language", **system)
+    speaks = "fr"
+    if sys.platform == "win32":  # (Windows' own language comes before the environment's)
+        own = i18n._windows_language()
+        speaks = own[:2].lower() if own[:2].lower() in i18n.LANGUAGES else "en" if own else "fr"
+    assert told.stdout == f"language: auto (the app speaks {speaks})\n", told.stderr
+    assert _run(tmp_path, "config", "language", "ja", "--if-auto").returncode == 0
+    assert language() == "ja"
+    for wrong in (["klingon"], ["de", "en"]):
+        done = _run(tmp_path, "config", "language", *wrong)
+        assert done.returncode == 1 and done.stderr.startswith("libre-panel: config language: ")
+    assert language() == "ja"
+    file.write_text("language = \n", "utf-8")
+    assert _run(tmp_path, "config", "language", "de", "--if-auto").returncode == 1
+    assert file.read_text("utf-8") == "language = \n"
+    other = tmp_path / "other.toml"
+    assert _run(tmp_path, "config", "language", "pl", "--config", str(other)).returncode == 0
+    assert 'language = "pl"' in other.read_text("utf-8")
 
 
 def test_the_command_line_helps_and_refuses_as_cli_py_does(tmp_path: Path) -> None:
@@ -1281,7 +1751,7 @@ def test_what_config_toml_names_and_nobody_has_is_said_in_plain_words(tmp_path: 
     assert done.returncode == 0, done.stderr
     assert "readings from: demo," in done.stderr
     unknown = "sensor source 'psutill' not started: unknown sensor provider 'psutill'"
-    assert f"{unknown} (available: audio, calendar, demo, " in done.stderr
+    assert f"{unknown} (available: audio, calendar, dell, demo, " in done.stderr
     assert "service 'nonsense': not installed" in done.stderr
     assert "this build" not in done.stderr
 
@@ -1309,8 +1779,6 @@ def test_it_lists_librehardwaremonitor_s_readings_as_the_python_app_names_them(
     readings the Python app makes of the same tree, in the Python app's lines."""
     import http.server
     import threading
-
-    from libre_panel.sensors import librehardwaremonitor as lhm
 
     def sensor(sensor_id: str, kind: str, text: str, value: str, **more: object) -> dict:
         return {"Text": text, "SensorId": sensor_id, "Type": kind, "Value": value, **more}
@@ -1358,14 +1826,11 @@ def test_it_lists_librehardwaremonitor_s_readings_as_the_python_app_names_them(
     finally:
         server.shutdown()
     assert done.returncode == 0, done.stderr
-    # (the names of this computer's parts win over LibreHardwareMonitor's, and the user's own)
-    readings = _named(lhm.readings_from_tree(tree), cpu="My own processor")
-    lines = []
-    for key in sorted(readings):
-        r = readings[key]
-        value = f"{r.value:.2f}" if isinstance(r.value, float) else str(r.value)
-        lines.append(f"{key:<40} {value:>14} {r.unit:<5} {r.label}")
-    assert _lines(done) == lines
+    # (the lines the Python app made of the tree's readings; the names of this computer's
+    # parts, which win over LibreHardwareMonitor's, are the computer's own, and the
+    # processor's the one config.toml gives)
+    lines = _lines(done)
+    assert _unnamed(lines) == _unnamed(golden.told("listed"))
     assert any(line.startswith("cpu.name") and "My own processor" in line for line in lines)
     assert any(line.startswith("mem.temp") for line in lines)
 
@@ -1382,36 +1847,31 @@ def test_the_load_source_measures_the_processor(tmp_path: Path) -> None:
     assert 0.0 <= float(value) <= 100.0 and unit == "%" and label == ["CPU", "load"]
 
 
+@pytest.mark.live  # (this computer's own readings)
+@this_computer
 def test_the_computer_s_own_readings_are_those_of_the_python_source(tmp_path: Path) -> None:
-    """`[sensors] providers = ["psutil", ...]`: the same keys, units and labels as
-    sensors/psutil_provider.py gives on this computer, and the same values where they stand
-    still (the drives, the memory in all, the threads, the address)."""
-    pytest.importorskip("psutil")
-    from libre_panel.sensors.psutil_provider import PsutilProvider
-
+    """`[sensors] providers = ["psutil", ...]`: the keys of this computer's readings with the
+    units and labels the Python app's sensors/psutil_provider.py gave their kind (kept by the
+    keys' shapes: a core's, a drive's and an adapter's number as N), and values that are
+    what they tell of."""
     (tmp_path / "config.toml").write_text(
         '[sensors]\nproviders = ["psutil", "nope"]\n', encoding="utf-8"
     )
-    provider = PsutilProvider({})
-    try:
-        provider.read()
-        done = _run(tmp_path, "sensors")
-        wanted = _named(provider.read())
-    finally:
-        provider.close()
+    done = _run(tmp_path, "sensors")
     assert done.returncode == 0, done.stderr
     ours = {line[:40].strip(): line[41:] for line in _lines(done)}
-    assert sorted(ours) == sorted(wanted), set(ours) ^ set(wanted)
-    still = ("cpu.cores", "mem.total", "disk.total", "net.ip", "cpu.name", "gpu.name", "mem.name",
-             "mem.speed")  # fmt: skip
-    for key, reading in wanted.items():
-        # (a value wider than its column moves the unit and the label to the right)
-        end = f" {reading.unit:<5} {reading.label}"
-        assert ours[key].endswith(end), (key, ours[key])
-        value = ours[key][: -len(end)].strip()
-        if key in still or (key.startswith("disk.") and key.endswith((".name", ".total"))):
-            said = reading.value
-            assert value == (f"{said:.2f}" if isinstance(said, float) else str(said)), key
+    kinds = golden.told("kinds")  # (a key's shape: its unit, and its label where it has no number)
+    known = 0
+    for key, rest in ours.items():
+        shape = re.sub(r"\d+", "N", key)
+        if key in NAMES or shape not in kinds:
+            continue  # (a part this computer has and the one the kinds were kept on had not)
+        unit, label = kinds[shape]
+        end = f" {unit:<5} {label}" if shape == key else f" {unit:<5} "
+        assert end in " " + rest, (key, rest)
+        known += 1
+    assert known > 20 and known >= len(ours) - len(NAMES) - 10, sorted(ours)
+    assert float(ours["cpu.cores"].split()[0]) >= 1 and float(ours["mem.total"].split()[0]) > 0
     assert {"cpu.core.1.load", "disk.1.name", "net.today.down", "sys.uptime"} <= set(ours)
 
 
@@ -1520,87 +1980,32 @@ def test_a_games_frames_come_from_the_presentmon_named(tmp_path: Path) -> None:
     assert not any(key.startswith("game.") for key in done.stdout.split())
 
 
+@pytest.mark.live  # (this computer's own readings)
+@this_computer
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the kernel's own files")
-def test_a_linux_pcs_sensors_are_those_of_the_python_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`[sensors] providers = ["linux", "psutil", ...]`: the keys, units and labels the Linux
-    source and the psutil source give together on this computer (the chips' temperatures and
-    fans from the Linux source alone, as the Python app has it)."""
-    pytest.importorskip("psutil")
-    from libre_panel.sensors import linux as linux_source
-    from libre_panel.sensors.base import Reading
-    from libre_panel.sensors.linux import LinuxProvider
-
-    # (the tests' computer is empty, conftest.py: here it is the real one, as the program's)
-    monkeypatch.setattr(linux_source, "ROOT", Path("/"))
-    from libre_panel.sensors.psutil_provider import PsutilProvider
-
+def test_a_linux_pcs_sensors_are_those_of_the_python_sources(tmp_path: Path) -> None:
+    """`[sensors] providers = ["linux", "psutil", ...]`: this computer's readings from the
+    kernel's files and from the system, each kind with the unit the Python app's sources gave
+    it (kept by the keys' shapes: a number in one as N), and its label where the key has no
+    number. The chips are the computer's own: a kind that was not kept is passed over."""
     (tmp_path / "config.toml").write_text(
         '[sensors]\nproviders = ["linux", "psutil", "nope"]\n', encoding="utf-8"
     )
-    linux, provider = LinuxProvider({}), PsutilProvider({})
-    provider.hwmon = False
-    try:
-        linux.read(), provider.read()
-        # the drives' and the memory's temperatures are read by a thread of their own every
-        # few seconds, and the program waits for its first readings: a round is made here
-        linux.read_slow()
-        done = _run(tmp_path, "sensors")
-        time.sleep(0.3)  # (a power needs two readings of its counter, a while apart)
-        # (the round before is dropped where the program took longer than SLOW_FRESH: CI)
-        linux.read_slow()
-        read = {**provider.read(), **linux.read()}
-        # a drive that did not answer this round (its own thread may have asked it at the
-        # same moment) is asked again, as the program's thread does a few seconds later:
-        # CI's NVMe drive often does not answer for a while
-        for item in linux._plan.slow:
-            for _ in range(30):
-                value = item.key not in read and item.read()
-                if value is None:
-                    time.sleep(0.2)
-                    continue
-                if value is not False:
-                    name = linux._plan.names[item.key]
-                    read[item.key] = Reading(item.key, value, item.unit, name)
-                break
-        wanted = _named(read)
-        slow = {item.key: item for item in linux._plan.slow}
-    finally:
-        linux.close()
-        provider.close()
+    done = _run(tmp_path, "sensors")
     assert done.returncode == 0, done.stderr
-    # (a value longer than its column, as a processor's long name, moves the rest along:
-    # each line ends in its unit and its label)
-    ours = {line[:40].strip(): line for line in _lines(done)}
-    # a drive that did not answer the program's round is asked again, as above (and as the
-    # program's own thread does a few seconds later): CI's NVMe drive often does not answer,
-    # and the program asks it once in its short life
-    for _ in range(12):
-        missing = {key for key in wanted if key not in ours} & set(slow)
-        if not missing:
-            break
-        again = _run(tmp_path, "sensors")
-        assert again.returncode == 0, again.stderr
-        ours.update({line[:40].strip(): line for line in _lines(again)
-                     if line[:40].strip() in missing})  # fmt: skip
-    # and one the program read that Python's side did not is asked again on Python's side
-    for key in (set(ours) - set(wanted)) & set(slow):
-        for _ in range(30):
-            value = slow[key].read()
-            if value is not None:
-                wanted[key] = Reading(key, value, slow[key].unit, linux._plan.names[key])
-                break
-            time.sleep(0.2)
-    # A drive that answers neither side's repeated asking for a while (CI's NVMe drive) is
-    # left out of the comparison; every other reading is compared, the drives' among them.
-    silent = (set(ours) ^ set(wanted)) & set(slow)
-    for key in silent:
-        ours.pop(key, None)
-        wanted.pop(key, None)
-    assert sorted(ours) == sorted(wanted)
-    for key, r in wanted.items():
-        assert ours[key].endswith(f" {r.unit:<5} {r.label}"), (key, ours[key])
+    ours = {line[:40].strip(): line[41:] for line in _lines(done)}
+    kinds = golden.told("kinds")
+    known = 0
+    for key, rest in ours.items():
+        shape = re.sub(r"\d+", "N", key)
+        if key in NAMES or shape not in kinds:
+            continue
+        unit, label = kinds[shape]
+        end = f" {unit:<5} {label}" if shape == key else f" {unit:<5} "
+        assert end in " " + rest, (key, rest)
+        known += 1
+    assert known > 20, sorted(ours)
+    assert {"cpu.load", "mem.total", "sys.uptime"} <= set(ours)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="a machine laid out as Linux has it")
@@ -1609,9 +2014,7 @@ def test_a_machine_laid_out_in_a_folder_is_read_as_the_python_source_reads_it(
 ) -> None:
     """The Linux source in the program: a processor's chip, the mainboard's fans, a drive and
     an AMD card with its hwmon chip, read from a folder; every reading as sensors/linux.py
-    gives it."""
-    from libre_panel.sensors.linux import LinuxProvider
-
+    gave it."""
     root = tmp_path / "pc"
     hwmon, card = "sys/class/hwmon/", "sys/class/drm/card1/device/"
     files = {
@@ -1640,33 +2043,30 @@ def test_a_machine_laid_out_in_a_folder_is_read_as_the_python_source_reads_it(
     )
     done = _run(tmp_path, "sensors", LP_LINUX_ROOT=str(root))
     assert done.returncode == 0, done.stderr
-    provider = LinuxProvider({}, root=root)
-    try:
-        wanted = provider.read()
-    finally:
-        provider.close()
-    lines = []
-    for key in sorted(wanted):
-        r = wanted[key]
-        lines.append(f"{key:<40} {r.value:>14.2f} {r.unit:<5} {r.label}")
+    lines = golden.told("folder")  # (the lines of what the Python app's source read there)
     ours = [line for line in _lines(done) if not line.startswith(NAMES)]
     assert ours == lines
+    keys = {line.split()[0] for line in ours}
     assert {"cpu.temp", "gpu.temp", "gpu.hotspot", "gpu.load", "gpu.power", "gpu.mem.used",
-            "fan.lpc.fan_2", "temp.nvme.composite"} <= set(wanted)  # fmt: skip
+            "fan.lpc.fan_2", "temp.nvme.composite"} <= keys  # fmt: skip
 
 
 def test_the_sun_and_the_moon_are_always_there(tmp_path: Path) -> None:
     """The sky's source is on without being named: the moon everywhere, the sun for the
-    place `[weather]` has; the readings sensors/sky.py gives at that moment."""
-    from libre_panel.sensors import sky
-
+    place `[weather]` has; the readings the sky gives at that moment (lp-check's sky, which
+    test_rust_sensors.py holds to what sensors/sky.py gave)."""
     (tmp_path / "config.toml").write_text(
         '[sensors]\nproviders = ["nope"]\n[weather]\nlatitude = 52.52\nlongitude = 13.405\n',
         encoding="utf-8",
     )
-    before = sky.sky_readings(time.time(), 52.52, 13.405)
+
+    def sky_now() -> dict[str, list[Any]]:
+        [told] = run([{"op": "sky", "moments": [[time.time(), 52.52, 13.405]]}], checked=False)
+        return {key: rest for key, *rest in told["moments"][0]}
+
+    before = sky_now()
     done = _run(tmp_path, "sensors")
-    after = sky.sky_readings(time.time(), 52.52, 13.405)
+    after = sky_now()
     assert done.returncode == 0, done.stderr
     # (a value longer than its column, as "Waxing Crescent", moves the rest along: each line
     # ends in its unit and its label)
@@ -1674,11 +2074,12 @@ def test_the_sun_and_the_moon_are_always_there(tmp_path: Path) -> None:
             for line in done.stdout.splitlines() if line.startswith(("moon.", "sun."))}  # fmt: skip
     assert list(ours) == sorted(before) and {"sun.rise", "sun.set", "moon.phase"} <= set(ours)
     for key, rest in ours.items():
-        tail = f" {before[key].unit:<5} {before[key].label}"
+        _, unit, label = before[key]
+        tail = f" {unit:<5} {label}"
         assert rest.endswith(tail), (key, rest)
         value = rest[: -len(tail)].strip()
-        said = [f"{r.value:.2f}" if isinstance(r.value, float) else str(r.value)
-                for r in (before[key], after[key])]  # fmt: skip
+        said = [f"{v:.2f}" if isinstance(v, float) else str(v)
+                for v, *_ in (before[key], after[key])]  # fmt: skip
         if key != "sun.elevation":  # (it moves by the second)
             assert value in said, key
 
@@ -1725,8 +2126,6 @@ def test_what_plays_is_read_from_playerctl_or_else_from_busctl(tmp_path: Path) -
     """The media source is on without being named: what plays as playerctl says it, and where
     that is not installed as busctl gives the players of the session's D-Bus (the one that
     plays, not the one that is paused); read only while something shows media.*."""
-    from libre_panel.sensors import media
-
     tools = tmp_path / "bin"
     tools.mkdir()
     line = "\x1f".join(["Playing", "Daft Punk", "Voyager", "Discovery", "61500000",
@@ -1743,7 +2142,7 @@ def test_what_plays_is_read_from_playerctl_or_else_from_busctl(tmp_path: Path) -
                 for line in _lines(done) if line.startswith("media.")}  # fmt: skip
 
     ours = listed(_run(tmp_path, "sensors", PATH=str(tools), LP_SENSORS_WANT="media.title"))
-    wanted = media.parse_playerctl(line + "\n", 0.0).readings(0.0)
+    wanted = _kept_readings(golden.told("wanted"))  # (of playerctl's line, as it began)
     assert list(ours) == sorted(wanted)
     for key in ("media.title", "media.artist", "media.album", "media.source", "media.state",
                 "media.playing", "media.duration"):  # fmt: skip
@@ -1785,13 +2184,13 @@ def test_what_plays_is_read_from_playerctl_or_else_from_busctl(tmp_path: Path) -
 
 def test_the_weather_comes_from_the_forecast_of_the_place(tmp_path: Path) -> None:
     """With `[weather]` on, the forecast is asked for the place in the settings (here of a
-    server of the test's own, which sees what is asked) and read as weather/open_meteo.py
-    reads it; an answer that is none is said and nothing more."""
+    server of the test's own, which sees what is asked) and read as the crate reads it (whose
+    address and readings test_rust_sensors.py holds against weather/open_meteo.py's); an
+    answer that is none is said and nothing more."""
     from datetime import UTC, datetime, timedelta
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    from libre_panel.config import WeatherConfig
-    from libre_panel.weather import open_meteo
+    from libre_panel import i18n
 
     start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0, tzinfo=None)
     start -= timedelta(hours=start.hour)
@@ -1863,16 +2262,17 @@ def test_the_weather_comes_from_the_forecast_of_the_place(tmp_path: Path) -> Non
         done = _run(tmp_path, "sensors", **env)
         after = time.time()
         assert done.returncode == 0, done.stderr
-        cfg = WeatherConfig(latitude=52.52, longitude=13.405, units="imperial")
-        from urllib.parse import urlencode
-
+        [made] = run([{"op": "weather", "locale": str(i18n.LOCALE_DIR), "language": "en",
+                       "urls": [[52.52, 13.405, True]], "iso": [],
+                       "answers": [[json.dumps(data), at] for at in (before, after)]}])  # fmt: skip
         [(path, agent)] = asked
-        assert path == f"/v1/forecast?{urlencode(open_meteo.build_params(cfg))}"
+        [address] = made["urls"]
+        assert path == "/v1/forecast?" + address.split("?", 1)[1] and "fahrenheit" in path
         assert agent.startswith("libre-panel/")
         ours = {line[:40].strip(): line[41:]
                 for line in done.stdout.splitlines() if line.startswith("weather.")}  # fmt: skip
-        wanted = [{**open_meteo.parse_current(data), **open_meteo.forecast_readings(data, at)}
-                  for at in (before, after)]  # fmt: skip
+        wanted = [_checked_readings(current + forecast)
+                  for current, forecast in made["answers"]]  # fmt: skip
         assert sorted(ours) in [sorted(readings) for readings in wanted]
         assert {"weather.temperature", "weather.hour.1.time", "weather.day.0.name",
                 "weather.rain.text"} <= set(ours)  # fmt: skip
@@ -1894,14 +2294,135 @@ def test_the_weather_comes_from_the_forecast_of_the_place(tmp_path: Path) -> Non
         server.server_close()
 
 
+def test_the_weather_comes_from_openweathermap_with_the_key(tmp_path: Path) -> None:
+    """`provider = "openweathermap"` with a key: OpenWeatherMap (here a server of the test's
+    own) is asked for the place with it. A key without One Call 3.0 gets the free plan's present
+    weather and 3-hour forecast, read into the same readings as Open-Meteo's (km/h from m/s, the
+    WMO code of its condition, the hours between its steps, the days it holds whole); a key with
+    it gets One Call's, its rain of the next hour by the minute too. A key it does not take is
+    said, and so is a provider with no key; the key is in nothing the program writes."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    key = "0123456789abcdef0123456789abcdef"
+    now = int(time.time())
+    step = 3 * 3600
+    first = (now // step + 1) * step  # the forecast's steps, as the free plan's fall
+    day = now - now % 86400
+    current = {"main": {"temp": 18.46, "feels_like": 17.2, "humidity": 70},
+               "wind": {"speed": 3.5}, "weather": [{"id": 501, "icon": "10d"}],
+               "timezone": 0, "dt": now}  # fmt: skip
+    forecast = {"city": {"timezone": 0, "sunrise": day + 6 * 3600, "sunset": day + 18 * 3600},
+                "list": [{"dt": first + n * step, "main": {"temp": 10 + n % 8},
+                          "weather": [{"id": 800 if n % 2 else 601}], "pop": n % 5 / 10,
+                          "sys": {"pod": "d"}} for n in range(40)]}  # fmt: skip
+    hour = now - now % 3600
+    onecall = {"timezone_offset": 0,
+               "current": {"temp": 5.04, "feels_like": 2, "humidity": 90, "wind_speed": 10,
+                           "weather": [{"id": 300, "icon": "09n"}]},
+               "minutely": [{"dt": now - now % 60 + 60 * m, "precipitation": 0 if m < 20 else 3}
+                            for m in range(60)],
+               "hourly": [{"dt": hour + 3600 * h, "temp": h, "pop": 0.5,
+                           "weather": [{"id": 802, "icon": "02d"}], "rain": {"1h": 1}}
+                          for h in range(48)],
+               "daily": [{"dt": day + 12 * 3600 + 86400 * d, "temp": {"min": d, "max": 10 + d},
+                          "pop": 0.2, "weather": [{"id": 804}]} for d in range(8)]}  # fmt: skip
+    asked: list[str] = []
+    answers: dict[str, tuple[int, Any]] = {}
+
+    class OpenWeatherMap(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            asked.append(self.path)
+            status, data = answers.get(self.path.split("?")[0], (404, {}))
+            body = json.dumps(data).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    def readings(done: subprocess.CompletedProcess[str]) -> dict[str, str]:
+        return {line[:40].strip(): line[41:].strip()
+                for line in done.stdout.splitlines() if line.startswith("weather.")}  # fmt: skip
+
+    refused = {"cod": 401, "message": "Invalid API key."}
+    server = ThreadingHTTPServer(("127.0.0.1", 0), OpenWeatherMap)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        config = ('language = "en"\n[sensors]\nproviders = ["nope"]\n[weather]\nenabled = true\n'
+                  'latitude = 35.68\nlongitude = 139.76\n'
+                  'provider = "openweathermap"\n')  # fmt: skip
+        (tmp_path / "config.toml").write_text(config + f'api_key = "{key}"\n', encoding="utf-8")
+        base = f"http://127.0.0.1:{server.server_address[1]}/data"
+        env = {"LP_OPENWEATHERMAP_URL": base, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}
+
+        # the free plan: One Call refused, the present weather and the forecast in 3-hour steps
+        answers.update({"/data/3.0/onecall": (401, refused), "/data/2.5/weather": (200, current),
+                        "/data/2.5/forecast": (200, forecast)})  # fmt: skip
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert [path.split("?")[0] for path in asked] == [
+            "/data/3.0/onecall", "/data/2.5/weather", "/data/2.5/forecast"]  # fmt: skip
+        assert all("lat=35.68&lon=139.76&units=metric" in path and f"appid={key}" in path
+                   for path in asked)  # fmt: skip
+        ours = readings(done)
+        temperature, wind = ours["weather.temperature"], ours["weather.wind_speed"]
+        assert temperature.startswith("18.5") and "°C" in temperature
+        assert wind.startswith("12.6") and "km/h" in wind
+        assert ours["weather.code"].startswith("63")
+        assert ours["weather.description"].startswith("Rain")
+        assert ours["weather.is_day"].startswith("1")
+        assert {"weather.hour.1.temperature", "weather.hour.1.time", "weather.day.0.high",
+                "weather.day.1.high", "weather.day.3.low",
+                "weather.day.1.name"} <= set(ours)  # fmt: skip
+        assert not any(name.startswith("weather.rain.") for name in ours)  # (not in 3-hour steps)
+        assert "free plan" in done.stderr
+        assert key not in done.stdout + done.stderr
+
+        # One Call 3.0: its answer, the rain of the next hour by the minute
+        asked.clear()
+        answers["/data/3.0/onecall"] = (200, onecall)
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert [path.split("?")[0] for path in asked] == ["/data/3.0/onecall"]
+        ours = readings(done)
+        assert ours["weather.temperature"].startswith("5.0")
+        assert ours["weather.wind_speed"].startswith("36.0")
+        assert ours["weather.description"].startswith("Light drizzle")
+        assert ours["weather.is_day"].startswith("0")
+        assert ours["weather.rain.text"].startswith(("Rain in", "Rain for"))
+        assert {"weather.hour.24.temperature", "weather.day.6.high"} <= set(ours)
+        assert key not in done.stdout + done.stderr
+
+        # a key it does not take
+        asked.clear()
+        answers.update({"/data/3.0/onecall": (401, refused), "/data/2.5/weather": (401, refused)})
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert "weather." not in done.stdout
+        assert "does not take the API key (HTTP 401" in done.stderr
+        assert key not in done.stdout + done.stderr
+
+        # no key: nothing asked, and said why
+        asked.clear()
+        (tmp_path / "config.toml").write_text(config, encoding="utf-8")
+        done = _run(tmp_path, "sensors", **env)
+        assert done.returncode == 0, done.stderr
+        assert asked == [] and "weather." not in done.stdout
+        assert "OpenWeatherMap needs your API key" in done.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_home_assistant_and_json_sources_are_asked_and_read(tmp_path: Path) -> None:
     """`homeassistant` and `json` among the sources: Home Assistant's states are asked for
     with the token, each JSON source at its address (with its headers) or in its file; the
     readings are those sensors/homeassistant.py and sensors/json_source.py make of the
     answers, and a source that cannot be is said."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    from libre_panel.sensors import homeassistant, json_source
 
     states = [
         {"entity_id": "sensor.living_room", "state": "21.5",
@@ -1970,9 +2491,7 @@ def test_home_assistant_and_json_sources_are_asked_and_read(tmp_path: Path) -> N
         assert done.returncode == 0, done.stderr
         assert sorted(set(asked)) == [("/api/states", "Bearer secret-token", ""),
                                       ("/nas", "", "abc")]  # fmt: skip
-        wanted = homeassistant.readings_from_states(states, ["sensor.*", "climate.*"])
-        for entry, data in zip(entries[:2], (nas, values), strict=True):
-            wanted.update(json_source.Source(entry).readings(data))
+        wanted = _kept_readings(golden.told("wanted"))  # (of the states and the two answers)
         listed = [line for line in done.stdout.splitlines() if line.startswith(("ha.", "json."))]
         ours = {line[:40].strip(): line[41:] for line in listed}
         assert sorted(ours) == sorted(wanted) and len(ours) == 9
@@ -2005,8 +2524,6 @@ def test_a_ups_is_asked_of_upsd(tmp_path: Path) -> None:
     named; the readings are Python's, and a server that is not there is said."""
     import socketserver
 
-    from libre_panel.sensors import nut
-
     variables = {"battery.charge": "87", "battery.runtime": "1530", "ups.load": "23",
                  "ups.realpower.nominal": "405", "input.voltage": "231.5",
                  "ups.status": "OB DISCHRG", "ups.model": 'Back-UPS "ES" 700G'}  # fmt: skip
@@ -2036,7 +2553,6 @@ def test_a_ups_is_asked_of_upsd(tmp_path: Path) -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         port = server.server_address[1]
-        options = {"host": "127.0.0.1", "port": port, "username": "panel", "password": "pw"}
 
         def said_goodbye() -> None:
             """Waits until the server has heard a talk to its end."""
@@ -2044,11 +2560,9 @@ def test_a_ups_is_asked_of_upsd(tmp_path: Path) -> None:
             while "LOGOUT" not in heard and time.monotonic() < until:
                 time.sleep(0.01)
 
-        python = nut.NutProvider(options, start=False)
-        python.fetch()
-        wanted = python.read()
-        said_goodbye()
-        asked = list(heard)
+        # (what the Python app's source asked this upsd, line by line, and read of it)
+        asked, wanted = golden.told("asked")
+        wanted = _kept_readings(wanted)
         heard.clear()
         (tmp_path / "config.toml").write_text(
             f'[sensors]\nproviders = ["nut"]\n[sensors.nut]\nport = {port}\n'
@@ -2090,8 +2604,6 @@ def test_mqtt_messages_come_from_a_broker(tmp_path: Path) -> None:
     pieces and long ones too, become the readings sensors/mqtt.py makes of them. A broker
     that refuses is said."""
     import socket
-
-    from libre_panel.sensors import mqtt
 
     def text(value: bytes) -> bytes:
         return len(value).to_bytes(2, "big") + value
@@ -2174,10 +2686,7 @@ def test_mqtt_messages_come_from_a_broker(tmp_path: Path) -> None:
         assert connect.endswith(text(b"panel") + text(b"pw")) and b"libre-panel-" in connect
         assert first == b"\x82\x00\x01" + text(b"home/+/temperature") + b"\x00"
         assert second == b"\x82\x00\x02" + text(b"zigbee2mqtt/#") + b"\x00"
-        units = {"home/+/temperature": "°C", "zigbee2mqtt/#": "W"}
-        wanted: dict[str, Any] = {}
-        for topic, payload in messages:
-            wanted.update(mqtt.readings_from_message(topic, payload, units))
+        wanted = _kept_readings(golden.told("wanted"))  # (of the messages, with the units)
         listed = [line for line in done.stdout.splitlines() if line.startswith("mqtt.")]
         ours = {line[:40].strip(): line[41:] for line in listed}
         assert list(ours) == sorted(wanted) and len(ours) == 6
@@ -2201,13 +2710,14 @@ def test_mqtt_messages_come_from_a_broker(tmp_path: Path) -> None:
 
 def test_the_next_events_come_from_calendars(tmp_path: Path) -> None:
     """`calendar` among the sources: an .ics file and an address (webcal:// asked as
-    https:// would be; here a server of the test's own) give the next events as
-    sensors/calendar.py reads them; a calendar that is not there is said by its number,
-    not by its address."""
+    https:// would be; here a server of the test's own) give the next events as the crate
+    reads them (whose events and readings test_rust_sensors.py holds against
+    sensors/calendar.py's); a calendar that is not there is said by its number, not by its
+    address."""
     from datetime import UTC, datetime, timedelta
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    from libre_panel.sensors import calendar
+    from libre_panel import i18n
 
     def event(title: str, start: datetime, rule: str = "") -> str:
         lines = ["BEGIN:VEVENT", f"UID:{title}", f"SUMMARY:{title}",
@@ -2258,11 +2768,11 @@ def test_the_next_events_come_from_calendars(tmp_path: Path) -> None:
         assert "secret" not in done.stderr
         listed = [line for line in done.stdout.splitlines() if line.startswith("calendar.")]
         ours = {line[:40].strip(): line[41:] for line in listed}
-        wanted = []
-        for now in (before, after):
-            events = [e for text in (work, home) for e in calendar.events_from_ics(text, now, 7)]
-            events.sort(key=lambda e: (e.start, not e.all_day, e.title))
-            wanted.append(calendar.calendar_readings(events, now))
+        moments = [[now.year, now.month, now.day, now.hour, now.minute, now.second,
+                    now.microsecond] for now in (before, after)]  # fmt: skip
+        [made] = run([{"op": "calendar", "locale": str(i18n.LOCALE_DIR), "language": "en",
+                       "cases": [[[work, home], now, 7, ""] for now in moments]}])  # fmt: skip
+        wanted = [_checked_readings(case["readings"]) for case in made["cases"]]
         assert sorted(ours) in [sorted(readings) for readings in wanted]
         assert ours["calendar.events"].lstrip().startswith("6.00")
         assert ours["calendar.1.title"].lstrip().startswith("Review")
@@ -2404,7 +2914,6 @@ def test_a_panel_beside_the_first_shows_its_companion_on_the_first_panels_readin
     the companion shows), as app.py picks them; taken out of config.toml, its loop ends and
     the first panel's theme is whole again."""
     from libre_panel.devices.models import find_model
-    from libre_panel.theme.model import companion_for, pair_version, theme_for
 
     head = 'theme = "lumen"\nfps = 2\n[device]\ndriver = "virtual"\noutput = "panel.png"\n'
     head += 'model = "turing-9.2-usb"\n[sensors]\nproviders = []\n'
@@ -2414,9 +2923,9 @@ def test_a_panel_beside_the_first_shows_its_companion_on_the_first_panels_readin
     config.write_text(head + beside, encoding="utf-8")
     size, beside_size = (find_model(name).size("landscape") for name in
                          ("turing-9.2-usb", "turing-5"))  # fmt: skip
-    alone = theme_for("lumen", "landscape", size)
-    paired = pair_version(alone) or alone
-    companion = theme_for(companion_for(paired) or "", "landscape", beside_size)
+    # (the versions of Lumen the Python app picked: for the panel alone, for it with one
+    # beside it, and the companion's for the other)
+    alone, paired, companion = golden.told("versions")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            **_libraries()}  # fmt: skip
     with subprocess.Popen([str(_program()), "run"], env=env, stderr=subprocess.PIPE,
@@ -2836,9 +3345,8 @@ def test_a_browsers_download_is_on_the_panel_while_it_loads(tmp_path: Path) -> N
     """`downloads` among the services: a part file in the folder named is a download on the
     theme's download module; once the file it was becoming is there, it is done for a few
     seconds, then the module is as it was."""
-    from libre_panel import design
-
-    look = design.LOOKS[sorted(design.LOOKS)[0]]
+    looks = golden.given("looks")  # (the app's looks, as its design.py had them)
+    look = looks[sorted(looks)[0]]
     folder = tmp_path / "themes" / "loads"
     folder.mkdir(parents=True)
     theme = {"format": "libre-panel-theme/1", "name": "Loads",
@@ -3146,12 +3654,9 @@ def test_the_background_app_follows_its_shortcuts(tmp_path: Path) -> None:
 @draws
 def test_each_panel_shows_its_part_of_the_picture_across_the_panels(tmp_path: Path) -> None:
     """A picture across the panels (config.toml across) and a panel placed (at): the panel
-    shows its part of the picture under its theme, fitted to its frames, as arrangement.py
-    cuts it and the renderer fits it."""
-    from PIL import ImageOps
-
-    from libre_panel import arrangement
-    from libre_panel.config import load_config
+    shows its part of the picture under its theme, fitted to its frames, as the Python app's
+    arrangement.py cut it and its renderer fitted it."""
+    import hashlib
 
     folder = tmp_path / "themes" / "plain"
     folder.mkdir(parents=True)
@@ -3174,28 +3679,21 @@ def test_each_panel_shows_its_part_of_the_picture_across_the_panels(tmp_path: Pa
     )
     done = _run(tmp_path, "run", "--frames", "3")
     assert done.returncode == 0, done.stderr
-    config = load_config(tmp_path / "config.toml")
-    places = arrangement.places(config, [None, None])
-    loaded = arrangement.load(tmp_path / "across" / "picture.jpg")
-    assert loaded is not None
-    rounded = [None if r is None else tuple(round(v, 1) for v in r) for r in places]
-    part = arrangement.part(loaded[0], rounded, 0)
-    expected = ImageOps.fit(part, (1920, 480))
     with Image.open(tmp_path / "panel.png") as frame:
-        assert frame.convert("RGB").tobytes() == expected.tobytes()
+        shown = hashlib.sha256(frame.convert("RGB").tobytes()).hexdigest()
+    assert frame.size == (1920, 480) and shown == golden.told("part")  # (its pixels' digest)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows' sensor service")
+@this_computer
 def test_windows_system_setup_tells_what_is_in_place_as_setup_py_does(tmp_path: Path) -> None:
     """`system-setup --status` on Windows: the sensor service, PawnIO, the group game frame
     rates need and what this program carries, as sensorservice/setup.py tells them; a SID that
     is none, a Linux flag and nothing to do refused in the same words."""
-    from libre_panel.sensorservice import setup
-
     done = _run(tmp_path, "system-setup", "--status")
     assert done.returncode == 0, done.stderr
     ours = json.loads(done.stdout)
-    theirs = setup.status(setup.WindowsSystem())
+    theirs = golden.told("status")  # (sensorservice/setup.py's of this computer)
     assert ours == theirs, (ours, theirs)
     for args, code, said in ((["--user-sid", "nobody", "--service"], 1, "is not a SID"),
                              (["--rapl"], 2, "is for Linux"),

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 use lp_py::{Dict, Value};
 
-use crate::share::{file_mode, local_time, now};
+use crate::share::{file_mode, local_time};
 use crate::zip::{Archive, Entry, Info, Writer, ZipError};
 
 const MANIFEST: &str = "libre-panel-backup.json";
@@ -112,7 +112,7 @@ pub fn make_backup(config_path: &Path, themes: &Path) -> Result<Vec<u8>, Refused
     let mut manifest = Dict::default();
     manifest.insert("kind".into(), Value::from(KIND));
     manifest.insert("version".into(), Value::from(lp_py::VERSION));
-    let at = local_time(now());
+    let at = local_time(crate::clock::now());
     let made = format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
         at[0], at[1], at[2], at[3], at[4]
@@ -130,7 +130,7 @@ pub fn make_backup(config_path: &Path, themes: &Path) -> Result<Vec<u8>, Refused
     let mut zip = Writer::default();
     zip.add(&Entry {
         name: MANIFEST,
-        date_time: local_time(now()),
+        date_time: local_time(crate::clock::now()),
         external_attr: 0o600 << 16,
         data: text.as_bytes(),
     });

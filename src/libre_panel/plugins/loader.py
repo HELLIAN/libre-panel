@@ -9,9 +9,9 @@ Two ways to install, same package:
   into the downloads (Windows setup, AppImage), which cannot pip install. The
   folder goes onto ``sys.path`` when one of its parts is used.
 
-Libre Panel never downloads or installs code itself. Its own services are
-registered here too (source "built in"): they work in the downloads, which
-have no package metadata for entry points.
+Libre Panel never downloads or installs code itself. The names of its own services and
+pages (the Rust app's) are registered here too (source "built in"), so that no plugin takes
+one of them.
 """
 
 from __future__ import annotations
@@ -45,32 +45,37 @@ GROUPS = {
     "toasts": "libre_panel.toasts",
     "editor_pages": "libre_panel.editor_pages",
     "sensors": "libre_panel.sensors",
+    "devices": "libre_panel.devices",  # display drivers
     "themes": "libre_panel.themes",  # a package whose folder holds theme folders
 }
 OWN_DISTRIBUTION = "libre-panel"  # its built-in sensors and drivers are no plugins
 BUILT_IN = "built in"  # the source of what Libre Panel brings itself
 
-# Built-in parts by kind and name ("module:attribute"), found without any package
-# metadata. A plugin cannot use their names. Imported on first use.
-BUILT_IN_PARTS: dict[str, dict[str, str]] = {
-    "services": {
-        "agents": "libre_panel.services.agents:Agents",
-        "autopilot": "libre_panel.services.autopilot:Autopilot",
-        "cooling": "libre_panel.services.cooling:Cooling",
-        "devices": "libre_panel.services.devices:Devices",
-        "downloads": "libre_panel.services.downloads:Downloads",
-        "game": "libre_panel.services.game:Game",
-        "memory": "libre_panel.services.memory:Memory",
-        "notices": "libre_panel.services.notices:Notices",
-        "power": "libre_panel.services.power:Power",
-        "timer": "libre_panel.services.timer:Timer",
-        "waveshare": "libre_panel.services.waveshare:Waveshare",
-    },
-    "editor_pages": {
-        "autopilot": "libre_panel.pages.autopilot:Autopilot",
-        "control": "libre_panel.pages.control:Control",
-    },
-}
+# Libre Panel's own parts by kind (the Rust app's: rust/app/src/plugins.rs, BUILT_IN_PARTS):
+# a plugin cannot use their names.
+BUILT_IN_PARTS: dict[str, tuple[str, ...]] = {
+    "services": ("agents", "autopilot", "cooling", "devices", "downloads", "game", "lightring",
+                 "memory", "notices", "power", "timer", "waveshare"),
+    "editor_pages": ("autopilot", "control"),
+    "devices": ("auto", "hongtai", "turzx", "virtual"),
+}  # fmt: skip
+
+
+# The kinds of field a plugin's widget type, screen or toast style declares (those of
+# rust/theme/src/model.rs, whose editor forms show them): these, each with "?" for one that may
+# be empty, and "enum:a|b|c".
+FIELD_KINDS = frozenset({
+    "int", "number", "bool", "color", "icon", "rules",
+    "string", "text", "sensor", "format", "font", "asset",
+})  # fmt: skip
+
+
+def valid_kind(kind: Any) -> bool:
+    """A field kind the loader and the editor know (plugins declare their fields with these)."""
+    if not isinstance(kind, str):
+        return False
+    base = kind.rstrip("?")
+    return base in FIELD_KINDS or (base.startswith("enum:") and len(base) > 5)
 
 
 class PluginError(ValueError):
@@ -129,6 +134,7 @@ class Registry:
 
 
 def _base_class(kind: str) -> type:
+    from libre_panel.devices.base import Display
     from libre_panel.plugins.host import Service
     from libre_panel.plugins.pages import EditorPage
     from libre_panel.plugins.render import Screen, ToastStyle, Transition, WidgetType
@@ -136,7 +142,8 @@ def _base_class(kind: str) -> type:
 
     bases = {"services": Service, "screens": Screen, "widgets": WidgetType}
     drawn = {"transitions": Transition, "toasts": ToastStyle}
-    return {**bases, **drawn, "editor_pages": EditorPage, "sensors": SensorProvider}[kind]
+    sources = {"sensors": SensorProvider, "devices": Display}
+    return {**bases, **drawn, "editor_pages": EditorPage, **sources}[kind]
 
 
 def _theme_folder(found: Found) -> Path:
@@ -171,8 +178,6 @@ def _load(found: Found) -> Any:
         )
     fields = {"widgets": "spec", "screens": "options", "toasts": "options"}.get(found.kind)
     if fields:
-        from libre_panel.theme.model import valid_kind
-
         for key, declared in getattr(obj, fields).items():
             if not (isinstance(declared, tuple) and len(declared) == 2 and valid_kind(declared[0])):
                 raise PluginError(f"{found.target}.{fields}[{key!r}]: unknown field kind")
@@ -191,9 +196,9 @@ def plugins_dir() -> Path:
 def discover(folder: Path | None = None) -> Registry:
     """Everything installed, without importing any plugin code yet."""
     registry = Registry()
-    for kind, parts in BUILT_IN_PARTS.items():
-        for name, target in parts.items():
-            registry.add(Found(kind, name, target, BUILT_IN))
+    for kind, names in BUILT_IN_PARTS.items():
+        for name in names:
+            registry.add(Found(kind, name, "", BUILT_IN))  # (nothing to load: the app's own)
     for kind, group in GROUPS.items():
         for entry in _installed(group):
             dist = entry.dist

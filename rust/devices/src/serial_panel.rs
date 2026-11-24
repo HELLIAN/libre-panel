@@ -198,7 +198,13 @@ impl<F: Family> SerialPanel<F> {
             leave_place(&found.device);
             DeviceError(tf(
                 "cannot open {port}: {error}",
-                &[("port", &found.device), ("error", &e.to_string())],
+                &[
+                    ("port", &found.device),
+                    (
+                        "error",
+                        &crate::serial::SerialPort::cause(&e, &found.device),
+                    ),
+                ],
             ))
         })?;
         let place = found.device.clone();

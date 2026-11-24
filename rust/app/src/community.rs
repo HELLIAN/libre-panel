@@ -151,6 +151,15 @@ fn entry_of(raw: &Value) -> Option<Entry> {
     })
 }
 
+/// readable: how many entries of a list (its bytes) the app reads, as it reads the community's
+/// list; the reason where it reads none of it. The limits a list and its pictures keep to.
+pub fn readable(data: &[u8]) -> Result<usize, String> {
+    parse_index(data).map(|entries| entries.len())
+}
+
+pub const LIMITS: [(&str, usize); 2] = [("max_index", MAX_INDEX), ("max_preview", MAX_PREVIEW)];
+pub const FORMAT: &str = INDEX_FORMAT;
+
 /// parse_index: the entries of the community's list (its bytes), each once by its id.
 fn parse_index(data: &[u8]) -> Result<Vec<Entry>, String> {
     let text = std::str::from_utf8(data).map_err(|e| e.to_string())?;
@@ -516,7 +525,7 @@ fn look(data: &[u8], model_id: &str, places: &Places, env: &Env) -> Result<Vec<u
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     let mut snapshot = lp_services::demo::demo_snapshot(
-        crate::share::now(),
+        crate::clock::now(),
         lp_services::demo::HISTORY_SAMPLES,
         zone,
     )

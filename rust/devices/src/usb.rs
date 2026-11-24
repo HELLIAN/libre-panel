@@ -39,6 +39,9 @@ fn busnum(_info: &nusb::DeviceInfo) -> Option<u8> {
 
 /// The TURZX panels on the bus, as the system lists them; none where it cannot list.
 pub fn list() -> Vec<Found> {
+    if let Some(found) = crate::testbus::usb(VENDOR_ID) {
+        return found;
+    }
     let Ok(devices) = nusb::list_devices().wait() else {
         return Vec::new();
     };
@@ -60,6 +63,9 @@ pub fn list() -> Vec<Found> {
 /// The ids (vendor, product) of every USB device on the bus, as the system lists them; none
 /// where it cannot list.
 pub fn all_ids() -> Vec<(u16, u16)> {
+    if let Some(ids) = crate::testbus::ids() {
+        return ids;
+    }
     match nusb::list_devices().wait() {
         Ok(devices) => devices.map(|d| (d.vendor_id(), d.product_id())).collect(),
         Err(_) => Vec::new(),

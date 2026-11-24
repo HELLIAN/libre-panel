@@ -14,6 +14,8 @@ from test_app_browser import (  # noqa: F401
     choose_theme,
     js,
     no_setup_card,
+    saved_theme,
+    server_language,
     settings_config,
     waits_for,
     widget,
@@ -133,6 +135,27 @@ def test_a_block_is_added_with_a_click_and_taken_back_from_the_message(app_url):
         expect(page.locator(".toast", has_text="Removed “Clock”")).to_have_count(0)
 
 
+def test_a_format_field_says_what_it_takes_and_links_every_format(app_url, isolated_home):  # noqa: F811
+    """A reading's format (issue 54: "is this Python's format syntax?"): the field says so,
+    what its parts mean in words, and leads to the list of every format; the list opens apart,
+    the editor stays."""
+    choose_theme(isolated_home, "slate")
+    with browser_page(app_url) as page:
+        js(page, "window.libre.doc.setSelection(['cpu-load'])")
+        hint = page.locator(".inspector .field-hint", has_text="Python's format syntax")
+        expect(hint).to_have_count(1)
+        expect(hint.locator("code")).to_have_text(
+            ["{value}", "{unit}", "{label}", "{value:.0f}", "{value:.1f}", "{value:bytes}/s"]
+        )
+        expect(hint).to_contain_text("{value:.0f} no decimal places")
+        link = hint.get_by_role("link", name="every format")
+        expect(link).to_have_attribute(
+            "href",
+            "https://github.com/syntensa/libre-panel/blob/main/docs/THEMES.md#format-strings",
+        )
+        expect(link).to_have_attribute("target", "_blank")
+
+
 def test_the_themes_settings_keep_to_the_theme_and_lead_to_look(app_url, isolated_home):  # noqa: F811
     """With nothing selected the inspector showed a 48 × 48 grid of numbers to a newcomer, and
     its fine-tuning had Look's grid background a second time. The colour world
@@ -164,7 +187,6 @@ def test_to_the_panel_says_when_the_panel_shows_what_is_edited(app_url, isolated
     Once it does, the button says "On the panel"; a change makes it ask again. A built-in theme
     says it is saved as one's own, and its copy is not a second "Lumen" in every list."""
     from libre_panel.config import load_config
-    from libre_panel.theme.model import load_theme
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url) as page:
@@ -182,7 +204,7 @@ def test_to_the_panel_says_when_the_panel_shows_what_is_edited(app_url, isolated
         dialog.locator("button[type='submit']").click()
         expect(apply).to_have_text("On the panel")
         assert load_config().theme == "lumen-mine"
-        assert load_theme(isolated_home / "themes" / "lumen-mine").name == "Lumen (mine)"
+        assert saved_theme(isolated_home / "themes" / "lumen-mine").name == "Lumen (mine)"
         expect(page.locator(".theme-name")).to_have_text("Lumen (mine)")
         # another theme, not on the panel: the button asks
         page.locator(".theme-name").click()
@@ -194,8 +216,6 @@ def test_to_the_panel_says_when_the_panel_shows_what_is_edited(app_url, isolated
 def test_unsaved_work_is_saved_with_one_click_before_another_theme_opens(app_url, isolated_home):  # noqa: F811
     """Opening another theme asked only to discard the work or to cancel; keeping it took a
     cancel, a save and the same way again. Save is the dialog's first choice now."""
-    from libre_panel.theme.model import load_theme
-
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url) as page:
         js(page, "window.libre.doc.edit('n', (theme) => { theme.description = 'mine now'; })")
@@ -208,7 +228,7 @@ def test_unsaved_work_is_saved_with_one_click_before_another_theme_opens(app_url
         dialog.get_by_role("button", name="Save").click()
         dialog.locator("button[type='submit']").click()  # built in: saved as one's own first
         page.wait_for_function("window.libre.store.get().doc.id === 'nimbus'")
-        assert load_theme(isolated_home / "themes" / "lumen-mine").description == "mine now"
+        assert saved_theme(isolated_home / "themes" / "lumen-mine").description == "mine now"
 
 
 def test_designs_pages_say_what_the_panel_shows_when_as_start_does(app_url, isolated_home):  # noqa: F811
@@ -444,7 +464,6 @@ def test_design_keeps_its_words_whole_in_a_small_window(app_url, isolated_home):
     itself). The way to the fine-tuning cut its list short with an ellipsis, in every language.
     The way to Look left its chevron alone on a second line where the words just filled the
     first. And the Russian "Изображения" stood out of its button in the rail."""
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url, size=(1100, 700)) as page:
@@ -457,7 +476,7 @@ def test_design_keeps_its_words_whole_in_a_small_window(app_url, isolated_home):
         expect(end).to_have_text("Look")
         assert end.locator("svg").count() == 1  # the chevron goes where the last word goes
         assert end.evaluate("(el) => getComputedStyle(el).whiteSpace") == "nowrap"
-    i18n.set_language("ru")
+    server_language(app_url, "ru")
     with browser_page(app_url, size=(1100, 700)) as page:
         beyond = js(
             page,

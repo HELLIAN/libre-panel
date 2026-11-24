@@ -1,0 +1,175 @@
+{
+"test_a_game_s_frames_are_counted_as_presentmon_py_counts_them": [
+[
+"485d7564d405"
+]
+],
+"test_a_linux_pcs_sensors_are_read_as_the_linux_source_reads_them": [
+[
+"a79efd92c48b"
+]
+],
+"test_a_players_icon_is_found_as_appicon_finds_it": [
+[
+"948c02cd3e46"
+]
+],
+"test_a_ups_is_read_as_nut_py_reads_it[de]": [
+[
+"f11428a75fe1"
+]
+],
+"test_a_ups_is_read_as_nut_py_reads_it[en]": [
+[
+"6e1ee8735879"
+]
+],
+"test_calendars_are_read_as_calendar_py_reads_them[America/New_York-en]": [
+[
+"f1baa628b309"
+]
+],
+"test_calendars_are_read_as_calendar_py_reads_them[Asia/Kolkata-fr]": [
+[
+"4b0e0f66b1ee"
+]
+],
+"test_calendars_are_read_as_calendar_py_reads_them[Australia/Lord_Howe-en]": [
+[
+"1002c2df3173"
+]
+],
+"test_calendars_are_read_as_calendar_py_reads_them[Europe/Berlin-de]": [
+[
+"6360a0020b48"
+]
+],
+"test_calendars_are_read_as_calendar_py_reads_them[None-en]": [
+[
+"ed7248bc5a0e"
+]
+],
+"test_dell_command_monitor_s_sensors_are_read_as_dell_py_reads_them": [
+[
+"df752b7f8e38"
+]
+],
+"test_hardware_names_are_tidied_as_hwnames_tidies_them": [
+[
+"8d44599191eb"
+]
+],
+"test_home_assistant_and_json_answers_are_read_as_python_reads_them": [
+[
+"7f9049a4789b"
+]
+],
+"test_loads_and_cores_are_worked_out_as_load_py_and_topology_py_do": [
+[
+"ed31a0557906"
+]
+],
+"test_mangohuds_logs_are_found_and_read_as_python_reads_them": [
+[
+"505ad16cdd65"
+]
+],
+"test_mqtt_messages_are_read_as_mqtt_py_reads_them": [
+[
+"320188b10094"
+]
+],
+"test_rtss_and_hwinfo_memories_are_read_as_python_reads_them": [
+[
+"5854c9b3b543"
+]
+],
+"test_sensors_become_readings_as_librehardwaremonitor_py_makes_them": [
+[
+"24b933d64b22"
+]
+],
+"test_the_computers_parts_are_named_as_hardware_names_them": [
+[
+"3526fd49b1ee"
+]
+],
+"test_the_hints_say_what_librehardwaremonitor_py_says": [
+[
+"298febcfb802"
+],
+[
+"e44cdcdc0bbf"
+]
+],
+"test_the_network_link_is_read_as_netlink_py_reads_it": [
+[
+"e42a82337c28"
+]
+],
+"test_the_sensor_service_s_answers_are_checked_as_protocol_py_checks_them": [
+[
+"93b9a4a216fc"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[America/St_Johns]": [
+[
+"93cedd73b039"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[Antarctica/Troll]": [
+[
+"4d687fa5fd83"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[Europe/Berlin]": [
+[
+"6eefc3b093ae"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[None]": [
+[
+"4171baf44b94"
+]
+],
+"test_the_sun_and_the_moon_are_computed_as_sky_computes_them[Pacific/Kiritimati]": [
+[
+"373f60f2f383"
+]
+],
+"test_the_volume_s_tools_are_read_as_audio_py_reads_them": [
+[
+"97e4808368c8"
+]
+],
+"test_the_weather_is_read_as_open_meteo_py_reads_it[de]": [
+[
+"7b338141b711"
+]
+],
+"test_the_weather_is_read_as_open_meteo_py_reads_it[en]": [
+[
+"ffb20e9a3da6"
+]
+],
+"test_the_weather_is_read_as_open_meteo_py_reads_it[fr]": [
+[
+"1bc7d10b3be2"
+]
+],
+"test_the_weather_is_read_as_open_meteo_py_reads_it[zh]": [
+[
+"41b9ef673bf4"
+]
+],
+"test_the_web_server_s_tree_is_read_as_librehardwaremonitor_py_reads_it": [
+[
+"c830d9b5ad61"
+]
+],
+"test_what_plays_is_read_as_the_media_source_reads_it": [
+[
+"85458851c17e"
+]
+]
+}

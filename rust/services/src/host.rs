@@ -603,8 +603,10 @@ impl PluginHost {
         self.with(|state| state.listeners.get(event).is_some_and(|l| !l.is_empty()))
     }
 
-    /// Tells the listeners, in the event thread (or here, with `wait`).
+    /// Tells the listeners, in the event thread (or here, with `wait`; and always in a clip,
+    /// whose frames are the same on every run: lp_render::clock).
     pub fn emit(&self, event: Event, wait: bool) {
+        let wait = wait || lp_render::clock::in_clip();
         let name = event.name();
         let heard = self.with(|state| {
             let heard = state.listeners.get(name).is_some_and(|l| !l.is_empty());

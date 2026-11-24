@@ -22,8 +22,6 @@ from libre_panel.fonts.fallback import (
     discover,
     truetype,
 )
-from libre_panel.render import facets
-from libre_panel.sensors.demo import demo_snapshot
 
 BASIC = ImageFont.Layout.BASIC
 LAYOUTS = [BASIC] + ([ImageFont.Layout.RAQM] if features.check("raqm") else [])
@@ -78,13 +76,6 @@ def runs(*parts, anchor="ls", xy=(40, 70), size=(480, 140)) -> Image.Image:
         ImageDraw.Draw(image).text((pen, xy[1]), text, font=font, fill=255, anchor=anchor)
         pen += font.getlength(text)
     return image
-
-
-def ink(image: Image.Image) -> Image.Image:
-    """What was drawn, cut out: where it lies does not matter."""
-    box = image.getbbox()
-    assert box is not None, "nothing was drawn"
-    return image.crop(box)
 
 
 def colours(image: Image.Image) -> int:
@@ -672,190 +663,9 @@ def test_the_face_is_made_by_pillows_function(monkeypatch):
 # -- in the renderer -----------------------------------------------------------------------------
 
 
-def theme(widgets, size=(300, 80), **parts):
-    display = {"width": size[0], "height": size[1]}
-    return {"format": "libre-panel-theme/1", "name": "t", "background": {"color": "#000000"},
-            "display": display, "widgets": widgets, **parts}  # fmt: skip
-
-
-def frame_of(widget: dict, size=(300, 80)) -> Image.Image:
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.theme.model import parse_theme
-
-    base = {"type": "text", "id": "t", "x": 10, "y": 10, "font_size": 30, "color": "#ffffff"}
-    renderer = Renderer(parse_theme(theme([{**base, **widget}], size)), preview=True)
-    try:
-        return renderer.render(demo_snapshot(1_700_000_000))[0].convert("L")
-    finally:
-        renderer.close()
-
-
-def test_the_fonts_of_the_renderer_fall_back(use, liberation, tmp_path):
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.theme.model import parse_theme
-
-    use(liberation)
-    folder = tmp_path / "theme"
-    folder.mkdir()
-    (folder / "own.ttf").write_bytes(Path(bundled("Barlow-Bold")).read_bytes())
-    renderer = Renderer(parse_theme(theme([]), folder), preview=True)
-    expected = {"builtin:Barlow-Medium": "Regular", "": "Regular", "own.ttf": "Bold"}
-    for ref, weight in expected.items():
-        font = renderer.font(ref, 20)
-        assert isinstance(font, FallbackFont)
-        assert font.getlength("Ж") == plain(f"LiberationSans-{weight}", 20).getlength("Ж")
-    renderer.close()
-
-
-def test_a_text_widget_shows_the_letters_its_font_lacks(use, liberation):
-    use(Fallbacks())  # nothing to fall back to: boxes, as before
-    boxes = frame_of({"text": "Привет"})
-    use(liberation)
-    letters = frame_of({"text": "Привет"})
-    assert letters.tobytes() != boxes.tobytes()
-    reference = Image.new("L", (300, 80), 0)  # the shapes Liberation draws, at the same size
-    ImageDraw.Draw(reference).text(
-        (10, 10), "Привет", font=plain("LiberationSans-Regular", 30), fill=255
-    )
-    assert ink(letters).size == ink(reference).size
-    spaced = frame_of({"text": "Привет", "letter_spacing": 3})  # letter by letter
-    assert spaced.getbbox() and spaced.getbbox()[2] > letters.getbbox()[2] + 10
-    assert frame_of({"text": "Привет", "tabular": True, "align": "right", "x": 290}).getbbox()
-
-
-def plain_truetype(font, size=10, index=0, **options):
-    return ImageFont.truetype(str(font), size, index, **options)
-
-
-@pytest.mark.parametrize("name", ["lumen", "studio", "libre-default", "almanac"])
-def test_a_theme_with_latin_text_is_drawn_exactly_as_with_pillows_own_faces(name, monkeypatch):
-    """The whole renderer, with its caches and its glyph by glyph layouts: the frame of a
-    built-in theme, with its time, numbers, names and cards, is the same picture whether the
-    faces are Pillow's own or fall back."""
-    from libre_panel.render import light, overlays
-    from libre_panel.render import renderer as renderer_module
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.theme.model import find_theme, load_theme
-
-    def frame(face_maker) -> bytes:
-        for module in (renderer_module, light, overlays):
-            monkeypatch.setattr(module, "truetype", face_maker)
-        light.face.cache_clear()
-        renderer = Renderer(load_theme(find_theme(name)), animate=True)
-        try:
-            return renderer.render(demo_snapshot(1_700_000_000), 5.0)[0].tobytes()
-        finally:
-            renderer.close()
-            light.face.cache_clear()
-
-    assert frame(truetype) == frame(plain_truetype)
-
-
-@pytest.mark.parametrize("style", ["card", "band"])
-def test_a_toast_with_latin_text_is_drawn_exactly_as_with_pillows_own_faces(style, monkeypatch):
-    from libre_panel.plugins import Toast
-    from libre_panel.render import light, overlays
-    from libre_panel.render.overlays import ToastLayer
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.theme.model import parse_theme
-
-    def shown(face_maker) -> bytes:
-        for module in (light, overlays):
-            monkeypatch.setattr(module, "truetype", face_maker)
-        light.face.cache_clear()
-        toast = {"style": style, "anchor": "bottom", "seconds": 3, "queue": False}
-        renderer = Renderer(parse_theme(theme([], (800, 320), toast=toast)), preview=True)
-        layer = ToastLayer(renderer)
-        try:
-            text = "Midnight Drive — The Night Owls, Zürich 21 °C"
-            layer.add(
-                [Toast(kind="info", level="info", text=text, payload={"label": "Now playing"})]
-            )
-            layer.advance(0.0)
-            return layer.apply(Image.new("RGB", (800, 320), (16, 24, 32)), 1.5).tobytes()
-        finally:
-            layer.close()
-            renderer.close()
-            light.face.cache_clear()
-
-    assert shown(truetype) == shown(plain_truetype)
-
-
-def test_the_band_and_the_card_toast_draw_the_letters_too(use, liberation):
-    from libre_panel.plugins import Toast
-    from libre_panel.render.overlays import ToastLayer
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.theme.model import parse_theme
-
-    def shown(style: str) -> bytes:
-        toast = {"style": style, "anchor": "bottom", "seconds": 3, "queue": False}
-        renderer = Renderer(parse_theme(theme([], (800, 320), toast=toast)), preview=True)
-        layer = ToastLayer(renderer)
-        try:
-            layer.add(
-                [Toast(kind="info", level="info", text="Привет, мир", payload={"label": "Играет"})]
-            )
-            layer.advance(0.0)
-            return layer.apply(Image.new("RGB", (800, 320), (16, 24, 32)), 1.5).tobytes()
-        finally:
-            layer.close()
-            renderer.close()
-
-    for style in ("card", "band"):
-        use(Fallbacks())
-        boxes = shown(style)
-        use(liberation)
-        assert shown(style) != boxes, style
-
-
-def test_facet_lettering_has_the_letters_of_the_fallback(use, liberation):
-    font = truetype(bundled("Barlow-Bold"), 48)
-    use(Fallbacks())
-    boxes = facets.glyph(font, "Ж", (255, 255, 255, 255))
-    use(liberation)
-    letter = facets.glyph(font, "Ж", (255, 255, 255, 255))
-    assert letter is not None and boxes is not None
-    assert letter[0].tobytes() != boxes[0].tobytes()
-    assert facets.glyph(font, "Ж", (255, 255, 255, 255))[0] is letter[0]  # (kept)
-
-
 # -- right to left and letters that join ---------------------------------------------------------
 
 
 def test_the_scripts_whose_letters_join_are_known():
     assert all(cursive(text) for text in ("مرحبا", "ܐܒܓ", "ߊߋ", "Hello مرحبا", "ﻣﺮﺣﺒﺎ", "٠"))
     assert not any(cursive(text) for text in ("", "Hello", "Привет", "שלום", "中文", "Äpfel – 5 €"))
-
-
-def test_letters_that_join_are_not_set_one_by_one(use, tmp_path):
-    """Letter spacing, equal-width digits and lettering with facets draw one letter at a time:
-    letters that join are drawn whole, as they would without them (with libraqm Pillow shapes
-    them; a Latin text is the control that the layout is otherwise different)."""
-    arabic = make_font(tmp_path / "arabic.ttf", "اب")
-    use(Fallbacks([(arabic, None, 0)]))
-    text = "ابا 2"
-    plain_frame = frame_of({"text": text})
-    for spaced in (
-        {"letter_spacing": 6},
-        {"tabular": True},
-        {"letter_spacing": 3, "tabular": True},
-    ):
-        assert frame_of({"text": text, **spaced}).tobytes() == plain_frame.tobytes()
-        assert (
-            frame_of({"text": "ABA 2", **spaced}).tobytes() != frame_of({"text": "ABA 2"}).tobytes()
-        )
-    assert plain_frame.getbbox()
-
-
-def test_letters_that_join_are_cut_to_the_width_of_the_whole(use, tmp_path):
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.theme.model import parse_theme
-
-    arabic = make_font(tmp_path / "arabic.ttf", "اب")  # 30 px wide each at 30
-    use(Fallbacks([(arabic, None, 0)]))
-    renderer = Renderer(parse_theme(theme([])), preview=True)
-    widget = {"font_size": 30, "max_width": 130, "fit": "ellipsis", "letter_spacing": 10}
-    cut, _size = renderer._fit(widget, "اب" * 3)
-    assert cut == "ابا…"  # three letters and the ellipsis: the spacing is not counted
-    assert renderer._fit(widget, "ABCDEFGH")[0] != "ABCDEFGH"  # (Latin, with it, is cut shorter)
-    renderer.close()

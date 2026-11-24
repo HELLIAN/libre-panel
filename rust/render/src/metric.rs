@@ -184,7 +184,7 @@ impl Renderer {
                 return;
             }
             self.motion.glide(&key, value, now, glide, lead);
-            if self.motion.passes(&key, now) {
+            if self.motion.turns(&key, now) {
                 return;
             }
         }

@@ -187,7 +187,7 @@ fn gpu_rank(device: &Device) -> (i32, f64) {
     (vendor, memory)
 }
 
-fn slug(text: &str) -> String {
+pub(crate) fn slug(text: &str) -> String {
     let mut out = String::new();
     let mut gap = false;
     for ch in lp_py::lower(text).chars() {

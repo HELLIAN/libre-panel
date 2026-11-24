@@ -48,7 +48,7 @@ pub const MOST_PIXELS: i64 = 1 << 28;
 pub const COVER_COLOR: &str = "@cover";
 /// A need on one of the theme's switches: "switch.frames".
 const SWITCH: &str = "switch.";
-/// The modules that show one card of several (theme/modules.py's SLOT_KINDS).
+/// The modules that show one card of several (libre_panel/cards.py's SLOT_KINDS).
 const SLOT_KINDS: [&str; 2] = ["cards", "netcard"];
 
 /// How a renderer draws: as the editor's preview or a picture (not the panel), with what moves
@@ -129,6 +129,10 @@ pub(crate) enum Drawn {
 
 /// The widgets a renderer draws, kept behind Rcs.
 pub type Widgets = Rc<Vec<Rc<Dict>>>;
+
+/// A plugin widget's piece as its host drew it, the widget, and the piece with the widget's
+/// effects.
+type PluginPiece = (Rc<Piece>, Rc<Dict>, Rc<Piece>);
 
 /// A box as getbbox gives it: left, top, right, bottom.
 pub type Bbox = (f64, f64, f64, f64);
@@ -254,13 +258,31 @@ pub struct Renderer {
     /// (renderer.native_fans and native_laid); how many went so
     pub native_fans: bool,
     pub native_fans_made: std::cell::Cell<u64>,
+    /// whether the engine draws a light field up and lays a frame's layers in front of it
+    /// (renderer.native_lights)
+    pub native_lights: bool,
+    /// where this panel stands among the panels standing together, the panel's own box and
+    /// the canvas of all of them (millimetres; the main loop sets it), for a light field under
+    /// the theme; None: the panel by itself
+    pub canvas: Option<(crate::field::Rect, crate::field::Rect)>,
+    /// the light under the frame being drawn (render/field.py), the one composed last, and
+    /// what the light was made of last
+    light: Option<Rc<crate::field::Light>>,
+    light_shown: Option<Rc<crate::field::Light>>,
+    light_key: Option<crate::field::LightKey>,
+    /// a light in a picture's colours (its field's colours): the pools it glides from, those
+    /// it glides to, and when it set out (the reading's time: every panel the same)
+    tint: Option<(Vec<crate::field::Pool>, Vec<crate::field::Pool>, f64)>,
     /// when the last reading came and the seconds to the next (Python's sample, the loop's)
     pub sample: (f64, f64),
     /// what draws the plugins' widget types and screen (the app's plugin host); None: a frame
     /// that holds one is not made here
     pub plugins: Option<Rc<dyn crate::plugin::Plugins>>,
+    /// the plugin widgets' pieces with their effects, by widget id (_cached's): kept while the
+    /// host gives the same piece for the same widget
+    plugin_pieces: HashMap<String, PluginPiece>,
     /// the frame the panel showed last and the toast on show with its age (the loop sets them,
-    /// for the plugins: Python's renderer.shown and renderer.toast)
+    /// for the plugins: their drawing's shown and toast, plugins/drawing.py)
     pub shown: Option<Rc<Image>>,
     pub toast: Option<(Rc<crate::overlays::Toast>, f64)>,
     /// the screen's last picture and its piece (_screen_last): the same picture is not
@@ -297,6 +319,9 @@ pub struct Renderer {
     /// when something wants a new frame, not before (Python's due: a turning globe's next
     /// step); None for nothing
     pub due: Option<f64>,
+    /// the light that moves over rings, graphs, music, downloads and the sun (shine.rs), on a
+    /// panel that moves; its kinds set by the app (config.toml's [shine], the theme's)
+    pub shine: Rc<RefCell<crate::shine::Shine>>,
     /// the pieces of turned widgets, turned, by id: as they were and how they were turned
     /// (_turned): a piece turned as it was the frame before is that frame's again
     turned: HashMap<String, (Rc<Piece>, Turn, Rc<Piece>)>,
@@ -448,8 +473,15 @@ impl Renderer {
             bar_bases: RefCell::new(HashMap::new()),
             native_fans: false,
             native_fans_made: std::cell::Cell::new(0),
+            native_lights: false,
+            canvas: None,
+            light: None,
+            light_shown: None,
+            light_key: None,
+            tint: None,
             sample: (0.0, 1.0),
             plugins: None,
+            plugin_pieces: HashMap::new(),
             shown: None,
             screen_last: None,
             grid: None,
@@ -467,6 +499,7 @@ impl Renderer {
             analog_halos: crate::analog::Faces::default(),
             earths: HashMap::new(),
             due: None,
+            shine: Rc::default(),
             turned: HashMap::new(),
             over: HashMap::new(),
             bars_laid: RefCell::new(Vec::new()),
@@ -484,7 +517,8 @@ impl Renderer {
         renderer.slots = renderer.make_slots()?;
         renderer.background = renderer.load_background()?;
         let ground = renderer.color(Some(&renderer.theme.background_color.clone()), 1.0)?;
-        renderer.opaque = ground.is_some_and(|c| c[3] == 255);
+        // (a light field under it is opaque)
+        renderer.opaque = ground.is_some_and(|c| c[3] == 255) || renderer.field().is_some();
         // (FacetText.glyph: the sky is the palette's accent, the ground the background)
         renderer.world =
             crate::facets::environment_for(&renderer.theme.palette, ground.unwrap_or([0; 4]));
@@ -572,6 +606,101 @@ impl Renderer {
             }
         }
         Ok(())
+    }
+
+    /// beneath: the frame composed last as it lies beneath its widgets, in RGB: the ground with
+    /// what covers all of the panel at the bottom of it (a screen, full-panel widgets, a look's
+    /// grid); and the boxes ([x0, y0, x1, y1]) of the widgets that lie on that, in their order,
+    /// each within the panel (what covers all of it, and a light, none). For a transition that
+    /// brings the widgets in on their ground (the cascade); None before a frame was composed
+    /// here.
+    pub fn beneath(&self) -> Result<Option<(Image, Vec<[i64; 4]>)>> {
+        let Some((_, pieces)) = &self.composed else {
+            return Ok(None);
+        };
+        let (w, h) = (self.theme.width.max(0), self.theme.height.max(0));
+        let size = (w as usize, h as usize);
+        let under = pieces
+            .iter()
+            .take_while(|(_, p)| compose::reach(p, size) == Some((0, 0, w, h)))
+            .count();
+        let canvas = if let Some(light) = &self.light {
+            // (what lies in front of the light, laid over it once)
+            let mut failed = Vec::new();
+            let canvas = crate::field::compose(light, &pieces[..under], (0, 0, w, h), &mut failed)?;
+            for (id, e) in failed {
+                self.warn(format!("widget {} failed: {e}", lp_py::repr(&id)));
+            }
+            canvas
+        } else {
+            let mut canvas = match &self.ground_kept {
+                Some(ground) => ground.clone(),
+                None => self.ground()?,
+            };
+            for (id, piece) in &pieces[..under] {
+                if let Err(Failed(e)) = compose::composite(&mut canvas, piece, (0, 0), self.opaque)
+                {
+                    self.warn(format!("widget {} failed: {e}", lp_py::repr(id)));
+                }
+            }
+            canvas
+        };
+        let mut boxes = Vec::new();
+        for (id, piece) in &pieces[under..] {
+            if id.contains('\0') {
+                continue; // (a light, or a widget's own part over it)
+            }
+            let [x, y, bw, bh] = piece.hit.unwrap_or_else(|| {
+                let (lw, lh) = piece.size();
+                [piece.x, piece.y, lw as i64, lh as i64]
+            });
+            let b = [
+                x.max(0),
+                y.max(0),
+                w.min(x.saturating_add(bw)),
+                h.min(y.saturating_add(bh)),
+            ];
+            if b[2] > b[0] && b[3] > b[1] && b != [0, 0, w, h] {
+                boxes.push(b);
+            }
+        }
+        Ok(Some((compose::as_rgb(&canvas)?, boxes)))
+    }
+
+    /// parting: the frame composed last as it was composed, for the morph (render/morph.py): the
+    /// ground, the pieces in their order and what each widget shows; None before a frame was
+    /// composed here (or where the engine composed it).
+    pub fn parting(&self) -> Result<Option<crate::morph::Parting>> {
+        let Some((frame, pieces)) = &self.composed else {
+            return Ok(None);
+        };
+        let ground = match &self.ground_kept {
+            Some(ground) if self.light.is_none() => ground.clone(),
+            _ => self.ground()?,
+        };
+        let mut shows = std::collections::HashMap::new();
+        for w in self.widgets.iter() {
+            if let Some(key) = crate::morph::shown_as(w) {
+                let id = w.get("id").map_or_else(|| "None".to_string(), Value::str);
+                shows.insert(id, key);
+            }
+        }
+        Ok(Some(crate::morph::Parting {
+            ground,
+            pieces: pieces.clone(),
+            shows,
+            opaque: self.opaque,
+            frame: Some(frame.clone()),
+        }))
+    }
+
+    /// The pieces of the frame composed last, in their order (none before the first, or where
+    /// the engine composes): what lies where, for a comparison with Python's, and whether a
+    /// piece is the one of a frame before.
+    pub fn composed_pieces(&self) -> impl Iterator<Item = (&str, &Rc<Piece>)> {
+        self.composed
+            .iter()
+            .flat_map(|(_, pieces)| pieces.iter().map(|(id, p)| (id.as_str(), p)))
     }
 
     /// What each slot shows in the frame drawn last, by its id: the card on show, the frame's
@@ -800,6 +929,141 @@ impl Renderer {
         turning.rotor
     }
 
+    /// _due_at: something wants a new frame at `at` (its next step), not before.
+    pub(crate) fn due_at(&mut self, at: f64) {
+        self.due = Some(match self.due {
+            Some(due) if due <= at => due,
+            _ => at,
+        });
+    }
+
+    /// _gauge_fraction: a ring's value now (gliding) and the share of its sweep that is lit,
+    /// in steps of the supersampled grid.
+    pub(crate) fn gauge_fraction(
+        &mut self,
+        w: &Dict,
+        snapshot: &Snapshot,
+    ) -> Result<(Option<f64>, f64)> {
+        let value = self.eased(w, number(&snapshot.value(widget::text(w, "sensor"))));
+        let (lo, hi) = (
+            widget::number(w, "min", 0.0),
+            widget::number(w, "max", 100.0),
+        );
+        let frac = bar::fraction(value, lo, hi, widget::text(w, "scale"));
+        // (the arc's length on the ring, as many steps of the supersampled grid)
+        let sweep =
+            (widget::number(w, "end_angle", 405.0) - widget::number(w, "start_angle", 135.0)).abs();
+        let size = widget::int(w, "w", 120).max(widget::int(w, "h", 120));
+        let length = sweep.to_radians() * size as f64 / 2.0;
+        Ok((value, gauge::steps_along(frac, length)?))
+    }
+
+    /// _bar_fraction: a bar's value now (gliding) and the share of its length that is full, in
+    /// steps of the supersampled grid.
+    pub(crate) fn bar_fraction(
+        &mut self,
+        w: &Dict,
+        snapshot: &Snapshot,
+    ) -> Result<(Option<f64>, f64)> {
+        let value = self.eased(w, number(&snapshot.value(widget::text(w, "sensor"))));
+        let (lo, hi) = (
+            widget::number(w, "min", 0.0),
+            widget::number(w, "max", 100.0),
+        );
+        let frac = bar::fraction(value, lo, hi, widget::text(w, "scale"));
+        let horizontal = matches!(widget::text(w, "direction"), "right" | "left");
+        let length = widget::int(w, if horizontal { "w" } else { "h" }, 0);
+        Ok((value, bar::steps(frac, length)?))
+    }
+
+    /// _shine_over: the moving light over widget `w` (shine.rs), of its piece as drawn, carried
+    /// with its card where it lies in a card slot: as the card was while it rolls up. None over
+    /// a turned widget; one that fails is left out, the frame drawn on.
+    fn shine_over(
+        &mut self,
+        w: &Dict,
+        (module, slot_id, how): (Option<&Dict>, Option<&str>, Option<OnShow>),
+        drawn: Option<&Rc<Piece>>,
+        snapshot: &Snapshot,
+        pieces: &mut Pieces,
+    ) {
+        let id = widget::text(w, "id").to_string();
+        if how == Some(OnShow::Frozen) {
+            let Some(slot) = slot_id.and_then(|sid| self.slots.get(sid)) else {
+                return;
+            };
+            let mut failed = None;
+            for key in slot.frozen_parts(&format!("{id}\0shine-")) {
+                match slot.leave(&key) {
+                    Ok(Some(top)) => pieces.push((key, top)),
+                    Ok(None) => {}
+                    Err(e) => failed = Some(e),
+                }
+            }
+            if let Some(e) = failed {
+                self.warn(format!(
+                    "widget {}: its light failed: {e}",
+                    lp_py::repr(&id)
+                ));
+            }
+            return;
+        }
+        let turned = |d: &Dict| {
+            let angle = match d.get("rotate") {
+                Some(v) if v.truthy() => widget::number(d, "rotate", 0.0),
+                _ => 0.0,
+            };
+            angle % 360.0 != 0.0
+        };
+        if turned(w) || module.is_some_and(turned) {
+            return;
+        }
+        let Some(piece) = drawn else {
+            return;
+        };
+        let shine = Rc::clone(&self.shine);
+        let at = self.at;
+        let lights = crate::prof::part("shine", || {
+            shine.borrow_mut().over(self, w, piece, snapshot, at)
+        });
+        let lights = match lights {
+            Ok(lights) => lights,
+            Err(e) => {
+                self.warn(format!(
+                    "widget {}: its light failed: {e}",
+                    lp_py::repr(&id)
+                ));
+                return;
+            }
+        };
+        for (name, top) in lights {
+            let key = format!("{id}\0shine-{name}");
+            match slot_id.and_then(|sid| self.slots.get_mut(sid)) {
+                Some(slot) => {
+                    let Some(top) = top else {
+                        slot.forget(&key);
+                        continue;
+                    };
+                    match slot.live(&key, top) {
+                        Ok(Some(top)) => pieces.push((key, top)),
+                        Ok(None) => {}
+                        Err(e) => {
+                            self.warn(format!(
+                                "widget {}: its light failed: {e}",
+                                lp_py::repr(&id)
+                            ));
+                        }
+                    }
+                }
+                None => {
+                    if let Some(top) = top {
+                        pieces.push((key, top));
+                    }
+                }
+            }
+        }
+    }
+
     /// _lead: the time between two planned frames (0: not known).
     pub(crate) fn lead(&self) -> f64 {
         if self.fps > 0.0 {
@@ -923,6 +1187,13 @@ impl Renderer {
     pub fn set_backdrop(&mut self, backdrop: Option<Image>) -> Result<()> {
         self.backdrop = backdrop;
         self.background = self.load_background()?;
+        // (no light field under a picture laid across the panels)
+        let colour = self.color(Some(&self.theme.background_color.clone()), 1.0)?;
+        self.opaque = colour.is_some_and(|c| c[3] == 255) || self.field().is_some();
+        self.mode = if self.opaque { Mode::RGB } else { Mode::RGBA };
+        self.light = None;
+        self.light_shown = None;
+        self.light_key = None;
         self.ground_kept = None;
         self.ground_shared = None;
         self.composed = None;
@@ -952,9 +1223,125 @@ impl Renderer {
         Ok(Image::from_bytes(Mode::RGB, w, h, rgb)?.convert(Mode::RGBA)?)
     }
 
+    /// The theme's light field (render/field.py), where it has one and no picture the person
+    /// laid across the panels lies under it.
+    fn field(&self) -> Option<&lp_theme::model::LightField> {
+        self.theme
+            .background_field
+            .as_ref()
+            .filter(|_| self.backdrop.is_none())
+    }
+
+    /// _light_at: the light under the frame at `now` (render/field.py): where this panel
+    /// stands among those standing together, at the field's step of `now` on the wall clock as
+    /// it drifts (its `moves` holds; else as it stands at 0), under the load of that step (its
+    /// `load` holds; else at rest), from the theme's background colour up. The light before
+    /// while it is the same. It drifts, and eases from one load to the next, only where the
+    /// frames stream to the panel (`continuous`): a panel that is sent a picture of all of it at
+    /// each change would be sent all of it at each step; there it stands, and takes the load of
+    /// each reading as it comes.
+    fn light_at(&mut self, snapshot: &Snapshot, now: f64) -> Result<Rc<crate::field::Light>> {
+        let spec = self.field().expect("a light field").clone();
+        let step = crate::field::stepped(now);
+        let streams = self.continuous;
+        let moves = streams && (spec.moves.is_empty() || self.holds(&spec.moves, snapshot));
+        let mut load = 0.0;
+        if spec.load.is_empty() || self.holds(&spec.load, snapshot) {
+            let (at, every) = self.sample;
+            let eased = if streams { (step - at) / every } else { 1.0 };
+            load = crate::field::load_of(&snapshot.history, eased);
+        }
+        let size = (
+            self.theme.width.max(0) as usize,
+            self.theme.height.max(0) as usize,
+        );
+        let (own, whole) = self.canvas.unwrap_or_else(|| {
+            let alone = crate::field::alone(&self.theme.model, size);
+            (alone, alone)
+        });
+        let base = self
+            .color(Some(&self.theme.background_color), 1.0)?
+            .unwrap_or([0, 0, 0, 255]);
+        let (pools, gliding) = self.pools_at(&spec, snapshot, step, streams);
+        let key = crate::field::LightKey {
+            size,
+            own,
+            whole,
+            t: if moves { step } else { 0.0 },
+            load,
+            pools,
+            base: [0, 1, 2].map(|c| base[c].clamp(0, 255) as u8),
+        };
+        if moves || (streams && load != 0.0) || gliding {
+            self.due_at(step + 1.0 / crate::field::RATE); // (the next step: a new light)
+        }
+        let before = self.light.clone();
+        if let Some(before) = &before {
+            if self.light_key.as_ref() == Some(&key) {
+                return Ok(Rc::clone(before));
+            }
+        }
+        self.light_key = Some(key.clone());
+        let light = crate::field::Light::new(key);
+        match before {
+            // (no level of it other: the frame, and the engine's, as they are)
+            Some(before) if before.same(&light) => Ok(before),
+            _ => Ok(Rc::new(light)),
+        }
+    }
+
+    /// _pools_at: the light's pools at the field's `step`: its look's, or, while the picture its
+    /// `colours` names is there, in that picture's colours (cover.rs's colours); and whether
+    /// they are still gliding. From one set of colours to the next they glide over
+    /// [`crate::field::TINT_S`] from the reading that brought them, where the frames stream;
+    /// elsewhere they are taken at once.
+    fn pools_at(
+        &mut self,
+        spec: &lp_theme::model::LightField,
+        snapshot: &Snapshot,
+        step: f64,
+        streams: bool,
+    ) -> (Vec<crate::field::Pool>, bool) {
+        use crate::field::{gliding, tinted, TINT_S};
+        let pools = crate::field::look(&spec.look).unwrap_or(&crate::field::LUMEN);
+        let Some(name) = spec.colours.strip_prefix('@').filter(|n| !n.is_empty()) else {
+            return (pools.to_vec(), false);
+        };
+        let found = snapshot
+            .images
+            .get(name)
+            .map(crate::cover::colours)
+            .unwrap_or_default();
+        let target = if found.is_empty() {
+            pools.to_vec()
+        } else {
+            tinted(pools, &found)
+        };
+        let at = self.sample.0;
+        let glide = match self.tint.take() {
+            None => (target.clone(), target, at), // (the first: as it is, no glide)
+            Some((before, after, set)) if after != target => {
+                // (from where the glide before stood when this reading came)
+                let here = gliding(&before, &after, (at - set) / TINT_S);
+                (here, target, at)
+            }
+            Some(glide) => glide,
+        };
+        let (before, after, set) = self.tint.insert(glide);
+        if !streams {
+            return (after.clone(), false);
+        }
+        let k = (step - *set) / TINT_S;
+        (gliding(before, after, k), k < 1.0)
+    }
+
     /// The ground of the whole frame: the background colour, with the picture laid over it
-    /// (the picture itself where it is opaque), in the frames' mode.
+    /// (the picture itself where it is opaque), in the frames' mode; under a light field, the
+    /// light of the frame being drawn.
     fn ground(&self) -> Result<Image> {
+        if let Some(light) = &self.light {
+            return Ok(light.picture().clone());
+        }
         let (w, h) = (
             self.theme.width.max(0) as usize,
             self.theme.height.max(0) as usize,
@@ -1376,24 +1763,13 @@ impl Renderer {
                     return Drawn::Unported("numbers a float does not hold as they are".into());
                 }
                 let snapshot = self.snapshot.clone().unwrap_or_default();
-                // (in a moving frame on its glide to the reading)
-                let value = self.eased(&w, number(&snapshot.value(widget::text(&w, "sensor"))));
                 let Some(rules) = metric::rules_of(&w) else {
                     return Drawn::Unported("colour rules above NaN".into());
                 };
-                let (lo, hi) = (
-                    widget::number(&w, "min", 0.0),
-                    widget::number(&w, "max", 100.0),
-                );
-                let frac = bar::fraction(value, lo, hi, widget::text(&w, "scale"));
-                // (the arc's length on the ring, as many steps of the supersampled grid)
-                let sweep = (widget::number(&w, "end_angle", 405.0)
-                    - widget::number(&w, "start_angle", 135.0))
-                .abs();
-                let size = widget::int(&w, "w", 120).max(widget::int(&w, "h", 120));
-                let length = sweep.to_radians() * size as f64 / 2.0;
-                let (frac, paint) = match gauge::steps_along(frac, length)
-                    .and_then(|frac| Ok((frac, self.rule_paint(&w, value, &rules)?)))
+                // (in a moving frame on its glide to the reading)
+                let (frac, paint) = match self
+                    .gauge_fraction(&w, &snapshot)
+                    .and_then(|(value, frac)| Ok((frac, self.rule_paint(&w, value, &rules)?)))
                 {
                     Ok(made) => made,
                     Err(e) => return Drawn::Failed(e),
@@ -1735,7 +2111,7 @@ impl Renderer {
                             .warnings
                             .into_iter()
                             .for_each(|said| self.warn(said));
-                        drawing.made.map_or(Drawn::Nothing, Drawn::Piece)
+                        self.plugin_piece(w, drawing.made)
                     }
                     Err(e) => Drawn::Failed(Failed(e)),
                 };
@@ -1749,6 +2125,31 @@ impl Renderer {
                 Err(e) => Drawn::Failed(e),
             },
             Ok(piece) => Drawn::Piece(piece),
+            Err(e) => Drawn::Failed(e),
+        }
+    }
+
+    /// A plugin widget's piece with the widget's effects (its opacity, shadow and glow, as
+    /// _cached gives a widget's piece): made again only where the host drew anew or the widget
+    /// changed, so that an unchanged piece stays the same piece (not composed again).
+    fn plugin_piece(&mut self, w: &Rc<Dict>, made: Option<Rc<Piece>>) -> Drawn {
+        let id = widget::text(w, "id").to_string();
+        let Some(raw) = made else {
+            self.plugin_pieces.remove(&id);
+            return Drawn::Nothing;
+        };
+        if let Some((was, widget_was, done)) = self.plugin_pieces.get(&id) {
+            if Rc::ptr_eq(was, &raw) && (Rc::ptr_eq(widget_was, w) || **widget_was == **w) {
+                return Drawn::Piece(Rc::clone(done));
+            }
+        }
+        match self.effects(w, (*raw).clone()) {
+            Ok(done) => {
+                let done = Rc::new(done);
+                self.plugin_pieces
+                    .insert(id, (raw, Rc::clone(w), Rc::clone(&done)));
+                Drawn::Piece(done)
+            }
             Err(e) => Drawn::Failed(e),
         }
     }
@@ -1866,6 +2267,14 @@ impl Renderer {
         None
     }
 
+    /// A clip's (`libre-panel clip`): the cards of the first card slot take turns of `seconds`
+    /// from `at` (the loop's clock) on, where it says so, and change the `way` it names.
+    pub fn clip_slot(&mut self, seconds: Option<f64>, at: f64, way: Option<&str>) {
+        if let Some(slot) = self.slots.values_mut().next() {
+            slot.clip(seconds, at, way);
+        }
+    }
+
     /// render: the frame (RGB) of `snapshot` at `now` (the clock the slots' rules keep their
     /// times by: render's own `now`, not the snapshot's moment), and the widgets' boxes;
     /// Unported where it holds what is not drawn here yet.
@@ -1934,6 +2343,13 @@ impl Renderer {
         // (Motion.begin: the springs of values long gone go, the others forget old pieces)
         self.moving = false;
         self.due = None;
+        if self.field().is_some() {
+            self.light = Some(self.light_at(&snapshot, now)?);
+        }
+        let shining = self.options.animate && !self.options.preview && self.shine.borrow().any();
+        if shining {
+            self.shine.borrow_mut().begin();
+        }
         self.video_drawn = None;
         let (glide, lead) = (self.glide_s(None), self.lead());
         let readings = |key: &str| {
@@ -2025,6 +2441,8 @@ impl Renderer {
                     continue;
                 }
             };
+            // (as drawn, before its card's change has it: its lights' source)
+            let as_drawn = (how != Some(OnShow::Frozen)).then(|| Rc::clone(&piece));
             // (the card on show: kept for when it goes, cut or moved as a change or a slide
             // has it)
             let piece = match (how, &slot_id) {
@@ -2091,6 +2509,10 @@ impl Renderer {
                     pieces.push((format!("{id}\0{name}"), top));
                 }
             }
+            if shining {
+                let parts = (module.as_deref(), slot_id.as_deref(), how);
+                self.shine_over(w, parts, as_drawn.as_ref(), &snapshot, &mut pieces);
+            }
             if let Some(module) = &module {
                 let mid = widget::text(module, "id").to_string();
                 if let Some(b) = self.module_boxes.get(&mid) {
@@ -2102,6 +2524,9 @@ impl Renderer {
                 continue;
             }
             boxes.insert(id, piece.bounds());
+        }
+        if shining {
+            self.shine.borrow_mut().end();
         }
         let ending = crate::prof::Span::new("render end");
         // the slots' frames, over their cards
@@ -2146,6 +2571,7 @@ impl Renderer {
     fn layered(&self, pieces: &Pieces) -> bool {
         self.mode == Mode::RGB
             && self.opaque
+            && (self.light.is_none() || self.native_lights)
             && pieces
                 .iter()
                 .all(|(_, piece)| crate::scene::layerable(piece))
@@ -2160,8 +2586,10 @@ impl Renderer {
         self.behind = [None, None];
         self.underlays.clear();
         let colour = self.color(Some(&self.theme.background_color), 1.0)?;
-        let ground = match (&self.background, colour) {
-            (None, Some(c)) => crate::scene::Ground::Colour([
+        let ground = match (&self.light, &self.background, colour) {
+            // (the engine draws it up from its points)
+            (Some(light), ..) => crate::scene::Ground::Light(Rc::clone(light)),
+            (None, None, Some(c)) => crate::scene::Ground::Colour([
                 c[0].clamp(0, 255) as u8,
                 c[1].clamp(0, 255) as u8,
                 c[2].clamp(0, 255) as u8,
@@ -2332,6 +2760,11 @@ impl Renderer {
     /// changed are laid again (from the ground up, each piece over them in its order): the
     /// same pixels as laying all of them, at a fraction of the cost.
     fn compose(&mut self, pieces: Pieces, shared: bool) -> Result<Rc<Image>> {
+        if let Some(light) = self.light.clone() {
+            let mut failed = Vec::new();
+            let (canvas, changed) = self.compose_lit(&light, &pieces, &mut failed)?;
+            return self.composed_frame(canvas, pieces, changed, failed, shared);
+        }
         if self.ground_kept.is_none() {
             self.ground_kept = Some(self.ground()?);
         }
@@ -2378,6 +2811,63 @@ impl Renderer {
                 canvas
             }
         };
+        self.underlays.keep_current(&pieces);
+        self.composed_frame(canvas, pieces, changed, failed, shared)
+    }
+
+    /// _compose over a light field (render/field.py): what lies in front of the light laid over
+    /// it once, all of the frame where the light is new or the pieces are other, else in the
+    /// boxes of those that changed (the pieces within each box laid in front of its light);
+    /// the canvas and where it changed.
+    fn compose_lit(
+        &mut self,
+        light: &Rc<crate::field::Light>,
+        pieces: &Pieces,
+        failed: &mut Vec<(String, String)>,
+    ) -> Result<(Image, Option<Vec<compose::Area>>)> {
+        let size = light.size;
+        if !self
+            .light_shown
+            .as_ref()
+            .is_some_and(|shown| Rc::ptr_eq(shown, light))
+        {
+            // (a new light: all of the frame is new)
+            self.composed = None;
+            self.light_shown = Some(Rc::clone(light));
+        }
+        let areas = match self.composed.take() {
+            Some((canvas, before)) if canvas.size() == size && canvas.mode() == Mode::RGB => {
+                crate::prof::part("compose changed", || {
+                    compose::changed(&before, pieces, size)
+                })
+                .map(|areas| (canvas, areas))
+            }
+            _ => None,
+        };
+        let Some((mut canvas, (areas, _))) = areas else {
+            let whole = (0, 0, size.0 as i64, size.1 as i64);
+            return Ok((crate::field::compose(light, pieces, whole, failed)?, None));
+        };
+        for &area in &areas {
+            let inside = pieces.iter().filter(|(_, piece)| {
+                compose::reach(piece, size).is_some_and(|r| compose::meet(r, area))
+            });
+            let part = crate::field::compose(light, inside, area, failed)?;
+            canvas.paste(&part, area.0, area.1, None)?;
+        }
+        Ok((canvas, Some(areas)))
+    }
+
+    /// The frame of `canvas` composed of `pieces` (`changed`: where it changed since the frame
+    /// before), with the widgets that failed in it told.
+    fn composed_frame(
+        &mut self,
+        canvas: Image,
+        pieces: Pieces,
+        changed: Option<Vec<compose::Area>>,
+        failed: Vec<(String, String)>,
+        shared: bool,
+    ) -> Result<Rc<Image>> {
         for (id, e) in failed {
             self.warn(format!("widget {} failed: {e}", lp_py::repr(&id)));
         }
@@ -2432,5 +2922,69 @@ impl Renderer {
         }
         self.behind[k] = Some(Vec::new());
         Ok(Rc::clone(self.frames[k].as_ref().expect("laid above")))
+    }
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use super::*;
+
+    fn renderer() -> Renderer {
+        let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/fonts");
+        let env = Env { fonts_dir };
+        let data = lp_py::json::loads(
+            r#"{"format": "libre-panel-theme/1", "name": "t",
+                "display": {"width": 64, "height": 32}, "widgets": []}"#,
+        )
+        .expect("a theme's data");
+        let theme = lp_theme::parse_theme(&data, None, &env).expect("a theme");
+        Renderer::new(theme, &env, Options::default()).expect("a renderer")
+    }
+
+    fn widget(text: &str) -> Rc<Dict> {
+        match lp_py::json::loads(text).expect("a widget") {
+            Value::Dict(dict) => Rc::new(dict),
+            other => panic!("no widget: {other:?}"),
+        }
+    }
+
+    fn drawn(made: Drawn) -> Rc<Piece> {
+        match made {
+            Drawn::Piece(piece) => piece,
+            _ => panic!("no piece"),
+        }
+    }
+
+    #[test]
+    fn a_plugin_s_piece_gets_its_widget_s_effects_once_while_it_stays_the_same() {
+        let mut r = renderer();
+        let raw = Rc::new(Piece::new(
+            Image::new(Mode::RGBA, 8, 6, &[255, 255, 255, 255]),
+            10,
+            4,
+        ));
+        let glowing = widget(r#"{"type": "t.box", "id": "p", "x": 10, "y": 4, "glow": 0.5}"#);
+        let first = drawn(r.plugin_piece(&glowing, Some(Rc::clone(&raw))));
+        // the glow round it, as _effects gives it (glow_radius 10: 20 pixels on every side)
+        assert_eq!(first.size(), (48, 46));
+        assert_eq!((first.x, first.y), (-10, -16));
+        assert_eq!(first.hit, Some([10, 4, 8, 6]));
+        // the same piece for the same widget (another Rc of it, the same fields): the same piece
+        // with its effects, not made again
+        let same = widget(r#"{"type": "t.box", "id": "p", "x": 10, "y": 4, "glow": 0.5}"#);
+        let again = drawn(r.plugin_piece(&same, Some(Rc::clone(&raw))));
+        assert!(Rc::ptr_eq(&first, &again));
+        // a new piece, or the widget changed: made again
+        let redrawn = Rc::new((*raw).clone());
+        assert!(!Rc::ptr_eq(
+            &first,
+            &drawn(r.plugin_piece(&glowing, Some(redrawn)))
+        ));
+        let plain = widget(r#"{"type": "t.box", "id": "p", "x": 10, "y": 4}"#);
+        let flat = drawn(r.plugin_piece(&plain, Some(Rc::clone(&raw))));
+        assert_eq!((flat.size(), flat.x, flat.y), ((8, 6), 10, 4));
+        // nothing drawn: nothing kept
+        assert!(matches!(r.plugin_piece(&plain, None), Drawn::Nothing));
+        assert!(r.plugin_pieces.is_empty());
     }
 }

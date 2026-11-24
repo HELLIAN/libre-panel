@@ -1,10 +1,16 @@
+import json
 import tomllib
+from pathlib import Path
 
 import pytest
 
 from libre_panel.config import (
+    DEFAULT_CARDS,
     DEFAULT_CONFIG_TOML,
+    Config,
     ConfigError,
+    DeviceConfig,
+    card_choice,
     config_dir,
     default_providers,
     hardware_name,
@@ -155,7 +161,7 @@ def test_every_setting_of_the_video_is_read_from_the_file():
 def test_the_standby_clip_is_asked_for_until_it_is_answered(isolated_home):
     """``clip_asked`` is a note of the app's (it asked, and was answered either way), not a
     setting of the panel: it is false until the app writes it, and the template only mentions it."""
-    from libre_panel.config import DeviceConfig, edit_config
+    from libre_panel.config import edit_config
 
     assert load_config().device.video.clip_asked is False
     assert parse_config(tomllib.loads(DEFAULT_CONFIG_TOML)).device.video.clip_asked is False
@@ -219,6 +225,19 @@ def test_write_default_config_roundtrip(isolated_home):
     assert parse_config({"device": {"rotate": 180}}).device.rotate == 180
     with pytest.raises(FileExistsError):
         write_default_config()
+
+
+def test_set_active_theme_keeps_comments(isolated_home):
+    from libre_panel.config import set_active_theme
+
+    path = write_default_config()
+    set_active_theme("lumen")
+    text = path.read_text()
+    assert 'theme = "lumen"' in text and "# Libre Panel configuration" in text
+    assert load_config(path).theme == "lumen"
+    assert [line for line in text.splitlines() if line.startswith("theme =")] == [
+        'theme = "lumen"'
+    ]  # one, under the note that explains it
 
 
 def test_set_config_value_keeps_comments_and_other_keys(isolated_home):
@@ -610,32 +629,336 @@ def test_a_portable_copy_keeps_its_settings_beside_the_program(tmp_path, monkeyp
     usual = tmp_path / "usual"
     monkeypatch.setattr(config_module, "usual_dir", lambda: usual)
     assert config_module.config_dir() == program.parent / "data"
-    assert config_module.take_over_into_portable() is None  # nothing to take over
-    (usual / "themes" / "mine").mkdir(parents=True)
-    (usual / "config.toml").write_text('theme = "mine"\n', encoding="utf-8")
-    (usual / "logs").mkdir()
-    (usual / "logs" / "libre-panel.log").write_text("old", encoding="utf-8")
-    assert config_module.take_over_into_portable() == usual
-    data = program.parent / "data"
-    assert (data / "config.toml").read_text(encoding="utf-8") == 'theme = "mine"\n'
-    assert (data / "themes" / "mine").is_dir() and not (data / "logs").exists()
-    (usual / "config.toml").write_text('theme = "other"\n', encoding="utf-8")
-    assert config_module.take_over_into_portable() is None  # once: then each keeps its own
-    assert "mine" in (data / "config.toml").read_text(encoding="utf-8")
     monkeypatch.setenv("LIBRE_PANEL_HOME", str(tmp_path / "own"))
     assert config_module.config_dir() == tmp_path / "own"  # still first
 
 
-def test_a_cache_this_version_no_longer_keeps_goes_at_the_start():
-    """The weather symbols' lit bodies were ten megabytes in cache/light3d until 0.8.0rc1:
-    the start takes them away, and leaves the other caches."""
-    from libre_panel.config import config_dir, forget_gone_caches
+# -- calm motion (device.motion) ------------------------------------------------------------------
 
-    gone = config_dir() / "cache" / "light3d"
-    gone.mkdir(parents=True)
-    (gone / "weather.npz").write_bytes(b"x" * 64)
-    kept = config_dir() / "cache" / "fonts"
-    kept.mkdir(parents=True)
-    forget_gone_caches()
-    assert not gone.exists() and kept.is_dir()
-    forget_gone_caches()  # (nothing there: nothing to do)
+
+def test_the_setting_is_read_and_checked():
+    assert parse_config({}).device.motion == "auto"
+    assert parse_config({"device": {"motion": "calm"}}).device.motion == "calm"
+    with pytest.raises(ConfigError, match="device.motion"):
+        parse_config({"device": {"motion": "wild"}})
+
+
+# -- cards that let the background through (card_opacity) -----------------------------------------
+
+
+def test_config_card_opacity():
+    assert Config().card_opacity == 0  # each theme's own
+    assert parse_config({"card_opacity": 70}).card_opacity == 70
+    assert parse_config({"card_opacity": 0}).card_opacity == 0
+    for wrong in (20, 101, -5):
+        with pytest.raises(ConfigError, match="card_opacity"):
+            parse_config({"card_opacity": wrong})
+
+
+# -- dark when Libre Panel quits (device.dark_on_quit) --------------------------------------------
+
+
+def test_the_setting_is_read_and_off_unless_set():
+    assert parse_config({}).device.dark_on_quit is False
+    assert parse_config({"device": {"dark_on_quit": True}}).device.dark_on_quit is True
+
+
+# -- dark while the computer sleeps (device.dark_on_sleep) ----------------------------------------
+
+
+def test_the_setting_is_read_and_on_unless_turned_off():
+    assert parse_config({}).device.dark_on_sleep is True
+    assert parse_config({"device": {"dark_on_sleep": False}}).device.dark_on_sleep is False
+
+
+# -- night (device.night) -------------------------------------------------------------------------
+
+
+def test_the_settings_are_read_and_checked():
+    device = parse_config({}).device
+    assert (device.night, device.night_from, device.night_to, device.night_brightness) == (
+        False, "22:00", "07:00", 10)  # fmt: skip
+    found = {"night": True, "night_from": "7:05", "night_to": " 6:30 "}
+    device = parse_config({"device": found}).device
+    assert (device.night_from, device.night_to) == ("07:05", "06:30")
+    for bad in ({"night_from": "25:00"}, {"night_to": "late"}, {"night_brightness": 101},
+                {"night_brightness": True}, {"night": "yes"}):  # fmt: skip
+        with pytest.raises(ConfigError):
+            parse_config({"device": bad})
+
+
+def test_the_night_may_go_from_sunset_to_sunrise():
+    """(When those are, the app's night.rs works out at the weather's place.)"""
+    device = parse_config({"device": {"night": True, "night_from": " Sunset ",
+                                      "night_to": "sunrise"}}).device  # fmt: skip
+    assert (device.night_from, device.night_to) == ("sunset", "sunrise")
+
+
+# -- the earth as a card --------------------------------------------------------------------------
+
+
+def test_the_earth_is_a_card_of_the_slots():
+    assert card_choice(["earth", "forecast for 5m"], "cards")[0] == "earth"
+
+
+# -- frames a second (fps) ------------------------------------------------------------------------
+
+
+def test_fps_setting():
+    assert parse_config({"fps": 25}).fps == 25
+    with pytest.raises(ConfigError):
+        parse_config({"fps": 0})
+
+
+# -- the names fans go by (hardware.fans) ---------------------------------------------------------
+
+
+def config(toml=""):
+    return parse_config(tomllib.loads(toml))
+
+
+@pytest.mark.parametrize(
+    "toml",
+    [
+        '[[hardware.fans]]\nname = "Intake"\n',  # no sensor
+        '[[hardware.fans]]\nsensor = 1\nname = "Intake"\n',
+        '[hardware]\nfans = "Intake"\n',
+        '[[hardware.fans]]\nsensor = "fan.lpc.fan_1"\nname = "' + "x" * 101 + '"\n',
+    ],
+)
+def test_a_fans_name_in_config_toml_is_checked(toml):
+    with pytest.raises(ConfigError):
+        config(toml)
+
+
+# -- the looks of fans (hardware.fan_look) --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "toml",
+    [
+        '[hardware]\nfan_look = "noctua-a15"\n',
+        '[hardware]\nfan_paint = "brown"\n',
+        '[[hardware.fans]]\nsensor = "fan.lpc.fan_1"\nlook = "rgb"\n',
+    ],
+)
+def test_a_look_that_does_not_exist_is_refused_in_config_toml(toml):
+    with pytest.raises(ConfigError):
+        config(toml)
+
+
+def test_a_fan_without_a_name_may_have_a_look_of_its_own_in_config_toml():
+    hw = config(
+        '[[hardware.fans]]\nsensor = "fan.lpc.fan_1"\nlook = "libre"\npaint = "own"\n'
+    ).hardware
+    assert hw.fans == {} and hw.fan_looks == {"fan.lpc.fan_1": "libre"}
+    assert hw.fan_paints == {"fan.lpc.fan_1": "own"}
+
+
+# -- graphs that step (graph_steps) ---------------------------------------------------------------
+
+
+def test_the_options_are_read_graphs_scroll_and_panels_rest_unless_asked_otherwise():
+    assert Config().graph_steps is False and Config().device.video.rest is True
+    assert parse_config({"graph_steps": True}).graph_steps is True
+    assert parse_config({"video": {"rest": False}}).device.video.rest is False
+    with pytest.raises(Exception, match="graph_steps"):
+        parse_config({"graph_steps": "yes"})
+
+
+# -- transitions (transitions) --------------------------------------------------------------------
+
+
+def test_transitions_in_config_toml():
+    config = parse_config({"transition": "wipe"})  # the old place still names the default
+    assert config.transition == config.transitions.default == "wipe"
+    config = parse_config({"transitions": {"default": "iris", "speed": "slow", "media": "glitch",
+                                           "game": "", "random": ["fade", "tiles"]}})  # fmt: skip
+    assert config.transition == "iris" and config.transitions.speed == "slow"
+    assert config.transitions.occasions["media"] == "glitch"
+    assert config.transitions.occasions["game"] == ""  # its own: the game's entrance
+    assert config.transitions.occasions["sequence"] == "light"  # as it comes
+    assert config.transitions.random == ["fade", "tiles"]
+    for bad in ({"speed": "warp"}, {"lightning": "fade"}, {"random": ["random"]},
+                {"random": []}, {"media": "Not A Name"}):  # fmt: skip
+        with pytest.raises(ConfigError):
+            parse_config({"transitions": bad})
+
+
+# -- an old switch of light mode ------------------------------------------------------------------
+
+
+def test_an_old_config_s_switch_of_light_mode_is_let_be_and_goes_with_the_next_write(tmp_path):
+    """0.8 to 0.8.1rc1 had a switch (``light_mode = false``): such a config.toml loads as any
+    other, the switch said nothing, and the next write of the file takes it out (the comments
+    stay); a layout that cannot lose it still takes the write asked for."""
+    from libre_panel.config import edit_config
+
+    assert not hasattr(parse_config({"light_mode": False}), "light_mode")
+    path = tmp_path / "config.toml"
+    path.write_text('# mine\ntheme = "lumen"\nlight_mode = false\n\n[device]\nbrightness = 50\n',
+                    encoding="utf-8")  # fmt: skip
+    edit_config(("value", "device.brightness", 70), path=path)
+    assert path.read_text(encoding="utf-8") == (
+        '# mine\ntheme = "lumen"\n\n[device]\nbrightness = 70\n'
+    )
+    path.write_text('theme = "lumen"\nlight_mode = false\n', encoding="utf-8")
+    edit_config(("value", "theme", "arena"), path=path)
+    assert path.read_text(encoding="utf-8") == 'theme = "arena"\n'
+    path.write_text('theme = "lumen"\n', encoding="utf-8")  # (nothing to take out)
+    edit_config(("value", "theme", "arena"), path=path)
+    assert path.read_text(encoding="utf-8") == 'theme = "arena"\n'
+
+
+# -- a panel on end (device.orientation) ----------------------------------------------------------
+
+
+def test_config_toml_says_how_the_panel_is_mounted():
+    assert parse_config({}).device.orientation == ""  # as each theme is made
+    for way in ("landscape", "portrait"):
+        assert parse_config({"device": {"orientation": way}}).device.orientation == way
+    with pytest.raises(ConfigError, match="device.orientation"):
+        parse_config({"device": {"orientation": "upright"}})
+
+
+# -- scenes ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "scenes_table, said",
+    [
+        ([{"name": "", "themes": ["lumen"]}], "scenes[0].name"),
+        ([{"name": "A", "themes": []}], "scenes[0].themes"),
+        ([{"name": "A", "themes": ["lumen"]}, {"name": "A", "themes": ["slate"]}], "twice"),
+        ([{"name": "A", "themes": ["a", "b", "c", "d", "e"]}], "scenes[0].themes"),
+    ],
+)
+def test_a_wrong_scene_is_said(scenes_table, said):
+    with pytest.raises(ConfigError, match=said.replace("[", r"\[").replace("]", r"\]")):
+        parse_config({"scenes": scenes_table})
+
+
+# -- a panel's port (device.port) -----------------------------------------------------------------
+
+
+def test_device_port_in_the_config():
+    assert parse_config({}).device.port == ""
+    assert parse_config({"device": {"port": " COM5 "}}).device.port == "COM5"
+
+
+# -- a theme's switches (switches) ----------------------------------------------------------------
+
+
+def test_config_keeps_the_choice_for_every_theme_and_by_theme():
+    config = parse_config({"switches": {"frames": False, "lumen": {"frames": True}}})
+    assert config.switches == {"*": {"frames": False}, "lumen": {"frames": True}}
+    assert parse_config({}).switches == {}
+    for bad in ({"lumen": {"frames": "no"}}, {"frames": "off"}, {"Lumen!": {"frames": True}}):
+        with pytest.raises(ConfigError):
+            parse_config({"switches": bad})
+
+
+# -- stills (device.still) ------------------------------------------------------------------------
+
+
+def test_the_stills_setting_is_read_and_checked():
+    assert parse_config({}).device.still == "auto"
+    assert parse_config({"device": {"still": "jpeg"}}).device.still == "jpeg"
+    panels = parse_config({"panels": [{"model": "turing-5.2-usb", "still": "png"}]}).panels
+    assert panels[0].device.still == "png"
+    with pytest.raises(ConfigError, match="device.still"):
+        parse_config({"device": {"still": "webp"}})
+
+
+# -- video mode (video) ---------------------------------------------------------------------------
+
+
+def test_video_config():
+    video = parse_config({"video": {"mode": "on", "fps": 30, "device_fps": 40}}).device.video
+    assert (video.mode, video.fps, video.device_fps, video.crf) == ("on", 30, 40, 20)
+    assert parse_config({}).device.video.mode == "auto"
+    assert parse_config({"video": {"mode": "off"}}).device.video.mode == "off"
+    assert parse_config({"video": {"maxrate": "auto"}}).device.video.maxrate == "auto"
+    for bad in ({"mode": "always"}, {"fps": 50, "device_fps": 40}, {"maxrate": "fast"}):
+        with pytest.raises(ConfigError):
+            parse_config({"video": bad})
+    assert (video.profile, video.encoder) == ("auto", "auto")
+    tried = parse_config({"video": {"profile": "high", "encoder": "h264_amf"}}).device.video
+    assert (tried.profile, tried.encoder) == ("high", "h264_amf")
+    for bad in ({"profile": "main10"}, {"encoder": "h264_videotoolbox"}):
+        with pytest.raises(ConfigError):
+            parse_config({"video": bad})
+
+
+# One Counters is shared by every display and session of a run (the main loop hands it out).
+
+
+def test_the_pixels_setting():
+    assert parse_config({}).device.video.pixels == "auto"
+    assert parse_config({"video": {"pixels": "rgb"}}).device.video.pixels == "rgb"
+    assert parse_config({"video": {"pixels": "card"}}).device.video.pixels == "card"
+    for bad in ("rgba", 1, "", "processor"):
+        with pytest.raises(ConfigError, match="video.pixels"):
+            parse_config({"video": {"pixels": bad}})
+    two = parse_config({"video": {"pixels": "rgb"}, "panels": [{"device": {"model": "auto"}}]})
+    assert two.for_panel(0).device.video.pixels == "rgb"  # a panel beside: the first one's
+
+
+# -- the cards of the card slots (cards) ----------------------------------------------------------
+
+
+def configured(tmp_path, text):
+    path = tmp_path / "config.toml"
+    path.write_text(text, encoding="utf-8")
+    return load_config(path)
+
+
+def test_the_cards_are_a_list_of_cards_each_once(tmp_path):
+    assert configured(tmp_path, "").cards == list(DEFAULT_CARDS) == [
+        "playback", "ai", "forecast", "date",
+    ]  # fmt: skip
+    assert configured(tmp_path, 'cards = ["ai", "download"]\n').cards == ["ai", "download"]
+    for bad in ('cards = ["nothing"]', 'cards = ["ai", "ai"]', "cards = []", 'cards = "ai"'):
+        with pytest.raises(ConfigError, match="cards"):
+            configured(tmp_path, bad + "\n")
+
+
+def test_a_card_may_have_the_time_of_its_turn_and_the_slot_its_order_and_transition(tmp_path):
+    config = configured(
+        tmp_path,
+        'cards = ["forecast for 5m", "date  for   90s", "analog"]\n'
+        'card_order = "turns"\ncard_transition = "fade"\n',
+    )
+    assert config.cards == ["forecast for 5m", "date for 90s", "analog"]
+    assert (config.card_order, config.card_transition) == ("turns", "fade")
+    plain = configured(tmp_path, "")
+    assert (plain.card_order, plain.card_transition) == ("first", "light")
+    for bad, says in (
+        ('cards = ["forecast for 2s"]', "a time such as 5m"),
+        ('cards = ["forecast for soon"]', "a time such as 5m"),
+        ('cards = ["forecast if weather.temperature"]', "is no card"),
+        ('cards = ["forecast # the weather"]', "is no card"),
+        ('cards = ["forecast for 5m", "forecast for 1m"]', "named twice"),
+        ('card_order = "shuffle"', "card_order: must be one of first, turns"),
+        ('card_transition = "spin"', "card_transition: must be one of light, fade"),
+        ("card_order = 1", "card_order"),
+    ):
+        with pytest.raises(ConfigError, match=says):
+            configured(tmp_path, bad + "\n")
+
+
+# -- the themes' files ----------------------------------------------------------------------------
+
+
+def test_builtin_theme_files_are_plain_json():
+    root = Path(__file__).resolve().parents[1] / "data" / "themes"
+    for file in root.glob("*/theme.json"):
+        json.loads(file.read_text(encoding="utf-8"))
+
+
+def test_the_accent_setting_is_read_and_checked():
+    assert parse_config({}).accent == "" and parse_config({"accent": "system"}).accent == "system"
+    assert parse_config({"accent": " #E0457B "}).accent == "#E0457B"
+    for bad in ("red", "#12345", 3):
+        with pytest.raises(ConfigError):
+            parse_config({"accent": bad})

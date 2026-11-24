@@ -15,8 +15,12 @@ from test_app_browser import (  # noqa: E402, F401
     app_url,
     browser_page,
     choose_theme,
+    header_overflow,
+    hidden_text,
     js,
     no_setup_card,
+    saved_theme,
+    server_language,
     settings_config,
     waits_for,
 )
@@ -225,10 +229,9 @@ def test_help_has_the_links_and_the_keys(app_url, isolated_home):  # noqa: F811
 
 
 def test_help_speaks_german(app_url, isolated_home):  # noqa: F811
-    from libre_panel import i18n
 
     routes = a_bar(isolated_home)
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
         page.keyboard.press("?")
         dialog = page.locator(".dialog")
@@ -264,6 +267,80 @@ def test_the_header_is_the_same_in_every_view(app_url, isolated_home, language):
             assert order == ["tabs", "search", "settings"], view
         titles = page.locator(".tabs .tab").evaluate_all("tabs => tabs.map((t) => t.title)")
         assert len(titles) == 6 and all(len(title) > 12 for title in titles)
+
+
+def tabs_where(page):
+    """Where the brand and each tab are in the header, and how wide (in pixels), once the
+    header has measured what of it gives way (in the frame after a change: header.js)."""
+    js(page, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))")
+    return js(
+        page,
+        """[...document.querySelectorAll('.topbar .brand, .topbar .tab')].map((el) => {
+             const box = el.getBoundingClientRect();
+             return [Math.round(box.left * 10) / 10, Math.round(box.width * 10) / 10];
+           })""",
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_the_tabs_stay_where_they_are_in_every_view(app_url, isolated_home, language):  # noqa: F811
+    """Design and Look showed the theme's name between the brand and the tabs, so the tabs
+    moved to the right on the way there and back to the left on the way out (issue 56). The name
+    is at the right, beside what acts on the theme; the brand and the tabs are where they are in
+    every view, at the window's default size, at 1280 px and at its smallest, with the theme
+    unsaved too, and what gives way does so to the right of them first."""
+    from libre_panel import i18n
+
+    routes = a_bar(isolated_home)
+    i18n.set_language(language)
+    with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
+        views = page.locator(".tabs .tab").evaluate_all(
+            "tabs => tabs.map((tab) => tab.getAttribute('href').slice(2))"
+        )
+        assert views[:3] == ["home", "design", "look"]
+        for width, height in ((1440, 900), (1280, 800), (1100, 700)):
+            page.set_viewport_size({"width": width, "height": height})
+            where = {}
+            for view in (*views, "settings/panel", "home"):
+                page.goto(f"{app_url}#/{view}")
+                page.wait_for_selector(".view > *")
+                where[view] = tabs_where(page)
+            assert len({str(found) for found in where.values()}) == 1, (width, where)
+            # the name at the right: after the search field, beside what acts on the theme
+            page.goto(f"{app_url}#/design")
+            page.wait_for_selector(".panel-canvas .preview")
+            order = js(
+                page,
+                """[...document.querySelectorAll('.topbar > *')].map((el) => el.className)""",
+            )
+            assert order.index("theme-title") > order.index("topbar-flex"), order
+            # unsaved, the mark beside the name; the tabs stay where they are
+            js(page, "window.libre.doc.edit('n', (theme) => { theme.description = 'changed'; })")
+            expect(page.locator(".unsaved")).to_be_visible()
+            assert tabs_where(page) == where["home"], width
+            page.goto(f"{app_url}#/look")
+            page.wait_for_selector(".look-side")
+            assert tabs_where(page) == where["home"], width
+            assert hidden_text(page.locator(".theme-name span")) < 0.1, width
+            assert header_overflow(page) == [], width
+
+
+def test_a_long_theme_name_does_not_fold_the_header(app_url, isolated_home):  # noqa: F811
+    """A name longer than the most the header gives it is cut however wide the window is: the
+    header took that for want of room and folded everything it could (the search field to its
+    glass, the chip, the way to the settings, the brand to its icon) even at 1920 px."""
+    routes = a_bar(isolated_home)
+    with browser_page(app_url, "design", routes=routes, allow=PICTURE, size=(1920, 1000)) as page:
+        bar = page.locator(".topbar")
+        expect(bar).to_have_attribute("data-fit", "")
+        name = "A theme whose name is longer than the header gives any name"
+        js(page, f"window.libre.doc.edit('n', (theme) => {{ theme.name = {name!r}; }})")
+        expect(page.locator(".theme-name span")).to_have_text(name)
+        tabs_where(page)  # (measured again)
+        assert hidden_text(page.locator(".theme-name span")) > 50  # (cut: whole in its title)
+        assert page.locator(".theme-name").get_attribute("title") == f"{name} · lumen (built-in)"
+        assert set(bar.get_attribute("data-fit").split()) <= {"keys"}
+        assert header_overflow(page) == []
 
 
 def test_the_settings_button_leads_back_to_where_you_were(app_url, isolated_home):  # noqa: F811
@@ -351,8 +428,6 @@ def test_a_failure_says_what_happened_in_plain_words(app_url, isolated_home):  #
 def test_unsaved_changes_can_be_saved_before_another_theme_opens(app_url, isolated_home):  # noqa: F811
     """Opening another theme with unsaved changes offers to save them first (it was Discard or
     Cancel, and the work had to be saved by hand and the other theme opened again)."""
-    from libre_panel.theme.model import load_theme
-
     routes = a_bar(isolated_home)
     with browser_page(app_url, "design", routes=routes, allow=PICTURE) as page:
         js(page, "window.libre.doc.edit('t', (theme) => { theme.name = 'My Lumen'; })")
@@ -366,7 +441,7 @@ def test_unsaved_changes_can_be_saved_before_another_theme_opens(app_url, isolat
         dialog.locator("input").fill("my-lumen")  # Lumen is built in: it asks for a name
         dialog.locator("button[type='submit']").click()
         page.wait_for_function("window.libre.store.get().doc.id === 'encore'")
-        assert load_theme(isolated_home / "themes" / "my-lumen").name == "My Lumen"
+        assert saved_theme(isolated_home / "themes" / "my-lumen").name == "My Lumen"
         assert js(page, "window.libre.store.get().dirty") is False
         # Cancel in the name's dialog: nothing is saved, and the theme stays open
         js(page, "window.libre.doc.edit('t', (theme) => { theme.name = 'My Encore'; })")
@@ -413,8 +488,8 @@ def test_the_shared_parts_have_names_rings_and_escape(app_url, isolated_home):  
             focused = page.evaluate(FOCUSED)
             assert focused["ring"], focused
             seen.append(focused["text"].split("\n")[0])
-        assert seen[:9] == ["Libre Panel: start", "Lumen", "Start", "Design", "Look", "Status",
-                            "Player", "Screen", "Search or command …"]  # fmt: skip
+        assert seen[:9] == ["Libre Panel: start", "Start", "Design", "Look", "Status", "Player",
+                            "Screen", "Search or command …", "Lumen"]  # fmt: skip
         assert seen[-1] == "Settings"
         for opener, floating, root in (
             (".panel-chip", ".popover", ".popover"),
@@ -445,10 +520,9 @@ def test_a_low_window_keeps_the_popover_below_and_the_help_from_its_top(app_url,
     """At 1280 × 800 the panel chip's popover, taller than the room below the chip, covered the
     chip and the header; it stays below and scrolls. The help, taller than the window there,
     opened scrolled to its end (its Close button has the focus): it shows its top."""
-    from libre_panel import i18n
 
     routes = a_bar(isolated_home)
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "design", routes=routes, allow=PICTURE, size=(1280, 800)) as page:
         chip = page.locator(".panel-chip")
         chip.click()

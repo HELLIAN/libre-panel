@@ -3,13 +3,19 @@ its pace?
 
     python tools/soak.py [--hours 24] [--every 60] [--out soak] [--video] [-- command ...]
 
-The app starts as autostart starts it (``libre-panel tray --background``, or the command after
-``--``) in a settings folder of its own: two virtual 9.2" bars (Lumen and Lumen Companion) on the
-demo readings, with notices, the timer (focus and break of a minute each, so a notice comes every
-minute) and the power service running. Every ``--every`` seconds it notes the app's memory
-(RSS), its threads, its open files (handles on Windows), its processor time and the panels'
-frame rate and frame times, into ``<out>/soak.jsonl`` as it goes; at the end (or on Ctrl+C) it
-writes ``<out>/soak.md`` and ``<out>/soak.png`` and quits the app.
+``--video``: the first panel a TURZX 9.2" in video mode, simulated (tests/fake_panel.py behind
+tests/panel_socket.py, as tests/frame_load.py has it): its frames go through Libre Panel's
+engine (LIBRE_PANEL_ENGINE, else the one the program finds) to the simulated panel, which checks
+every packet; needs pyusb.
+
+The app starts as autostart starts it (``libre-panel tray --background``: the program
+LIBRE_PANEL_PROGRAM names, else the one built in rust/, else the one on the PATH; or the command
+after ``--``) in a settings folder of its own: two virtual 9.2" bars (Lumen and Lumen Companion)
+on the demo readings, with notices, the timer (focus and break of a minute each, so a notice
+comes every minute) and the power service running. Every ``--every`` seconds it notes the app's
+memory (RSS), its threads, its open files (handles on Windows), its processor time and the
+panels' frame rate and frame times, into ``<out>/soak.jsonl`` as it goes; at the end (or on
+Ctrl+C) it writes ``<out>/soak.md`` and ``<out>/soak.png`` and quits the app.
 
 It passes when, after the first ten minutes, the memory grows by less than ``--max-growth`` MB
 an hour, the threads and the open files do not climb, every panel kept showing and no frame took
@@ -21,27 +27,47 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
 
 import psutil
 
+ROOT = Path(__file__).resolve().parent.parent
 WARM_UP_S = 600.0  # what the first ten minutes do (caches, fonts, the first pictures) is no leak
 MODEL = "turing-9.2-usb"
 
 
+def program() -> str:
+    """Libre Panel: LIBRE_PANEL_PROGRAM, the program built in rust/, or the one on the PATH."""
+    built = (
+        ROOT
+        / "rust"
+        / "target"
+        / "release"
+        / ("libre-panel.exe" if os.name == "nt" else "libre-panel")
+    )
+    found = os.environ.get("LIBRE_PANEL_PROGRAM") or (
+        str(built) if built.is_file() else shutil.which("libre-panel")
+    )
+    if not found:
+        raise SystemExit("needs the libre-panel program: LIBRE_PANEL_PROGRAM, rust/ built, or PATH")
+    return found
+
+
 def config(home: Path, video: bool) -> str:
-    """The soak's config.toml."""
+    """The soak's config.toml (``video``: the first panel the simulated TURZX in video mode)."""
     return (
         'theme = "lumen"\nfps = 10\n\n'
-        f'[device]\ndriver = "virtual"\nmodel = "{MODEL}"\n\n'
-        f'[video]\nmode = "{"on" if video else "off"}"\nlocal_clip = "soak.h264"\n\n'
+        f'[device]\ndriver = "{"turzx" if video else "virtual"}"\nmodel = "{MODEL}"\n\n'
+        f'[video]\nmode = "{"on" if video else "off"}"\nlocal_clip = "usr/data/soak.h264"\n\n'
         '[sensors]\nproviders = ["demo"]\n\n'
         '[services]\nenabled = ["notices", "timer", "power"]\n\n'
         "[services.timer]\nminutes = 1\nbreak_minutes = 1\n\n"
@@ -50,12 +76,53 @@ def config(home: Path, video: bool) -> str:
     )
 
 
+class Simulated:
+    """A TURZX 9.2" for the engine (tests/fake_panel.py behind a socket: tests/panel_socket.py),
+    plugged in while it runs: the environment that sends the app's engine there."""
+
+    def __init__(self, home: Path) -> None:
+        sys.path.insert(0, str(ROOT / "tests"))
+        from fake_panel import FakePanel
+        from panel_socket import PanelSocket
+
+        self.panel = FakePanel()  # (a 9.2": 0x0092, 480 x 1920)
+        self.socket = PanelSocket(self.panel)
+        self.present = home / "panel-present"
+        self.alive = True
+        self.blocks = 0  # the blocks of video it took (121), all the while
+        threading.Thread(target=self._watch, daemon=True).start()
+        self.env = {"LP_ENGINE_LINK": self.socket.link, "LP_ENGINE_PRESENT": str(self.present)}
+
+    def _watch(self) -> None:  # (the app sees the panel plugged in through this file)
+        tidied = time.monotonic()
+        while self.alive:
+            if self.panel.present:
+                self.present.touch()
+            elif self.present.exists():
+                self.present.unlink()
+            if time.monotonic() - tidied > 5:  # (what it keeps of each packet, counted and let
+                tidied = time.monotonic()  # go: a day of them would fill this process)
+                for name in ("blocks", "commands", "frames", "jpegs", "fps_log", "brightness"):
+                    kept = getattr(self.panel, name)
+                    n = len(kept)
+                    if name == "blocks":
+                        self.blocks += n
+                    del kept[:n]  # (the first n only: those it adds meanwhile stay)
+            time.sleep(0.02)
+
+    def close(self) -> list[str]:
+        """Unplugged; what the panel's checks found wrong."""
+        self.alive = False
+        self.socket.close()
+        return list(self.socket.errors)
+
+
 class App:
     """The app under test, talked to as the smoke test does (packaging/smoke_test.py)."""
 
-    def __init__(self, home: Path, command: list[str]) -> None:
+    def __init__(self, home: Path, command: list[str], more: dict[str, str]) -> None:
         self.home = home
-        env = dict(os.environ, LIBRE_PANEL_HOME=str(home))
+        env = dict(os.environ, LIBRE_PANEL_HOME=str(home), **more)
         self.proc = subprocess.Popen(command, env=env)
         self.url = self._wait(lambda: json.loads((home / "instance.json").read_text())["editor"])
         self.token = self._wait(lambda: json.loads(
@@ -102,9 +169,17 @@ def sample(app: App, process: psutil.Process, began: float) -> dict:
         threads = process.num_threads()
         files = process.num_handles() if sys.platform == "win32" else process.num_fds()
         cpu = sum(process.cpu_times()[:2])
-    children = len(process.children(recursive=True))
+    children = 0
+    children_mb = 0.0  # (the engine's memory: what the video mode does is done there)
+    for child in process.children(recursive=True):
+        try:
+            children_mb += child.memory_info().rss / 2**20
+            children += 1
+        except psutil.Error:  # (it ended meanwhile)
+            pass
     row = {"t": round(time.monotonic() - began, 1), "rss_mb": round(memory, 1), "threads": threads,
-           "files": files, "cpu_s": round(cpu, 1), "children": children}  # fmt: skip
+           "files": files, "cpu_s": round(cpu, 1), "children": children,
+           "children_mb": round(children_mb, 1)}  # fmt: skip
     try:
         panel = app.get("api/app")["panel"]
     except (OSError, ValueError, KeyError) as exc:
@@ -148,6 +223,9 @@ def summary(rows: list[dict], max_growth: float) -> tuple[dict, bool]:
         ),  # fmt: skip
         "files_growth_h": round(slope([(r["t"], r["files"]) for r in late]), 2),
         "children_max": max((r["children"] for r in rows), default=0),
+        "children_growth_mb_h": round(
+            slope([(r["t"], r["children_mb"]) for r in late if r.get("children_mb")]), 2
+        ),
         "fps_mean": round(statistics.fmean(fps), 2) if fps else None,
         "fps_target": target,
         "render_ms_median": round(statistics.median(times), 2) if times else None,
@@ -159,6 +237,7 @@ def summary(rows: list[dict], max_growth: float) -> tuple[dict, bool]:
     budget = 1000 / max(1, target)
     passed = (
         found["rss_growth_mb_h"] < max_growth
+        and found["children_growth_mb_h"] < max_growth
         and found["threads"][1] - found["threads"][0] <= 4
         and found["files_growth_h"] < 5
         and not_showing == 0
@@ -173,13 +252,11 @@ def chart(rows: list[dict], path: Path) -> None:
     (the mean of each sample's seconds and their longest frame)."""
     from PIL import Image, ImageDraw, ImageFont
 
-    from libre_panel.fonts import builtin_font_path
-
     w, h, pad = 1200, 360, 56
     surface, ink, muted, grid = (255, 255, 255), (28, 33, 40), (100, 108, 120), (226, 230, 235)
     blue, orange = (44, 110, 210), (214, 110, 32)
-    font = ImageFont.truetype(str(builtin_font_path("builtin:Barlow-Regular")), 15)
-    title = ImageFont.truetype(str(builtin_font_path("builtin:Barlow-SemiBold")), 19)
+    font = ImageFont.truetype(str(ROOT / "data" / "fonts" / "Barlow-Regular.ttf"), 15)
+    title = ImageFont.truetype(str(ROOT / "data" / "fonts" / "Barlow-SemiBold.ttf"), 19)
     picture = Image.new("RGB", (w, 2 * h), surface)
     draw = ImageDraw.Draw(picture)
     hours = max(rows[-1]["t"] / 3600, 1e-6) if rows else 1.0
@@ -225,7 +302,7 @@ def report(rows: list[dict], found: dict, passed: bool, path: Path, args) -> Non
     lines = [
         f"# Soak test: {found['hours']} h, two panels",
         "",
-        f"**{'Passed' if passed else 'Failed'}** · {sys.platform} · Python {sys.version.split()[0]}"
+        f"**{'Passed' if passed else 'Failed'}** · {sys.platform} · {args.app_version}"
         f" · video mode {'on' if args.video else 'off'} · a sample every {args.every:.0f} s",
         "",
         "| | |",
@@ -237,6 +314,8 @@ def report(rows: list[dict], found: dict, passed: bool, path: Path, args) -> Non
         f"| Threads after the warm-up | {found['threads'][0]} to {found['threads'][1]} |",
         f"| Open files (handles) | {found['files_growth_h']:+} an hour |",
         f"| Programs started by the app, at most at once | {found['children_max']} |",
+        f"| Their memory's growth after the warm-up | {found['children_growth_mb_h']} MB an hour "
+        f"(at most {args.max_growth}) |",
         f"| Frames per second | {found['fps_mean']} of {found['fps_target']} |",
         f"| Frame time: median, 99th percentile, longest | {found['render_ms_median']} ms, "
         f"{found['render_ms_p99']} ms, {found['peak_ms_max']} ms |",
@@ -254,12 +333,17 @@ def main() -> int:
     parser.add_argument("--hours", type=float, default=24.0)
     parser.add_argument("--every", type=float, default=60.0, help="seconds between two samples")
     parser.add_argument("--out", type=Path, default=Path("soak"))
-    parser.add_argument("--video", action="store_true", help="the video mode on (needs ffmpeg)")
+    video = "the first panel a simulated TURZX in video mode (needs pyusb)"
+    parser.add_argument("--video", action="store_true", help=video)
     parser.add_argument("--max-growth", type=float, default=5.0, help="MB an hour at most")
     parser.add_argument("command", nargs="*", help="how to start the app (after --)")
     args = parser.parse_args()
-    command = args.command or [sys.executable, "-m", "libre_panel", "tray", "--background",
-                               "--port", "0"]  # fmt: skip
+    command = args.command or [program(), "tray", "--background", "--port", "0"]
+    try:  # (what the program says it is: "libre-panel 0.9.5")
+        said = subprocess.run([command[0], "version"], capture_output=True, text=True, timeout=30)
+        args.app_version = said.stdout.strip() or command[0]
+    except (OSError, subprocess.TimeoutExpired):
+        args.app_version = command[0]
     args.out.mkdir(parents=True, exist_ok=True)
     log = args.out / "soak.jsonl"
     rows: list[dict] = []
@@ -268,7 +352,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as folder:
         home = Path(folder)
         (home / "config.toml").write_text(config(home, args.video), encoding="utf-8")
-        app = App(home, command)
+        simulated = Simulated(home) if args.video else None
+        app = App(home, command, simulated.env if simulated else {})
         process = psutil.Process(app.proc.pid)
         try:
             app.call("api/plugins/control/shortcut", {"action": "timer"})  # the timer runs
@@ -290,6 +375,18 @@ def main() -> int:
             rows.append({"t": round(time.monotonic() - began, 1), "rss_mb": 0, "threads": 0,
                          "files": 0, "cpu_s": 0, "children": 0,
                          "error": f"the app ended by itself ({ended})"})  # fmt: skip
+        if simulated is not None:
+            wrong = simulated.close()
+            pictures = simulated.blocks + len(simulated.panel.blocks)
+            print(f"the simulated panel took {pictures} blocks of video")
+            for why in wrong[:20]:
+                rows.append({"t": rows[-1]["t"] if rows else 0, "rss_mb": 0, "threads": 0,
+                             "files": 0, "cpu_s": 0, "children": 0,
+                             "error": f"the simulated panel: {why}"})  # fmt: skip
+            if not pictures:
+                rows.append({"t": rows[-1]["t"] if rows else 0, "rss_mb": 0, "threads": 0,
+                             "files": 0, "cpu_s": 0, "children": 0,
+                             "error": "no video reached the simulated panel"})  # fmt: skip
         found, passed = summary(rows, args.max_growth)
         chart(rows, args.out / "soak.png")
         report(rows, found, passed, args.out / "soak.md", args)

@@ -473,6 +473,27 @@ pub fn with_look(theme: &Theme, source: Option<&Theme>) -> Theme {
     }
     out.palette = palette;
     out.background_color = source.background_color.clone();
+    // its light field too, with the switches that govern it where `theme` has none of them
+    out.background_field = source.background_field.clone();
+    if let Some(field) = &source.background_field {
+        let named: Vec<String> = [&field.moves, &field.load]
+            .iter()
+            .filter_map(|need| {
+                let body = lp_py::strip(need.trim_start_matches('!'));
+                body.strip_prefix("switch.").map(str::to_string)
+            })
+            .collect();
+        let mut switches = Dict::default();
+        for (name, spec) in &source.switches {
+            if named.contains(name) {
+                switches.insert(name.clone(), spec.clone());
+            }
+        }
+        for (name, spec) in &theme.switches {
+            switches.insert(name.clone(), spec.clone());
+        }
+        out.switches = switches;
+    }
     out.font = if reachable(&source.font) {
         source.font.clone()
     } else {

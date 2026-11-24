@@ -1,6 +1,7 @@
-//! Card slots (theme/modules.py): the cards a slot holds, one a line of its `items` (a name,
-//! then `for <time>` for a turn of its own, then `if <conditions>` for a rule of its own), and
-//! the person's cards in each slot that leaves them to the person.
+//! Card slots (libre_panel/cards.py, theme/modules.py's slot_cards and with_cards): the cards a
+//! slot holds, one a line of its `items` (a name, then `for <time>` for a turn of its own, then
+//! `if <conditions>` for a rule of its own), and the person's cards in each slot that leaves them
+//! to the person.
 
 use lp_py::{Dict, Value};
 

@@ -1,26 +1,33 @@
-"""tools/compare_reference.py: a theme against a picture of the same screen."""
+"""tools/compare_reference.py: a theme, as Libre Panel draws it, against a picture of the
+same screen."""
 
 import importlib.util
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageFont
-
-from libre_panel.theme.model import THEME_FORMAT
+from PIL import Image
 
 TOOL = Path(__file__).resolve().parent.parent / "tools" / "compare_reference.py"
-TRUETYPE = ImageFont.truetype
+THEME_FORMAT = "libre-panel-theme/1"
 
 
 @pytest.fixture(scope="module")
 def tool():
-    spec = importlib.util.spec_from_file_location("compare_reference", TOOL)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from rust_check import find
+
+    check = find()
+    if check is None or not check.is_file():
+        pytest.skip("needs lp-check (cargo build --release in rust/)")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("LIBRE_PANEL_CHECK", str(check))
+        spec = importlib.util.spec_from_file_location("compare_reference", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        yield module
 
 
 def bar_theme(folder: Path, color: str) -> Path:
@@ -76,4 +83,4 @@ def test_differences_are_counted_by_region(tool, tmp_path, monkeypatch, capsys):
     assert "100.00 %" in lines["header"] and "100.00 %" in lines["charts"]
     assert "100.00 %" not in lines["sections"]  # the bar's colour differs, down there only
     assert not any(p.name.endswith("-x1.png") for p in (tmp_path / "cmp").iterdir())
-    assert ImageFont.truetype is TRUETYPE  # the basic layout was for its frame only
+    assert "LP_LIBFRIBIDI" not in os.environ  # the basic layout was for its frame only

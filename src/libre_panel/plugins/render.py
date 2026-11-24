@@ -108,7 +108,7 @@ class RenderContext:
     @property
     def supersample(self) -> int:
         """Draw this much larger, then :meth:`downsample`: smooth edges."""
-        from libre_panel.render.renderer import SUPERSAMPLE
+        from libre_panel.plugins.drawing import SUPERSAMPLE
 
         return SUPERSAMPLE
 
@@ -253,7 +253,7 @@ class ToastStyle:
     picture through its alpha may also have ``layer(size, toast, age, previous)``, which
     returns that picture (RGBA, with the alpha it is laid through) and where it goes,
     ``(picture, x, y)``, or None while nothing shows: an engine that composes the frames
-    then lays it itself (render/scene.py; docs/PLUGINS.md).
+    then lays it itself (rust/render/src/scene.rs; docs/PLUGINS.md).
 
     The instance stays across theme switches while the theme names the same
     style with the same options at the same size, so what it keeps per toast

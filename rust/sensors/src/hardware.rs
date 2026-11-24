@@ -558,8 +558,56 @@ fn visible_memory() -> u64 {
         .map_or(0, |kilobytes| kilobytes * 1024)
 }
 
-/// Ask this computer. Each part on its own: one that cannot be read leaves the rest.
+/// LP_HARDWARE: a computer named instead of this one's, as JSON: `{"cpu": "8-Core Processor",
+/// "adapters": [["Graphics Card", 8589934592, true]], "memory": 0}` (tools/readme_images.py:
+/// the README's pictures of the app show no one's own computer).
+pub const NAMED_ENV: &str = "LP_HARDWARE";
+
+fn named_machine() -> Option<Found> {
+    let text = std::fs::read_to_string(std::env::var_os(NAMED_ENV)?).ok()?;
+    let lp_py::Value::Dict(given) = lp_py::json::loads(&text).ok()? else {
+        return None;
+    };
+    let number = |v: Option<&lp_py::Value>| match v {
+        Some(lp_py::Value::Int(n)) => u64::try_from(n).unwrap_or(0),
+        _ => 0,
+    };
+    let cpu = match given.get("cpu") {
+        Some(lp_py::Value::Str(name)) => name.clone(),
+        _ => String::new(),
+    };
+    let adapters = match given.get("adapters") {
+        Some(lp_py::Value::List(all)) => all
+            .iter()
+            .filter_map(|one| match one {
+                lp_py::Value::List(parts) => Some(Adapter {
+                    name: match parts.first() {
+                        Some(lp_py::Value::Str(name)) => name.clone(),
+                        _ => String::new(),
+                    },
+                    memory: number(parts.get(1)),
+                    discrete: matches!(parts.get(2), Some(lp_py::Value::Bool(true))),
+                    slot: String::new(),
+                }),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    Some(Found {
+        cpu,
+        adapters,
+        modules: Vec::new(),
+        memory: number(given.get("memory")),
+    })
+}
+
+/// Ask this computer (or the one LP_HARDWARE names). Each part on its own: one that cannot be
+/// read leaves the rest.
 fn scan_machine() -> Found {
+    if let Some(named) = named_machine() {
+        return named;
+    }
     #[cfg(windows)]
     let (cpu, adapters, modules, memory) = (
         windows::cpu_name(),

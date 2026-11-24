@@ -33,7 +33,9 @@ With the downloads:
   points at the AppImage file; if you move it, enable autostart again. The
   AppImage needs FUSE, which desktop distributions include.
 
-Installed with pip, add the `tray` extra: `pipx install "libre-panel[usb,serial,tray]"`.
+Installed with pip or pipx, from the release's wheel for the system (Linux:
+`…-manylinux_…_x86_64.whl`, Windows: `…-win_amd64.whl`):
+`pipx install "libre-panel @ <the wheel's link>"`. The tray is in it.
 
 ## Updating
 
@@ -67,8 +69,8 @@ By hand, as ever: quit Libre Panel, download the file from the
 [releases](https://github.com/syntensa/libre-panel/releases) and put it where the old one was (the
 setup does that by itself and keeps your settings, which are not in the program's folder; for
 the zip, take the `data` folder along). `sha256sum -c SHA256SUMS --ignore-missing` in the
-download's folder checks it. Installed with pip:
-`pipx install --force "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v<version>"`.
+download's folder checks it. Installed with pip or pipx: the update card shows the command,
+`pipx install --force "libre-panel @ <the new version's wheel>"`.
 
 ## Tray menu
 
@@ -107,41 +109,30 @@ the app's look).
 
 Libre Panel shows its app (*Start*, *Design*, *Look*, *Status*, *Settings*) in a
 window of its own, not in the browser. There is one window at a time: whatever
-asks for the app again (the tray, `libre-panel start`, `libre-panel editor`, a
-second start) brings that window to the front, on the view it asks for. The
+asks for the app again (the tray, `libre-panel start`, a second start) brings
+that window to the front, on the view it asks for. The
 window keeps its size for the next time; with unsaved changes, closing it asks
 first; quitting Libre Panel closes it.
 
 - **Windows:** WebView2 draws the window. Windows 11 has it, Windows 10 gets
-  it with Microsoft Edge; the downloads bring everything else. Installed with
-  pip: `pipx install "libre-panel[usb,serial,tray,window]"`.
-- **Linux:** WebKitGTK draws the window, through pywebview and PyGObject.
-  WebKitGTK and PyGObject come from your distribution:
+  it with Microsoft Edge; the downloads and the pip install bring everything else.
+- **Linux:** WebKitGTK draws the window (the program `libre-panel-window`, which
+  the AppImage, the Linux archive and the pip install carry). WebKitGTK comes
+  from your distribution:
 
-  | Distribution | Packages |
+  | Distribution | Package |
   |---|---|
-  | Debian, Ubuntu | `sudo apt install python3-gi gir1.2-webkit2-4.1` |
-  | Fedora | `sudo dnf install python3-gobject webkit2gtk4.1` |
-  | Arch | `sudo pacman -S python-gobject webkit2gtk-4.1` |
-  | openSUSE | `sudo zypper install python3-gobject typelib-1_0-WebKit2-4_1` |
+  | Debian, Ubuntu | `sudo apt install libwebkit2gtk-4.1-0` |
+  | Fedora | `sudo dnf install webkit2gtk4.1` |
+  | Arch | `sudo pacman -S webkit2gtk-4.1` |
+  | openSUSE | `sudo zypper install libwebkit2gtk-4_1-0` |
 
-  pywebview goes into the environment Libre Panel runs in, which must see the
-  system's PyGObject: `pipx install --system-site-packages
-  "libre-panel[usb,serial,tray]"`, then `pipx inject libre-panel pywebview`
-  (without pywebview, Libre Panel draws its window with PyGObject itself).
-  **The AppImage and the Linux archive** open their window with the same packages
-  of your distribution: their own Python has no GTK, so the window runs in the
-  system's Python (3.11 or later), from Libre Panel's sources they carry. With the
-  packages above installed it opens by itself; without them the app opens in the
-  browser, as before.
+  Without it the app opens in the browser.
 - **Without a window** (no WebView2 runtime, no WebKitGTK, no desktop, an SSH
-  session) the app opens in the browser as it always did. `libre-panel editor
-  --browser` asks for the browser, `libre-panel editor --no-browser` only
-  serves the app. `libre-panel window --check` says whether a window can open
-  here, and why not; with `--open` it opens one for a moment, minimized, as the
-  app does. A window that ends with an error right after its start leaves the
-  app in the browser instead, and `logs/window.log` (next to the tray's log)
-  says why.
+  session) the app opens in the browser. `libre-panel start --no-browser` opens
+  nothing, and `libre-panel editor` only serves the app and prints its address.
+  A window that ends with an error right after its start leaves the app in the
+  browser instead, and `logs/window.log` (next to the tray's log) says why.
 
 ## How the panel is doing
 
@@ -228,7 +219,7 @@ anything does. A website cannot guess the token, and no other user of the PC has
   before. Open Libre Panel again; the window of the tray takes the new token by itself.
 - The browser, where no window can open, gets the address with the token as an argument. On
   Linux other users can read the arguments of your programs while they run, so on a PC that
-  several people use, prefer the window (pywebview, above) to the browser.
+  several people use, prefer the window (above) to the browser.
 
 Anything that runs as you can read the token and change `config.toml`; the token keeps out the
 programs of *other* users and of websites. That is why a Libre Panel that runs with the highest
@@ -386,8 +377,8 @@ settings folder, which is yours: `%APPDATA%\LibrePanel` can be written by you an
 administrators, no other user, but by every program you run, also one without administrator
 rights. So what the settings name is used with those rights only from a folder that only
 administrators may change (*Program Files*, *Windows*, or the folder of the download itself):
-ffmpeg (`video.ffmpeg`), PresentMon (`[sensors.presentmon] path`), the libraries of
-LibreHardwareMonitor (`dll_dir`) and the plugins in `plugins\`; one named elsewhere is passed
+ffmpeg (`video.ffmpeg`), PresentMon (`[sensors.presentmon] path`) and the plugins in
+`plugins\`; one named elsewhere is passed
 over (*Settings → System* says which), and the programs the download carries itself (ffmpeg and
 PresentMon in its `tools` folder) are used. The panel's picture file (`device.output`, written
 while no panel is there) is written only into such a folder: in your settings folder a link

@@ -183,6 +183,9 @@ url = "http://127.0.0.1:8085/data.json"
 # Weather is off by default. Turn it on and set your own location.
 enabled = false
 provider = "open-meteo"
+# or "openweathermap", with your own key from openweathermap.org (the app sets both:
+# Settings, Weather and place)
+# api_key = ""
 # Find coordinates with:  libre-panel location "Your City"  (or in the app: Settings)
 # latitude = 0.0
 # longitude = 0.0

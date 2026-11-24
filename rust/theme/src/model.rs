@@ -166,12 +166,17 @@ pub struct Theme {
     pub background_image: Option<String>,
     pub background_gradient: Option<(String, String)>,
     pub background_direction: String,
+    /// A light field under everything (render/field.rs), over the panels that stand together
+    /// (background.field); None: none.
+    pub background_field: Option<LightField>,
     /// an int, of any size from 100 up
     pub refresh_ms: Value,
     pub model: String,
     pub palette: Dict,
     pub font: String,
     pub smoothing_ms: i64,
+    /// the kinds of moving light it shows (animation.shine: render/shine.py), None: all of them
+    pub shine: Option<Vec<String>>,
     pub screen: Option<Dict>,
     pub toast: Dict,
     pub grid: Option<Dict>,
@@ -230,6 +235,17 @@ impl Theme {
                 );
             }
         }
+        if let Some(field) = &self.background_field {
+            let mut f = Dict::default();
+            f.insert("look".into(), field.look.clone().into());
+            f.insert("moves".into(), field.moves.clone().into());
+            f.insert("load".into(), field.load.clone().into());
+            // (its colours only where it has them: a field without stays as it was written)
+            if !field.colours.is_empty() {
+                f.insert("colours".into(), field.colours.clone().into());
+            }
+            b.insert("field".into(), Value::Dict(f));
+        }
         Value::Dict(b)
     }
 
@@ -256,6 +272,10 @@ impl Theme {
         d.insert("refresh_ms".into(), self.refresh_ms.clone());
         let mut animation = Dict::default();
         animation.insert("smoothing_ms".into(), self.smoothing_ms.into());
+        if let Some(shine) = &self.shine {
+            let kinds = shine.iter().map(|kind| Value::Str(kind.clone())).collect();
+            animation.insert("shine".into(), Value::List(kinds));
+        }
         d.insert("animation".into(), Value::Dict(animation));
         let widgets = self.widgets.iter().cloned().map(Value::Dict).collect();
         d.insert("widgets".into(), Value::List(widgets));
@@ -602,6 +622,40 @@ fn check_paths(
         }
     }
     Ok(())
+}
+
+/// The kinds of light that move over a panel that moves (render/shine.py's KINDS).
+pub const SHINE_KINDS: [&str; 5] = ["rings", "graphs", "music", "downloads", "sun"];
+
+/// _parse_shine: `animation.shine`, the kinds of moving light a theme shows, in the order of
+/// SHINE_KINDS; true (or none given) all of them, false none.
+fn parse_shine(value: Option<&Value>) -> Result<Option<Vec<String>>> {
+    let items = match value {
+        None | Some(Value::None) | Some(Value::Bool(true)) => return Ok(None),
+        Some(Value::Bool(false)) => return Ok(Some(Vec::new())),
+        Some(Value::List(items)) if items.iter().all(|kind| matches!(kind, Value::Str(_))) => items,
+        Some(_) => {
+            return refuse(format!(
+                "animation.shine: true, false or a list of {}",
+                SHINE_KINDS.join(", ")
+            ))
+        }
+    };
+    let kinds: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+    if let Some(kind) = kinds.iter().find(|kind| !SHINE_KINDS.contains(kind)) {
+        return refuse(format!(
+            "animation.shine: {} is none of {}",
+            lp_py::repr(kind),
+            SHINE_KINDS.join(", ")
+        ));
+    }
+    Ok(Some(
+        SHINE_KINDS
+            .into_iter()
+            .filter(|kind| kinds.contains(kind))
+            .map(str::to_string)
+            .collect(),
+    ))
 }
 
 fn get(d: &Dict, key: &str, default: Value) -> Value {
@@ -1090,6 +1144,51 @@ fn finish_warnings(widgets: &[Dict], warnings: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// The looks of a light field under a theme (render/field.rs's look; model.py's FIELD_LOOKS).
+pub const FIELD_LOOKS: [&str; 2] = ["lumen", "arena"];
+
+/// A light field under a theme (background.field): its look, and the conditions (as a widget's
+/// needs) under which its light drifts and follows the load; "" always. `colours`: the picture
+/// ("@media.cover") in whose colours the light is while it is there; "" none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LightField {
+    pub look: String,
+    pub moves: String,
+    pub load: String,
+    pub colours: String,
+}
+
+/// _parse_field: ``background.field``, ``{"look": "lumen", "moves": "switch.light_flows",
+/// "load": "switch.light_load"}``.
+fn parse_field(value: Option<&Value>) -> Result<Option<LightField>> {
+    let field = match value {
+        None | Some(Value::None) => return Ok(None),
+        Some(Value::Dict(d)) => d,
+        Some(_) => return refuse("background.field: an object, e.g. {\"look\": \"lumen\"}"),
+    };
+    let look = get(field, "look", FIELD_LOOKS[0].into());
+    if !FIELD_LOOKS.iter().any(|&l| look == Value::from(l)) {
+        return refuse(format!(
+            "background.field.look: one of {}",
+            FIELD_LOOKS.join(", ")
+        ));
+    }
+    let need = |key: &str| -> Result<String> {
+        let place = format!("background.field.{key}");
+        Ok(coerce("string", get(field, key, "".into()), &place, None)?.str())
+    };
+    let (moves, load, colours) = (need("moves")?, need("load")?, need("colours")?);
+    if !colours.is_empty() && !(colours.starts_with('@') && colours.chars().count() > 1) {
+        return refuse("background.field.colours: a picture's name, e.g. \"@media.cover\"");
+    }
+    Ok(Some(LightField {
+        look: look.str(),
+        moves,
+        load,
+        colours,
+    }))
+}
+
 fn parse_switches(raw: Option<&Value>) -> Result<Dict> {
     let raw = match raw {
         None | Some(Value::None) => return Ok(Dict::default()),
@@ -1280,6 +1379,7 @@ pub fn parse_theme(data: &Value, root: Option<&Path>, env: &Env) -> Result<Theme
         return refuse("animation.smoothing_ms: must be between 0 and 5000");
     }
     let smoothing_ms = small(&smoothing);
+    let shine = parse_shine(animation.get("shine"))?;
     let background = match object_or_empty(data, "background") {
         Value::Dict(d) => d,
         _ => return refuse("background must be an object, e.g. {\"color\": \"#101418\"}"),
@@ -1325,6 +1425,7 @@ pub fn parse_theme(data: &Value, root: Option<&Path>, env: &Env) -> Result<Theme
     if direction != Value::from("vertical") && direction != Value::from("horizontal") {
         return refuse("background.gradient_direction: \"vertical\" or \"horizontal\"");
     }
+    let bg_field = parse_field(background.get("field"))?;
     let refresh_ms = coerce(
         "int",
         get(data, "refresh_ms", int(1000)),
@@ -1395,11 +1496,13 @@ pub fn parse_theme(data: &Value, root: Option<&Path>, env: &Env) -> Result<Theme
         background_image: bg_image,
         background_gradient: bg_gradient,
         background_direction: direction.str(),
+        background_field: bg_field,
         refresh_ms,
         model: model_id,
         palette,
         font,
         smoothing_ms,
+        shine,
         widgets,
         grid,
         style,

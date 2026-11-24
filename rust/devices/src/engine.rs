@@ -108,9 +108,8 @@ pub fn find_engine() -> Option<PathBuf> {
             return Some(named);
         }
     }
-    let program = std::env::current_exe().ok()?;
-    let program = std::fs::canonicalize(&program).unwrap_or(program);
-    let beside = program.parent()?;
+    let beside = crate::rights::program_folder()?;
+    let beside = beside.as_path();
     let own = [beside.join("tools").join(&name), beside.join(&name)];
     if let Some(found) = own.into_iter().find(|file| file.is_file()) {
         return Some(found);
@@ -736,5 +735,52 @@ impl EngineLink {
 impl Drop for EngineLink {
     fn drop(&mut self) {
         self.close(Duration::from_secs(5));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn u32_at(record: &[u8], at: usize) -> u32 {
+        u32::from_le_bytes(record[at..at + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn a_frame_goes_to_the_engine_as_its_boxes_with_their_pixels() {
+        // (as devices/h264.py's engine_frame wrote it: a 64 x 48 frame, one block of it)
+        let (width, height) = (64usize, 48usize);
+        let rgb: Vec<u8> = (0..width * height * 3).map(|n| (n % 251) as u8).collect();
+        let record = frame_record(7, None, width, &rgb, &[[16, 0, 32, 16]]);
+        assert_eq!(&record[..5], b"LPE1\x01");
+        assert_eq!(&record[5..8], &[0, 0, 0]);
+        assert_eq!((u32_at(&record, 8), u32_at(&record, 12)), (7, 1));
+        let edges: Vec<u16> = record[16..24]
+            .chunks(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        assert_eq!(edges, [16, 0, 32, 16]);
+        let crop: Vec<u8> = (0..16)
+            .flat_map(|y| rgb[(y * width + 16) * 3..(y * width + 32) * 3].to_vec())
+            .collect();
+        assert_eq!(&record[24..], &crop[..]);
+        // the whole frame; none of it (nothing changed)
+        let whole = frame_record(0, None, width, &rgb, &[[0, 0, 64, 48]]);
+        assert_eq!(whole.len(), 16 + 8 + width * height * 3);
+        let none = frame_record(3, None, width, &rgb, &[]);
+        assert_eq!((none.len(), u32_at(&none, 12)), (16, 0));
+    }
+
+    #[test]
+    fn a_frame_drawn_for_a_time_says_it_and_a_rate_is_its_own_record() {
+        let rgb = vec![9u8; 16 * 16 * 3];
+        let record = frame_record(5, Some(12.5), 16, &rgb, &[[0, 0, 16, 16]]);
+        assert_eq!(&record[..5], b"LPE1\x07");
+        assert_eq!((u32_at(&record, 8), u32_at(&record, 12)), (5, 1));
+        assert_eq!(f64::from_le_bytes(record[16..24].try_into().unwrap()), 12.5);
+        assert_eq!(record.len(), 16 + 8 + 8 + 16 * 16 * 3);
+        let rate = head(RATE, 2500, 0);
+        assert_eq!(&rate[..5], b"LPE1\x02");
+        assert_eq!((u32_at(&rate, 8), rate.len()), (2500, 16));
     }
 }

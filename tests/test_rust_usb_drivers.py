@@ -1,258 +1,35 @@
-"""The drivers of the USB screens of other makers in Rust (rust/devices: udisp ...) against
-those of devices/, to the byte: each opened on a screen the test scripts (its product string,
-its interfaces, what it answers each read), frames shown, the brightness set, the JPEGs' layout
-changed, closed; what went to the screen, in order, and what the driver says of itself."""
+"""The drivers of the USB screens of other makers in Rust (rust/devices: udisp ...) as those
+of the Python app's devices/ drove them, to the byte: each opened on a screen the test scripts
+(its product string, its interfaces, what it answers each read), frames shown, the brightness
+set, the JPEGs' layout changed, closed; what went to the screen, in order, and what the driver
+says of itself. What the Python drivers did is kept (golden.py): lp-check's answers are checked
+against it."""
 
 from __future__ import annotations
 
 import base64
-import io
 import random
-import sys
-from collections import deque
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import usb
-import usb.core
 from PIL import Image
 from rust_check import image, noise, run
 
-from libre_panel.config import DeviceConfig
-from libre_panel.devices import (
-    beadapanel,
-    jonsbo_zc360,
-    lianli_usb,
-    ms9132,
-    nzxt_kraken,
-    thermalright,
-    thermaltake,
-    turzx_usb,
-    udisp,
-    usb_link,
-)
-from libre_panel.devices.models import get_model
+pytestmark = pytest.mark.kept  # (what the Python drivers did: tests/golden)
+
+# what the cases take from the drivers they were written against
+TROFEO_MAGIC = b"\xda\xdb\xdc\xdd"  # (thermalright.py: what a Trofeo's answer begins with)
+TROFEO_HID, TROFEO_BULK = 0x5302, 0x5408
+KRAKEN_Z3, KRAKEN_2023 = 0x3008, 0x300E
+# a ZC-360 controller's states, as it says them (DES under the key jonsbo_zc360.py knew)
+ZC360_SAYS = {0x10: "e3de5a33bac84332", 0x62: "216c53d74131cd90", 0x60: "4a54915bdc1c9b3b",
+              0x59: "234760717afc499a"}  # fmt: skip
+# the reports ms9132.py started the chip with: 24, then its EDID four bytes at a time
+MS9132_START: list[int | None] = [None] * 24 + list(range(0, 0x80, 4))
 
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(bytes(data)).decode("ascii")
-
-
-class FakeScreen:
-    """A USB screen as pyusb shows it to usb_link and the drivers, scripted as the Rust side's
-    (check/src/usb_drivers.rs): each read takes the next answer, a write fails as told."""
-
-    bus, address = 1, 2
-
-    def __init__(self, case: dict[str, Any], events: list[Any]) -> None:
-        self.product = case["product"]
-        self.events = events
-        self.answers = deque(case.get("answers", []))
-        self.fail_writes = {n: (errno, text) for n, errno, text in case.get("fail_writes", [])}
-        self.writes = 0
-        self.config = [
-            SimpleNamespace(
-                bInterfaceNumber=i["number"],
-                bInterfaceClass=i["class"],
-                endpoints=[
-                    SimpleNamespace(bEndpointAddress=a, wMaxPacketSize=m)
-                    for a, m, _interrupt in i["endpoints"]
-                ],  # fmt: skip
-            )
-            for i in case["interfaces"]
-        ]
-
-    def get_active_configuration(self) -> list[Any]:
-        return [_Interface(i) for i in self.config]
-
-    def _answer(self, size: int) -> bytes:
-        answer = self.answers.popleft() if self.answers else None
-        if answer is None:
-            raise usb.core.USBTimeoutError("Operation timed out", errno=110)
-        if isinstance(answer, dict):
-            raise usb.core.USBError(answer["error"])
-        return base64.b64decode(answer)[:size]
-
-    def write(self, endpoint: int, data: bytes, timeout: int) -> int:
-        self.writes += 1
-        self.events.append(["write", endpoint, _b64(data)])
-        if self.writes in self.fail_writes:
-            errno, text = self.fail_writes[self.writes]
-            raise usb.core.USBError(text, errno=errno)
-        return len(data)
-
-    def read(self, endpoint: int, size: int, timeout: int) -> bytes:
-        self.events.append(["read", endpoint, size])
-        return self._answer(size)
-
-    def ctrl_transfer(self, request_type, request, value, index, data_or_length, timeout=None):
-        if isinstance(data_or_length, int):
-            self.events.append(["ctrl", request_type, request, value, index, data_or_length])
-            return self._answer(data_or_length)
-        self.events.append(["ctrl", request_type, request, value, index, _b64(data_or_length)])
-        return len(data_or_length)
-
-
-class _Interface:
-    def __init__(self, info: Any) -> None:
-        self.bInterfaceNumber = info.bInterfaceNumber
-        self.bInterfaceClass = info.bInterfaceClass
-        self._endpoints = info.endpoints
-
-    def __iter__(self):
-        return iter(self._endpoints)
-
-
-class _Tagged(list):
-    """The events of one of several screens, each beginning with its number."""
-
-    def __init__(self, events: list[Any], tag: int) -> None:
-        super().__init__()
-        self.events, self.tag = events, tag
-
-    def append(self, event: Any) -> None:
-        self.events.append([self.tag, *event])
-
-
-def _zc360_screens(case: dict[str, Any], events: list[Any], monkeypatch: pytest.MonkeyPatch):
-    """The ZC-360's screens of the case as pyusb would list them, scripted each."""
-    screens = []
-    for n, part in enumerate(case["screens"]):
-        screen = FakeScreen(part, _Tagged(events, n))
-        screen.address, screen.port_numbers, screen.serial = (
-            part["address"],
-            part["ports"],
-            part["serial"],
-        )
-        screens.append(screen)
-    monkeypatch.setattr(jonsbo_zc360, "_devices", lambda: list(screens))
-    monkeypatch.setattr(jonsbo_zc360, "_serial", lambda device: device.serial)
-    monkeypatch.setattr(
-        jonsbo_zc360.Screen, "claim", lambda self: self.device.events.append(["claim", [0]])
-    )
-    monkeypatch.setattr(
-        jonsbo_zc360.Screen, "release", lambda self: self.device.events.append(["release"])
-    )
-    monkeypatch.setattr(jonsbo_zc360.time, "sleep", lambda seconds: None)
-
-
-def _ms9132_chip(screen: FakeScreen, events: list[Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    """The MS9132 as ms9132.py finds, claims and lets go of it, on the fake screen."""
-    monkeypatch.setattr(ms9132, "_device", lambda: screen)
-    monkeypatch.setattr(ms9132.Ms9132Display, "_claim",
-                        lambda self: events.append(["claim", [0, 3]]))  # fmt: skip
-    util = SimpleNamespace(release_interface=lambda device, interface: None,
-                           dispose_resources=lambda device: events.append(["release"]))  # fmt: skip
-    monkeypatch.setitem(sys.modules, "usb.util", util)
-    monkeypatch.setattr(usb, "util", util, raising=False)
-    monkeypatch.setattr(ms9132.time, "sleep", lambda seconds: None)
-
-
-def _python_session(case: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    events: list[Any] = []
-    if case["driver"] == "zc360":
-        _zc360_screens(case, events, monkeypatch)
-        case = {**case, "product": "", "interfaces": []}
-    screen = FakeScreen(case, events)
-    monkeypatch.setattr(
-        usb_link,
-        "take",
-        lambda vendor, products, label: (screen, case.get("product_id", 0), "usb:1.2"),
-    )
-    monkeypatch.setattr(
-        usb_link, "claim", lambda device, interfaces: events.append(["claim", list(interfaces)])
-    )
-    monkeypatch.setattr(
-        usb_link, "release", lambda device, interfaces, where: events.append(["release"])
-    )
-    if case["driver"] == "lianli":
-        _turzx_transport(screen, events, monkeypatch)
-    if case["driver"] == "ms9132":
-        _ms9132_chip(screen, events, monkeypatch)
-    options = case.get("options", {})
-    config = DeviceConfig(driver="turzx")
-    config.jpeg = options.get("jpeg", "4:4:4")
-    config.jpeg_quality = options.get("jpeg_quality", 90)
-    config.video.fps = options.get("fps", 30)
-    config.brightness = options.get("brightness", 100)
-    config.port = options.get("port", "")
-    model = get_model(case["model"]) if case.get("model") else None
-    display = _driver(case["driver"], config, model)
-    try:
-        display.open()
-    except Exception as error:  # noqa: BLE001 (what Python raises, as it is)
-        return {"error": str(error), "events": events}
-    failed = None
-    for step in case["steps"]:
-        try:
-            if "brightness" in step:
-                display.set_brightness(step["brightness"])
-            elif "jpeg" in step:
-                display.set_jpeg(step["jpeg"])
-            else:
-                display.show(step["show"], step.get("region"))
-        except Exception as error:  # noqa: BLE001
-            failed = str(error)
-            break
-    model = display.model.id if display.model else None
-    told = {"picture": display.picture, "jpeg_layout": display.jpeg_layout,
-            "describe": display.describe(), "streaming": bool(display.streaming),
-            "slow": bool(display.slow), "model": model}  # fmt: skip
-    counters = display.counters
-    display.close()
-    return {"events": events, "error": failed, "bytes": counters.bytes,
-            "usb_errors": counters.usb_errors, "told": told}  # fmt: skip
-
-
-def _driver(name: str, config: DeviceConfig, model: Any) -> Any:
-    if name == "udisp":
-        return udisp.UdispDisplay(config, model)
-    if name == "beada":
-        return beadapanel.BeadaDisplay(config, model)
-    if name == "thermaltake":
-        return thermaltake.ThermaltakeDisplay(config, model)
-    if name == "lianli":
-        return lianli_usb.LianLiDisplay(config, model)
-    if name == "thermalright":
-        return thermalright.TrofeoDisplay(config, model)
-    if name == "nzxt":
-        return nzxt_kraken.KrakenDisplay(config, model)
-    if name == "zc360":
-        return jonsbo_zc360.Zc360Display(config, model)
-    if name == "ms9132":
-        return ms9132.Ms9132Display(config, model)
-    raise AssertionError(name)
-
-
-class _Endpoint:
-    """An endpoint of the fake screen, as turzx_usb.UsbTransport writes to and reads it."""
-
-    def __init__(self, screen: FakeScreen, address: int) -> None:
-        self.screen, self.bEndpointAddress = screen, address
-
-    def write(self, data: bytes, timeout: int) -> int:
-        return self.screen.write(self.bEndpointAddress, data, timeout)
-
-    def read(self, size: int, timeout: int) -> bytes:
-        return self.screen.read(self.bEndpointAddress, size, timeout)
-
-
-def _turzx_transport(screen: FakeScreen, events: list[Any], monkeypatch: pytest.MonkeyPatch):
-    """turzx_usb.UsbTransport on the fake screen (Lian Li's), as the Rust side claims it."""
-
-    def opened(pid, beside=(), skip=0):
-        events.append(["claim", [0]])
-        out = next(e.bEndpointAddress for i in screen.config for e in i.endpoints
-                   if not e.bEndpointAddress & 0x80)  # fmt: skip
-        into = next(e.bEndpointAddress for i in screen.config for e in i.endpoints
-                    if e.bEndpointAddress & 0x80)  # fmt: skip
-        return turzx_usb.UsbTransport(screen, _Endpoint(screen, out), _Endpoint(screen, into),
-                                      pid, "usb:1.2")  # fmt: skip
-
-    monkeypatch.setattr(turzx_usb.UsbTransport, "open", staticmethod(opened))
-    monkeypatch.setattr(turzx_usb.UsbTransport, "close", lambda self: events.append(["release"]))
-    monkeypatch.setattr(turzx_usb, "ms_since_midnight", lambda now=None: 12_345_678)
 
 
 def _rust_case(case: dict[str, Any]) -> dict[str, Any]:
@@ -260,40 +37,10 @@ def _rust_case(case: dict[str, Any]) -> dict[str, Any]:
     return {"op": "usb_session", **case, "steps": steps}
 
 
-def _png_written(event: list[Any]) -> list[Any]:
-    """A write of a TURZX command packet and a PNG (Lian Li's layer) as what it means: the
-    command, the length its arguments name (the PNG's own) and the PNG's pixels. (Rust packs
-    its PNGs with zlib-rs, not zlib: the same pixels, other bytes, as tests/test_rust_devices.py
-    takes the TURZX panels' PNGs.)"""
-    if event[0] != "write":
-        return event
-    data = base64.b64decode(event[2])
-    if data[512:520] != b"\x89PNG\r\n\x1a\n":
-        return event
-    plain = turzx_usb.decode_packet(data[:512])
-    payload = data[512:]
-    assert int.from_bytes(plain[8:12], "big") == len(payload)
-    with Image.open(io.BytesIO(payload)) as png:
-        pixels = (png.mode, png.size, _b64(png.tobytes()))
-    return ["write png", event[1], plain[0], list(pixels)]
-
-
-def _compare(cases: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> int:
-    """Each case on both sides, the same; how many opened."""
-    opened = 0
-    for n, (case, got) in enumerate(zip(cases, run([_rust_case(c) for c in cases]),
-                                        strict=True)):  # fmt: skip
-        want = _python_session(case, monkeypatch)
-        assert got["error"] == want["error"], (n, case["product"])
-        ours, theirs = ([_png_written(e) for e in side["events"]] for side in (got, want))
-        assert ours == theirs, (n, case["product"])
-        if "told" in want:
-            opened += 1
-            assert got["told"] == want["told"], n
-            assert got["usb_errors"] == want["usb_errors"], n
-            if case["driver"] != "lianli":  # (its PNG's bytes are counted)
-                assert got["bytes"] == want["bytes"], n
-    return opened
+def _sessions(cases: list[dict[str, Any]]) -> int:
+    """Each case's session as the Rust driver leads it; how many opened."""
+    answers = run([_rust_case(c) for c in cases])
+    return sum("told" in got for got in answers)
 
 
 def _frame(rng: random.Random, sizes: list[tuple[int, int]]) -> Image.Image:
@@ -340,10 +87,9 @@ def _udisp_case(rng: random.Random) -> dict[str, Any]:
             "options": options, "steps": steps, "fail_writes": fail}  # fmt: skip
 
 
-def test_udisp_sessions_as_udisp_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(udisp, "AGAIN_S", 3600.0)  # (the keeper sends nothing in a case)
+def test_udisp_sessions_as_udisp_py_drives_them() -> None:
     rng = random.Random(0x0D15)
-    assert _compare([_udisp_case(rng) for _ in range(40)], monkeypatch) > 15
+    assert _sessions([_udisp_case(rng) for _ in range(40)]) > 15
 
 
 def _beada_info(rng: random.Random, code: int, size: tuple[int, int], top: int, link: int) -> bytes:
@@ -384,11 +130,9 @@ def _beada_case(rng: random.Random) -> dict[str, Any]:
             "steps": steps, "fail_writes": fail}  # fmt: skip
 
 
-def test_beadapanel_sessions_as_beadapanel_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(beadapanel, "AGAIN_S", 3600.0)
-    monkeypatch.setattr(beadapanel.time, "sleep", lambda seconds: None)
+def test_beadapanel_sessions_as_beadapanel_py_drives_them() -> None:
     rng = random.Random(0xBEAD)
-    assert _compare([_beada_case(rng) for _ in range(30)], monkeypatch) > 10
+    assert _sessions([_beada_case(rng) for _ in range(30)]) > 10
 
 
 def _thermaltake_case(rng: random.Random) -> dict[str, Any]:
@@ -409,14 +153,9 @@ def _thermaltake_case(rng: random.Random) -> dict[str, Any]:
             "answers": answers, "options": {}, "steps": steps, "fail_writes": fail}  # fmt: skip
 
 
-def test_thermaltake_sessions_as_thermaltake_py_drives_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(thermaltake, "AGAIN_S", 3600.0)
-    monkeypatch.setattr(thermaltake.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(thermaltake.time, "time", lambda: 1_700_000_000.123)
+def test_thermaltake_sessions_as_thermaltake_py_drives_them() -> None:
     rng = random.Random(0x7A7E)
-    assert _compare([_thermaltake_case(rng) for _ in range(24)], monkeypatch) > 8
+    assert _sessions([_thermaltake_case(rng) for _ in range(24)]) > 8
 
 
 def _lianli_case(rng: random.Random) -> dict[str, Any]:
@@ -449,9 +188,9 @@ def _lianli_case(rng: random.Random) -> dict[str, Any]:
             "answers": answers, "options": {}, "steps": steps, "fail_writes": fail}  # fmt: skip
 
 
-def test_lianli_sessions_as_lianli_usb_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lianli_sessions_as_lianli_usb_py_drives_them() -> None:
     rng = random.Random(0x11A1)
-    assert _compare([_lianli_case(rng) for _ in range(24)], monkeypatch) > 8
+    assert _sessions([_lianli_case(rng) for _ in range(24)]) > 8
 
 
 def _trofeo_case(rng: random.Random) -> dict[str, Any]:
@@ -460,7 +199,7 @@ def _trofeo_case(rng: random.Random) -> dict[str, Any]:
     answers: list[Any] = []
     if hid:
         said = bytearray(32)
-        said[0:4], said[12] = thermalright.MAGIC, 1
+        said[0:4], said[12] = TROFEO_MAGIC, 1
         said[5], said[4] = rng.choice([0x80, 0x80, 0x81]), rng.choice([1, 2])
         answers = rng.choice([[_b64(said)], [_b64(bytes(30)), _b64(said)], [None, _b64(said)],
                               [None, None]])  # fmt: skip
@@ -485,16 +224,14 @@ def _trofeo_case(rng: random.Random) -> dict[str, Any]:
             answers.append(rng.choice([_b64(took), _b64(took), None]))
     fail = [[rng.randrange(2, 6), 19, "No such device"]] if rng.random() < 0.15 else []
     return {"driver": "thermalright", "model": None, "product": "Trofeo",
-            "product_id": thermalright.HID_PRODUCT if hid else thermalright.BULK_PRODUCT,
+            "product_id": TROFEO_HID if hid else TROFEO_BULK,
             "interfaces": interfaces, "answers": answers, "options": {}, "steps": steps,
             "fail_writes": fail}  # fmt: skip
 
 
-def test_trofeo_sessions_as_thermalright_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(thermalright, "AGAIN_S", {thermalright.HID_PRODUCT: 3600.0,
-                                                  thermalright.BULK_PRODUCT: 3600.0})  # fmt: skip
+def test_trofeo_sessions_as_thermalright_py_drives_them() -> None:
     rng = random.Random(0x7709)
-    assert _compare([_trofeo_case(rng) for _ in range(40)], monkeypatch) > 12
+    assert _sessions([_trofeo_case(rng) for _ in range(40)]) > 12
 
 
 def _kraken_answer(asked: tuple[int, int], **at: int) -> str:
@@ -506,10 +243,10 @@ def _kraken_answer(asked: tuple[int, int], **at: int) -> str:
 
 
 def _kraken_case(rng: random.Random) -> dict[str, Any]:
-    product, firmware = rng.choice([(nzxt_kraken.Z3, 1), (nzxt_kraken.KRAKEN_2023, 2),
-                                    (nzxt_kraken.KRAKEN_2023, 1), (0x3014, 1)])  # fmt: skip
-    size = {nzxt_kraken.Z3: 320}.get(product, 240)
-    direct = product == nzxt_kraken.KRAKEN_2023 and firmware == 2
+    product, firmware = rng.choice([(KRAKEN_Z3, 1), (KRAKEN_2023, 2),
+                                    (KRAKEN_2023, 1), (0x3014, 1)])  # fmt: skip
+    size = {KRAKEN_Z3: 320}.get(product, 240)
+    direct = product == KRAKEN_2023 and firmware == 2
     status = _b64(bytes((0x75, 0x02)) + rng.randbytes(30))  # (the cooler's own report)
 
     def asked(report: tuple[int, int], **at: int) -> list[str]:
@@ -548,21 +285,15 @@ def _kraken_case(rng: random.Random) -> dict[str, Any]:
             "steps": steps, "fail_writes": fail}  # fmt: skip
 
 
-def test_kraken_sessions_as_nzxt_kraken_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nzxt_kraken, "_linux", lambda: False)  # (the HID interface itself)
-    monkeypatch.setattr(nzxt_kraken.time, "sleep", lambda seconds: None)
+def test_kraken_sessions_as_nzxt_kraken_py_drives_them() -> None:
     rng = random.Random(0x2A3)
-    assert _compare([_kraken_case(rng) for _ in range(24)], monkeypatch) > 10
+    assert _sessions([_kraken_case(rng) for _ in range(24)]) > 10
 
 
 def _zc360_answer(state: int) -> str:
     """A controller's answer saying ``state``."""
-    from Crypto.Cipher import DES
-
     answer = bytearray(32)
-    answer[2:10] = DES.new(jonsbo_zc360.DES_KEY, DES.MODE_ECB).encrypt(
-        bytes((state, 0, 0, 0, 0, 0, 0, 0))
-    )
+    answer[2:10] = bytes.fromhex(ZC360_SAYS[state])
     return _b64(answer)
 
 
@@ -602,9 +333,9 @@ def _zc360_case(rng: random.Random) -> dict[str, Any]:
             "steps": steps}  # fmt: skip
 
 
-def test_zc360_sessions_as_jonsbo_zc360_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_zc360_sessions_as_jonsbo_zc360_py_drives_them() -> None:
     rng = random.Random(0x2C36)
-    assert _compare([_zc360_case(rng) for _ in range(30)], monkeypatch) > 12
+    assert _sessions([_zc360_case(rng) for _ in range(30)]) > 12
 
 
 def _edid(size: tuple[int, int] | None) -> bytes:
@@ -622,10 +353,10 @@ def _ms9132_case(rng: random.Random) -> dict[str, Any]:
     size = rng.choice([(376, 960), (320, 960), (480, 480), (123, 456), None])
     edid = _edid(size)
     answers: list[Any] = []
-    for report in ms9132.START:
+    for at in MS9132_START:
         data = rng.randbytes(5)
-        if report[:2] == bytes((0xB5, 0xC0)):
-            data = edid[report[2] : report[2] + 4] + b"\0"
+        if at is not None:
+            data = edid[at : at + 4] + b"\0"
         answers.append(_b64(rng.randbytes(3) + data))
     if rng.random() < 0.1:
         answers[rng.randrange(len(answers))] = None  # (a report the chip does not answer)
@@ -646,7 +377,6 @@ def _ms9132_case(rng: random.Random) -> dict[str, Any]:
             "answers": answers, "options": {}, "steps": steps, "fail_writes": fail}  # fmt: skip
 
 
-def test_ms9132_sessions_as_ms9132_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ms9132, "AGAIN_S", 3600.0)
+def test_ms9132_sessions_as_ms9132_py_drives_them() -> None:
     rng = random.Random(0x9132)
-    assert _compare([_ms9132_case(rng) for _ in range(24)], monkeypatch) > 10
+    assert _sessions([_ms9132_case(rng) for _ in range(24)]) > 10

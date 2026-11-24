@@ -1,6 +1,8 @@
-//! Weather from Open-Meteo (https://open-meteo.com), as weather/open_meteo.py reads it.
+//! Weather from Open-Meteo (https://open-meteo.com), as weather/open_meteo.py reads it, or from
+//! OpenWeatherMap with the user's own key (openweathermap.rs, which puts its answer into the
+//! shape of Open-Meteo's).
 //!
-//! No API key needed. Open-Meteo's data is CC BY 4.0 and free for non-commercial use. The
+//! Open-Meteo needs no API key. Its data is CC BY 4.0 and free for non-commercial use. The
 //! place always comes from the user's settings; nothing is sent but the request for it.
 
 use std::sync::{Arc, Condvar, Mutex};
@@ -48,8 +50,9 @@ const RAIN_STEPS: i64 = 8;
 /// a step with at least this much precipitation is rain
 const RAIN_MM: f64 = 0.1;
 
-/// The WMO's weather interpretation codes as Open-Meteo uses them.
-const WMO: [(i64, &str); 28] = [
+/// The WMO's weather interpretation codes as Open-Meteo uses them (`weather.description`,
+/// shown in the person's language: lp_render::metric translates it).
+pub const WMO: [(i64, &str); 28] = [
     (0, "Clear sky"),
     (1, "Mainly clear"),
     (2, "Partly cloudy"),
@@ -461,12 +464,23 @@ struct Shared {
     changed: Condvar,
 }
 
-fn run(shared: &Shared, url: &str, agent: &str, interval: Duration) {
+/// How a source gets its answer, in Open-Meteo's shape: Unix time now and the notes to add.
+type Fetch = Box<dyn FnMut(f64, &mut Vec<String>) -> Result<Dict, String> + Send>;
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64())
+}
+
+fn run(shared: &Shared, mut fetch: Fetch, interval: Duration) {
     loop {
-        let found = fetch(url, agent);
+        let mut notes = Vec::new();
+        let found = fetch(unix_now(), &mut notes);
         let Ok(mut state) = shared.state.lock() else {
             return;
         };
+        state.notes.append(&mut notes);
         let wait = match found {
             Ok(data) => {
                 state.latest = parse_current(&data);
@@ -514,16 +528,48 @@ impl WeatherSource {
         update_minutes: u64,
         agent: &str,
     ) -> WeatherSource {
+        let url = forecast_url(base, latitude, longitude, imperial);
+        let agent = agent.to_string();
+        WeatherSource::asking(Box::new(move |_, _| fetch(&url, &agent)), update_minutes)
+    }
+
+    /// The weather of a place from OpenWeatherMap at `base` with the user's `key`, asked for
+    /// every `update_minutes` (five at least) by a program that names itself `agent`.
+    pub fn openweathermap(
+        base: &str,
+        key: &str,
+        latitude: f64,
+        longitude: f64,
+        imperial: bool,
+        update_minutes: u64,
+        agent: &str,
+    ) -> WeatherSource {
+        let mut client = crate::openweathermap::Client {
+            base: base.trim_end_matches('/').to_string(),
+            key: key.to_string(),
+            latitude,
+            longitude,
+            imperial,
+            agent: agent.to_string(),
+            onecall: None,
+            seen: Default::default(),
+        };
+        WeatherSource::asking(
+            Box::new(move |now, notes| client.fetch(now, notes)),
+            update_minutes,
+        )
+    }
+
+    fn asking(fetch: Fetch, update_minutes: u64) -> WeatherSource {
         let shared = Arc::new(Shared {
             state: Mutex::new(State::default()),
             changed: Condvar::new(),
         });
-        let url = forecast_url(base, latitude, longitude, imperial);
         let interval = Duration::from_secs(update_minutes.clamp(5, 1 << 40) * 60);
-        let (theirs, agent) = (Arc::clone(&shared), agent.to_string());
+        let theirs = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name("weather".into())
-            .spawn(move || run(&theirs, &url, &agent, interval))
+            .spawn(move || run(&theirs, fetch, interval))
             .ok();
         WeatherSource { shared, thread }
     }
@@ -537,10 +583,7 @@ impl WeatherSource {
         drop(state);
         if let Some(data) = data.filter(|data| !data.is_empty()) {
             // relative to now, so "in 1 hour" stays true between updates
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0.0, |since| since.as_secs_f64());
-            out.extend(forecast_readings(&data, now));
+            out.extend(forecast_readings(&data, unix_now()));
         }
         out
     }

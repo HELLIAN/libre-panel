@@ -499,48 +499,52 @@ Since 0.9.4 (`devices/panel_files.py`, `rust/app/src/start_screen.rs`):
 - **The room a panel's files get**: on the 9.2" 360,000 bytes for the clip and
   120,000 for the logo, two thirds of what filled one; on the 12.3" 500,000 and
   150,000, four fifths of the 817,587 bytes one has held for weeks (where its
-  room ends is not known). The clip is made at crf 20 and, where that is too
-  much, a step coarser at a time up to 26; the logo at quality 95, 92, 90, 88 or
-  85, every pixel with its own colour (a colour for four was the worse trade: on
-  Circuit's traces 38.7 dB where the same bytes gave 42.1). A look that would
-  have to be coarser is not made: Levels, on both. What the others come to
-  (ffmpeg 6.1 on Linux; another build's clips are a per cent or two apart), and
-  how close they stay to what was drawn (PSNR; the clip against the lossless
-  clip of its pictures):
+  room ends is not known). Since 0.9.5 the 8.8" gets the 9.2"'s: its maker sells
+  the two as one, with the same framebuffer. The clip is made at crf 20 and,
+  where that is too much, a step coarser at a time up to 26, then a quarter of a
+  step finer again where that still fits (the three quarters made at once); the
+  logo at the finest whole quality from 95 down to 85 that fits (0.9.4 tried 95,
+  92, 90, 88 and 85 only), every pixel with its own colour (a colour for four was
+  the worse trade: on Circuit's traces 38.7 dB where the same bytes gave 42.1). A
+  look that would have to be coarser is not made: Levels, on both. What the
+  others come to (ffmpeg 6.1 on Linux; another build's clips are a per cent or two
+  apart, and find their own quarter), and how close they stay to what was drawn
+  (PSNR; the clip against the lossless clip of its pictures):
 
   | Look | 9.2": clip | logo | together | 12.3": clip | logo | together |
   |---|---|---|---|---|---|---|
-  | Libre Panel | 352,645 (51.9 dB; 0.9.0: 606,261, 53.4) | 82,934 (47.1; 127,210, 48.3) | 435,579 | 477,724 (52.2; the same) | 107,531 (47.7; 165,169, 48.7) | 585,255 |
-  | Aurora | 318,482 (49.7; 652,208, 51.1) | 117,959 (49.9; the same) | 436,441 | 465,170 (50.2; 988,183, 51.5) | 103,593 (49.6; 161,725, 50.0) | 568,763 |
-  | Pulse | 349,927 (51.5; 464,168, 52.3) | 103,691 (46.3; 150,737, 47.8) | 453,618 | 491,809 (52.4; 604,690, 52.7) | 124,310 (47.1; 187,968, 48.6) | 616,119 |
-  | Circuit | 319,625 (51.0; 715,341, 52.8) | 113,040 (46.1; 159,776, 47.8) | 432,665 | 492,450 (51.0; 602,822, 51.4) | 141,864 (45.5; 223,833, 47.9) | 634,314 |
-  | Night | 334,693 (52.5; 574,056, 53.3) | 104,757 (48.7; the same) | 439,450 | 440,712 (52.4; 897,818, 53.5) | 137,679 (49.1; the same) | 578,391 |
-  | Dark | 45,000 (70.3; 51,771, 72.0) | 14,289 (65.2; the same) | 59,289 | 73,830 (69.0; 85,817, 70.5) | 21,952 (64.6; the same) | 95,782 |
-
-  Turned round for a panel that is mounted upside down, the clips come out within
-  2 % of these and the logos within 0.12 %, at the same crf and quality.
+  | Libre Panel | 352,645 (51.85 dB, crf 20; 0.9.0: 606,261, 53.4) | 108,620 (47.80, quality 94; 127,210, 48.3) | 461,265 | 477,724 (52.15, crf 20; the same) | 140,346 (48.35, 94; 165,169, 48.7) | 618,070 |
+  | Aurora | 349,368 (49.95, crf 24.25; 652,208, 51.1) | 117,959 (49.91, 95; the same) | 467,327 | 497,227 (50.38, crf 24.5; 988,183, 51.5) | 137,422 (49.88, 94; 161,725, 50.0) | 634,649 |
+  | Pulse | 359,725 (51.58, crf 21.75; 464,168, 52.3) | 116,362 (46.86, 93; 150,737, 47.8) | 476,087 | 491,809 (52.36, crf 21; 604,690, 52.7) | 141,623 (47.68, 93; 187,968, 48.6) | 633,432 |
+  | Circuit | 355,625 (51.18, crf 20.5; 715,341, 52.8) | 113,040 (46.08, 92; 159,776, 47.8) | 468,665 | 492,450 (50.98, crf 21; 602,822, 51.4) | 149,517 (45.88, 91; 223,833, 47.9) | 641,967 |
+  | Night | 348,994 (52.55, crf 22.75; 574,056, 53.3) | 104,757 (48.66, 95; the same) | 453,751 | 497,619 (52.60, crf 23.25; 897,818, 53.5) | 137,679 (49.10, 95; the same) | 635,298 |
+  | Dark | 45,000 (70.30, crf 20; 51,771, 72.0) | 14,289 (65.15, 95; the same) | 59,289 | 73,830 (69.02, crf 20; 85,817, 70.5) | 21,952 (64.57, 95; the same) | 95,782 |
 
   For a panel mounted on end the pictures are others (drawn upright for 480×1920
   and 720×1920), and so are the files:
 
   | Look | 9.2": clip | logo | together | 12.3": clip | logo | together |
   |---|---|---|---|---|---|---|
-  | Libre Panel | 339,014 (52.0 dB, crf 20; 0.9.0: 584,330, 53.5) | 76,978 (47.2; 120,502, 48.4) | 415,992 | 470,238 (52.0, crf 20; the same) | 103,955 (47.6; 160,679, 48.7) | 574,193 |
-  | Aurora | 313,126 (46.8, crf 26; 796,787, 49.6) | 87,989 (49.1; 131,336, 49.7) | 401,115 | 437,151 (47.4, crf 26; 796,589, 49.2) | 123,453 (49.5; 185,952, 50.0) | 560,604 |
-  | Pulse | 341,785 (50.2, crf 23; 513,382, 51.7) | 111,521 (45.7; 160,629, 47.2) | 453,306 | 453,571 (51.5, crf 22; 652,522, 52.3) | 129,615 (46.8; 194,549, 48.2) | 583,186 |
-  | Circuit | 320,684 (50.9, crf 21; 711,836, 52.7) | 113,393 (46.2; 160,503, 47.9) | 434,077 | 481,563 (51.0, crf 21; 595,882, 51.5) | 141,227 (45.5; 222,915, 48.0) | 622,790 |
-  | Night | 336,991 (53.2, crf 22; 575,996, 53.7) | 81,343 (49.0; the same) | 418,334 | 427,480 (53.0, crf 23; 873,977, 53.8) | 115,184 (49.2; the same) | 542,664 |
-  | Dark | 44,517 (70.2, crf 20; 50,283, 71.8) | 14,310 (65.1; the same) | 58,827 | 73,428 (68.8, crf 20; 84,481, 70.3) | 22,047 (64.6; the same) | 95,475 |
+  | Libre Panel | 339,014 (51.97 dB, crf 20; 0.9.0: 584,330, 53.5) | 101,824 (47.97, quality 94; 120,502, 48.4) | 440,838 | 470,238 (51.97, crf 20; the same) | 135,973 (48.35, 94; 160,679, 48.7) | 606,211 |
+  | Aurora | 347,820 (47.18, crf 25.25; 796,787, 49.6) | 113,670 (49.54, 94; 131,336, 49.7) | 461,490 | 486,044 (47.75, crf 25.25; 796,589, 49.2) | 141,154 (49.68, 93; 185,952, 50.0) | 627,198 |
+  | Pulse | 349,677 (50.35, crf 22.75; 513,382, 51.7) | 111,521 (45.72, 92; 160,629, 47.2) | 461,198 | 489,997 (51.72, crf 21.5; 652,522, 52.3) | 146,703 (47.23, 93; 194,549, 48.2) | 636,700 |
+  | Circuit | 354,700 (51.14, crf 20.5; 711,836, 52.7) | 113,393 (46.18, 92; 160,503, 47.9) | 468,093 | 481,563 (51.05, crf 21; 595,882, 51.5) | 149,015 (45.89, 91; 222,915, 48.0) | 630,578 |
+  | Night | 352,784 (53.26, crf 21.75; 575,996, 53.7) | 81,343 (49.02, 95; the same) | 434,127 | 490,326 (53.18, crf 22.25; 873,977, 53.8) | 115,184 (49.23, 95; the same) | 605,510 |
+  | Dark | 44,517 (70.16, crf 20; 50,283, 71.8) | 14,310 (65.13, 95; the same) | 58,827 | 73,428 (68.84, crf 20; 84,481, 70.3) | 22,047 (64.60, 95; the same) | 95,475 |
 
-  Aurora on end is the one clip at the coarsest step (0.9.0 made it 797,000
-  bytes on either panel, at crf 20 on the 9.2" and 22 on the 12.3"). It is 2.9 dB
-  from 0.9.0's on the 9.2" and 1.9 on the 12.3", where every other clip, lying
-  or on end, is within 1.8; its finest rays are softer. On end and turned round,
-  the clips are 44,206 to 342,715 bytes on the 9.2" and 73,333 to 498,920 on the
-  12.3" (up to a tenth from the upright ones, a crf step apart at most), the
-  logos within 0.06 %. Over all four mountings a look comes to 401,115 to
-  454,168 bytes on the 9.2" and 537,204 to 634,314 on the 12.3" (Dark: 58,521 to
-  59,289 and 95,379 to 96,137).
+  Turned round for a panel that is mounted upside down, the files are made the
+  same way: the logos come out within 0.12 % of these, the clips at a step of
+  their own and within the same room.
+
+  The clips that are not at crf 20 now use 96 to 99.9 % of their room; with
+  whole steps (0.9.4) it was 85 to 98.5 %. Aurora on end is the clip furthest
+  from 0.9.0's (797,000 bytes on either panel, at crf 20 on the 9.2" and 22 on
+  the 12.3"): 2.4 dB on the 9.2" and 1.45 on the 12.3", where every other clip,
+  lying or on end, is within 1.7; its finest rays are a little softer. 0.9.4 made
+  it at crf 26, the coarsest step (46.8 and 47.4 dB). The logos are within 2.1 dB
+  of 0.9.0's (Circuit's on the 12.3" at 91 the furthest), at 45.7 dB or better.
+  Upright, a look comes to 434,127 to 476,087 bytes on the 9.2" and 605,510 to
+  641,967 on the 12.3" (Dark: 58,827 and 59,289; 95,475 and 95,782).
 
 - **Before 40**, 98 for the file and for the other one. A file larger than the
   one it replaces is not sent where both together would be more than that room;
@@ -562,10 +566,16 @@ Since 0.9.4 (`devices/panel_files.py`, `rust/app/src/start_screen.rs`):
   days), and for the clip 0.9.1 took away (after which it took the next file
   and showed frames until its next start). What ended it came after: the larger
   clip written into the room the delete had made, and the settings saved.
-- **Only the 9.2" and the 12.3"** are written to. Another model of the family
-  needs the word in the environment (`LIBRE_PANEL_PANEL_WRITES=at-my-own-risk`),
-  for who looks into it on a panel of their own: its files are then made for
-  the 9.2"'s room, by the pixels, and never for more.
+- **The 9.2", the 12.3" and the 8.8"** are written to (the 8.8" since 0.9.5,
+  with the 9.2"'s room; the first write to one is an owner's). Another model of
+  the family is written to only on its owner's word, given for each write after
+  the app has said what happened to issue 52's panel (`untested: true` with the
+  write; or `LIBRE_PANEL_PANEL_WRITES=at-my-own-risk` in the environment): its
+  files are then made for the 9.2"'s room, by the pixels, and never for more, and
+  sent and checked with the same commands. How it went is asked for in the
+  [start screen issue form](https://github.com/syntensa/libre-panel/issues/new?template=start_screen.yml);
+  a model goes on the list of those written to without the question only after
+  such a report from a panel of it.
 - **Run on two sound panels** before 0.9.4 (0.9.4rc1 on Windows, 2026-11-16): a
   9.2" with firmware `turzx_0001_0015`, mounted on end, and a 12.3" with
   `turzx_0001_0026`. Every 40, in the order sent, with the size 98 said before
@@ -611,13 +621,29 @@ until its time is over, however often the panel comes without an answer. What
 comes back and is no answer (a port's echo) is told once each time the panel
 comes and counts as none; a step is sent only after the sync's answer.
 
-The chance is small: that panel answered the app nothing after it began to
+The chance was small: that panel answered the app nothing after it began to
 restart. What the command has over the app's tries is that it is there the moment
 the panel comes (the app looked every five seconds, and started its engine
 first), that it sends the sync again until it is answered, that it goes on for as
 long as it is given, and that it says to the millisecond how far each coming
 gets: whether the panel can be opened, whether its port takes what is sent,
 whether the port sends it back unread, whether the panel answers.
+
+**What it found on that panel** (0.9.3's `remove-clip --wait`, run by its owner on
+Windows, 2026-11-16): in its ten minutes the panel came 81 times, about every
+7.5 s, and stayed 3.9 to 7.8 s, mostly 5.8. Each time it could be opened (WinUSB),
+and each time its port took nothing: the sync waited until the panel left, and
+the transfer ended as a stalled endpoint or as a packet not taken, in turn. A
+sound 9.2" with that firmware takes the first packet 0.32 s after it comes
+([below](#a-92-as-it-starts)). So the panel's program never gets as far as reading
+its USB port before the panel starts again, and nothing a PC sends reaches it:
+not this command, not the app, and as far as is known not the vendor's app
+either, which talk to it the same way. `default-start` would meet the same port.
+What may still bring such a panel back is its maker's: a way to put its software
+back that is not known here. Where a panel comes and goes and its port takes
+nothing in a dozen comings, the command's last line says so (`its port took
+nothing that was sent`), and that is the answer: nothing more can be done from
+the PC.
 
 ### A 9.2" as it starts
 

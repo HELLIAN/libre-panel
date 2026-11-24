@@ -564,12 +564,13 @@ impl System {
                 "battery.plugged".into(),
                 reading(Value::int(i64::from(plugged)), "", "Plugged in"),
             );
+            let [on_battery, charging, charged] = lp_sensors::BATTERY_STATES;
             let state = if !plugged {
-                "On battery"
+                on_battery
             } else if battery.percent >= 99.5 {
-                "Charged"
+                charged
             } else {
-                "Charging"
+                charging
             };
             put_text(out, "battery.state", state, "Battery");
         }

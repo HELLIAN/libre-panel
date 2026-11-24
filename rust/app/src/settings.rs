@@ -20,7 +20,7 @@ use crate::sensors::value_of;
 pub const PROJECT_URL: &str = "https://github.com/syntensa/libre-panel";
 const MAX_NOTICE: usize = 200_000;
 /// The built-in services in the order the app lists them; plugins' come after them.
-const SERVICE_ORDER: [&str; 11] = [
+const SERVICE_ORDER: [&str; 12] = [
     "game",
     "memory",
     "notices",
@@ -31,6 +31,7 @@ const SERVICE_ORDER: [&str; 11] = [
     "timer",
     "power",
     "agents",
+    "lightring",
     "waveshare",
 ];
 /// Sources that start by themselves; they are listed only where config.toml names them.
@@ -62,7 +63,7 @@ const PATH_WORDS: [&str; 13] = [
     "output",
 ];
 /// The sensor sources of Libre Panel (sensors/base.py's), in its order.
-pub(crate) const PROVIDERS: [&str; 18] = [
+pub(crate) const PROVIDERS: [&str; 19] = [
     "psutil",
     "linux",
     "librehardwaremonitor",
@@ -81,6 +82,7 @@ pub(crate) const PROVIDERS: [&str; 18] = [
     "hwinfo",
     "json",
     "nut",
+    "dell",
 ];
 const DRIVERS: [&str; 3] = ["auto", "turzx", "virtual"]; // (sorted)
 const LHM_MODES: [&str; 4] = ["auto", "service", "inprocess", "webserver"];
@@ -99,8 +101,10 @@ const PLAIN_TRANSITIONS: [&str; 11] = [
     "blinds",
     "dissolve",
 ];
-const ELABORATE_TRANSITIONS: [&str; 6] =
-    ["tube", "entrance", "light", "glitch", "tiles", "shatter"];
+const ELABORATE_TRANSITIONS: [&str; 10] = [
+    "tube", "entrance", "light", "glitch", "tiles", "shatter", "cascade", "comet", "portal",
+    "morph",
+];
 const HOTKEYS: [&str; 8] = [
     "pause",
     "brightness_up",
@@ -112,8 +116,9 @@ const HOTKEYS: [&str; 8] = [
     "mic_mute",
 ];
 /// What can be taken out of config.toml, so that its default holds (the shortcuts too).
-const UNSETTABLE: [&str; 6] = [
+const UNSETTABLE: [&str; 7] = [
     "refresh_ms",
+    "weather.api_key",
     "weather.latitude",
     "weather.longitude",
     "weather.place",
@@ -270,6 +275,17 @@ fn plain_text(name: &str, value: &Value, limit: usize, required: bool) -> Answer
 
 fn a_text(name: &str, value: &Value, limit: usize) -> Answer<Value> {
     plain_text(name, value, limit, false).map(Value::Str)
+}
+
+/// An API key: letters, digits and signs, no spaces (pasted with spaces round it: without).
+fn api_key(name: &str, value: &Value) -> Answer<Value> {
+    let key = plain_text(name, value, 128, true)?;
+    if !key.chars().all(|c| c.is_ascii_graphic()) {
+        return Err(bad(format!(
+            "{name}: letters, digits and signs only, no spaces"
+        )));
+    }
+    Ok(Value::Str(key))
 }
 
 /// As config.toml takes video.maxrate: "auto", or digits (with a fraction) and k, K or M.
@@ -628,6 +644,8 @@ impl Settings<'_> {
         let mut transitions = Dict::default();
         transitions.insert("default".into(), text(&config.transition));
         transitions.insert("speed".into(), text(&config.transitions.speed));
+        // (over all the panels as one)
+        transitions.insert("canvas".into(), Value::Bool(config.transitions.canvas));
         for (occasion, name) in &config.transitions.occasions {
             transitions.insert(occasion.clone(), text(name));
         }
@@ -708,6 +726,12 @@ impl Settings<'_> {
                 "weather",
                 dict([
                     ("enabled", Value::Bool(weather.enabled)),
+                    ("provider", text(&weather.provider)),
+                    // (whether there is a key, not the key: the page has no need of it)
+                    (
+                        "api_key_set",
+                        Value::Bool(!weather.api_key.trim().is_empty()),
+                    ),
                     ("latitude", float_of(weather.latitude)),
                     ("longitude", float_of(weather.longitude)),
                     ("place", text(&weather.place)),
@@ -739,6 +763,7 @@ impl Settings<'_> {
             ),
             ("hotkeys_enabled", Value::Bool(config.hotkeys_enabled)),
             ("symbols", text(&config.symbols)),
+            ("data_unit", text(&config.data_unit)),
             ("cards", texts(&config.cards)),
             ("card_order", text(&config.card_order)),
             ("card_transition", text(&config.card_transition)),
@@ -749,6 +774,16 @@ impl Settings<'_> {
             ("across", text(&config.across)),
             // how the panel goes from one screen to the next
             ("transitions", Value::Dict(transitions)),
+            // the light that moves over a panel that moves (Settings → Panel → Moving light)
+            (
+                "shine",
+                Value::Dict(
+                    lp_config::SHINE_KINDS
+                        .into_iter()
+                        .map(|kind| (kind.to_string(), Value::Bool(config.shine.on(kind))))
+                        .collect(),
+                ),
+            ),
             ("switches", Value::Dict(switches)),
             // the panels beside this one ([[panels]]): written back whole ("panels")
             ("panels", Value::List(panels)),
@@ -758,6 +793,15 @@ impl Settings<'_> {
             ("catalog", self.catalog()),
             ("restart", texts(&self.restart.pending(self.run()))),
         ]))
+    }
+
+    /// The display drivers to choose from: the app's and the plugins' (editor/settings.py's
+    /// available_drivers), sorted.
+    fn drivers(&self) -> Vec<String> {
+        let mut drivers: Vec<String> = DRIVERS.map(String::from).to_vec();
+        drivers.extend(crate::plugins::driver_names(&self.home.settings));
+        drivers.sort_unstable();
+        drivers
     }
 
     fn catalog(&self) -> Value {
@@ -841,7 +885,7 @@ impl Settings<'_> {
                 texts(&lp_config::default_providers(platform)),
             ),
             ("lhm_modes", texts(&LHM_MODES)),
-            ("drivers", texts(&DRIVERS)),
+            ("drivers", texts(&self.drivers())),
             ("services", Value::List(services)),
             ("transitions", Value::List(transitions)),
         ])
@@ -887,6 +931,12 @@ impl Settings<'_> {
             edits.iter().map(named).collect::<Vec<String>>()
         };
         self.restart.written(&names, self.run());
+        if names.iter().any(|name| name == "data_unit") {
+            // (the pages' previews say amounts of data so at once; the panel when it reads it)
+            if let Ok(config) = self.config() {
+                crate::say_data_as(&config);
+            }
+        }
         self.follow();
         self.read()
     }
@@ -943,7 +993,11 @@ impl Settings<'_> {
             return check_switch(name, value);
         }
         if name == "panels" {
-            return Ok(Change::Tables(name.into(), check_panels(value, config)?));
+            let drivers = self.drivers();
+            return Ok(Change::Tables(
+                name.into(),
+                check_panels(value, config, &drivers)?,
+            ));
         }
         if name == JSON_SOURCES {
             return Ok(Change::Tables(
@@ -960,7 +1014,7 @@ impl Settings<'_> {
                 false => Err(bad(format!("{name}: cannot be taken out"))),
             };
         }
-        let Some(cleaned) = rule(name, name, value, config) else {
+        let Some(cleaned) = rule(name, name, value, config, &self.drivers()) else {
             return Err(bad(format!("unknown setting {}", repr(name))));
         };
         let cleaned = toml_of(&cleaned?).ok_or_else(unwritable)?;
@@ -1022,6 +1076,17 @@ impl Settings<'_> {
 
     // -- the panel ------------------------------------------------------------------------
 
+    /// The panel the app shows on now, by the model its panel loop says (None: it shows on
+    /// none, or this is no app with a panel loop).
+    fn showing(&self) -> Option<&'static PanelModel> {
+        self.controls.as_ref().and_then(|app| {
+            let state = app.panel.state();
+            let on = state.get("on_panel") == Some(&Value::Bool(true));
+            let id = state.get("model").and_then(Value::as_str).filter(|_| on)?;
+            lp_devices::models::find_model(id)
+        })
+    }
+
     /// The panel that is found (looked for on the bus, without opening it, so a running
     /// panel is not disturbed) and what the video mode makes of it.
     pub fn panel(&self) -> Answer<Value> {
@@ -1033,7 +1098,14 @@ impl Settings<'_> {
                 found = Some(Found::of(configured));
             }
         }
-        let model = configured.or(found.as_ref().map(|found| found.model));
+        // the panel chosen by hand, there by its own USB ids: a screen no search finds by
+        // itself (the JONSBO DS339's display chip is in USB-to-HDMI adapters too)
+        if let Some(configured) = configured.filter(|&model| on_the_bus(model)) {
+            found = Some(Found::of(configured));
+        }
+        // (else the one the app shows on: a panel whose port it has open is found by no search)
+        let showing = self.showing();
+        let model = (configured.or(found.as_ref().map(|found| found.model))).or(showing);
         let video = &config.device.video;
         let usb = model.is_none_or(|model| model.protocol == "usb-turing");
         let gaps = gaps_of(&video.mode, &video.local_clip, model, usb);
@@ -1061,9 +1133,12 @@ impl Settings<'_> {
                         .cloned()
                         .unwrap_or(Value::List(Vec::new())),
                 ),
+                // its frames go to the panel: it is there, whatever the search finds
+                ("on_panel", Value::Bool(of("on_panel") == Value::Bool(true))),
             ]);
         }
-        let maybe = match found.is_none() && configured.is_none() {
+        // (not while the app shows on a panel: its port is the one "which is it?" would ask of)
+        let maybe = match found.is_none() && configured.is_none() && showing.is_none() {
             true => maybe_panels(),
             false => Vec::new(),
         };
@@ -1179,7 +1254,7 @@ impl Settings<'_> {
     /// panel's permission, the mainboard's sensor driver and the processor's power. Both have
     /// `platform`, `available`, `command` and `job`.
     pub fn unlock(&self) -> Answer<Value> {
-        if cfg!(target_os = "linux") {
+        if crate::linux_setup::supported() {
             let facts = crate::linux_setup::gather(&crate::linux_setup::root());
             return Ok(Value::Dict(crate::linux_setup::status(&facts, true)));
         }
@@ -1221,7 +1296,7 @@ impl Settings<'_> {
     /// once; the run goes on in the background.
     pub fn set_unlock(&self, payload: &Value) -> Answer<Value> {
         let payload = payload.as_dict();
-        if cfg!(target_os = "linux") {
+        if crate::linux_setup::supported() {
             return self.unlock_linux(payload);
         }
         let action = payload
@@ -1529,7 +1604,10 @@ impl Settings<'_> {
     /// one, by its USB ids. The bus is only looked at: nothing is sent to a panel.
     pub fn report(&self) -> Answer<Value> {
         let config = self.config()?;
-        let product = find_panel(&config).map_or(String::new(), |found| found.model.label());
+        // (a panel whose port the app has open is found by no search: the one it shows on)
+        let product = (find_panel(&config).map(|found| found.model))
+            .or_else(|| self.showing())
+            .map_or(String::new(), PanelModel::label);
         let (system, release, machine) = platform();
         let mut lines = vec![
             format!(
@@ -1669,6 +1747,16 @@ fn model_info(model: &PanelModel, port: Option<&str>, sure: bool) -> Value {
 
 fn port_info(port: &lp_devices::ports::FoundPort) -> Value {
     model_info(port.model, Some(&port.device), port.sure())
+}
+
+/// Whether a panel no search finds by itself (a USB display chip, MS9132) is on the bus by
+/// its USB ids, none of it opened: chosen by hand, it is there.
+fn on_the_bus(model: &PanelModel) -> bool {
+    model.protocol == "usb-ms9132"
+        && model
+            .usb_ids
+            .iter()
+            .any(|&(vendor, product)| lp_devices::usb_link::present(vendor, &[product]).is_some())
 }
 
 /// Whether the panel set up is one screen of the panel on the bus: a screen of the ZC-360
@@ -2033,7 +2121,7 @@ fn panel_video(name: &str, value: &Value) -> Answer<Value> {
 /// `panels`: the panels beside this one, each a table of `theme`, `on` and the keys of
 /// `[device]`, as read() hands them; written as `[[panels]]` with what differs from the
 /// defaults.
-fn check_panels(value: &Value, config: &Config) -> Answer<Vec<Table>> {
+fn check_panels(value: &Value, config: &Config, drivers: &[String]) -> Answer<Vec<Table>> {
     let listed = match value {
         Value::List(listed) if listed.len() <= lp_config::MORE_PANELS => listed,
         _ => {
@@ -2080,7 +2168,7 @@ fn check_panels(value: &Value, config: &Config) -> Answer<Vec<Table>> {
                 "brightness_offset" => whole(&name, item, -50, 50)?,
                 "video" => panel_video(&name, item)?,
                 _ => match default.contains_key(key) {
-                    true => rule(&format!("device.{key}"), &name, item, config)
+                    true => rule(&format!("device.{key}"), &name, item, config, drivers)
                         .unwrap_or_else(|| Err(bad(format!("unknown setting {}", repr(&name)))))?,
                     false => return Err(bad(format!("unknown setting {}", repr(&name)))),
                 },
@@ -2373,7 +2461,14 @@ fn rule_random(name: &str, value: &Value) -> Answer<Value> {
 
 /// The rule of the setting `key`, applied to `value` (`name`: what an error calls it); None
 /// for a setting there is no rule for.
-fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<Value>> {
+/// `drivers`: the display drivers to choose from (the app's and the plugins').
+fn rule(
+    key: &str,
+    name: &str,
+    value: &Value,
+    config: &Config,
+    drivers: &[String],
+) -> Option<Answer<Value>> {
     use lp_config as c;
     let speeds: Vec<&str> = c::TRANSITION_SPEEDS
         .iter()
@@ -2388,7 +2483,7 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
                 "{name}: auto, or a model from: libre-panel models"
             ))),
         },
-        "device.driver" => choice(name, value, &DRIVERS),
+        "device.driver" => choice(name, value, drivers),
         "device.brightness" | "device.night_brightness" | "device.away_brightness" => {
             whole(name, value, 0, 100)
         }
@@ -2409,6 +2504,10 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
         "across" => a_text(name, value, 300),
         "transitions.default" => rule_transition(name, value, false),
         "transitions.speed" => choice(name, value, &speeds),
+        "transitions.canvas" => flag(name, value),
+        "shine.rings" | "shine.graphs" | "shine.music" | "shine.downloads" | "shine.sun" => {
+            flag(name, value)
+        }
         "transitions.random" => rule_random(name, value),
         "device.output" => plain_text(name, value, 260, true).map(Value::Str),
         "device.port" => a_text(name, value, 64),
@@ -2435,6 +2534,7 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
         "check_updates" | "allow_notify" | "tray_icon" | "light_colours" | "graph_steps"
         | "hotkeys.enabled" | "weather.enabled" => flag(name, value),
         "symbols" => choice(name, value, &c::SYMBOL_PACKS),
+        "data_unit" => choice(name, value, &c::DATA_UNITS),
         "cards" => rule_cards(name, value),
         "card_order" => choice(name, value, lp_theme::modules::slots::CARD_ORDERS),
         "card_transition" => choice(name, value, lp_theme::modules::slots::CARD_TRANSITIONS),
@@ -2453,6 +2553,8 @@ fn rule(key: &str, name: &str, value: &Value, config: &Config) -> Option<Answer<
         }),
         "sensors.json.update_s" => whole(name, value, 2, 3600),
         "weather.units" => choice(name, value, &["metric", "imperial"]),
+        "weather.provider" => choice(name, value, &["open-meteo", "openweathermap"]),
+        "weather.api_key" => api_key(name, value),
         "weather.update_minutes" => whole(name, value, 5, 1440),
         "weather.latitude" => number(name, value, -90.0, 90.0),
         "weather.longitude" => number(name, value, -180.0, 180.0),

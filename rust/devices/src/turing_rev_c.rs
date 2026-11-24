@@ -502,7 +502,10 @@ pub fn open(
             leave_place(&device);
             return Err(DeviceError(tf(
                 "cannot open {port}: {error}",
-                &[("port", &device), ("error", &e.0)],
+                &[
+                    ("port", &device),
+                    ("error", &crate::serial::SerialPort::cause(&e, &device)),
+                ],
             )));
         }
     };

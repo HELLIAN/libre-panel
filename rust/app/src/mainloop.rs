@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use indexmap::IndexMap;
 use lp_config::sequence::Rotation;
@@ -52,6 +52,8 @@ pub const LIVE_HOLD_S: f64 = 10.0;
 /// a panel beside the first takes its readings this long after the first panel took them, so
 /// that a value glides on both at once
 const IN_STEP_S: f64 = 0.1;
+/// how much sooner than due a frame still takes the readings
+const SAMPLE_SLACK_S: f64 = 1e-6;
 
 /// What `notify` is told of a message, kept where any thread may ask: whether the panel is
 /// connected, the kinds the theme switches off and those the screen shows itself.
@@ -81,6 +83,8 @@ pub struct RunStatus {
     pub detail: String,
     /// where frames go: a panel, or a PNG file
     pub target: String,
+    /// whether they go to a panel (not to a PNG file): the panel is there and takes them
+    pub on_panel: bool,
     /// the panel's model, set or reported ("": not known yet)
     pub model: String,
     /// the mode a service set (a game, music)
@@ -125,6 +129,8 @@ pub struct Asked {
     pub port: Option<u16>,
     /// this driver instead of config.toml's `[device] driver` (`run --driver virtual`)
     pub driver: Option<String>,
+    /// a clip's (`libre-panel clip`): none of this computer's readings, the clip adds its own
+    pub clip: bool,
 }
 
 /// What a loop of a panel beside the first has of it: its place in `[[panels]]`, and the
@@ -216,6 +222,9 @@ pub struct MainLoop {
     asked: Asked,
     config: Config,
     config_file: PathBuf,
+    /// a panel beside the first: config.toml whole as it read it last for where the panels
+    /// stand (arranged), with the file's stamp then (read again only once the file changed)
+    full_config: std::cell::RefCell<Option<(i128, Config)>>,
     watched: f64,
     /// the sources' hub: the first panel's loop reads them, those beside it share it
     hub: Arc<Mutex<Hub>>,
@@ -227,6 +236,8 @@ pub struct MainLoop {
     on_bus: std::cell::Cell<Option<(Instant, Option<&'static PanelModel>)>>,
     /// the first panel's: the loops of the panels beside it
     more: Option<More>,
+    /// a clip's panels beside the first: their loops are the clip's, not threads of `more`
+    clip_beside: Vec<Arc<Mutex<RunStatus>>>,
     /// when a companion was last seen showing beside the first panel
     paired_at: Option<f64>,
     /// frame rate, drawing time, data rate, the video link, faults; and what the drivers
@@ -298,6 +309,9 @@ pub struct MainLoop {
     scenes_same: u64,
     scenes_apart: u64,
     shown_frame: Option<Rc<Image>>,
+    /// the scene of the config.toml read before the last (a scene's change goes over all the
+    /// panels as one: Python's `before`)
+    scene_before: String,
     /// the renderer and its count of frames of the frame the panel showed last, where that
     /// was the theme's frame as drawn (no transition, message, edge or picture over it): the
     /// next such frame of that renderer differs from it only where the renderer says
@@ -316,6 +330,8 @@ pub struct MainLoop {
     in_sequence: bool,
     /// the step of the screens in turn the theme was last taken from
     sequence_at: Option<(usize, String, f64)>,
+    /// the seconds of a step of the screens in turn, in seconds (a clip's are tenths)
+    sequence_unit: f64,
     /// counts the transitions (each breaks its old frame anew)
     blends: u64,
     connected: bool,
@@ -357,6 +373,79 @@ pub fn panel_config(config: &Config, n: usize) -> Result<Config, String> {
 /// how long the panel found on the USB bus counts before it is looked for again
 const BUS_LOOK_S: u64 = 5;
 
+/// a transition over all the panels as one (render/canvas.rs) begins on each this long after
+/// the change: each notices it in its own time, and warms its theme first
+const SWEEP_LEAD_S: f64 = 0.8;
+/// what all the panels change for at once, besides a scene: a game, music, the PC at rest
+const TOGETHER: [&str; 3] = ["game", "media", "idle"];
+/// a moment is kept this long after it, for the panels that come to it late
+const MOMENT_KEEP_S: f64 = 5.0;
+/// the moments the changes all the panels make at once begin (shared_moment)
+#[allow(clippy::type_complexity)]
+static MOMENTS: Mutex<Vec<((&'static str, bool), f64)>> = Mutex::new(Vec::new());
+
+/// The canvas of the panel `index` of those standing at `rects` (millimetres, the first
+/// panel's first; None for one whose size is not known): `{"own": [x, y, w, h], "whole":
+/// [x, y, w, h]}`, around all of them that are known, and which of them this is and how many
+/// there are ("panel", "panels": a morph's things fly between them); None for this one not
+/// known, or for fewer than two known.
+fn canvas_of(rects: &[Option<crate::arrangement::Rect>], index: usize) -> Option<Value> {
+    let (own, whole, panels) = canvas_rects(rects, index)?;
+    let rect = |(x, y, w, h): crate::arrangement::Rect| {
+        Value::List([x, y, w, h].into_iter().map(Value::Float).collect())
+    };
+    let mut canvas = lp_py::Dict::default();
+    canvas.insert("own".into(), rect(own));
+    canvas.insert("whole".into(), rect(whole));
+    canvas.insert("panel".into(), Value::int(index as i64));
+    canvas.insert("panels".into(), Value::int(panels as i64));
+    Some(Value::Dict(canvas))
+}
+
+/// The box of the panel `index` of those standing at `rects` and the canvas around all of
+/// them that are known (millimetres), and how many those are; None for this one not known, or
+/// for fewer than two known.
+fn canvas_rects(
+    rects: &[Option<crate::arrangement::Rect>],
+    index: usize,
+) -> Option<(crate::arrangement::Rect, crate::arrangement::Rect, usize)> {
+    let own = rects.get(index).copied().flatten()?;
+    let shown: Vec<_> = rects.iter().flatten().copied().collect();
+    if shown.len() < 2 {
+        return None;
+    }
+    let least = |of: fn(&crate::arrangement::Rect) -> f64| {
+        shown.iter().map(of).fold(f64::INFINITY, f64::min)
+    };
+    let most = |of: fn(&crate::arrangement::Rect) -> f64| {
+        shown.iter().map(of).fold(f64::NEG_INFINITY, f64::max)
+    };
+    let (left, top) = (least(|r| r.0), least(|r| r.1));
+    let (right, bottom) = (most(|r| r.0 + r.2), most(|r| r.1 + r.3));
+    Some((own, (left, top, right - left, bottom - top), shown.len()))
+}
+
+/// Now on the wall clock, in seconds since 1970.
+fn wall_clock() -> f64 {
+    lp_render::clock::wall()
+}
+
+/// _moment: when the change `key` (its occasion, and whether it leaves it) begins on every
+/// panel, on the wall clock: the first panel's loop to come to it sets it, [`SWEEP_LEAD_S`]
+/// from now, and those that come to it after take it.
+fn shared_moment(key: (&'static str, bool)) -> f64 {
+    let now = wall_clock();
+    let Ok(mut moments) = MOMENTS.lock() else {
+        return now + SWEEP_LEAD_S;
+    };
+    moments.retain(|(_, at)| *at >= now - MOMENT_KEEP_S);
+    if let Some((_, at)) = moments.iter().find(|(known, _)| *known == key) {
+        return *at;
+    }
+    moments.push((key, now + SWEEP_LEAD_S));
+    now + SWEEP_LEAD_S
+}
+
 /// LP_SCENE_CHECK: each frame that goes as its layers compared with the engine's (a check while
 /// measuring: it composes the frame here too).
 fn scene_check() -> bool {
@@ -366,9 +455,8 @@ fn scene_check() -> bool {
 
 /// The local time of now, and its fold.
 pub(crate) fn moment() -> (Moment, bool) {
-    let since = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    // (where LP_NOW names a moment, the time of day stands still at it: crate::clock)
+    let since = crate::clock::named().unwrap_or_else(lp_render::clock::wall);
     let utc = lp_py::zones::Zone::utc();
     let zone = lp_py::zones::local().unwrap_or(&utc);
     lp_py::zones::fromtimestamp(zone, since).unwrap_or((Moment::date(1970, 1, 1), false))
@@ -377,7 +465,8 @@ pub(crate) fn moment() -> (Moment, bool) {
 impl MainLoop {
     /// A loop with services of its own, which end with it.
     pub fn new(home: Home, asked: Asked) -> Result<MainLoop, String> {
-        MainLoop::with(home, asked, Company::new(), true, Arc::default())
+        let company = Company::new(&home.settings);
+        MainLoop::with(home, asked, company, true, Arc::default())
     }
 
     /// A loop in the `company` of the background app: its services go on when the loop ends
@@ -401,9 +490,14 @@ impl MainLoop {
             };
         }
         // (a source nobody brings is noted by the hub, and said with its first readings)
-        let (mut hub, _) = Hub::of(&config, asked.demo);
+        let mut hub = match asked.clip {
+            true => Hub::bare(&config),
+            false => Hub::of(&config, asked.demo).0,
+        };
         hub.add(Box::new(crate::sensors::Services(Arc::clone(&host))));
-        say(&format!("readings from: {}", hub.names().join(", ")));
+        if !asked.clip {
+            say(&format!("readings from: {}", hub.names().join(", ")));
+        }
         let judged: Arc<Mutex<Judged>> = Arc::default();
         let asks = Arc::clone(&judged);
         host.set_judge(Some(Box::new(move |toast| {
@@ -420,7 +514,6 @@ impl MainLoop {
                 Delivery::shown()
             }
         })));
-        host.set_data_dir(home.settings.join("plugins-data"));
         let themes = home.places();
         host.set_themes(Some(Box::new(move |name| {
             versions::find_theme(name, &themes).is_ok()
@@ -470,7 +563,7 @@ impl MainLoop {
             };
         }
         let began = company.began;
-        let host = PluginHost::new(Box::new(move || began.elapsed().as_secs_f64()));
+        let host = PluginHost::new(Box::new(move || crate::company::since(began)));
         let asked = Asked {
             theme: None,
             output: None,
@@ -495,6 +588,7 @@ impl MainLoop {
         owns: bool,
     ) -> MainLoop {
         let began = company.began;
+        let scene_before = config.scene.clone();
         MainLoop {
             on_bus: std::cell::Cell::new(None),
             env: Env {
@@ -505,13 +599,15 @@ impl MainLoop {
             asked,
             config,
             config_file,
+            full_config: std::cell::RefCell::new(None),
             watched: 0.0,
             hub,
             view: None,
             beside: None,
             more: None,
+            clip_beside: Vec::new(),
             paired_at: None,
-            meter: crate::meter::Meter::new(began.elapsed().as_secs_f64(), &Default::default()),
+            meter: crate::meter::Meter::new(crate::company::since(began), &Default::default()),
             counted: Default::default(),
             panel: None,
             failures: 0,
@@ -546,6 +642,7 @@ impl MainLoop {
             alarm: AlarmEdge::new(),
             blend: None,
             showing: None,
+            scene_before,
             began_in: None,
             failed_switches: std::collections::HashSet::new(),
             last_frame: None,
@@ -562,6 +659,7 @@ impl MainLoop {
             occasion: "manual",
             in_sequence: false,
             sequence_at: None,
+            sequence_unit: 1.0,
             blends: 0,
             connected: false,
         }
@@ -580,13 +678,93 @@ impl MainLoop {
         self.beside.as_ref().map_or(0, |beside| beside.n + 1)
     }
 
-    /// The loop's clock: seconds since it began.
-    fn clock(&self) -> f64 {
-        self.began.elapsed().as_secs_f64()
+    // -- what `libre-panel clip` does with a loop (clip.rs) --------------------------------
+
+    /// The services' host of the loop.
+    pub(crate) fn host(&self) -> Arc<PluginHost> {
+        Arc::clone(&self.host)
     }
 
-    /// The app's language as config.toml sets it ("auto": the system's).
+    pub(crate) fn company(&self) -> Arc<Company> {
+        Arc::clone(&self.company)
+    }
+
+    pub(crate) fn shared_hub(&self) -> Arc<Mutex<Hub>> {
+        Arc::clone(&self.hub)
+    }
+
+    pub(crate) fn status(&self) -> Arc<Mutex<RunStatus>> {
+        Arc::clone(&self.status)
+    }
+
+    /// The sources of a clip (`Asked::clip`): its own, beside the services'.
+    pub(crate) fn clip_sources(&self, given: Vec<Box<dyn crate::sensors::Source>>) {
+        if let Ok(mut hub) = self.hub.lock() {
+            for source in given {
+                hub.add(source);
+            }
+            say(&format!("readings from: {}", hub.names().join(", ")));
+        }
+    }
+
+    /// The panel the loop shows on, instead of looking for one.
+    pub(crate) fn set_display(&mut self, display: Display) {
+        self.panel = Some(display);
+    }
+
+    /// The sources read once into the graphs' history, without a frame.
+    pub(crate) fn prefill(&mut self) {
+        let (now, fold) = moment();
+        if let Ok(mut hub) = self.hub.lock() {
+            hub.snapshot(now, fold);
+        }
+    }
+
+    /// A clip's pages: none asks this computer how long it has been idle; music's stays
+    /// `leave_s` after a track stops (None: its usual time).
+    pub(crate) fn clip_pages(&mut self, leave_s: Option<f64>) {
+        self.pages.without_idle();
+        if let Some(leave_s) = leave_s {
+            self.pages.leave_s = leave_s;
+        }
+    }
+
+    /// A clip's screens in turn: config.toml's seconds of a step are `unit` seconds each
+    /// (0.1: tenths, for steps shorter than a step can be).
+    pub(crate) fn clip_pace(&mut self, unit: f64) {
+        if unit > 0.0 {
+            self.sequence_unit = unit;
+        }
+    }
+
+    /// A clip's panels beside the first (their statuses): the loops the clip runs itself.
+    pub(crate) fn clip_beside(&mut self, statuses: Vec<Arc<Mutex<RunStatus>>>) {
+        self.clip_beside = statuses;
+    }
+
+    /// config.toml read again in the next frame (a clip changed it), not at the next look.
+    pub(crate) fn clip_config(&mut self) {
+        self.watched = f64::NEG_INFINITY;
+    }
+
+    /// The cards of the first card slot on show take turns of `seconds` from now on (None: as
+    /// they do), `way` their transition (None: as it is).
+    pub(crate) fn clip_slot(&mut self, seconds: Option<f64>, way: Option<&str>) {
+        let now = self.clock();
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.clip_slot(seconds, now, way);
+        }
+    }
+
+    /// The loop's clock: seconds since it began.
+    fn clock(&self) -> f64 {
+        crate::company::since(self.began)
+    }
+
+    /// The app's language as config.toml sets it ("auto": the system's), and how it says
+    /// amounts of data.
     fn speak(&self) {
+        crate::say_data_as(&self.config);
         let code = lp_i18n::resolve(Some(&self.config.language), lp_i18n::system_language_here);
         match lp_i18n::Language::load(&self.home.locale(), &code) {
             Ok(language) => lp_i18n::set_language(language),
@@ -684,24 +862,11 @@ impl MainLoop {
 
     fn fps(&self) -> i64 {
         let streams = self.panel.as_ref().is_some_and(Display::streams);
-        if !streams && self.calm() {
-            return 1;
-        }
         let mode = self.host.mode().unwrap_or_default();
         let own = self.config.modes.get(&mode).and_then(|mode| mode.fps);
-        if let Some(fps) = own.filter(|fps| *fps != 0) {
-            return fps.max(1);
-        }
-        if streams {
-            let video = (self.panel.as_ref().and_then(Display::stream_fps))
-                .unwrap_or(self.config.device.video.fps);
-            return match mode.as_str() {
-                "game" => video.min(GAME_STREAM_FPS),
-                _ => video,
-            }
-            .max(1);
-        }
-        self.config.fps.max(1)
+        let video = (self.panel.as_ref().and_then(Display::stream_fps))
+            .unwrap_or(self.config.device.video.fps);
+        frames_a_second(streams, self.calm(), &mode, own, video, self.config.fps)
     }
 
     /// The transition of a switch that begins now, where config.toml has one for it.
@@ -723,9 +888,18 @@ impl MainLoop {
         if self.calm() {
             return;
         }
+        // all the panels change at once (a scene, a game, music, the rest): a slide, the wipe
+        // or the line of light goes over them as one
+        let together = self.scene_before != self.config.scene || TOGETHER.contains(&occasion);
+        let mut canvas = if together { self.canvas() } else { None };
+        if let Some(Value::Dict(canvas)) = canvas.as_mut() {
+            // (the switch, as every panel knows it)
+            let at = self.together_at(occasion, leaving);
+            canvas.insert("key".into(), Value::Str(format!("switch {at:?}")));
+        }
         let (moment, _) = moment();
         self.blends += 1;
-        let kind = switch::handover(
+        let mut kind = switch::handover(
             &self.config,
             occasion,
             leaving,
@@ -735,7 +909,16 @@ impl MainLoop {
             &renderer.theme.name,
             &moment,
             self.blends as usize + now.to_bits() as usize,
+            canvas.as_ref(),
         );
+        if let Some(morph) = kind.as_mut().filter(|kind| kind.name == "morph") {
+            morph.set_before(self.parting(now));
+        }
+        // (over all of them: on each from the same moment)
+        let begins = match &kind {
+            Some(kind) if kind.on_canvas() => now + self.together(occasion, leaving),
+            _ => now,
+        };
         if self.last_frame.is_none() {
             // (the frame shown last went as its layers: its pixels made now)
             self.last_frame = self
@@ -748,7 +931,7 @@ impl MainLoop {
             kind,
             self.last_frame.as_deref(),
             self.shown_frame.as_deref(),
-            now,
+            begins,
             self.blends,
             self.toasts.as_mut(),
         );
@@ -756,6 +939,25 @@ impl MainLoop {
             self.blend = Some(blend);
             self.began_in = self.host.mode();
         }
+    }
+
+    /// The old screen for a morph, from the renderer that drew it (still the loop's while the
+    /// switch is made): its last frame as it was composed; composed here once where its layers
+    /// went to the engine.
+    fn parting(&mut self, now: f64) -> Option<lp_render::morph::Parting> {
+        let was = self.renderer.as_mut()?;
+        if let Ok(Some(parting)) = was.parting() {
+            return Some(parting);
+        }
+        let snapshot = self.snapshot.clone()?;
+        if let Err(why) = was.render_shared(snapshot, now) {
+            say(&format!(
+                "the old screen could not be drawn for the morph: {}",
+                why.0
+            ));
+            return None;
+        }
+        was.parting().ok().flatten()
     }
 
     /// config.toml read again where it changed; one that cannot be read leaves the last.
@@ -786,7 +988,8 @@ impl MainLoop {
                 if self.beside.is_none() {
                     // (the sources: the first panel's loop tells them, its config has the
                     // same readings)
-                    if fresh.sensors != self.config.sensors {
+                    // (a clip's are its own, whatever config.toml says)
+                    if fresh.sensors != self.config.sensors && !self.asked.clip {
                         let (mut hub, _) = Hub::of(&fresh, self.asked.demo);
                         hub.add(Box::new(crate::sensors::Services(Arc::clone(&self.host))));
                         self.hub().replace(hub);
@@ -795,6 +998,7 @@ impl MainLoop {
                     // ([hardware]: the names of this computer's parts and its fans)
                     self.hub().follow_config(&fresh);
                 }
+                self.scene_before = std::mem::take(&mut self.config.scene);
                 self.config = fresh;
                 self.relook = true;
                 self.refused = None;
@@ -814,6 +1018,9 @@ impl MainLoop {
     }
 
     fn close_panel(&mut self) {
+        if let Ok(mut status) = self.status.lock() {
+            status.on_panel = false;
+        }
         if let Some(mut panel) = self.panel.take() {
             // (the frame that went last as its layers: its pixels made now, to stay, turned as
             // the panel got it)
@@ -879,6 +1086,7 @@ impl MainLoop {
                 say(&format!("showing on {}{}", panel.describe(), panel.way()));
                 if let Ok(mut status) = self.status.lock() {
                     status.target = panel.describe();
+                    status.on_panel = panel.on_panel();
                     status.detail.clear();
                 }
                 self.failures = 0;
@@ -992,7 +1200,12 @@ impl MainLoop {
             .config
             .sequence
             .on
-            .then(|| self.rotation.at(&self.config.sequence.steps, now))
+            .then(|| {
+                (self.rotation).at(
+                    &self.config.sequence.steps,
+                    now * (1.0 / self.sequence_unit),
+                )
+            })
             .flatten()
         {
             self.in_sequence = true;
@@ -1070,10 +1283,12 @@ impl MainLoop {
     /// _pairing: for the first panel, whether a companion runs beside it, and PAIR_HOLD_S
     /// after the last one was seen, so that a reconnect does not switch back and forth.
     fn paired(&mut self, now: f64) -> bool {
-        let Some(more) = &self.more else {
-            return false;
+        let statuses = match &self.more {
+            Some(more) => more.statuses(),
+            None if !self.clip_beside.is_empty() => self.clip_beside.clone(),
+            None => return false,
         };
-        let showing = more.statuses().iter().any(|status| {
+        let showing = statuses.iter().any(|status| {
             status.lock().is_ok_and(|status| {
                 status.state == "showing" && versions::is_companion(&status.theme)
             })
@@ -1115,19 +1330,58 @@ impl MainLoop {
     /// it was written, where every panel stands and which of them this is; None without a
     /// picture, or while this panel is not placed.
     fn across_now(&self) -> Option<crate::arrangement::Across> {
-        use crate::arrangement::Told;
         if self.config.across.is_empty() {
             return None;
         }
-        // (where every panel stands: the whole config.toml, the first panel's first)
-        let loaded;
-        let full = match &self.beside {
-            None => &self.config,
-            Some(_) => {
-                loaded = lp_config::load_config(&self.config_file, lp_config::platform()).ok()?;
-                &loaded
+        let index = self.beside.as_ref().map_or(0, |beside| beside.n + 1);
+        let folder = self
+            .config_file
+            .parent()
+            .map_or_else(lp_config::dirs::config_dir, std::path::Path::to_path_buf);
+        self.arranged(|full, statuses| {
+            let places = crate::arrangement::places(full, statuses);
+            crate::arrangement::across_of(full, &folder, &places, index)
+        })
+        .flatten()
+    }
+
+    /// `then` of the whole config.toml (the first panel's: where every panel stands) and what
+    /// each panel told of itself, the first panel's first; None where it cannot be read.
+    fn arranged<T>(
+        &self,
+        then: impl FnOnce(&Config, &[Option<crate::arrangement::Told>]) -> T,
+    ) -> Option<T> {
+        let kept;
+        let full = match (&self.beside, self.config.stamp) {
+            (None, _) => &self.config,
+            (Some(_), stamp) => {
+                let fresh = self
+                    .full_config
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|(at, _)| Some(*at) == stamp);
+                if !fresh {
+                    let loaded =
+                        lp_config::load_config(&self.config_file, lp_config::platform()).ok()?;
+                    *self.full_config.borrow_mut() = stamp.map(|at| (at, loaded.clone()));
+                    if stamp.is_none() {
+                        return self.arranged_of(&loaded, then);
+                    }
+                }
+                kept = self.full_config.borrow();
+                &kept.as_ref().expect("kept above").1
             }
         };
+        self.arranged_of(full, then)
+    }
+
+    /// arranged of `full`, config.toml whole.
+    fn arranged_of<T>(
+        &self,
+        full: &Config,
+        then: impl FnOnce(&Config, &[Option<crate::arrangement::Told>]) -> T,
+    ) -> Option<T> {
+        use crate::arrangement::Told;
         let first = match &self.beside {
             Some(beside) => Arc::clone(&beside.first),
             None => Arc::clone(&self.status),
@@ -1147,13 +1401,52 @@ impl MainLoop {
         for each in more {
             statuses.push(each.and_then(|each| each.lock().ok().map(|s| told(&s))));
         }
-        let places = crate::arrangement::places(full, &statuses);
+        Some(then(full, &statuses))
+    }
+
+    /// _place: where this panel stands among all of them, in millimetres, as Settings → More
+    /// panels shows them (arrangement::laid_out), for a light across them (render/field.rs):
+    /// its own box and the canvas around all of them; None for a panel alone, or one whose
+    /// place is not known yet (its light as on a panel by itself).
+    fn place(&self) -> Option<(lp_render::field::Rect, lp_render::field::Rect)> {
+        let rects = self.arranged(crate::arrangement::laid_out)?;
         let index = self.beside.as_ref().map_or(0, |beside| beside.n + 1);
-        let folder = self
-            .config_file
-            .parent()
-            .map_or_else(lp_config::dirs::config_dir, std::path::Path::to_path_buf);
-        crate::arrangement::across_of(full, &folder, &places, index)
+        canvas_rects(&rects, index).map(|(own, whole, _)| (own, whole))
+    }
+
+    /// _canvas: where this panel and all of them stand, in millimetres, as Settings → More
+    /// panels shows them (arrangement::laid_out), for a transition over all the panels as one
+    /// (render/canvas.rs): `{"own": [x, y, w, h], "whole": [x, y, w, h]}`; None where
+    /// `[transitions] canvas` is off, or there is no other panel.
+    fn canvas(&self) -> Option<Value> {
+        if !self.config.transitions.canvas {
+            return None;
+        }
+        let rects = self.arranged(crate::arrangement::laid_out)?;
+        canvas_of(
+            &rects,
+            self.beside.as_ref().map_or(0, |beside| beside.n + 1),
+        )
+    }
+
+    /// _together: how much later this panel's part of a transition over all the panels
+    /// begins: every panel at the same moment, [`SWEEP_LEAD_S`] after the change (each notices
+    /// it in its own time, and warms its theme first).
+    fn together(&self, occasion: &'static str, leaving: bool) -> f64 {
+        (self.together_at(occasion, leaving) - wall_clock()).clamp(0.0, SWEEP_LEAD_S)
+    }
+
+    /// _together_at: when a transition over all the panels begins on every panel, on the wall
+    /// clock: a scene's from the moment config.toml was written; a game's, music's or the
+    /// rest's from the moment the first panel to come to it did ([`shared_moment`]). The same
+    /// on every panel: what tells their parts of one switch apart from another's.
+    fn together_at(&self, occasion: &'static str, leaving: bool) -> f64 {
+        match self.config.stamp {
+            Some(stamp) if self.scene_before != self.config.scene => {
+                stamp as f64 / 1e9 + SWEEP_LEAD_S
+            }
+            _ => shared_moment((occasion, leaving)),
+        }
     }
 
     /// The part of the picture across the panels followed: a new one (another picture, a
@@ -1228,6 +1521,7 @@ impl MainLoop {
         };
         renderer.symbols = config.symbols.clone();
         renderer.switches = switches;
+        renderer.canvas = self.place(); // (its part of a light across the panels)
         let streams = self.panel.as_ref().is_some_and(Display::streams);
         renderer.fps = if streams {
             config.device.video.fps as f64
@@ -1414,6 +1708,7 @@ impl MainLoop {
             // it: at the speed set, one of the list where it is "random")
             let calm = self.calm();
             let (moment, _) = moment();
+            let canvas = self.canvas(); // (every panel shows it at once: over all of them)
             let mut made = |pick: usize| {
                 if calm {
                     return None;
@@ -1437,13 +1732,32 @@ impl MainLoop {
                     &renderer.theme.name,
                     &moment,
                     pick + self.blends as usize,
+                    canvas.as_ref(),
                 )
             };
             let picked = now.to_bits() as usize;
-            let (out, back) = (made(picked), made(picked.wrapping_add(1)));
-            self.showing = Some(crate::transition_show::Show::new(
-                number, &frame, card, out, back,
-            ));
+            let (mut out, mut back) = (made(picked), made(picked.wrapping_add(1)));
+            let mut card = card;
+            // (a morph turns the screen into another theme and back: what both show flies)
+            if let (Some(out), Some(back)) = (out.as_mut(), back.as_mut()) {
+                if out.name == "morph" {
+                    if let Some((before, after, picture)) = self.morph_shown(renderer, now) {
+                        card = picture;
+                        out.set_before(Some(before));
+                        out.set_after(Some(after.clone()));
+                        back.set_before(Some(after));
+                        // (each way a switch of its own, over all the panels)
+                        out.across(&format!("show {number} out"));
+                        back.across(&format!("show {number} back"));
+                    }
+                }
+            }
+            let mut show = crate::transition_show::Show::new(number, &frame, card, out, back);
+            if show.on_canvas() {
+                // (all from one moment)
+                show.begin_at(now + crate::transition_show::lead(number));
+            }
+            self.showing = Some(show);
         }
         let Some(show) = self.showing.as_mut() else {
             return frame;
@@ -1462,6 +1776,48 @@ impl MainLoop {
                 frame
             }
         }
+    }
+
+    /// _morph_shown: for a morph shown to see it, the screen as `renderer` composed it last,
+    /// another of Libre Panel's themes (transition_show::morph_partner) drawn with the readings
+    /// of now as it composed it, and its frame, which stays in the card's place; None where
+    /// either cannot be drawn, or is of another size (it fades to the card and back).
+    fn morph_shown(
+        &self,
+        renderer: &Renderer,
+        now: f64,
+    ) -> Option<(lp_render::morph::Parting, lp_render::morph::Parting, Image)> {
+        let before = renderer.parting().ok().flatten()?;
+        let snapshot = self.snapshot.clone()?;
+        let (w, h) = before.size();
+        let named = crate::transition_show::morph_partner(&self.shown, &self.places);
+        let orientation = &self.config.device.orientation;
+        let version = versions::theme_for(
+            &named,
+            orientation,
+            Some((w as i64, h as i64)),
+            &self.places,
+        );
+        let drawn = self.renderer_of(&version).and_then(|mut other| {
+            other.render_shared(snapshot, now).map_err(|e| e.0)?;
+            other.parting().map_err(|e| e.0)
+        });
+        let after = match drawn {
+            Ok(after) => after?,
+            Err(why) => {
+                say(&format!("{version} not drawn for the morph shown: {why}"));
+                return None;
+            }
+        };
+        if after.size() != (w, h) {
+            return None;
+        }
+        let frame = after.frame.as_ref()?;
+        let picture = match frame.mode() {
+            lp_pixels::Mode::RGB => frame.clone(),
+            _ => frame.convert(lp_pixels::Mode::RGB).ok()?,
+        };
+        Some((before, after, picture))
     }
 
     /// The frame as it goes out: upside down on a panel mounted so.
@@ -1707,6 +2063,12 @@ impl MainLoop {
         }
         renderer.fps = self.fps() as f64; // (the mode's, the panel's video's, config.toml's)
 
+        // nothing glides, turns or breathes on a calm panel (it would be sent every frame)
+        renderer.options.animate = self.config.fps > 1 && !self.calm();
+        // the light that moves: the kinds [shine] has on, of the ones the theme shows
+        let kinds = shine_kinds(&self.config, &renderer.theme);
+        renderer.shine.borrow_mut().set_kinds(kinds);
+
         // the readings, at the theme's pace; between them the last ones at the time of now
         let every = match (&self.config.refresh_ms, &renderer.theme.refresh_ms) {
             (Some(ms), _) => lp_py::num::int_to_float(ms).unwrap_or(1000.0),
@@ -1717,8 +2079,11 @@ impl MainLoop {
         drop(heading);
         let snapshotting = lp_render::prof::Span::new("snapshot");
         let mut sampled = false; // (fresh readings: Renderer.new_sample)
+
+        // (due within a microsecond: the clock's nanoseconds put a frame that is due a hair
+        // before it, and the readings a frame late every time)
         let snapshot = match self.snapshot.take() {
-            Some(mut last) if started < self.next_sample => {
+            Some(mut last) if started + SAMPLE_SLACK_S < self.next_sample => {
                 if self.hub().every_frame() {
                     // cheap sources follow on every frame, not only with the readings
                     let streams = self.panel.as_ref().is_some_and(|panel| panel.streams());
@@ -1784,12 +2149,16 @@ impl MainLoop {
         lp_render::prof::part("rewant", || self.rewant(&renderer));
         if sampled {
             renderer.new_sample(started, every);
+            if renderer.theme.background_field.is_some() {
+                renderer.canvas = self.place(); // (panels moved meanwhile)
+            }
         }
         renderer.continuous = self.panel.as_ref().is_some_and(Display::streams);
         renderer.left_out_windows = self.panel.as_ref().is_some_and(Display::cuts_windows);
         renderer.native_rings = self.panel.as_ref().is_some_and(Display::makes_rings);
         renderer.native_bars = self.panel.as_ref().is_some_and(Display::makes_bars);
         renderer.native_fans = self.panel.as_ref().is_some_and(Display::makes_fans);
+        renderer.native_lights = self.panel.as_ref().is_some_and(Display::draws_lights);
         // (graphs that rest: frames that rest)
         renderer.graph_steps = self.config.graph_steps;
 
@@ -1957,6 +2326,7 @@ impl MainLoop {
                                     let target = panel.describe();
                                     if let Ok(mut status) = self.status.lock() {
                                         status.target = target;
+                                        status.on_panel = true;
                                     }
                                 }
                                 // (a panel took over from the PNG file: drawn for it from now on)
@@ -2108,5 +2478,106 @@ impl MainLoop {
             }
         }
         self.close_panel();
+    }
+}
+
+/// shine_kinds: the kinds of moving light a panel shows (render/shine.py): those `[shine]` has
+/// on, of the ones the theme shows (`animation.shine`; all where it names none).
+fn shine_kinds<'a>(config: &'a Config, theme: &'a lp_theme::Theme) -> Vec<&'a str> {
+    let own = theme.shine.as_deref();
+    config
+        .shine
+        .kinds()
+        .into_iter()
+        .filter(|kind| own.is_none_or(|own| own.iter().any(|o| o == kind)))
+        .collect()
+}
+
+/// frames_a_second: one where the motion is calm (and nothing streams), else the active
+/// mode's own (`own`, not 0), else a streaming display's (`video`; in game mode at most 24),
+/// else config.toml's `fps`.
+fn frames_a_second(
+    streams: bool,
+    calm: bool,
+    mode: &str,
+    own: Option<i64>,
+    video: i64,
+    fps: i64,
+) -> i64 {
+    if !streams && calm {
+        return 1;
+    }
+    if let Some(own) = own.filter(|fps| *fps != 0) {
+        return own.max(1);
+    }
+    if streams {
+        return match mode {
+            "game" => video.min(GAME_STREAM_FPS),
+            _ => video,
+        }
+        .max(1);
+    }
+    fps.max(1)
+}
+
+#[cfg(test)]
+mod canvas_tests {
+    use super::*;
+
+    // a 12.3" (293 x 110 mm) and, 30 mm to its right, a 9.2" (227 x 57 mm), their middles level
+    const BIG: (f64, f64, f64, f64) = (0.0, 0.0, 292.5, 109.7);
+    const BAR: (f64, f64, f64, f64) = (322.5, 26.2, 226.7, 56.7);
+
+    fn told(own: (f64, f64, f64, f64), whole: (f64, f64, f64, f64), panel: i64) -> Option<Value> {
+        let rect = |(x, y, w, h): (f64, f64, f64, f64)| {
+            Value::List([x, y, w, h].into_iter().map(Value::Float).collect())
+        };
+        let mut canvas = lp_py::Dict::default();
+        canvas.insert("own".into(), rect(own));
+        canvas.insert("whole".into(), rect(whole));
+        canvas.insert("panel".into(), Value::int(panel));
+        canvas.insert("panels".into(), Value::int(2)); // (the two whose size is known)
+        Some(Value::Dict(canvas))
+    }
+
+    #[test]
+    fn a_panel_is_told_where_it_and_all_of_them_stand() {
+        let whole = (0.0, 0.0, 322.5 + 226.7, 109.7);
+        let rects = [Some(BIG), None, Some(BAR)];
+        assert_eq!(canvas_of(&rects, 0), told(BIG, whole, 0));
+        assert_eq!(canvas_of(&rects, 2), told(BAR, whole, 2)); // ([[panels]][1]: the third)
+        assert_eq!(canvas_of(&rects, 1), None); // (one whose size is not known)
+        assert_eq!(canvas_of(&rects, 3), None);
+        assert_eq!(canvas_of(&[Some(BIG)], 0), None); // (one panel)
+        assert_eq!(canvas_of(&[Some(BIG), None], 0), None);
+    }
+
+    #[test]
+    fn every_panel_begins_a_change_they_all_make_at_the_same_moment() {
+        let first = shared_moment(("media", false));
+        assert!((first - wall_clock() - SWEEP_LEAD_S).abs() < 0.05);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(shared_moment(("media", false)), first); // (the panels after take it)
+        let ending = shared_moment(("media", true)); // (music stops: another change)
+        assert!(ending - first > 0.05, "{ending} {first}");
+        assert_eq!(TOGETHER, ["game", "media", "idle"]);
+    }
+
+    #[test]
+    fn a_mode_sets_the_frame_rate_and_game_mode_slows_a_stream() {
+        // (as app.py's _fps: a mode's own rate replaces the stream's 50; game mode without
+        // one streams 24 at most; a calm panel that does not stream draws one a second)
+        assert_eq!(frames_a_second(true, false, "game", Some(10), 50, 5), 10);
+        assert_eq!(
+            frames_a_second(true, false, "game", None, 50, 5),
+            GAME_STREAM_FPS
+        );
+        assert_eq!(frames_a_second(true, false, "", None, 50, 5), 50);
+        assert_eq!(frames_a_second(true, false, "game", Some(0), 20, 5), 20);
+        assert_eq!(frames_a_second(false, false, "", None, 50, 5), 5);
+        assert_eq!(frames_a_second(false, false, "night", Some(2), 50, 5), 2);
+        assert_eq!(frames_a_second(false, true, "night", Some(2), 50, 5), 1);
+        assert_eq!(frames_a_second(true, true, "", None, 25, 5), 25); // (a stream is never calm)
+        assert_eq!(frames_a_second(false, false, "", None, 50, 0), 1);
     }
 }

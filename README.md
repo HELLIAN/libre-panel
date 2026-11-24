@@ -3,7 +3,7 @@
 <p>
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/media/hero.png">
-    <img src="docs/media/hero.gif" width="100%" alt="Libre Panel. Your PC's vitals as moving light. Free and open source, for the small USB screens in your PC's case. Below it Lumen, Libre Panel's own theme, in video mode on a 9.2-inch panel: what is playing with its cover, the time with the load scrolling past as light, four fans turning, and lit rings for CPU, GPU and RAM">
+    <img src="docs/media/hero.gif" width="100%" alt="Libre Panel. Your PC's vitals as moving light. Free and open source, for the small USB screens in your PC's case. Below it Lumen v2, Libre Panel's own theme, in video mode on a 9.2-inch panel, with soft light drifting behind its cards: what is playing with its cover, the time with the load scrolling past as light, four fans turning, and lit rings for CPU, GPU and RAM">
   </picture>
 </p>
 
@@ -131,6 +131,16 @@ and fans turn at their own speed. Values sit as light in milled grooves. 25 fram
 the default, smooth and far lighter on the PC; every other panel gets still frames, sent where
 something changed.
 
+### Light that moves
+
+<p><img src="docs/media/light.gif" width="100%" alt="Lumen v2 in video mode on a 9.2-inch panel: soft pools of light drift behind the cards; a burst of work drives the rings up and the light warms, the ends of the rings breathe, the newest point of each curve beats with each reading, and it all settles again"></p>
+
+Lumen, Arena and Encore come in a second version with a light of their own: soft pools that
+drift behind the cards, across all your panels as one, and warm while the PC works; Encore's
+take the colours of the cover that plays. And on every theme the light moves a little: the end
+of a ring breathes, the newest point of a curve beats with each reading, and the cover glows in
+its own colours. Each kind can be turned off in *Settings → Panel → Moving light*.
+
 ### Cards that take turns
 
 <p><img src="docs/media/card-turns.gif" width="100%" alt="Lumen's card slot, its cards in turn: what is playing gives way to the weather in a fade, a clock face pushes the weather out to the left, the day with its month rises in place of the clock, and a beam of light wipes across to what is playing again"></p>
@@ -140,6 +150,16 @@ symbols and the next hours, the day, a clock face, the moon or your agenda. The 
 something to show is on show, or they take turns, each for its minutes. From one to the next
 the slot goes as you choose: a line of light, a fade, a push to the side or upwards, or a beam
 of light that wipes across.
+
+### From one screen to the next
+
+<p><img src="docs/media/morph.gif" width="100%" alt="Morph on a 9.2-inch panel: Lumen v2 gives way to Arena v2, and what both show flies to its new place and size: the time shrinks into the corner, the CPU and GPU rings move over, and the rest of Arena comes up around them; then the same way back to Lumen v2"></p>
+
+A new screen comes in the way you pick. With *Morph*, what both screens show (the time, a ring,
+the cover, a game's logo) flies to its new place and size, even from one panel to the other.
+*Cascade* lets the new screen's cards rise in one after another, a *Comet* flies across with a
+glowing tail, and a *Portal* opens onto the new screen. With more than one panel, slides, wipes
+and the line of light run across all of them as over one screen.
 
 ### Notices
 
@@ -185,14 +205,15 @@ while one of them works; **Agents** gives them a screen of their own. Nothing le
 
 ### Several panels at once
 
-<p><img src="docs/media/more-panels.gif" width="100%" alt="Two 9.2-inch bars one above the other: Lumen with the track, the time and the rings, and Lumen Companion below it with every core, the temperatures with the fans turning, the drives and the processes; a burst of work goes up on both in the same beat, then the processor gets too hot, both edges pulse red and the second panel shows High Contrast until it has cooled"></p>
+<p><img src="docs/media/panels-light.gif" width="100%" alt="Two 9.2-inch bars one above the other: Lumen v2 with the track, the time and the rings, and Lumen v2 Companion below it with every core, the temperatures with the fans turning, the drives and the processes; one soft light drifts across both as over one screen, and a burst of work goes up on both in the same beat and warms it"></p>
 
-Up to four panels, each with its own theme, on the same readings and in the same beat. A panel
-beside Lumen gets **Lumen Companion**: every core, the temperatures with the fans turning, the
-drives and the processes, while Lumen leaves out what its companion shows. One picture can span
-all panels, **scenes** put a theme on every panel with one click, and when a sensor reaches its
-critical limit every panel's edge pulses red. A JONSBO ZC-360's three fan screens are three
-panels of their own ([more panels at once](docs/CONFIGURATION.md#more-panels-at-once)).
+Up to four panels, each with its own theme, on the same readings and in the same beat; the light
+of the v2 themes and the transitions run across them as over one screen. A panel beside Lumen
+gets **Lumen Companion**: every core, the temperatures with the fans turning, the drives and the
+processes, while Lumen leaves out what its companion shows. One picture can span all panels,
+**scenes** put a theme on every panel with one click, and when a sensor reaches its critical
+limit every panel's edge pulses red. A JONSBO ZC-360's three fan screens are three panels of
+their own ([more panels at once](docs/CONFIGURATION.md#more-panels-at-once)).
 
 ### The panel as a monitor
 
@@ -225,9 +246,11 @@ Start screen*. The files are made for a room that is known to be there (at most 
 on the 9.2", 650,000 on the 12.3"), the panel is asked what it holds before a file goes and
 again after, and nothing on it is deleted to make room. That is what 0.9.1 lacked: one 9.2"
 ran out of room for its start screen and has kept restarting since. Levels has more detail
-than fits that room finely and is not written; for the family's other panels writing stays
-off, since how much room they have is not known. What is on a panel can always be asked, and
-a boot logo taken off again: the panel then shows its factory logo.
+than fits that room finely and is not written. **The 8.8"** gets the 9.2"'s room; on **the
+family's other panels**, whose room is not known, it writes only where you agree to try it at
+your own risk, after a plain warning, and asks you to share how it went, so that the model can
+be written to for everyone. What is on a panel can always be asked, and a boot logo taken off
+again: the panel then shows its factory logo.
 
 ### Every size, round and upright
 
@@ -328,7 +351,7 @@ nothing while no theme shows it.
 |---|---|---|---|
 | **Turing / TURZX** | 8.8", 9.2", 12.3" | 1.6", 2.1" round, 2.8" round, 4.6", 5.2", 8" | USB, video mode |
 | **Turing Smart Screen** | 3.5", 8.8" | 2.1" round, 5" | COM port |
-| **JONSBO** | ZC-360, each screen its own panel; DS339 | ZC-360 as one picture, TF3-360SC, DS916 | USB |
+| **JONSBO** | ZC-360, each screen its own panel; DS339, DS916 | ZC-360 as one picture, TF3-360SC | USB |
 | **Waveshare USB Monitor** | 2.8", as a USB display | – | USB |
 | **UsbPCMonitor** | – | 3.5", 5", 7" | COM port |
 | **XuanFang** | – | 3.5" | COM port |
@@ -336,7 +359,7 @@ nothing while no theme shows it.
 | **WeAct Display FS V1** | 0.96" | 3.5" | COM port |
 | **VMAX** | – | 4.6" | USB |
 | **Hongtai / Jungle Leopard** | – | Chill Arc 360, MSI EZ Display and more | COM port |
-| **Lian Li** | – | Universal Screen, HydroShift II, OLED Curve | USB |
+| **Lian Li** | Universal Screen 8.8" | Universal Screen 9.2", HydroShift II, OLED Curve | USB |
 | **Thermalright** | – | Trofeo Vision | USB |
 | **BeadaPanel** | – | every model | USB |
 | **NZXT Kraken** | – | with an LCD | USB |
@@ -378,8 +401,8 @@ your user the panel's USB access with one click. Or the <b>tarball</b>.
 <b>With Python</b><br>
 <sub>3.11 or newer</sub>
 <br><br>
-<b>pipx</b> installs it from this repository, with the panel's drivers and the tray, on
-Windows and Linux.
+<b>pipx</b> installs the same app as the downloads, from the release's wheel for Windows or
+Linux.
 <br><br>
 <a href="#with-python">The commands</a>
 </td>
@@ -449,7 +472,8 @@ administrator rights.
 ### With Python
 
 ```bash
-pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.4"
+pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-manylinux_2_35_x86_64.whl"    # Linux
+pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-win_amd64.whl"    # Windows
 libre-panel tray                    # the background app with its tray icon; opens its window
 libre-panel autostart enable        # start it whenever you log in
 ```
@@ -486,8 +510,10 @@ every start.
 <br>
 
 - **The weather** is off until you set a place. Then only its coordinates go to
-  [Open-Meteo](https://open-meteo.com), every 15 minutes. A place you look up by name goes
-  to Open-Meteo's place search when you press *Search*, and is kept to about a kilometre.
+  [Open-Meteo](https://open-meteo.com), every 15 minutes, or, if you choose it with a key of
+  your own, the coordinates and the key to [OpenWeatherMap](https://openweathermap.org). A
+  place you look up by name goes to Open-Meteo's place search when you press *Search*, and is
+  kept to about a kilometre.
 - **New versions**: *Start* asks once whether to look. Say yes, and once a day Libre Panel
   asks GitHub for its latest release; the request carries the version you have, nothing about
   you or your panel. *Settings → Start and system* switches it off again.

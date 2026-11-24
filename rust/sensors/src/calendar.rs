@@ -767,6 +767,28 @@ fn when(event: &Event, now: &DateTime) -> (String, String) {
     (name, clock)
 }
 
+/// The events of several calendars' texts together, in the order the panel lists them (by
+/// their start, a whole day before a time, then by their title), and why each text that
+/// could not be read could not: one odd calendar must not stop the others.
+pub fn events_of_calendars<'a>(
+    texts: impl IntoIterator<Item = &'a str>,
+    now: &DateTime,
+    days: i64,
+    local: &Zone,
+) -> (Vec<Event>, Vec<String>) {
+    let (mut events, mut unread) = (Vec::new(), Vec::new());
+    for ics in texts {
+        match events_from_ics(ics, now, days, "", local) {
+            Ok(found) => events.extend(found),
+            Err(why) => unread.push(why),
+        }
+    }
+    events.sort_by(|a, b| {
+        (stamp_of(&a.start), !a.all_day, &a.title).cmp(&(stamp_of(&b.start), !b.all_day, &b.title))
+    });
+    (events, unread)
+}
+
 /// calendar_readings: the events to come (or going on) at `now`, as readings.
 pub fn calendar_readings(events: &[Event], now: &DateTime, local: &Zone) -> Readings {
     let at = stamp_of(now);
@@ -1002,26 +1024,12 @@ impl CalendarSource {
             let stamp = (state.texts.len(), now.toordinal());
             let changed = std::mem::take(&mut state.changed);
             if changed || self.built_for != Some(stamp) || now.minute % 10 == 0 {
-                let mut events = Vec::new();
-                let mut notes = Vec::new();
-                for ics in state.texts.values() {
-                    match events_from_ics(ics, &now, self.days, "", local) {
-                        Ok(found) => events.extend(found),
-                        // (one odd calendar must not stop the others)
-                        Err(why) if changed => {
-                            notes.push(format!("calendar could not be read: {why}"));
-                        }
-                        Err(_) => {}
-                    }
+                let texts = state.texts.values().map(String::as_str);
+                let (events, unread) = events_of_calendars(texts, &now, self.days, local);
+                if changed {
+                    let said = |why: String| format!("calendar could not be read: {why}");
+                    state.notes.extend(unread.into_iter().map(said));
                 }
-                state.notes.extend(notes);
-                events.sort_by(|a, b| {
-                    (stamp_of(&a.start), !a.all_day, &a.title).cmp(&(
-                        stamp_of(&b.start),
-                        !b.all_day,
-                        &b.title,
-                    ))
-                });
                 self.events = events;
                 self.built_for = Some(stamp);
             }

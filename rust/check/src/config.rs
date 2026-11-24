@@ -5,7 +5,8 @@
 
 use lp_config::{
     Config, DeviceConfig, Error, HardwareConfig, ModeConfig, PanelConfig, SceneConfig,
-    SensorsConfig, SequenceConfig, ServicesConfig, TransitionsConfig, VideoConfig, WeatherConfig,
+    SensorsConfig, SequenceConfig, ServicesConfig, ShineConfig, TransitionsConfig, VideoConfig,
+    WeatherConfig,
 };
 use lp_py::toml::{Table, Toml};
 use serde_json::{json, Value};
@@ -151,6 +152,7 @@ fn weather(w: &WeatherConfig) -> Value {
     object(vec![
         ("enabled", flag(w.enabled)),
         ("provider", text(&w.provider)),
+        ("api_key", text(&w.api_key)),
         ("latitude", maybe(&w.latitude, |at| float(*at))),
         ("longitude", maybe(&w.longitude, |at| float(*at))),
         ("place", text(&w.place)),
@@ -179,9 +181,19 @@ fn transitions(t: &TransitionsConfig) -> Value {
     object(vec![
         ("default", text(&t.default)),
         ("speed", text(&t.speed)),
+        ("canvas", flag(t.canvas)),
         ("occasions", names(&t.occasions)),
         ("random", texts(&t.random)),
     ])
+}
+
+fn shine(s: &ShineConfig) -> Value {
+    object(
+        lp_config::SHINE_KINDS
+            .into_iter()
+            .map(|kind| (kind, flag(s.on(kind))))
+            .collect(),
+    )
 }
 
 fn sequence(s: &SequenceConfig) -> Value {
@@ -224,6 +236,7 @@ fn config(c: &Config) -> Value {
         ("fps", whole(c.fps)),
         ("transition", text(&c.transition)),
         ("transitions", transitions(&c.transitions)),
+        ("shine", shine(&c.shine)),
         (
             "check_updates",
             maybe(&c.check_updates, |check| flag(*check)),
@@ -243,6 +256,7 @@ fn config(c: &Config) -> Value {
         ("hotkeys", names(&c.hotkeys)),
         ("hotkeys_enabled", flag(c.hotkeys_enabled)),
         ("symbols", text(&c.symbols)),
+        ("data_unit", text(&c.data_unit)),
         ("cards", texts(&c.cards)),
         ("card_order", text(&c.card_order)),
         ("card_transition", text(&c.card_transition)),

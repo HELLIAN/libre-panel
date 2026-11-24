@@ -20,7 +20,7 @@ BASIC = ImageFont.Layout.BASIC
 LAYOUT = {"basic": BASIC, "raqm": ImageFont.Layout.RAQM}
 # libraqm's layout where Pillow has it here (FriBiDi found) and lp-check its HarfBuzz
 LAYOUTS = ["basic"] + (["raqm"] if features.check("raqm") and pillow_libharfbuzz() else [])
-BUNDLED = sorted((ROOT / "src" / "libre_panel" / "fonts").glob("*.ttf"))
+BUNDLED = sorted((ROOT / "data" / "fonts").glob("*.ttf"))
 # fonts of other kinds where the system has them: OpenType (CFF), a collection's second face,
 # Type 1, CJK, a font of bitmaps in colour (one size only)
 SYSTEM = [

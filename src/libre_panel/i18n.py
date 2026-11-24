@@ -19,8 +19,9 @@ import re
 import sys
 from datetime import datetime
 from functools import cache
-from pathlib import Path
 from typing import Any
+
+from libre_panel.datadir import DATA
 
 LANGUAGES = {
     "en": "English",
@@ -40,7 +41,7 @@ DAY_BEFORE_MONTH = {"de": ".", "es": " de", "pt": " de"}
 MONTH_DAY = {"zh": "{month}月{day}日", "ja": "{month}月{day}日"}
 _DAY_AND_MONTH = re.compile(r"%-?d\.? %[bB]|%[bB] %-?d")
 DECIMAL_COMMA = {"de", "fr", "es", "it", "pl", "pt", "ru"}  # 1,5 rather than 1.5
-LOCALE_DIR = Path(__file__).resolve().parent / "locale"
+LOCALE_DIR = DATA / "locale"
 
 _current = "en"
 

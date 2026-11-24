@@ -38,8 +38,9 @@ class SceneClip:
 
     about: str
     seconds: float
-    draw: Callable[[Settings, FrameSink], int]  # returns the number of the poster's frame
-    themes: tuple[str, ...] = ("lumen",)  # (the app opens with one; a scene shows none of it)
+    # (its settings, where its frames go, the themes it shows) -> the number of the poster's frame
+    draw: Callable[[Settings, FrameSink, tuple[str, ...]], int]
+    themes: tuple[str, ...] = ("lumen",)  # (the app's scenes open it with one and show none)
 
     @property
     def kind(self) -> str:
@@ -53,9 +54,9 @@ def record(
     folder: Path,
     themes: tuple[str, ...] | None = None,
 ) -> Recorded:
-    """Draw ``clip`` into ``folder``."""
+    """Draw ``clip`` into ``folder`` (with ``themes`` instead of its own)."""
     sink = FrameSink(folder, FPS)
-    poster = clip.draw(settings, sink)
+    poster = clip.draw(settings, sink, themes or clip.themes)
     return Recorded(sink.frames(), poster)
 
 
@@ -364,7 +365,7 @@ def moment(t: float, scroll_to: float) -> tuple[Box, float, tuple[float, float],
     return BROWSER, 0.0, _along(grab, REST, (t - 7.85) / 0.8), False
 
 
-def screen_monitor(settings: Settings, sink: FrameSink) -> int:
+def screen_monitor(settings: Settings, sink: FrameSink, themes: tuple[str, ...]) -> int:
     """A window of the desktop dragged onto the panel, which is a monitor of its own below the
     main one: it is there at once, as on any monitor, is made as large as the panel, and goes
     back again."""
@@ -436,12 +437,13 @@ HEADLINES = {
 TEXT, MUTED, LIT = images.TX_1, (150, 168, 192), images.ACCENT
 
 
-def _bare_lumen(settings: Settings) -> tuple[Any, int]:
-    """Lumen in video mode (the README's video-mode clip, without its frame): its frames, and
-    the poster's number."""
-    folder = Path(tempfile.mkdtemp(prefix="readme-scene-lumen-"))
+def _bare_panel(settings: Settings, theme: str) -> tuple[Any, int]:
+    """``theme`` in video mode (the README's video-mode clip, without its frame): its frames,
+    and the poster's number."""
+    folder = Path(tempfile.mkdtemp(prefix="readme-scene-panel-"))
     clip = media_panel.CLIPS["video-mode"]
-    recorded = media_panel.record("video-mode", clip, replace(settings, bare=True), folder)
+    recorded = media_panel.record("video-mode", clip, replace(settings, bare=True), folder,
+                                  (theme,))  # fmt: skip
     return recorded.frames, recorded.poster
 
 
@@ -453,7 +455,7 @@ def _headline(width: int, language: str, scale: float) -> Image.Image:
     height = round(400 * u)
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    mark = Image.open(ROOT / "src/libre_panel/assets/libre-panel.png").convert("RGBA")
+    mark = Image.open(ROOT / "data/assets/libre-panel.png").convert("RGBA")
     mark = mark.resize((round(64 * u), round(64 * u)), Image.LANCZOS)
     name_font = images.font("Barlow-SemiBold", round(44 * u))
     name_w = d.textlength("Libre Panel", font=name_font)
@@ -481,12 +483,13 @@ def _headline(width: int, language: str, scale: float) -> Image.Image:
     return img
 
 
-def hero(language: str) -> Callable[[Settings, FrameSink], int]:
-    """The headline in ``language`` over Lumen on its 9.2" bar in video mode: one picture, so
-    that the top of the README is one thing, as the website's is."""
+def hero(language: str) -> Callable[[Settings, FrameSink, tuple[str, ...]], int]:
+    """The headline in ``language`` over the theme (Lumen v2, its light flowing) on its 9.2"
+    bar in video mode: one picture, so that the top of the README is one thing, as the
+    website's is."""
 
-    def draw(settings: Settings, sink: FrameSink) -> int:
-        frames, poster = _bare_lumen(settings)
+    def draw(settings: Settings, sink: FrameSink, themes: tuple[str, ...]) -> int:
+        frames, poster = _bare_panel(settings, themes[0])
         try:
             screen = frames.size
             border = max(4, round(0.0375 * screen[1]))
@@ -525,12 +528,12 @@ def hero(language: str) -> Callable[[Settings, FrameSink], int]:
 
 CLIPS: dict[str, SceneClip] = {
     "hero": SceneClip(
-        "the top of the README: the headline over Lumen in video mode on its 9.2\" bar",
-        media_panel.CLIPS["video-mode"].seconds, hero("en"),
+        "the top of the README: the headline over Lumen v2 in video mode on its 9.2\" bar",
+        media_panel.CLIPS["video-mode"].seconds, hero("en"), ("lumen-v2",),
     ),
     "hero-de": SceneClip(
-        "the top of the German README: the headline in German over Lumen in video mode",
-        media_panel.CLIPS["video-mode"].seconds, hero("de"),
+        "the top of the German README: the headline in German over Lumen v2 in video mode",
+        media_panel.CLIPS["video-mode"].seconds, hero("de"), ("lumen-v2",),
     ),
     "screen-monitor": SceneClip(
         "the panel as a monitor of its own: a window dragged onto it, made as large, and back",

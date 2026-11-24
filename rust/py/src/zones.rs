@@ -680,8 +680,8 @@ fn local_file(path: &Path) -> Option<Option<Zone>> {
 /// TZ UTC; a file of its name (a leading colon dropped; a relative name in TZDIR), else the TZ
 /// string it is; unset, /etc/localtime; UTC where none of these is read. None where glibc would
 /// take more than Rust knows (a file of leap seconds, a TZ string naming summer time without its
-/// rules, or one glibc reads by its leniencies). On Windows the C runtime's own, which reads TZ
-/// itself ([`Zone::system`]).
+/// rules where TZDIR has a posixrules file, or one glibc reads by its leniencies). On Windows the
+/// C runtime's own, which reads TZ itself ([`Zone::system`]).
 pub fn local_of(tz: Option<&str>) -> Option<Zone> {
     if cfg!(windows) {
         // (the C runtime reads TZ itself, from the environment the process began with)
@@ -703,7 +703,7 @@ pub fn local_of(tz: Option<&str>) -> Option<Zone> {
     if let Some(zone) = local_file(&path) {
         return zone;
     }
-    if let Some(zone) = Zone::from_posix(tz) {
+    if let Some(zone) = Zone::from_posix(tz).or_else(|| summer_by_default(tz, &tzdir())) {
         return Some(zone);
     }
     // (__tzset_parse_tz: unnamed UTC unless the string begins with a name and an offset;
@@ -722,6 +722,24 @@ pub fn local_of(tz: Option<&str>) -> Option<Zone> {
         _ => false,
     };
     (!may).then(Zone::utc)
+}
+
+/// A TZ string naming summer time without its rules ("EST5EDT", "EST5EDT4,") as glibc's
+/// __tzset_parse_tz reads it: by the rules of `dir`'s posixrules file where there is one (None:
+/// Rust does not take those), else by the rules glibc carries, the United States' since 2007
+/// (M3.2.0,M11.1.0, each at 2:00). None for any other string.
+fn summer_by_default(tz: &str, dir: &Path) -> Option<Zone> {
+    let after = posix_name(tz)
+        .and_then(|rest| posix_time(rest, true))
+        .and_then(|(_, rest)| posix_name(rest))?;
+    let after = posix_time(after, true).map_or(after, |(_, rest)| rest);
+    if !(after.is_empty() || after == ",") || dir.join("posixrules").exists() {
+        return None;
+    }
+    Zone::from_posix(&format!(
+        "{},M3.2.0,M11.1.0",
+        tz.strip_suffix(',').unwrap_or(tz)
+    ))
 }
 
 /// A zone of a key as zoneinfo finds its file (the search path, else the tzdata package) and
@@ -1022,6 +1040,49 @@ mod tests {
         assert!(Zone::from_posix("X1").is_none());
         assert!(Zone::from_posix("CET-1:75").is_none());
         assert!(Zone::from_posix("XXX3YYY,J+5,J300").is_none());
+    }
+
+    #[test]
+    fn summer_time_without_rules_as_glibc_reads_it() {
+        // (glibc: by TZDIR's posixrules where there is one, else the rules it carries)
+        let dir = std::env::temp_dir().join(format!("lp-zones-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_file(dir.join("posixrules"));
+        let us = |tz: &str| Zone::from_posix(&format!("{tz},M3.2.0,M11.1.0")).unwrap();
+        for (tz, plain) in [
+            ("EST5EDT", "EST5EDT"),
+            ("EST5EDT,", "EST5EDT"),
+            ("EST5EDT4", "EST5EDT4"),
+            ("<-03>3<-02>,", "<-03>3<-02>"),
+        ] {
+            assert_eq!(summer_by_default(tz, &dir), Some(us(plain)), "{tz}");
+        }
+        // (2026: summer time from 8 March 7:00 UTC to 1 November 6:00 UTC)
+        let zone = summer_by_default("EST5EDT", &dir).unwrap();
+        let march = naive_seconds(&DateTime::date(2026, 3, 8)) + 7 * 3600;
+        assert_eq!(
+            (zone.localtime(march - 1), zone.localtime(march)),
+            (-18_000, -14_400)
+        );
+        let november = naive_seconds(&DateTime::date(2026, 11, 1)) + 6 * 3600;
+        assert_eq!(
+            (zone.localtime(november - 1), zone.localtime(november)),
+            (-14_400, -18_000)
+        );
+        for tz in [
+            "EST5",
+            "EST5EDT,M3.2.0",
+            "EST5EDT,,",
+            "EST5EDT x",
+            "EST5EDT+",
+            "EST",
+            "5EDT",
+        ] {
+            assert_eq!(summer_by_default(tz, &dir), None, "{tz}");
+        }
+        std::fs::write(dir.join("posixrules"), b"TZif").unwrap();
+        assert_eq!(summer_by_default("EST5EDT", &dir), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

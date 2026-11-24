@@ -23,6 +23,9 @@ use lp_render::Reading;
 use crate::lhm::Readings;
 use crate::service::{wanted, Wanted};
 
+/// media.state: what the player is doing, shown in the person's language (lp_render::metric
+/// translates it)
+pub const MEDIA_STATES: [&str; 3] = ["Playing", "Paused", "Stopped"];
 /// playerctl cannot tell what changes: it is asked this often
 pub const POLL_SECONDS: f64 = 1.0;
 /// Windows tells what changes; this only catches a notice that went missing
@@ -100,7 +103,7 @@ impl Track {
         put("media.album", text(&self.album), "", "Album");
         put("media.source", text(&self.source), "", "Player");
         put(
-            "media.state",
+            "media.state", // (one of MEDIA_STATES)
             Value::Str(lp_py::capitalize(&self.state)),
             "",
             "Media",

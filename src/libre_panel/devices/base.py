@@ -3,6 +3,8 @@
 A driver only moves pixels to hardware. It knows nothing about themes or
 sensors, which keeps adding a new panel family (TURZX revisions, other
 vendors) down to one small class registered under ``libre_panel.devices``.
+The Rust app's own drivers are its own (rust/devices); a plugin's runs in the
+plugin host, which hands it the app's frames (plugin_host.py, display.*).
 """
 
 from __future__ import annotations
@@ -11,7 +13,6 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib.metadata import entry_points
 from typing import Any
 
 from PIL import Image
@@ -60,12 +61,12 @@ class FrameError(DeviceError):
 
 @dataclass
 class Counters:
-    """What the drivers count while the panel runs, for the editor's diagnostics.
+    """What a driver counts while the panel runs, for the panel's diagnostics.
 
-    The main loop gives every display the same one (``display.counters``), so the
-    numbers go on when a display is made again after a replug. A driver adds to the
-    counters that apply to it; each is written by one thread, so nothing is locked
-    and counting costs a few additions per frame.
+    The plugin host tells the app the driver's numbers after each frame (plugin_host.py's
+    ``_COUNTED``; the app's own drivers count the rest). A driver adds to the counters that
+    apply to it; each is written by one thread, so nothing is locked and counting costs a few
+    additions per frame.
     """
 
     bytes: int = 0  # sent to the panel
@@ -145,46 +146,20 @@ class Display:
     # changed or not; others get only frames that changed, at the configured fps.
     streaming = False
     stream_fps = 0
-    # How far behind its beat the main loop may fall and still draw each frame for its planned
-    # time, catching up: a display that sends each picture on its time, a lead after its frame
-    # was drawn (the engine's), takes a late frame on time within that lead. None: a frame's
-    # time, then a new beat (a burst would show late).
-    slack: float | None = None
-    # Whether a frame may come as its layers (render/scene.py), composed by the display's engine
-    # itself (devices/engine.py): only then does the main loop hand out such frames.
-    takes_scenes = False
-    # ... and whose engine makes a lit gauge's ring itself (render/lit.py's Ring)
-    makes_rings = False
-    # ... and a fan's rotor at each position and its ring (render/fan.py's recipes)
-    makes_fans = False
-    # ... and a picture of a mask and an ink (render/scene.py's MaskRecipe: texts, letters)
-    makes_masks = False
-    # a slow link (the USB serial panels, pixels over a serial port): the main loop keeps the
-    # motion calm and sends the parts that changed one by one (app.calm, changed_regions)
+    # a slow link (pixels over a serial port): the app sends the parts that changed one by one
+    # and keeps the motion calm with [device] motion = "auto"
     slow = False
     # the kind of picture a frame goes to the panel as, as the doctor's speed check names it
     picture = "RGB565"
     # the layout of the JPEGs it sends ([device] jpeg, config.JPEG_LAYOUTS): a udisp display's
     # that takes JPEG; None for a driver that has no choice (set_jpeg changes it)
     jpeg_layout: str | None = None
-    # True once open() brought the panel back after the driver restarted it
-    # (a hung video decoder): the main loop tells the services, unlike a replug.
-    restarted = False
     # The panel this is, once it is open and the driver knows (a panel found by its USB ids
     # learns its model when it connects); None before, and for drivers that do not say.
     model: PanelModel | None = None
-    # How a video display feeds ffmpeg while a colour check shows the panel its picture
-    # (Settings → Panel → Check the colours): "auto" or "rgb" as video.pixels takes them; None
-    # the rest of the time, when video.pixels holds (set_feed)
-    feed: str | None = None
-    # So for the range of the video's values ("limited" or "full"), while a colour check compares
-    # them on the panel; None: [device] video_range holds (set_range)
-    range: str | None = None
 
     def __init__(self, config: DeviceConfig) -> None:
         self.config = config
-        # Replaced by the main loop's, shared by every display it makes (and by the
-        # displays a wrapping one makes inside: ``auto``, ``turzx``).
         self.counters = Counters()
 
     def open(self) -> None:
@@ -195,26 +170,6 @@ class Display:
 
     def set_brightness(self, percent: int) -> None:
         """0-100. Drivers without brightness control ignore it."""
-
-    def set_feed(self, pixels: str | None) -> None:
-        """A colour check's feed for the video (:attr:`feed`); the video display starts ffmpeg
-        anew with it at its next frame, and the others have no video to feed."""
-        self.feed = pixels
-
-    def set_range(self, video_range: str | None) -> None:
-        """A colour check's range for the video (:attr:`range`), as :meth:`set_feed`."""
-        self.range = video_range
-
-    def screen_off(self) -> bool:
-        """Libre Panel quits ([device] dark_on_quit): the panel's own command that turns its
-        screen off, where it has one (its next open() turns it on again); whether it did."""
-        return False
-
-    def show_video(self, source: Any, size: tuple[int, int]) -> bool:
-        """A theme that is one video across the panel ([video] direct): whether the panel
-        takes it straight from its file (``source``: h264.VideoSource) instead of frames. Only
-        a TURZX panel in video mode does (turzx_video.py); the others show frames."""
-        return False
 
     def describe(self) -> str:
         """What frames go to, for status displays (tray, editor)."""
@@ -235,31 +190,6 @@ class Display:
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
-
-
-_BUILTIN_DRIVERS = {
-    "auto": "libre_panel.devices.auto:AutoDisplay",
-    "virtual": "libre_panel.devices.virtual:VirtualDisplay",
-    "turzx": "libre_panel.devices.turzx:TurzxDisplay",
-}
-
-
-def available_drivers() -> dict[str, str]:
-    found = dict(_BUILTIN_DRIVERS)
-    for ep in entry_points(group="libre_panel.devices"):
-        found[ep.name] = ep.value
-    return found
-
-
-def create_display(config: DeviceConfig) -> Display:
-    drivers = available_drivers()
-    if config.driver not in drivers:
-        raise DeviceError(
-            f"unknown display driver {config.driver!r} (available: {', '.join(sorted(drivers))})"
-        )
-    module_name, _, attr = drivers[config.driver].partition(":")
-    module = __import__(module_name, fromlist=[attr])
-    return getattr(module, attr)(config)
 
 
 def list_usb_devices(

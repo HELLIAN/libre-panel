@@ -1,0 +1,46 @@
+[
+ [
+  "^\\s*(-?[0-9]+(?:[.,][0-9]+)?)\\s*(.*)$",
+  false
+ ],
+ [
+  "^(CPU )?Core #\\d+$",
+  false
+ ],
+ [
+  "\\((?:R|TM|C)\\)|[®™©]",
+  true
+ ],
+ [
+  "\\s*@?\\s*\\b\\d+(?:[.,]\\d+)?\\s*[GM]Hz\\b",
+  true
+ ],
+ [
+  "\\s+(?:with|w/)\\s+(?:AMD\\s+)?(?:Radeon|Vega)\\b.*$",
+  true
+ ],
+ [
+  "\\s*\\b(?:\\d+|[A-Za-z]+)-Cores?\\b(?:\\s+Processor)?",
+  true
+ ],
+ [
+  "^\\s*\\d+(?:st|nd|rd|th)\\s+Gen\\b",
+  true
+ ],
+ [
+  "\\b(?:CPU|Processor)\\b",
+  true
+ ],
+ [
+  "^(?:AMD|Intel|NVIDIA|ATI|Advanced\\s+Micro\\s+Devices)\\b[,.]?\\s*(?:Inc\\.?|Corporation|Corp\\.?)?",
+  true
+ ],
+ [
+  "^Genuine\\s+",
+  true
+ ],
+ [
+  "(?:[\\s,.]+(?:technology|technologies|corporation|corp|company|co|inc|ltd|limited|gmbh|semiconductor|semiconductors|electronics|international|intl|group|memory|modules?|information|usa))+[\\s,.]*$",
+  true
+ ]
+]

@@ -4,7 +4,7 @@ and the body, byte for byte."""
 
 from __future__ import annotations
 
-import importlib.util
+import hashlib
 import json
 import logging
 import os
@@ -23,47 +23,33 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import golden
 import pytest
-from test_rust_app import DATA, Rig, _libraries, _program
+import server_tape
+from test_rust_app import (
+    BOOT_LOGO,
+    DATA,
+    RUST_ONLY_SERVICES,
+    STANDBY_CLIP,
+    Rig,
+    _asked,
+    _libraries,
+    _program,
+    python_s_services,
+    this_computer,
+)
 
-from libre_panel import i18n
-from libre_panel.editor import server as editor
-from libre_panel.sensors import hardware
-from libre_panel.weather import open_meteo
+from libre_panel import __version__, i18n
 
 pytestmark = pytest.mark.skipif(
     sys.version_info[:2] != (3, 12), reason="the release's http.server is Python 3.12's"
 )
 
 TOKEN = "t" * 43
-
-
-def _asked(
-    port: int, request: bytes, done: bool = True, wait: float = 60, left: bool = False
-) -> tuple[str, dict[str, str], bytes]:
-    """What the server on ``port`` answers to ``request``: its status line, its headers (but
-    for the server's name and the date) and its body. ``done``: the request's end said by
-    closing the way there (else it stays open, as a browser's that waits for a picture);
-    ``wait``: seconds without a word from the server before it is taken for hung. ``left``:
-    the browser has left by the time the server reads its request: the request is held back
-    until the way there is closed, so that both arrive as one (a server that read the request
-    before the end was said took the browser for waiting, now and then on a busy machine)."""
-    with socket.create_connection(("127.0.0.1", port), timeout=wait) as link:
-        if left and hasattr(socket, "TCP_CORK"):
-            link.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
-        link.sendall(request)
-        if done:
-            link.shutdown(socket.SHUT_WR)
-        answer = b""
-        while chunk := link.recv(65536):
-            answer += chunk
-    if not answer.startswith(b"HTTP/"):
-        return "", {}, answer  # (a request without a version: the body alone)
-    head, _, body = answer.partition(b"\r\n\r\n")
-    status, *lines = head.decode("latin-1").split("\r\n")
-    headers = dict(line.split(": ", 1) for line in lines)
-    assert headers.pop("Date").endswith(" GMT") and "LibrePanelEditor/" in headers.pop("Server")
-    return status, headers, body
+# the moment the server takes for now in what it tells (a Thursday, 9 October 2025, 08:53:20
+# in UTC, the zone it is given; LP_NOW): what the Python app's answered then, kept
+# (tests/server_tape.py), is what the Rust app's answers whenever the tests run
+NOW = 1_760_000_000
 
 
 def _failed(ours: tuple[str, dict[str, str], bytes], asked: Any) -> None:
@@ -80,9 +66,12 @@ OWN = ("cpu.name", "mem.", "gpu.name", "board.", "system.")
 
 
 @pytest.fixture
-def servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    """Both servers on a config.toml of their own: ``ask(request)`` gives each one's answer to
-    the request, in which ``{host}`` is the server's name and ``{token}`` its token."""
+def servers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[Any]:
+    """The Rust app's server and what editor/server.py answered (kept: server_tape.py), each on
+    a config.toml of its own: ``ask(request)`` gives each one's answer to the request, in which
+    ``{host}`` is the server's name and ``{token}`` its token."""
     homes = []
     for side in ("py", "rs"):
         home = tmp_path / side
@@ -107,15 +96,6 @@ def servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             (home / "themes" / name).mkdir()
             (home / "themes" / name / "theme.json").write_text(text, encoding="utf-8")
         homes.append(home)
-    monkeypatch.setenv("LIBRE_PANEL_HOME", str(homes[0]))
-    i18n.set_language("de")
-    theirs = editor.make_server(0, homes[0] / "config.toml", token=TOKEN)
-    # (a connection that is gone again before it is accepted leaves accept() waiting for
-    # the next one, for good: serve_forever never looked at its end then, and shutdown()
-    # below waited for it. With a time to wait, accept() gives up and the loop goes on)
-    theirs.socket.settimeout(1.0)
-    serving = threading.Thread(target=theirs.serve_forever, daemon=True)
-    serving.start()
     # Open-Meteo's place search as the tests make it up: its answer, the same for both
     places = tmp_path / "places.json"
     places.write_text("{}", encoding="utf-8")
@@ -135,13 +115,32 @@ def servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     search.socket.settimeout(1.0)
     threading.Thread(target=search.serve_forever, daemon=True).start()
     search_url = f"http://127.0.0.1:{search.server_address[1]}/search"
-    monkeypatch.setattr(open_meteo, "GEOCODING_URL", search_url)
     # GitHub's answer on the releases, the same file for both (the update check's)
     releases = tmp_path / "releases.json"
-    theirs.editor_state.updates.fetch = lambda: json.loads(releases.read_text(encoding="utf-8"))
+    # the user's own folder, as both servers see it (where Claude Code's and Codex's settings
+    # are): the test's, not this computer's (one a test gave already, pictures_home's, stays)
+    if not Path(os.environ.get("HOME") or "/").resolve().is_relative_to(tmp_path.resolve()):
+        user = tmp_path / "user"
+        user.mkdir()
+        monkeypatch.setenv("HOME", str(user))
+        monkeypatch.setenv("USERPROFILE", str(user))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    # stand-ins for both: xdg-open, which shows the folders a test asks for (the same answer
+    # on every computer, one without xdg-open says it cannot, and nothing is opened), and the
+    # AI agents' programs, found on every computer alike
+    if os.name != "nt":
+        stand_in = tmp_path / "bin"
+        stand_in.mkdir()
+        for name, done in (("xdg-open", 0), ("claude", 1), ("codex", 1)):
+            (stand_in / name).write_text(f"#!/bin/sh\nexit {done}\n", encoding="utf-8")
+            (stand_in / name).chmod(0o755)
+        monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ.get('PATH', '')}")
+    i18n.set_language("de")  # (the servers' language, for what the tests say in it)
     env = {**os.environ, "LIBRE_PANEL_HOME": str(homes[1]), "LIBRE_PANEL_DATA": str(DATA),
            "LP_RELEASES_FILE": str(releases), "XDG_CONFIG_HOME": str(homes[1] / "xdg"),
-           "LP_GEOCODING_URL": search_url,
+           "LP_GEOCODING_URL": search_url, "LP_NOW": str(NOW), "TZ": "UTC",
+           # (an ordinary user's rights, whoever runs the tests: conftest.py's not_elevated)
+           "LP_TEST_RIGHTS": "user",
            **_libraries()}  # fmt: skip
     command = [str(_program()), "editor", "--port", "0"]
     ours = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -151,25 +150,31 @@ def servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         said = ours.stdout.readline()
         address = said.split(" running at ")[1].split()[0]
         port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
-        sides = ((theirs.server_address[1], TOKEN), (port, token))
+
+        def asked(side: tuple[int, str], request: str | bytes, done: bool, left: bool) -> Any:
+            text = request if isinstance(request, bytes) else request.encode("utf-8")
+            text = text.replace(b"{host}", f"127.0.0.1:{side[0]}".encode())
+            text = text.replace(b"{token}", side[1].encode())
+            return _asked(side[0], text, done, left=left)
+
+        tape = server_tape.Played(golden.told("answers"), homes, tmp_path)
 
         def ask(
             request: str | bytes, done: bool = True, left: bool = False
         ) -> list[tuple[str, dict[str, str], bytes]]:
-            answers = []
-            for port, token in sides:
-                text = request if isinstance(request, bytes) else request.encode("utf-8")
-                text = text.replace(b"{host}", f"127.0.0.1:{port}".encode())
-                text = text.replace(b"{token}", token.encode())
-                answers.append(_asked(port, text, done, left=left))
-            return answers
+            tape.before(request, done, left)
+            mine = _as_python_s(asked((port, token), request, done, left))
+            return [tape.answer(mine), mine]
 
+        ask.shares = tape.shares  # type: ignore[attr-defined]
         yield ask, homes
+        if getattr(request.node, "_golden_passed", False):
+            assert tape.left() == 0, f"{tape.left()} of the kept answers were not asked for"
+            if server_tape.RECORDING:  # (what the Rust app's server answered, kept)
+                given = golden.FOLDER.parent / "given" / "test_rust_server.json"
+                server_tape.keep(golden.given("test_rust_server"), given)
     finally:
         i18n.set_language("en")
-        theirs.shutdown()
-        theirs.server_close()
-        theirs.editor_state.close()
         search.shutdown()
         if os.name == "nt":
             ours.terminate()
@@ -177,6 +182,43 @@ def servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             ours.send_signal(signal.SIGINT)
         said = ours.communicate(timeout=30)[1]
         assert "panicked" not in said, said
+
+
+def _as_python_s(answer: Any) -> Any:
+    """An answer of the Rust app's server without what the Python app never had: the
+    services only the Rust app has (``python_s_services``), wherever its JSON lists services
+    by name (Settings' catalog, Control's page)."""
+    status, headers, body = answer
+    if not any(name.encode() in body for name in RUST_ONLY_SERVICES):
+        return answer
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return answer
+    taken = 0
+
+    def without(value: Any) -> Any:
+        nonlocal taken
+        if isinstance(value, dict):
+            for key, inner in value.items():
+                listed = isinstance(inner, list) and all(isinstance(i, dict) for i in inner)
+                if key == "services" and listed:
+                    value[key] = python_s_services(inner)
+                    taken += len(inner) - len(value[key])
+                else:
+                    without(inner)
+        elif isinstance(value, list):
+            for inner in value:
+                without(inner)
+        return value
+
+    without(data)
+    if not taken:
+        return answer
+    body = json.dumps(data).encode("utf-8")  # (as the server writes it: json.dumps's way)
+    if "Content-Length" in headers:
+        headers = {**headers, "Content-Length": str(len(body))}
+    return status, headers, body
 
 
 def _get(path: str, *headers: str, method: str = "GET", body: str = "") -> str:
@@ -192,10 +234,11 @@ def test_the_apps_files_and_the_way_in_are_answered_as_server_py_answers(servers
     name of the server or page of another site; the token missing, wrong or in the wrong
     place; requests that are none, in http.server's words; the texts in the app's language
     and the state without a background app."""
-    font = next(DATA.joinpath("fonts").glob("*.ttf")).stem
-    module = next(path for path in DATA.joinpath("editor", "app").rglob("*.js"))
+    # (each the first by name: the folder's own order is another on another computer)
+    font = min(DATA.joinpath("fonts").glob("*.ttf")).stem
+    module = min(DATA.joinpath("editor", "app").rglob("*.js"))
     module = module.relative_to(DATA / "editor" / "app").as_posix()
-    old = next(DATA.joinpath("editor", "static").iterdir()).name
+    old = min(DATA.joinpath("editor", "static").iterdir()).name
     json = "Content-Type: application/json"
     requests: list[str | bytes] = [
         _get("/"), _get("/index.html"), _get("/index.html?x=1#y"), _get("//index.html"),
@@ -329,6 +372,7 @@ def test_the_background_app_is_controlled_through_its_server(tmp_path: Path) -> 
             assert state["panel"]["state"] == "showing" and state["panel"]["theme"] == "slate"
             assert (state["brightness"], state["upside_down"]) == (50, False)
             shown = {key: state["panel"][key] for key in ("theme", "target", "default_theme")}
+            assert state["panel"]["on_panel"] is False  # (a PNG file is no panel)
             assert asked("pause")[1]["panel"]["state"] == "paused"
             # what the panel showed stays said while it rests, as 0.8 says it: once its loop
             # had ended, Start named no theme for a paused panel, and no panel
@@ -339,6 +383,7 @@ def test_the_background_app_is_controlled_through_its_server(tmp_path: Path) -> 
                 time.sleep(0.6)
             rests = asked()[1]["panel"]
             assert rests["state"] == "paused" and rests["stats"] == {} and rests["more"] == []
+            assert rests["on_panel"] is False
             assert {key: rests[key] for key in shown} == shown and shown["target"], rests
             assert asked("brightness", 30)[1]["brightness"] == 30
             assert asked("upside_down", True)[1]["upside_down"] is True
@@ -473,6 +518,68 @@ def test_a_paused_panel_keeps_no_blocks_for_a_frame_that_does_not_come(tmp_path:
             program.communicate(timeout=30)
 
 
+def test_the_background_app_s_power_count_goes_on_from_what_it_kept_and_the_memory_recorded(
+    tmp_path: Path,
+) -> None:
+    """The background app started its services before their folder was known: the power count
+    read none of its totals and began each start at nothing, so "this month" was "today"
+    (issue 56). It goes on from power.json now, and where the memory recorded more of today
+    or this month (the minutes it ran without the count, as History adds them up), from that."""
+    import sqlite3
+    from datetime import datetime
+
+    (tmp_path / "config.toml").write_text(
+        'theme = "slate"\nfps = 2\n[device]\ndriver = "virtual"\noutput = "panel.png"\n'
+        '[sensors]\nproviders = []\n[services]\nenabled = ["power"]\n',
+        encoding="utf-8",
+    )
+    now = datetime.now()
+    data = tmp_path / "plugins-data"
+    (data / "power").mkdir(parents=True)
+    kept = {"day": now.strftime("%Y-%m-%d"), "today_wh": 1000.0,
+            "month": now.strftime("%Y-%m"), "month_wh": 2000.0}  # fmt: skip
+    (data / "power" / "power.json").write_text(json.dumps(kept), encoding="utf-8")
+    (data / "memory").mkdir()
+    con = sqlite3.connect(data / "memory" / "memory.db")
+    con.execute("CREATE TABLE minutes (ts INTEGER PRIMARY KEY, cpu_power REAL, gpu_power REAL)")
+    first = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+    for n in range(600):  # ten hours of 500 W from the month's first minute: 5 kWh
+        con.execute("INSERT INTO minutes VALUES (?, ?, NULL)", (first + 60 * n, 500.0))
+    con.execute("INSERT INTO minutes VALUES (?, 900.0, 900.0)", (first - 60,))  # (the month before)
+    con.commit()
+    con.close()
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
+           **_libraries()}  # fmt: skip
+    with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          encoding="utf-8") as program:  # fmt: skip
+        try:
+            assert program.stdout is not None
+            address = program.stdout.readline().split(" running at ")[1].split()[0]
+            port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
+
+            def readings() -> dict[str, Any] | None:
+                request = _get("/api/readings?keys=power.today,power.month", WITH)
+                request = request.replace("{host}", f"localhost:{port}")
+                status, _, answer = _asked(port, request.replace("{token}", token).encode())
+                assert status.split()[1] == "200", answer
+                found = json.loads(answer)["readings"]
+                # (the samples' stand-ins until the count's own come)
+                published = [
+                    found.get(key, {}).get("sample") for key in ("power.today", "power.month")
+                ]
+                return found if published == [False, False] else None
+
+            found = _waited(readings, 40)
+        finally:
+            program.kill()
+            program.communicate(timeout=30)
+    assert found, "the power count published nothing"
+    today = 5.0 if now.day == 1 else 1.0  # (on the 1st the memory's minutes are today's too)
+    assert found["power.today"]["value"] == pytest.approx(today, abs=0.002), found
+    assert found["power.month"]["value"] == pytest.approx(5.0, abs=0.002), found
+
+
 def test_a_transition_is_shown_on_the_panel_as_transition_show_py_shows_it(
     tmp_path: Path,
 ) -> None:
@@ -483,12 +590,6 @@ def test_a_transition_is_shown_on_the_panel_as_transition_show_py_shows_it(
     import io
 
     from PIL import Image
-
-    from libre_panel import transition_show
-    from libre_panel.plugins.render import RenderContext
-    from libre_panel.render.light import role_color
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.theme import load_theme
 
     folder = tmp_path / "themes" / "red"
     folder.mkdir(parents=True)
@@ -506,9 +607,9 @@ def test_a_transition_is_shown_on_the_panel_as_transition_show_py_shows_it(
         'output = "panel.png"\n[sensors]\nproviders = []\n',
         encoding="utf-8",
     )
-    context = RenderContext(Renderer(load_theme(folder), preview=True))
-    card = transition_show.card("Fade", (800, 480), role_color(context, "void"),
-                                role_color(context, "text")).tobytes()  # fmt: skip
+    # (the card transition_show.py makes of "Fade" in the theme's colours: its pixels' digest)
+    _program()  # (skips where rust/ is not built, before what was kept is read)
+    card = golden.told("card")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            **_libraries()}  # fmt: skip
     with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
@@ -529,13 +630,13 @@ def test_a_transition_is_shown_on_the_panel_as_transition_show_py_shows_it(
                                               method="POST", body=body))  # fmt: skip
                 return status.split()[1], json.loads(answer)
 
-            def shown() -> bytes | None:
+            def shown() -> str | None:
                 status, _, body = sent(_get("/api/plugins/control/live?panel=1&format=PNG&w=800",
                                             WITH))  # fmt: skip
                 if " 200 " not in status:
                     return None
                 with Image.open(io.BytesIO(body)) as picture:
-                    return picture.convert("RGB").tobytes()
+                    return hashlib.sha256(picture.convert("RGB").tobytes()).hexdigest()
 
             before = _waited(shown, 30)
             assert before is not None and before != card
@@ -552,7 +653,7 @@ def test_a_transition_is_shown_on_the_panel_as_transition_show_py_shows_it(
             end = time.monotonic() + 30
             while time.monotonic() < end:
                 frame = shown()
-                kind = {before: "theme", card: "card"}.get(frame or b"", "between")
+                kind = {before: "theme", card: "card"}.get(frame or "", "between")
                 if not seen or seen[-1] != kind:
                     seen.append(kind)
                 if kind == "theme" and "card" in seen:
@@ -579,8 +680,6 @@ def test_the_live_picture_is_the_frame_on_each_panel_as_control_py_makes_it(
     import time
 
     from PIL import Image
-
-    from libre_panel.pages import control
 
     for name, colour in (("red", "#DC1E1E"), ("blue", "#1E1EDC")):
         folder = tmp_path / "themes" / name
@@ -628,33 +727,25 @@ def test_the_live_picture_is_the_frame_on_each_panel_as_control_py_makes_it(
             program.send_signal(signal.SIGINT) if os.name == "posix" else program.terminate()
             said = program.communicate(timeout=30)[1]
     assert "panicked" not in said, said
-    frames = {n: Image.open(tmp_path / file).convert("RGB")
-              for n, file in ((1, "panel.png"), (2, "beside.png"))}  # fmt: skip
-    for query, n, width, kind in (("panel=1", 1, 960, "jpeg"),
-                                  ("panel=1&format=PNG&w=400", 1, 400, "png"),
-                                  ("panel=2&w=1920", 2, 1920, "jpeg"),
-                                  ("panel=2&w=100", 2, 160, "jpeg")):  # fmt: skip
+    for query, kind in (("panel=1", "jpeg"), ("panel=1&format=PNG&w=400", "png"),
+                        ("panel=2&w=1920", "jpeg"), ("panel=2&w=100", "jpeg")):  # fmt: skip
         status, headers, body = answers[query]
         assert status == "HTTP/1.0 200 OK", (query, status, body[:200])
-        assert headers["Content-Type"] == control.PICTURES[kind], query
-        made = control.encode(frames[n], width, kind)
+        # (what control.py's encode() makes of the same frame: its kind, and the digest of its
+        # bytes or, of a PNG, its mode and the digest of its pixels)
+        kind_of, *made = golden.told("encoded")
+        assert headers["Content-Type"] == kind_of, query
         if kind == "jpeg":
-            assert body == made, query
+            assert [hashlib.sha256(body).hexdigest()] == made, query
         else:  # (the same pixels; zlib's stream is not the one of Pillow's wheel)
-            with Image.open(io.BytesIO(body)) as ours, Image.open(io.BytesIO(made)) as theirs:
-                assert ours.mode == theirs.mode and ours.tobytes() == theirs.tobytes(), query
-    # the meter's numbers as meter.py makes them, for a PNG file at 2 frames a second
-    from libre_panel.app import RunStatus
-    from libre_panel.meter import Meter
-
-    status = RunStatus()
-    meter = Meter(status, 0.0)
-    meter.drew(0.01)
-    meter.tick(1.0, 2, False)
+            with Image.open(io.BytesIO(body)) as ours:
+                assert [ours.mode, hashlib.sha256(ours.tobytes()).hexdigest()] == made, query
+    # the meter's numbers as meter.py makes them, for a PNG file at 2 frames a second: which
+    # there are, and which are none
+    meter = golden.told("meter")
     stats = panel["stats"]
-    assert list(stats) == list(status.stats), stats
-    assert {k for k, v in stats.items() if v is None} == {
-        k for k, v in status.stats.items() if v is None}, stats  # fmt: skip
+    assert list(stats) == meter["keys"], stats
+    assert sorted(k for k, v in stats.items() if v is None) == meter["none"], stats
     assert stats["target_fps"] == 2 and stats["streaming"] is False and stats["fps"] > 0
     assert isinstance(stats["uptime_s"], int) and stats["render_ms"] > 0
     assert [more["index"] for more in panel["more"]] == [0] and panel["more"][0]["fps"] > 0
@@ -665,6 +756,7 @@ def test_the_live_picture_is_the_frame_on_each_panel_as_control_py_makes_it(
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the Linux source")
+@this_computer
 def test_controls_sources_are_those_the_panel_reads_as_control_py_lists_them(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -673,13 +765,6 @@ def test_controls_sources_are_those_the_panel_reads_as_control_py_lists_them(
     itself and its rows, as control.py lists the sources of the Python app's hub; the numbers
     of readings of the sources whose readings do not come and go."""
     import time
-    from types import SimpleNamespace
-
-    from libre_panel.app import build_hub
-    from libre_panel.config import load_config
-    from libre_panel.pages import control
-    from libre_panel.plugins import pages
-    from libre_panel.plugins.host import PluginHost
 
     config = tmp_path / "config.toml"
     config.write_text(
@@ -711,34 +796,31 @@ def test_controls_sources_are_those_the_panel_reads_as_control_py_lists_them(
             program.send_signal(signal.SIGINT) if os.name == "posix" else program.terminate()
             said = program.communicate(timeout=30)[1]
     assert "panicked" not in said, said
-    # (the tests' computer is empty, conftest.py: here it is the real one, as the program's)
-    spec = importlib.util.find_spec("libre_panel.sensors.hardware")
-    assert spec is not None and spec.loader is not None
-    fresh = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(fresh)
-    monkeypatch.setattr(hardware, "_scan_machine", fresh._scan_machine)
-    from libre_panel.sensors import linux
-
-    monkeypatch.setattr(linux, "ROOT", Path("/"))  # (its chips and cards too)
-    hub = build_hub(load_config(config))
-    hub.providers.append(PluginHost().provider())
-    try:
-        hub.snapshot()
-        time.sleep(0.3)
-        hub.snapshot()
-        listed = [{"name": p.name, "readings": hub.readings_from(p),
-                   "status": pages._status_of(p)} for p in hub.providers]  # fmt: skip
-    finally:
-        hub.close()
-    context = SimpleNamespace(status=lambda: {"hint": ""}, sources=lambda: listed,
-                              background=True)  # fmt: skip
-    theirs = {"background": True, "sources": control.Control._sources(SimpleNamespace(
-        context=context))}  # fmt: skip
+    # (what control.py lists of the Python app's hub on this config.toml, with this computer's
+    # parts and readings as the program has them)
+    theirs = golden.told("sources")
     # (the Linux source's and psutil's numbers: whether there are any; the drives' and the
     # rates' readings come with rounds of their own)
     for each in (*ours["sources"], *theirs["sources"]):
         if each["name"] in ("linux", "psutil"):
             each["readings"] = bool(each["readings"])
+    # (what the Linux source found of this computer's chips, its graphics card's driver, NVML
+    # and the processor's power: CI's computers have a chip of temperatures or none, a card
+    # or none, one run to the next; how it counts is test_rust_sensors.py's, on computers
+    # laid out in folders. Here: that it says the same in both places)
+    for each in (*ours["sources"], *theirs["sources"]):
+        if each["name"] == "linux" and isinstance(each["status"], dict):
+            found = {k: each["status"][k] for k in ("chips", "temperatures", "fans")}
+            assert all(isinstance(n, int) and n >= 0 for n in found.values()), found
+            assert {k: v for k, v in each["details"] if k in found} == {
+                k: str(n) for k, n in found.items()}  # fmt: skip
+            named = {k: each["status"][k] for k in ("graphics", "nvidia driver", "cpu power")}
+            assert {k: v for k, v in each["details"] if k in named} == {
+                k: v for k, v in named.items() if v is not None}  # fmt: skip
+            each["readings"] = "<this computer's>"
+            each["status"].update(dict.fromkeys([*found, *named], "<this computer's>"))
+            each["details"] = [[k, "<this computer's>" if k in found else v]
+                               for k, v in each["details"] if k not in named]  # fmt: skip
     assert ours == theirs
 
 
@@ -749,10 +831,6 @@ def test_a_theme_that_is_gone_leaves_the_panel_lit_and_is_said_as_app_py_says_it
     panel's state names the missing one with the notice service.py gives; a theme chosen
     later that cannot be shown either leaves the one on show where it is."""
     import time
-
-    from libre_panel.devices.models import find_model
-    from libre_panel.theme.defaults import default_theme
-    from libre_panel.theme.model import ThemeError, find_theme
 
     config = tmp_path / "config.toml"
     head = 'fps = 2\nlanguage = "en"\n[device]\ndriver = "virtual"\noutput = "panel.png"\n'
@@ -784,7 +862,10 @@ def test_a_theme_that_is_gone_leaves_the_panel_lit_and_is_said_as_app_py_says_it
         finally:
             program.send_signal(signal.SIGINT) if os.name == "posix" else program.terminate()
             said = program.communicate(timeout=30)[1]
-    own = default_theme(find_model("turing-5"))
+    # (the theme of its own the Python app had for the panel, and what it said of each theme
+    # that is not there)
+    told = golden.told("gone")
+    own, whys = told["own"], told["whys"]
     notice = i18n.t(
         "The theme “{name}” is no longer installed, so the panel shows “{shown}”. "
         "Choose a theme in the tray menu or on Start.",
@@ -792,13 +873,10 @@ def test_a_theme_that_is_gone_leaves_the_panel_lit_and_is_said_as_app_py_says_it
         shown=own,
     )
     assert (first["state"], first["theme"], first["default_theme"]) == ("showing", own, own)
+    # (the panel's model, as for the panels beside it: the header names the panel by it)
+    assert first["model"] == "turing-5"
     assert (first["missing_theme"], first["notice"]) == ("gone", notice), first
     assert list(first)[:6] == ["state", "testing", "detail", "hint", "missing_theme", "notice"]
-    whys = []
-    for name in ("gone", "also-gone"):
-        with pytest.raises(ThemeError) as caught:
-            find_theme(name)
-        whys.append(str(caught.value))
     lines = [line.removeprefix("libre-panel: ") for line in said.splitlines()]
     showing = f"{whys[0]}: showing {own!r}, the panel's own, until it is back or another is chosen"
     assert showing in lines and f"keeping theme {own!r}: {whys[1]}" in lines, said
@@ -815,8 +893,6 @@ def test_a_theme_with_an_error_or_one_that_cannot_be_drawn_is_said_with_its_reas
     import time
 
     from libre_panel import i18n
-    from libre_panel.devices.models import find_model
-    from libre_panel.theme.defaults import default_theme
 
     theme: dict[str, Any] = {
         "format": "libre-panel-theme/1", "name": "Mine",
@@ -873,7 +949,7 @@ def test_a_theme_with_an_error_or_one_that_cannot_be_drawn_is_said_with_its_reas
         finally:
             program.send_signal(signal.SIGINT) if os.name == "posix" else program.terminate()
             said = program.communicate(timeout=30)[1]
-    own = default_theme(find_model("turing-5"))
+    own = golden.told("gone")["own"]  # (the theme of its own the Python app has for the panel)
     key = (
         "The theme “{name}” cannot be loaded ({why}), so the panel shows “{shown}”. "
         "Mend it, or choose a theme in the tray menu or on Start."
@@ -1109,16 +1185,34 @@ def test_a_notice_is_sent_and_libre_panel_quits_as_cli_py_does_it(tmp_path: Path
     assert listed.returncode == 0 and listed.stdout.startswith("drivers: auto, turzx, virtual\n")
 
 
+def _restart_in_words(command: list[str], pid: int, program: Path, setup: Path) -> list[str]:
+    """A command that installs an update once the app has quit, as it is compared: its script
+    as text, and what is the run's own as words (the app's process, its program, the file)."""
+    import base64
+
+    words, script = [], False
+    for word in command:
+        if script:
+            word = base64.b64decode(word).decode("utf-16-le")
+        script = word == "-EncodedCommand"
+        for spelled, said in ((str(setup), "<setup>"), (str(setup.parent), "<setup's folder>"),
+                              (str(program), "<program>"), (str(program.parent), "<its folder>"),
+                              (f"-Id {pid} ", "-Id <pid> ")):  # fmt: skip
+            word = word.replace(spelled, said)
+        words.append(word)
+    return words
+
+
 def test_an_update_is_fetched_checked_and_installed_as_updates_py_does(tmp_path: Path) -> None:
     """updates.py's Install, through the app's server: nothing to install before a download;
     the newer release's setup fetched from the release's files and checked against its
     SHA256SUMS; on the second click the command that runs it once the app has quit (Python's
     restart_command, word for word) started, and the app quits."""
-    import hashlib
     import urllib.request
 
-    from libre_panel.editor import updates
-
+    # (updates.py's: where a release's files are, and what Install tells while nothing goes on)
+    _program()  # (skips where rust/ is not built, before what was kept is read)
+    theirs = golden.told("update")
     name = "libre-panel-9.1.0-windows-x64-setup.exe"
     content = b"the setup " * 100
     files = tmp_path / "release"
@@ -1126,7 +1220,7 @@ def test_an_update_is_fetched_checked_and_installed_as_updates_py_does(tmp_path:
     (files / name).write_bytes(content)
     digest = hashlib.sha256(content).hexdigest()
     (files / "SHA256SUMS").write_text(f"{'0' * 64}  other.zip\n{digest}  {name}\n")
-    own = f"{updates.RELEASE_FILES}v9.1.0/"
+    own = f"{theirs['files']}v9.1.0/"
     answer = {
         "tag_name": "v9.1.0", "html_url": "https://github.com/syntensa/libre-panel/releases/tag/v9.1.0",
         "body": "What is new.", "published_at": "2026-11-01T10:00:00Z", "prerelease": False,
@@ -1180,73 +1274,27 @@ def test_an_update_is_fetched_checked_and_installed_as_updates_py_does(tmp_path:
         finally:
             if program.poll() is None:
                 program.kill()
-    assert idle == (200, updates.IDLE)
+    assert idle == (200, theirs["idle"])
     assert early == (409, {"error": "Nothing is downloaded to install yet."})
     assert (
         started[0] == 200 and started[1]["state"] == "downloading" and started[1]["how"] == "setup"
     )
-    assert ready == {**updates.IDLE, "state": "ready", "version": "9.1.0", "how": "setup",
+    assert ready == {**theirs["idle"], "state": "ready", "version": "9.1.0", "how": "setup",
                      "file": name, "where": ready["where"], "done": len(content),
                      "total": len(content), "checked": True}  # fmt: skip
     setup = Path(ready["where"]) / name
     assert wrong[0] == 400
     assert installing == (200, {**ready, "state": "installing"})
-    assert command == updates.restart_command(
-        "setup", program.pid, _program().with_name("LibrePanel.exe"), setup, digest
-    )
+    # (updates.py's restart_command for this setup: the same words)
+    windowed = _program().with_name("LibrePanel.exe")
+    assert _restart_in_words(command, program.pid, windowed, setup) == golden.told("restart")
     assert Path(cwd) == setup.parent.parent
     assert program.returncode is not None
 
 
-class _Item:
-    """pystray's MenuItem as tray.py makes it: what the tests read of it."""
-
-    def __init__(
-        self,
-        text: Any,
-        action: Any,
-        checked: Any = None,
-        radio: bool = False,
-        default: bool = False,
-        enabled: bool = True,
-        visible: Any = True,
-    ) -> None:
-        self.args = (text, action, checked, radio, default, enabled, visible)
-
-
-class _Menu:
-    """pystray's Menu: its items, or what makes them as the menu opens."""
-
-    SEPARATOR = object()
-
-    def __init__(self, *items: Any) -> None:
-        self.items = items
-
-    def listed(self) -> list[Any]:
-        made = self.items[0] if len(self.items) == 1 and callable(self.items[0]) else None
-        return list(made()) if made is not None else list(self.items)
-
-
-def _as_listed(menu: _Menu) -> list[dict[str, Any]]:
-    """A menu tray.py made, as /api/tray lists one: the visible items, what each says, whether
-    it is on, a choice, the default, and its own menu; separators as they are."""
-    told: list[dict[str, Any]] = []
-    for item in menu.listed():
-        if item is _Menu.SEPARATOR:
-            told.append({"separator": True})
-            continue
-        text, action, checked, radio, default, enabled, visible = item.args
-        if not (visible(item) if callable(visible) else visible):
-            continue
-        told.append({
-            "text": text(item) if callable(text) else text,
-            "enabled": enabled,
-            "checked": checked(item) if callable(checked) else checked,
-            "radio": radio,
-            "default": default,
-            "items": _as_listed(action) if isinstance(action, _Menu) else None,
-        })  # fmt: skip
-    return told
+def _in_json(path: Path) -> str:
+    """A path as JSON writes it."""
+    return json.dumps(str(path))[1:-1]
 
 
 def _without_ids(menu: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1267,22 +1315,16 @@ def test_the_trays_menu_is_tray_pys_and_what_is_chosen_in_it_is_done(
     the switches, the views and Quit; each item's words, whether it is on and a choice, the
     same. And what is chosen in it (POST /api/tray) is done: a brightness step, a scene, the
     panel beside switched on, the panel paused, Quit; the icon's picture is branding.py's."""
-    import types
-
     from PIL import Image
-
-    from libre_panel.branding import logo
-    from libre_panel.service import BackgroundApp
-    from libre_panel.tray import Tray, tooltip
 
     home = tmp_path / "home"
     home.mkdir()
     (home / "config.toml").write_text(
         'theme = "slate"\nfps = 2\nlanguage = "en"\n[device]\ndriver = "virtual"\n'
-        f'brightness = 50\noutput = "{(home / "panel.png").as_posix()}"\n[sensors]\n'
+        'brightness = 50\noutput = "panel.png"\n[sensors]\n'
         'providers = []\n[[panels]]\ntheme = "orbit"\non = false\n[panels.device]\n'
         'driver = "virtual"\n'
-        f'output = "{(home / "panel2.png").as_posix()}"\n[[scenes]]\nname = "Work"\n'
+        'output = "panel2.png"\n[[scenes]]\nname = "Work"\n'
         'themes = ["slate"]\n[[scenes]]\nname = "Play"\nthemes = ["orbit"]\n',
         encoding="utf-8",
     )
@@ -1298,16 +1340,10 @@ def test_the_trays_menu_is_tray_pys_and_what_is_chosen_in_it_is_done(
     def showing(state: dict[str, Any]) -> bool:
         return state["state"] == "showing"
 
-    app = BackgroundApp(port=0)
-    app.start()
-    try:
-        assert _waited(lambda: True if showing(app.panel.state()) else None, 60)
-        tray = Tray(app, types.SimpleNamespace(Menu=_Menu, MenuItem=_Item), log_path=None)
-        theirs = _as_listed(tray.build_menu())
-        their_tip = tooltip(app.panel.state())
-    finally:
-        app.quit()
-        app.shutdown()
+    # (tray.py's menu and its tooltip, of the Python app in the background on these settings:
+    # kept with the folder as a word)
+    _program()  # (skips where rust/ is not built, before what was kept is read)
+    theirs = json.loads(json.dumps(golden.told("menu")).replace("<home>", _in_json(home)))
     env = {**os.environ, "LIBRE_PANEL_DATA": str(DATA), **_libraries()}
     with subprocess.Popen([str(_program()), "start", "--port", "0", "--no-browser"], env=env,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1333,13 +1369,16 @@ def test_the_trays_menu_is_tray_pys_and_what_is_chosen_in_it_is_done(
 
             assert _waited(lambda: True if showing(state()) else None, 60)
             ours = told()
-            assert _without_ids(ours["menu"]) == theirs
-            assert ours["title"] == their_tip and ours["state"] == "showing"
+            assert _without_ids(ours["menu"]) == theirs["menu"]
+            # (tray.py's tooltip: 120 characters at most, the last one then an ellipsis)
+            tip = theirs["tip"] if len(theirs["tip"]) <= 120 else theirs["tip"][:119] + "…"
+            assert ours["title"] == tip and ours["state"] == "showing"
             ids = {i["text"]: i for i in ours["menu"] if "text" in i}
             assert ids["Open Libre Panel"]["id"] == "open"
             picture = ask(_get("/api/tray/icon?state=paused&size=32", WITH))[2]
             got = Image.open(__import__("io").BytesIO(picture))
-            assert got.tobytes() == logo(32, "paused").tobytes()
+            # (branding.py's logo of a paused panel: its pixels' digest)
+            assert hashlib.sha256(got.tobytes()).hexdigest() == golden.told("logo")
             # what is chosen is done, as the tray's actions do it
             # (each in a thread of its own, as tray.py's: one after the other here, each
             # written before the next is chosen)
@@ -1376,6 +1415,23 @@ def _waited(found: Any, seconds: float) -> Any:
     return None
 
 
+def _screen(size: str) -> tuple[subprocess.Popen[bytes], str]:
+    """An Xvfb of a screen of `size` ("1920x1080x24") and its display's number, once it takes
+    clients. (-displayfd: Xvfb writes the number and its newline apart, and ends where the
+    second finds the pipe closed: so the pipe is read to the newline)"""
+    read, write = os.pipe()
+    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", size],
+                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
+    os.close(write)
+    told = b""
+    try:
+        while not told.endswith(b"\n") and (part := os.read(read, 16)):
+            told += part
+    finally:
+        os.close(read)
+    return screen, told.decode().strip()
+
+
 @pytest.mark.skipif(
     not sys.platform.startswith("linux") or shutil.which("Xvfb") is None,
     reason="the window on a screen of Xvfb's",
@@ -1397,14 +1453,7 @@ def test_the_app_opens_its_window_one_window_and_closes_it_as_window_py_does(
     opened = tmp_path / "browser.txt"
     (tools / "xdg-open").write_text(f'#!/bin/sh\necho "$@" >> {opened}\n', encoding="utf-8")
     (tools / "xdg-open").chmod(0o755)
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1920x1080x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1920x1080x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
            "WAYLAND_DISPLAY": "", **_libraries()}  # fmt: skip
@@ -1471,14 +1520,7 @@ def test_a_window_just_closed_is_opened_anew_by_the_next_start(tmp_path: Path) -
     opened = tmp_path / "browser.txt"
     (tools / "xdg-open").write_text(f'#!/bin/sh\necho "$@" >> {opened}\n', encoding="utf-8")
     (tools / "xdg-open").chmod(0o755)
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1920x1080x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1920x1080x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
            "WAYLAND_DISPLAY": "", "LP_WINDOW_LINGER_S": "30", **_libraries()}  # fmt: skip
@@ -1552,14 +1594,7 @@ def test_the_tray_shows_its_icon_and_its_quit_ends_libre_panel(tmp_path: Path) -
         'output = "panel.png"\n[sensors]\nproviders = []\n',
         encoding="utf-8",
     )
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1280x800x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1280x800x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "WAYLAND_DISPLAY": "", "XDG_CONFIG_HOME": str(tmp_path),
            **_libraries()}  # fmt: skip
@@ -1623,14 +1658,7 @@ def test_the_tray_icon_follows_its_setting_and_comes_back_when_it_ends(tmp_path:
         'output = "panel.png"\n[sensors]\nproviders = []\n',
         encoding="utf-8",
     )
-    read, write = os.pipe()
-    screen = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1280x800x24"],
-                              pass_fds=(write,), stderr=subprocess.DEVNULL)  # fmt: skip
-    os.close(write)
-    try:
-        display = os.read(read, 16).decode().strip()
-    finally:
-        os.close(read)
+    screen, display = _screen("1280x800x24")
     env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
            "DISPLAY": f":{display}", "WAYLAND_DISPLAY": "", "XDG_CONFIG_HOME": str(tmp_path),
            **_libraries()}  # fmt: skip
@@ -1924,9 +1952,16 @@ SETTINGS = (  # what is written, a request each: what is refused leaves the file
     {"weather.enabled": False, "weather.latitude": None, "weather.longitude": None,
      "weather.place": None},
     {"weather.update_minutes": 4}, {"weather.units": None},
+    {"weather.provider": "openweathermap", "weather.api_key": " 0123456789abcdef "},
+    {"weather.api_key": "two words"}, {"weather.api_key": ""}, {"weather.api_key": 5},
+    {"weather.provider": "elsewhere"}, {"weather.api_key": None},
+    {"weather.provider": "open-meteo"},
     {"transitions.default": "tube", "transitions.speed": "slow", "transitions.game": "",
      "transitions.media": "random", "transitions.random": ["fade", "cut", "fade"]},
     {"transitions.default": ""}, {"transitions.speed": "slower"}, {"transitions.other": "cut"},
+    {"transitions.canvas": False}, {"transitions.canvas": True}, {"transitions.canvas": 1},
+    {"shine.rings": False, "shine.sun": False}, {"shine.music": True}, {"shine.graphs": 1},
+    {"shine.downloads": None}, {"shine.nope": True}, {"shine": False},
     {"transitions.random": []}, {"transitions.random": ["nothing"]}, {"transitions.game": 5},
     {"switches.glow": True, "switches.lumen.glow": False}, {"switches.glow": None},
     {"switches.Glow": True}, {"switches.a.b.c": True}, {"switches.glow": "on"},
@@ -1963,16 +1998,6 @@ SCENES = (
 # fmt: on
 
 
-def _with_rights() -> bool:
-    """Whether the tests run with administrator rights (a CI runner on Windows) or as root (a
-    container): the program sees that, whatever the tests make Python believe."""
-    if sys.platform == "win32":
-        import ctypes
-
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    return os.geteuid() == 0
-
-
 def test_the_settings_are_read_and_written_as_settings_py_does(
     servers: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1982,10 +2007,7 @@ def test_the_settings_are_read_and_written_as_settings_py_does(
     put on and taken out; what the About page says. After each request the two config.toml
     files hold the same. With the highest rights the settings that name a program or a file
     are refused, by both."""
-    from libre_panel.editor import access
-
     ask, homes = servers
-    monkeypatch.setattr(access, "elevated", _with_rights)
 
     def both(request: str | bytes, what: Any) -> Any:
         theirs, ours = ask(request)
@@ -2043,11 +2065,9 @@ def test_the_panel_and_the_clip_question_are_told_as_settings_py_tells_them(
     smooth motion makes of it and what it lacks (on this panel and on those beside it),
     whether to ask how black looks and for the standby clip's name, the theme that shows the
     weather. (Libre Panel's engine encodes: Python is told its ffmpeg is there.)"""
-    from libre_panel.devices import h264
     from libre_panel.devices.models import find_model
 
     ask, homes = servers
-    monkeypatch.setattr(h264, "find_ffmpeg", lambda path="": "ffmpeg")
     proven, seen, unproven = "turing-9.2-usb", "turing-12.3-usb", "turing-8.8-usb"
     assert [find_model(m).video for m in (proven, seen, unproven)] == [True, True, False]
     serial, other = "turing-3.5", "waveshare-2.8-udisp"
@@ -2299,6 +2319,16 @@ def test_the_update_check_is_told_as_updates_py_tells_it(servers: Any) -> None:
     both(_get("/api/update", WITH), "a file of no table")
 
 
+def _replaceable(program: Path) -> bool:
+    """Whether a program lies in the user's own folder, where whatever the user runs can
+    replace it (autostart.py's writable_by_user): starting it with the highest rights would
+    hand them on."""
+    try:
+        return program.resolve().is_relative_to(Path.home().resolve())
+    except OSError:
+        return True
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the XDG autostart entry")
 def test_starting_with_the_system_is_told_and_set_as_settings_py_does(
     servers: Any, monkeypatch: pytest.MonkeyPatch
@@ -2306,10 +2336,7 @@ def test_starting_with_the_system_is_told_and_set_as_settings_py_does(
     """Settings → System: the start at login (the desktop entry, the same file but for the
     program it starts), the language; switched on and off, or refused in the same words.
     And the command line's `autostart`, which writes the same entry."""
-    from libre_panel import autostart
-
     ask, homes = servers
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(homes[0] / "xdg"))
     entries = [home / "xdg" / "autostart" / "libre-panel.desktop" for home in homes]
 
     def both(request: str | bytes, what: Any) -> Any:
@@ -2321,7 +2348,7 @@ def test_starting_with_the_system_is_told_and_set_as_settings_py_does(
                 # (whether the user may write over the program each side starts: its own,
                 # the Python app's interpreter)
                 program = one["program"]
-                risky = bool(program) and autostart.writable_by_user(Path(program), Path.home())
+                risky = bool(program) and _replaceable(Path(program))
                 assert one.pop("risky") == risky, (what, program)
                 one["program"] = "a program"
                 one["location"] = one["location"].replace(str(home), "HOME")
@@ -2363,9 +2390,9 @@ def test_starting_with_the_system_is_told_and_set_as_settings_py_does(
                               capture_output=True, encoding="utf-8", timeout=60)  # fmt: skip
         assert said in done.stdout + done.stderr, (action, done)
         assert (done.returncode == 0) is ("elevated" not in action), (action, done)
-    # (written by the command line without --config: the start at login takes the usual file)
-    command = [str(_program()), "tray", "--background"]
-    exec_line = f"Exec={autostart.desktop_exec(command)}"
+    # (written by the command line without --config: the start at login takes the usual file;
+    # autostart.py's Exec line of `tray --background`, the program as a word)
+    exec_line = "Exec=" + golden.told("exec").replace("<program>", str(_program()))
     assert exec_line in entries[1].read_text(encoding="utf-8").splitlines()
 
 
@@ -2391,8 +2418,6 @@ def test_the_video_experiment_runs_on_the_app_and_brings_the_settings_back(
     """The experiment on the running app: its steps as experiment.py makes them (the card's
     encoder only where the graphics card has one), the first step's settings written, and
     when it is stopped the settings from before it back in config.toml."""
-    from libre_panel.editor import experiment
-
     (tmp_path / "config.toml").write_text(
         'theme = "slate"\nfps = 2\nlanguage = "en"\n[device]\ndriver = "virtual"\n'
         'output = "panel.png"\n[sensors]\nproviders = []\n[video]\ncrf = 23\n',
@@ -2415,8 +2440,7 @@ def test_the_video_experiment_runs_on_the_app_and_brings_the_settings_back(
                 return _asked(port, text.replace("{token}", token).encode())
 
             started = json.loads(ask(_post("/api/experiment", {"action": "start"}))[2])
-            want = [{"id": s.id, "changes": s.changes, "seconds": s.seconds}
-                    for s in experiment.steps("")]  # fmt: skip
+            want = golden.told("steps")  # (experiment.py's, for a computer with no card)
             assert started["steps"] == want and started["running"] is True
             config = tmp_path / "config.toml"
 
@@ -2607,7 +2631,6 @@ def test_themes_are_shared_and_taken_in_as_share_py_does(servers: Any) -> None:
         (own / "back.jpg").write_bytes(b"\xff\xd8\xff" + b"j" * 40)
         (own / "unused.png").write_bytes(png)
         (own / "font.ttf").write_bytes(b"\x00\x01\x00\x00font")
-        os.utime(own / "back.jpg", (1_600_000_000, 1_600_000_000))
         (own / "linked.png").symlink_to(own / "photos" / "a.png")
         theme = json.loads((DATA / "themes" / "slate" / "theme.json").read_text("utf-8"))
         theme["name"] = "Pics"
@@ -2620,6 +2643,8 @@ def test_themes_are_shared_and_taken_in_as_share_py_does(servers: Any) -> None:
              "font": "font.ttf"},
         ]  # fmt: skip
         (own / "theme.json").write_text(json.dumps(theme), encoding="utf-8")
+        for made in own.rglob("*"):  # (a zip keeps a file's time: one moment, whenever this runs)
+            os.utime(made, (1_600_000_000, 1_600_000_000))
     for theme in ("pics", "slate", "mine", "nothing", "broken"):
         theirs, ours = ask(_get(f"/api/themes/{theme}/export", WITH))
         assert ours[0] == theirs[0], theme
@@ -2919,19 +2944,24 @@ def test_the_hardware_settings_are_as_server_py_has_them(
     is refused."""
     ask, homes = servers
     # (this computer's parts, as the Rust program finds them, not the tests' empty machine)
-    spec = importlib.util.find_spec("libre_panel.sensors.hardware")
-    assert spec is not None and spec.loader is not None
-    fresh = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(fresh)
-    monkeypatch.setattr(hardware, "_scan_machine", fresh._scan_machine)
     for side in homes:
         with (side / "config.toml").open("a", encoding="utf-8") as config:
             config.write('[hardware]\ncpu_name = "Mine"\n\n[[hardware.fans]]\n'
                          'sensor = "fan.lpc.fan_10"\nname = "Back"\n')  # fmt: skip
+
+    def same(theirs: Any, ours: Any, what: Any) -> None:
+        # (what was kept is of CI's computer, whose parts are another's than this one's: the
+        # names as found are left out, the rest is the same)
+        assert ours[0] == theirs[0], what
+        unsized = [{k: v for k, v in side[1].items() if k != "Content-Length"}
+                   for side in (theirs, ours)]  # fmt: skip
+        assert unsized[1] == unsized[0], what
+        told = [_without_found(json.loads(side[2])) for side in (theirs, ours)]
+        assert told[1] == told[0], what
+
     for query in ("", "?refresh", "?refresh=1", "?refresh=0", "?refresh=false"):
         theirs, ours = ask(_get(f"/api/hardware{query}", WITH))
-        assert ours[2] == theirs[2], query
-        assert ours == theirs, query
+        same(theirs, ours, query)
     for payload in (
         {"cpu": "My  CPU\x07", "gpu": ""}, {"fans": {"fan.lpc.fan_2": "Intake"}},
         {"fan_looks": {" fan.lpc.fan_2 ": "libre"}, "fan_paints": {"gpu.fan": "own"}},
@@ -2942,9 +2972,18 @@ def test_the_hardware_settings_are_as_server_py_has_them(
         {"fans": {"fan.lpc.fan_3": "y" * 200}},
     ):  # fmt: skip
         theirs, ours = ask(_post("/api/hardware", payload))
-        assert ours == theirs, payload
+        same(theirs, ours, payload)
         configs = [(side / "config.toml").read_text("utf-8") for side in homes]
         assert configs[1] == configs[0], payload
+
+
+def _without_found(data: Any) -> Any:
+    """The hardware's answer without the parts' names as the computer it ran on found them."""
+    if isinstance(data, dict):
+        return {k: "<found>" if k == "detected" else _without_found(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_without_found(v) for v in data]
+    return data
 
 
 def test_the_history_is_as_server_py_has_it(servers: Any) -> None:
@@ -2952,11 +2991,9 @@ def test_the_history_is_as_server_py_has_it(servers: Any) -> None:
     summary, the rounds and the games, the energy and its cost; no database, one of another
     make, and a span that is none."""
     import sqlite3
-    import time
-
-    from libre_panel.services.memory_store import SCHEMA
 
     ask, homes = servers
+    schema = golden.given("memory_schema")["schema"]  # (the database's, as the memory makes it)
 
     def answers(query: str) -> list[Any]:
         found, since = [], []
@@ -2970,12 +3007,12 @@ def test_the_history_is_as_server_py_has_it(servers: Any) -> None:
 
     theirs, ours = answers("")
     assert ours == theirs and theirs[2]["found"] is False
-    now = int(time.time())
+    now = NOW
     for side in homes:
         folder = side / "plugins-data" / "memory"
         folder.mkdir(parents=True)
         con = sqlite3.connect(folder / "memory.db")
-        con.executescript(SCHEMA)
+        con.executescript(schema)
         for n in range(0, 3000, 7):
             ts = (now - 600 - n * 60) // 60 * 60
             con.execute(
@@ -3020,16 +3057,6 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
     import io
     import zipfile
 
-    from libre_panel.editor import access
-
-    def elevated() -> bool:  # (as the Rust program finds it: root here, an administrator in CI)
-        if sys.platform == "win32":
-            from libre_panel.autostart import is_admin
-
-            return is_admin()
-        return os.geteuid() == 0
-
-    monkeypatch.setattr(access, "elevated", elevated)
     ask, homes = servers
     for side in homes:
         mine = side / "themes" / "mine"
@@ -3040,6 +3067,16 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
         (mine / "Zed.txt").write_bytes(b"z")
         if os.name != "nt":  # (a link needs rights there)
             os.symlink(mine / "notes.txt", mine / "link.txt")
+
+    def still() -> None:
+        """Every file of both settings folders as old as one moment: a backup keeps their
+        times, and is then the same whenever it is made."""
+        for side in homes:
+            for path in side.rglob("*"):
+                if not path.is_symlink():
+                    os.utime(path, (1_600_000_000, 1_600_000_000))
+
+    still()
     answers = ask(_get("/api/backup/file", WITH))
     zips = []
     for status, headers, body in answers:
@@ -3053,6 +3090,9 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
         if name == "libre-panel-backup.json":
             theirs_said, ours_said = json.loads(body), json.loads(ours_file[4])
             assert theirs_said.pop("made")[:10] == ours_said.pop("made")[:10]
+            # (the version that made it: the one built, where the kept one is the version it
+            # was kept with, inside the zip as packed)
+            assert ours_said.pop("version") == __version__ and theirs_said.pop("version")
             assert ours_said == theirs_said
             assert ours_file[4].count(b"\n") == body.count(b"\n")
         else:
@@ -3091,15 +3131,15 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
     # back, the config.toml before it kept)
     for side in homes:
         shutil.rmtree(side / "themes" / "Bad Name")
+    still()
     backup = ask(_get("/api/backup/file", WITH))[0][2]
     with zipfile.ZipFile(io.BytesIO(backup)) as archive:
         assert "config.toml" in archive.namelist()
     (homes[0] / "config.toml").write_text('theme = "terra"\n', encoding="utf-8")
     (homes[1] / "config.toml").write_text('theme = "terra"\n', encoding="utf-8")
     restore(backup)
-    if not elevated():
-        kept = (homes[1] / "config.toml.before-restore").read_text("utf-8")
-        assert kept == 'theme = "terra"\n'
+    kept = (homes[1] / "config.toml.before-restore").read_text("utf-8")
+    assert kept == 'theme = "terra"\n'
 
 
 def test_ai_activity_comes_in_as_server_py_takes_it(servers: Any) -> None:
@@ -3172,9 +3212,8 @@ def test_notices_of_other_programs_come_in_as_server_py_takes_them(servers: Any)
     (header or address); its text, title, seconds, icon and level in the address or posted,
     checked as notify.py checks them; without a panel it is not shown. Settings' notify key,
     its address and command, and a new key."""
-    from libre_panel.icons import ICON_NAMES
-
     ask, homes = servers
+    icon = golden.given("icons")["names"][0]
 
     def both(request: str | bytes) -> None:
         theirs, ours = ask(request)
@@ -3189,7 +3228,7 @@ def test_notices_of_other_programs_come_in_as_server_py_takes_them(servers: Any)
     for query in (
         "text=Hi", "key=wrong&text=Hi", "key=nk", "key=nk&text=%20%20", f"key=nk&text={long}",
         "key=nk&text=Hello%20%0A%20there&title=T&seconds=3&level=warning",
-        f"key=nk&text=Hi&icon={ICON_NAMES[0]}", "key=nk&text=Hi&icon=nope",
+        f"key=nk&text=Hi&icon={icon}", "key=nk&text=Hi&icon=nope",
         "key=nk&text=Hi&seconds=0.5", "key=nk&text=Hi&seconds=x", "key=nk&text=Hi&seconds=nan",
         "key=nk&text=Hi&level=bad", f"key=nk&text=Hi&title={'t' * 41}",
     ):  # fmt: skip
@@ -3313,12 +3352,23 @@ def test_the_start_screen_is_told_drawn_and_made_as_server_py_does(servers: Any)
         assert _frames_of(ours[2]) == _frames_of(theirs[2]), path
     if shutil.which("ffmpeg"):
         theirs, ours = ask(_get("/api/start-screen/file?model=turing-2.1-usb&what=clip", WITH))
-        assert ours[0] == theirs[0] and ours[1] == theirs[1]
-        assert ours[2] == theirs[2]
+        # (kept of CI's ffmpeg and processor, whose bytes another's are not: an H.264 stream of
+        # the same kind, near as large)
+        unsized = [{k: v for k, v in side[1].items() if k != "Content-Length"}
+                   for side in (ours, theirs)]  # fmt: skip
+        assert ours[0] == theirs[0] and unsized[0] == unsized[1]
+        size = server_tape.kept_size(theirs[2])
+        assert ours[2][:4] == b"\x00\x00\x00\x01", ours[2][:16]
+        assert abs(len(ours[2]) - size) <= size // 10, (len(ours[2]), size)
     for path in ("picture?model=nope", "picture?model=turing-9.2-usb&what=x",
                  "picture?model=turing-9.2-usb&design=nope", "file?what=clip"):  # fmt: skip
         theirs, ours = ask(_get(f"/api/start-screen/{path}", WITH))
         assert ours[0] == theirs[0] and json.loads(ours[2]) == json.loads(theirs[2]), path
+
+
+def _is(data: bytes, kept: dict[str, Any]) -> bool:
+    """Whether a file is the one panel_files.py made, of which its size and digest are kept."""
+    return [len(data), hashlib.sha256(data).hexdigest()] == [kept["size"], kept["sha256"]]
 
 
 def _start_screen_of(program: Any) -> tuple[Any, Any]:
@@ -3354,51 +3404,81 @@ def _start_screen_of(program: Any) -> tuple[Any, Any]:
 
 
 def test_files_are_written_to_the_models_it_has_been_done_on(tmp_path: Path) -> None:
-    """Issue 52: start screens are written to the 9.2" and the 12.3", where what fits is known.
-    For another panel of the family (an 8.8" here) the boot logo and the standby clip are
-    refused in panel_files.py's words before the panel is opened. The card is told which
-    models are written to and how large their files are at most; what the panel holds and the
-    boot logo taken off stay."""
-    from libre_panel.devices import panel_files
+    """Issue 52: start screens are written to the 9.2" and the 12.3", where what fits is known,
+    and to the 8.8", the 9.2"'s sibling. For another panel of the family (a 5.2" here, as many
+    pixels as the 9.2") the boot logo and the standby clip are refused in panel_files.py's
+    words before the panel is opened, unless its owner chose to try it (``untested`` true and
+    nothing else): then the boot logo is written in the 9.2"'s room. The card is told which
+    models are written to, tried and confirmed, how large their files are at most, where to
+    share how it went and the version; what the panel holds and the boot logo taken off stay."""
+    from libre_panel import __version__
 
+    _program()  # (skips where rust/ is not built, before what was kept is read)
+    theirs = golden.told("panel files")  # (panel_files.py's words and tables)
     words = (
-        "Writing to this panel is switched off: Libre Panel has written start screens to the "
-        '9.2" and the 12.3" only, and how much room another panel has for them is not known.'
+        "No one has tried start screens on this panel yet: they are written to it only where you "
+        "agree to try it, at your own risk, in Settings → Panel → Start screen."
     )
-    rig = Rig(tmp_path, pid=0x0088)
+    rig = Rig(tmp_path, pid=0x0050)
     try:
         rig.config(
             'theme = "slate"\nlanguage = "en"\n[device]\ndriver = "turzx"\n'
-            'model = "turing-8.8-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
+            'model = "turing-5.2-usb"\nbrightness = 60\n[sensors]\nproviders = []\n'
         )
-        rig.fake.files = {panel_files.BOOT_LOGO: b"logo", panel_files.STANDBY_CLIP: b"clip"}
+        rig.fake.files = {BOOT_LOGO: b"logo", STANDBY_CLIP: b"clip"}
         env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
                **_libraries(), **rig.env()}  # fmt: skip
-        env.pop(panel_files.WRITES_ENV, None)
+        env.pop(theirs["writes_env"], None)
         with subprocess.Popen([str(_program()), "editor", "--port", "0"], env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               encoding="utf-8") as program:  # fmt: skip
             try:
                 post, get = _start_screen_of(program)
-                told = {m["id"]: m for m in json.loads(get("/api/start-screen"))["models"]}
+                state = json.loads(get("/api/start-screen"))
+                assert state["report"] == theirs["report"]
+                assert state["version"] == __version__
+                told = {m["id"]: m for m in state["models"]}
                 written_to = {name for name, model in told.items() if model["writes"]}
-                assert written_to == {"turing-9.2-usb", "turing-12.3-usb"}
+                assert written_to == {"turing-8.8-usb", "turing-9.2-usb", "turing-12.3-usb"}
+                assert {name for name, model in told.items() if model["tried"]} == written_to
+                confirmed = {name for name, model in told.items() if model["confirmed"]}
+                assert confirmed == {"turing-9.2-usb", "turing-12.3-usb"}
                 assert told["turing-9.2-usb"]["room"] == {"clip": 360_000, "logo": 120_000}
                 assert told["turing-12.3-usb"]["room"] == {"clip": 500_000, "logo": 150_000}
-                assert told["turing-9.2-usb"]["unfit"] == ["levels"]
-                assert told["turing-8.8-usb"]["unfit"] == []
+                assert told["turing-8.8-usb"]["room"] == told["turing-9.2-usb"]["room"]
+                for model in written_to:
+                    assert told[model]["unfit"] == ["levels"], model
+                five = theirs["unfit"]["turing-5.2-usb"]  # (measured for its room)
+                assert told["turing-5.2-usb"]["unfit"] == five and "levels" in five
+                for name, model in told.items():  # (every model as panel_files.py has it)
+                    assert model["unfit"] == theirs["unfit"][name], name
                 for action in ("logo", "clip"):
-                    assert post({"action": action, "model": "turing-8.8-usb"}) == (
+                    assert post({"action": action, "model": "turing-5.2-usb"}) == (
                         "409", {"error": words, "paused": False}), action  # fmt: skip
+                for word in ("yes", 1, "true", None):  # (its owner's word is true, nothing else)
+                    assert post({"action": "logo", "model": "turing-5.2-usb",
+                                 "untested": word}) == (
+                        "409", {"error": words, "paused": False}), word  # fmt: skip
                 assert rig.fake.commands == []  # (the panel was not even opened)
-                status, said = post({"action": "state", "model": "turing-8.8-usb"})
+                status, said = post({"action": "state", "model": "turing-5.2-usb"})
                 assert status == "200" and said["boot_logo"] == 4 and said["standby_clip"] == 4
-                assert said["model"] == "turing-8.8-usb"
+                assert said["model"] == "turing-5.2-usb"
                 assert said["room"] == {"clip": 360_000, "logo": 120_000}  # (as many pixels)
                 status, said = post({"action": "remove-logo"})
                 assert status == "200" and said["boot_logo"] == 0, said
-                assert set(rig.fake.files) == {panel_files.STANDBY_CLIP}
+                assert set(rig.fake.files) == {STANDBY_CLIP}
                 assert not {40, 110, 113, 125} & set(rig.fake.commands), rig.fake.commands
+                # its owner chose to try it: the boot logo made for the 9.2"'s room, written
+                model = "turing-5.2-usb"
+                status, said = post({"action": "logo", "model": model, "untested": True})
+                assert status == "200", said
+                logo = golden.told("logo file")  # (the one panel_files.py makes for it)
+                assert said == {"model": model, "boot_logo": logo["size"],
+                                "design": "libre-panel", "paused": False}  # fmt: skip
+                assert _is(rig.fake.files[BOOT_LOGO], logo)
+                assert 0 < logo["size"] <= logo["room"]
+                assert rig.fake.shown[-1] == BOOT_LOGO
+                assert {40, 113} <= set(rig.fake.commands), rig.fake.commands
             finally:
                 program.send_signal(signal.SIGINT) if os.name != "nt" else program.terminate()
                 stderr = program.communicate(timeout=30)[1]
@@ -3419,12 +3499,10 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
     size (the time the write took tells); one that ended early is taken off again and not
     played or saved; a boot logo that would be too much beside a clip of before 0.9.4 is not
     sent. What is no action, panel or model is refused in server.py's words."""
-    from PIL import Image
-
-    from libre_panel.devices import panel_files
-    from libre_panel.devices.turzx_usb import brightness_arg
-    from libre_panel.render import bootscreen
-
+    if not shutil.which("ffmpeg"):
+        pytest.skip("what was kept is of a computer with ffmpeg")
+    _program()  # (skips where rust/ is not built, before what was kept is read)
+    theirs = golden.told("panel files")  # (panel_files.py's words and tables)
     rig = Rig(tmp_path)
     try:
         rig.config(
@@ -3434,7 +3512,7 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
         # (a 9.2": one of the two models files are written to, with nothing set for it)
         env = {**os.environ, "LIBRE_PANEL_HOME": str(tmp_path), "LIBRE_PANEL_DATA": str(DATA),
                **_libraries(), **rig.env()}  # fmt: skip
-        env.pop(panel_files.WRITES_ENV, None)
+        env.pop(theirs["writes_env"], None)
         with subprocess.Popen([str(_program()), "editor", "--port", "0"], env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               encoding="utf-8") as program:  # fmt: skip
@@ -3442,35 +3520,37 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                 post, get = _start_screen_of(program)
                 told = {m["id"]: m for m in json.loads(get("/api/start-screen"))["models"]}
                 assert told["turing-9.2-usb"]["writes"] is True
-                model = panel_files.model_of("turing-9.2-usb")
+                model = "turing-9.2-usb"
                 room = {"clip": 360_000, "logo": 120_000}
                 status, said = post({"action": "state"})
                 assert status == "200", said
-                assert said == {"model": model.id, "files": [], "boot_logo": 0,
+                assert said == {"model": model, "files": [], "boot_logo": 0,
                                 "standby_clip": 0, "room": room, "paused": False}  # fmt: skip
-                logo = panel_files.logo_jpeg(model, design="aurora")
+                logo = golden.told("logo file")  # (the one panel_files.py makes of that look)
                 status, said = post({"action": "logo", "design": "aurora"})
                 assert status == "200", said
-                assert said == {"model": model.id, "boot_logo": len(logo), "design": "aurora",
+                assert said == {"model": model, "boot_logo": logo["size"], "design": "aurora",
                                 "paused": False}  # fmt: skip
-                assert rig.fake.files[panel_files.BOOT_LOGO] == logo
-                assert rig.fake.shown == [panel_files.BOOT_LOGO]
-                status, said = post({"action": "state", "model": model.id})
-                assert said["files"] == ["boot.jpg"] and said["boot_logo"] == len(logo), said
+                assert _is(rig.fake.files[BOOT_LOGO], logo)
+                assert rig.fake.shown == [BOOT_LOGO]
+                status, said = post({"action": "state", "model": model})
+                assert said["files"] == ["boot.jpg"] and said["boot_logo"] == logo["size"], said
                 status, said = post({"action": "remove-logo"})
                 assert status == "200" and said["boot_logo"] == 0, said
-                assert panel_files.BOOT_LOGO not in rig.fake.files
+                assert BOOT_LOGO not in rig.fake.files
                 if shutil.which("ffmpeg"):
-                    clip = panel_files.clip_h264(model, shutil.which("ffmpeg"), full=True)
                     status, said = post({"action": "clip"})
                     assert status == "200", said
-                    assert said == {"model": model.id, "standby_clip": len(clip),
-                                    "name": panel_files.STANDBY_CLIP, "design": "libre-panel",
+                    # (the clip the panel got: as panel_files.py made it, byte for byte)
+                    clip = rig.fake.files[STANDBY_CLIP]
+                    assert golden.told("same clip")
+                    assert said == {"model": model, "standby_clip": len(clip),
+                                    "name": STANDBY_CLIP, "design": "libre-panel",
                                     "paused": False}  # fmt: skip
-                    assert rig.fake.files[panel_files.STANDBY_CLIP] == clip
-                    assert rig.fake.clip_names[-1] == panel_files.STANDBY_CLIP
+                    assert rig.fake.files[STANDBY_CLIP] == clip
+                    assert rig.fake.clip_names[-1] == STANDBY_CLIP
                     assert rig.fake.fps_log[-1] == 30
-                    assert rig.fake.saved[-1] == bytes([brightness_arg(60), 2, 0, 0, 0, 0])
+                    assert rig.fake.saved[-1] == bytes([theirs["brightness"], 2, 0, 0, 0, 0])
                     written = (tmp_path / "config.toml").read_text(encoding="utf-8")
                     assert 'local_clip = "usr/data/standby.h264"' in written, written
                     assert "clip_asked = true" in written, written
@@ -3480,19 +3560,18 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                     'model = "turing-9.2-usb"\nbrightness = 60\nrotate = 180\n'
                     "[sensors]\nproviders = []\n"
                 )
-                logo = bootscreen.boot_logo(model, "landscape", "aurora")
-                turned = panel_files.logo_jpeg(model, logo.transpose(Image.Transpose.ROTATE_180))
+                turned = golden.told("logo file")  # (panel_files.py's of that look, turned)
                 status, said = post({"action": "logo", "design": "aurora"})
-                assert status == "200" and said["boot_logo"] == len(turned), said
-                assert rig.fake.files[panel_files.BOOT_LOGO] == turned
+                assert status == "200" and said["boot_logo"] == turned["size"], said
+                assert _is(rig.fake.files[BOOT_LOGO], turned)
                 # (and so are the files to keep: as the panel takes them)
-                assert get("/api/start-screen/file?model=turing-9.2-usb&what=logo"
-                           "&design=aurora") == turned  # fmt: skip
+                assert _is(get("/api/start-screen/file?model=turing-9.2-usb&what=logo"
+                               "&design=aurora"), turned)  # fmt: skip
                 if shutil.which("ffmpeg"):
-                    frames = [frame.transpose(Image.Transpose.ROTATE_180)
-                              for frame in bootscreen.standby_frames(model)]  # fmt: skip
-                    clip = panel_files.clip_h264(model, shutil.which("ffmpeg"), frames, full=True)
-                    assert len(clip) <= room["clip"] and len(turned) <= room["logo"]
+                    # (the clip to keep, turned: panel_files.py's, byte for byte)
+                    clip = get("/api/start-screen/file?model=turing-9.2-usb&what=clip")
+                    assert golden.told("same clip")
+                    assert len(clip) <= room["clip"] and turned["size"] <= room["logo"]
 
                     def sent_since(before: int) -> list[int]:
                         return [cmd for cmd in rig.fake.commands[before:]
@@ -3502,29 +3581,29 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                     # answers at once and keeps what it had. Said, and left as it is: nothing
                     # taken away, played or saved (0.9.1 took the clip away and wrote again;
                     # that 9.2" has kept restarting since)
-                    old = rig.fake.files[panel_files.STANDBY_CLIP]
+                    old = rig.fake.files[STANDBY_CLIP]
                     saved, played = len(rig.fake.saved), len(rig.fake.clip_names)
                     rig.fake.refuses = True
                     before = len(rig.fake.commands)
                     status, said = post({"action": "clip"})
-                    assert (status, said["error"]) == ("409", panel_files.not_taken()), said
-                    assert rig.fake.files[panel_files.STANDBY_CLIP] == old
+                    assert (status, said["error"]) == ("409", theirs["not_taken"]), said
+                    assert rig.fake.files[STANDBY_CLIP] == old
                     assert sent_since(before) == [98, 98, 40, 98]
                     rig.fake.refuses = False
                     # a panel whose room ends before the clip does: what it took of it is taken
                     # off again, so that it is not left full, and said; not played, not saved
-                    rig.fake.room = len(turned) + len(clip) - 1000
+                    rig.fake.room = turned["size"] + len(clip) - 1000
                     before = len(rig.fake.commands)
                     status, said = post({"action": "clip"})
-                    assert (status, said["error"]) == ("409", panel_files.cut_off(
-                        panel_files.STANDBY_CLIP, len(clip) - 1000, len(clip))), said  # fmt: skip
-                    assert set(rig.fake.files) == {panel_files.BOOT_LOGO}
+                    cut_off = theirs["cut_off"].format(took=len(clip) - 1000, size=len(clip))
+                    assert (status, said["error"]) == ("409", cut_off), said
+                    assert set(rig.fake.files) == {BOOT_LOGO}
                     assert sent_since(before) == [98, 98, 40, 98, 42, 98]
                     assert (len(rig.fake.saved), len(rig.fake.clip_names)) == (saved, played)
                     rig.fake.room = None
                     status, said = post({"action": "clip"})
                     assert status == "200" and said["standby_clip"] == len(clip), said
-                    assert rig.fake.files[panel_files.STANDBY_CLIP] == clip
+                    assert rig.fake.files[STANDBY_CLIP] == clip
                     assert get("/api/start-screen/file?model=turing-9.2-usb&what=clip") == clip
                     assert len(rig.fake.saved) == saved + 1
                     # the same clip again: the panel has a file of that very size, so the size
@@ -3538,27 +3617,26 @@ def test_the_start_screen_is_written_to_the_panel_as_panel_files_py_writes_it(
                     rig.fake.refuses = True
                     before = len(rig.fake.commands)
                     status, said = post({"action": "clip"})
-                    assert (status, said["error"]) == ("409", panel_files.not_taken()), said
+                    assert (status, said["error"]) == ("409", theirs["not_taken"]), said
                     assert sent_since(before) == [98, 98, 40, 98]
                     assert len(rig.fake.saved) == saved + 2
                     rig.fake.refuses = False
                 # a clip of before 0.9.4 on the panel (700 KB), and no boot logo: a logo beside
                 # it would be more than Libre Panel puts on a 9.2": asked, and not sent
-                rig.fake.files = {panel_files.STANDBY_CLIP: bytes(701_830)}
+                rig.fake.files = {STANDBY_CLIP: bytes(701_830)}
                 before = len(rig.fake.commands)
                 status, said = post({"action": "logo", "design": "aurora"})
-                assert (status, said["error"]) == ("409", panel_files.no_room(
-                    panel_files.BOOT_LOGO, 701_830)), said  # fmt: skip
+                assert (status, said["error"]) == ("409", theirs["no_room"]), said
                 assert "(685 KB)" in said["error"]
                 assert [cmd for cmd in rig.fake.commands[before:]
                         if cmd in (40, 42, 98, 113)] == [98, 98]  # fmt: skip
-                assert set(rig.fake.files) == {panel_files.STANDBY_CLIP}
+                assert set(rig.fake.files) == {STANDBY_CLIP}
                 status, said = post({"action": "state"})
                 assert said["standby_clip"] == 701_830 and said["room"] == room, said
                 # a look with more detail than fits finely is not made, and nothing is sent
                 before = len(rig.fake.commands)
                 status, said = post({"action": "logo", "design": "levels"})
-                assert (status, said["error"]) == ("409", panel_files.too_fine()), said
+                assert (status, said["error"]) == ("409", theirs["too_fine"]), said
                 assert not {40, 42, 113} & set(rig.fake.commands[before:])
                 for payload, words in (
                     ({"action": "nope"},
@@ -3737,6 +3815,41 @@ def pictures_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
+def kept_rounds(home: Path) -> list[int]:
+    """A memory with two rounds of Starfall, the last one with its frame figures and the course
+    of its temperatures (the demo's), and a round of another game without frame rates; their
+    ids."""
+    import sqlite3
+
+    folder = home / "plugins-data" / "memory"
+    folder.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(folder / "memory.db")
+    con.executescript(golden.given("memory_schema")["schema"])
+    levels = json.dumps(
+        {"edges": [60, 90, 120, 144, 165], "seconds": [26, 52, 235, 1150, 1040, 107]}
+    )
+    starfall = {"game": "Starfall", "program": "starfall", "duration_s": 2700, "fps_s": 2610,
+                "levels": levels, "closed": 1}  # fmt: skip
+    rows = [
+        {**starfall, "id": 1_700_000_000_000, "started": 1_700_000_000, "ended": 1_700_002_700,
+         "fps_mean": 140.0, "cpu_temp_max": 72.0},
+        {**starfall, "id": 1_700_090_000_000, "started": 1_700_090_000, "ended": 1_700_092_700,
+         "fps_mean": 148.3, "cpu_temp_max": 74.1, "power_max": 468.0, "fps_1low": 97.0,
+         "fps_01low": 71.0, "frametime_avg": 6.76, "frametime_max": 38.0,
+         "course": json.dumps(golden.given("demo_course"))},
+        {"id": 1_700_100_000_000, "game": "Puzzle: Box?", "program": "puzzle",
+         "started": 1_700_100_000, "ended": 1_700_100_600, "duration_s": 600, "fps_s": 0,
+         "closed": 1},
+    ]  # fmt: skip
+    for row in rows:
+        names = ", ".join(row)
+        con.execute(f"INSERT INTO sessions ({names}) VALUES ({','.join('?' * len(row))})",
+                    list(row.values()))  # fmt: skip
+    con.commit()
+    con.close()
+    return [row["id"] for row in rows]
+
+
 def test_the_pictures_of_the_panels_and_of_a_round_are_made_as_server_py_makes_them(
     pictures_home: Path, servers: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3746,16 +3859,13 @@ def test_the_pictures_of_the_panels_and_of_a_round_are_made_as_server_py_makes_t
     kept and what is no round refused in the same words. The picture of all panels
     (/api/panels/photo) without a panel loop: refused in the same words."""
     from PIL import Image
-    from test_editor_server import kept_rounds
 
-    from libre_panel import tray
-
-    monkeypatch.setattr(tray, "open_path", lambda path: None)
     ask, homes = servers
     ids = [kept_rounds(home) for home in homes]
     assert ids[0] == ids[1]
     first, last, puzzle = ids[0]
     folder = pictures_home / "Pictures" / "Libre Panel"
+    ask.shares(folder)  # (both keep their pictures there)
     files = []
     for ident in (last, last):
         theirs, ours = ask(_post("/api/history/picture", {"id": ident}))
@@ -3856,6 +3966,10 @@ def test_the_panel_test_runs_on_the_app_s_panel_as_doctor_session_py_runs_it(
                     return status.split(" ", 2)[1], json.loads(answer)
 
                 assert _waited(lambda: len(rig.fake.frames) > 0 or None, 30), "no frame shown"
+                # its frames go to the panel: the app and Settings → Panel say it is there
+                _, app = ask(_get("/api/app", WITH))
+                assert app["panel"]["state"] == "showing" and app["panel"]["on_panel"] is True
+                assert ask(_get("/api/panel", WITH))[1]["running"]["on_panel"] is True
                 assert ask(_get("/api/doctor", WITH))[1] == {
                     "state": "idle", "question": None, "error": "", "steps": []}  # fmt: skip
                 status, said = ask(_post("/api/doctor", {"action": "start"}))
@@ -3934,8 +4048,6 @@ def community_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     """GitHub's community folder as a web server of this computer (set before the servers
     start): what is put in the folder it answers, and `moved.zip` a redirect to another
     host."""
-    from libre_panel.editor import community
-
     folder = tmp_path / "site"
     folder.mkdir()
 
@@ -3966,7 +4078,6 @@ def community_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
     threading.Thread(target=site.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{site.server_address[1]}/index.json"
-    monkeypatch.setattr(community, "INDEX_URL", url)
     monkeypatch.setenv("LP_COMMUNITY_INDEX", url)
     try:
         yield folder
@@ -3982,18 +4093,16 @@ def test_community_themes_are_listed_and_installed_as_community_py_does(
     the same files as Python's; a checksum that differs, a size the list does not name, a
     redirect to another host, a theme not listed, a panel not known and what is no request
     refused in the same words; a look at a theme on a panel drawn."""
+    import base64
     import hashlib
     import io
 
     from PIL import Image
 
-    from libre_panel.theme.model import find_theme, load_theme
-    from libre_panel.theme.share import export_theme
-
     ask, homes = servers
-    data, _name = export_theme("slate")
-    theme = load_theme(find_theme("slate"))
-    size = f"{theme.width}x{theme.height}"
+    # (slate as share.py gives it to someone, and the size it is made for)
+    shared = golden.told("shared")
+    data, size = base64.b64decode(shared["zip"]), shared["size"]
     (community_site / "slate").mkdir()
     (community_site / "slate" / "slate.zip").write_bytes(data)
     (community_site / "wrong").mkdir()
@@ -4361,15 +4470,6 @@ def test_the_screen_a_panel_can_show_is_told_as_mirror_py_tells_it(x11: Path, se
         theirs, ours = ask(_post("/api/mirror", body))
         assert ours[0] == theirs[0], body
         assert json.loads(ours[2]) == json.loads(theirs[2]), body
-    from libre_panel import mirror
-
-    for raw in (None, {"kind": "tv"}, {"kind": "monitor"}, {"kind": "monitor", "id": 3},
-                {"kind": "window", "id": "0x1", "region": [0, 0, 8, 8]},
-                {"kind": "monitor", "id": "DP-1", "region": [0, 0, 100, True]},
-                {"kind": "monitor", "id": "DP-1", "fit": "zoom"}):  # fmt: skip
-        with pytest.raises(mirror.MirrorError) as said:
-            mirror.source_of(raw)
-        assert str(said.value), raw
 
 
 @pytest.mark.skipif(os.name == "nt", reason="an X11 desktop")
@@ -4378,8 +4478,6 @@ def test_a_panel_shows_a_monitor_and_its_own_as_mirror_py_does(x11: Path, tmp_pa
     captured with ffmpeg's command line as Python's and its pictures on the panel; the panel's
     own monitor made with xrandr's calls as extend.py's and taken off again; stopped, the theme
     again."""
-    from libre_panel import capture, extend, mirror
-
     rig = Rig(tmp_path)
     try:
         rig.config(
@@ -4426,12 +4524,8 @@ def test_a_panel_shows_a_monitor_and_its_own_as_mirror_py_does(x11: Path, tmp_pa
                                30), "the screen is not shown"  # fmt: skip
                 calls = x11.read_text(encoding="utf-8").splitlines()
                 line = next(c for c in calls if c.startswith("ffmpeg "))
-                rate = int(line.split(",fps=")[1].split()[0])
-                monitor = capture.find_monitor("HDMI-1", "x11")
-                found = capture.monitor_capture("ffmpeg", monitor, rate, False, (100, 51, 801, 600),
-                                                "x11")  # fmt: skip
-                wanted = mirror.frames_command("ffmpeg", found, (1920, 480), "stretch", rate)
-                assert line == " ".join(wanted), line
+                # (capture.py's and mirror.py's command for that part of the monitor)
+                assert line == golden.told("capture"), line
                 # the panel's own monitor: xrandr told as extend.py tells it
                 x11.write_text("", encoding="utf-8")
                 status, told = ask(
@@ -4448,10 +4542,7 @@ def test_a_panel_shows_a_monitor_and_its_own_as_mirror_py_does(x11: Path, tmp_pa
                     return [c for c in lines if c.startswith("xrandr") and c not in asked]
 
                 ours = changes()
-                x11.write_text("", encoding="utf-8")
-                extend.attach((1920, 480), "x11")
-                extend.detach("x11")
-                theirs = changes()
+                theirs = golden.told("xrandr")  # (what extend.py tells xrandr for the same)
                 assert ours == theirs and any("--setmonitor" in c for c in ours), ours
                 after = len(rig.fake.frames)
                 assert _waited(lambda: any(not green(f) for f in rig.fake.frames[after:]) or None,
@@ -4463,15 +4554,13 @@ def test_a_panel_shows_a_monitor_and_its_own_as_mirror_py_does(x11: Path, tmp_pa
         rig.close()
 
 
-def _one_program(text: str | bytes, program: str) -> str:
+def _one_program(text: str | bytes, program: str, python: str) -> str:
     """A command line of the setup with the program that starts it said one way: Python's
-    starts itself as `python -B -I -m libre_panel`, the Rust app as its own file."""
-    from libre_panel import linux_rights
-
+    starts itself as `python -B -I -m libre_panel` (``python``: as it was when its answers
+    were kept), the Rust app as its own file."""
     text = text.decode("utf-8") if isinstance(text, bytes) else text
-    python = linux_rights.program()
     if python:
-        text = text.replace(shlex.join(python), "PROGRAM")
+        text = text.replace(python, "PROGRAM")
     # (the tests' Python has no program root can run: it names the one a pip install has)
     text = text.replace("sudo libre-panel ", "sudo PROGRAM ")
     return text.replace(shlex.quote(program), "PROGRAM")
@@ -4511,12 +4600,6 @@ def test_the_linux_setup_is_planned_and_told_as_linux_setup_py_does(tmp_path: Pa
     the board's driver, the drives' driver, the energy counters opened, udev told), with
     --json, to remove, and what the app shows of it, as linux_setup.py and linux_rights.py say;
     a Windows flag refused in the same words."""
-    import argparse
-    import contextlib
-    import io
-
-    from libre_panel import linux_rights, linux_setup
-
     root = tmp_path / "pc"
     _a_pc(root)
     program = str(_program())
@@ -4524,44 +4607,27 @@ def test_the_linux_setup_is_planned_and_told_as_linux_setup_py_does(tmp_path: Pa
            "LIBRE_PANEL_DATA": str(DATA), **_libraries()}  # fmt: skip
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
-    # (the tests' linux_setup looks at no computer: a copy of the module of its own does)
-    spec = importlib.util.find_spec("libre_panel.linux_setup")
-    assert spec is not None and spec.loader is not None
-    looking = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(looking)
-    facts = looking.gather(root)
 
-    def python(**flags: Any) -> tuple[int, str, str]:
-        args = argparse.Namespace(**{"status": False, "rapl": False, "no_rapl": False,
-                                     "remove": False, "dry_run": False, "json": False,
-                                     **flags})  # fmt: skip
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(pytest.MonkeyPatch.context()).delenv("DISPLAY", raising=False)
-            code = linux_setup.run_cli(args, facts=facts, root=False, stdout=out, stderr=err)
-        return code, out.getvalue(), err.getvalue()
+    def plain(text: str) -> str:
+        """What the setup says without the run's own: the folder, the kernel's release."""
+        return text.replace(str(tmp_path), "<tmp>").replace(os.uname().release, "<kernel>")
 
-    runs = [({"rapl": True, "dry_run": True}, ["--rapl", "--dry-run"]),
-            ({"dry_run": True}, ["--dry-run"]),
-            ({"dry_run": True, "json": True}, ["--dry-run", "--json"]),
-            ({"remove": True, "dry_run": True}, ["--remove", "--dry-run"])]  # fmt: skip
-    for flags, words in runs:
+    runs = [["--rapl", "--dry-run"], ["--dry-run"], ["--dry-run", "--json"],
+            ["--remove", "--dry-run"]]  # fmt: skip
+    for words in runs:
         done = subprocess.run([program, "system-setup", "--linux", *words], env=env,
                               capture_output=True, text=True, timeout=60)  # fmt: skip
-        theirs = python(**flags)
-        assert (done.returncode, done.stdout, done.stderr) == theirs, words
-    said = python(rapl=True, dry_run=True)[1]
+        theirs = golden.told("setup")  # (linux_setup.py's run_cli with the same flags)
+        assert [done.returncode, plain(done.stdout), plain(done.stderr)] == theirs, words
+        if words == ["--rapl", "--dry-run"]:
+            said = theirs[1]
     assert "60-libre-panel.rules" in said and "nct6775" in said and "drivetemp" in said
     assert "energy counters" in said
     done = subprocess.run([program, "system-setup", "--linux", "--status"], env=env,
                           capture_output=True, text=True, timeout=60)  # fmt: skip
     assert done.returncode == 0, done.stderr
-    ours = json.loads(_one_program(done.stdout, program))
-    with pytest.MonkeyPatch.context() as patch:
-        patch.delenv("DISPLAY", raising=False)
-        theirs = linux_rights.status(facts)
-    theirs.pop("job")
-    theirs = json.loads(_one_program(json.dumps(theirs), program))
+    ours = json.loads(plain(_one_program(done.stdout, program, "")))
+    theirs = golden.told("rights")  # (linux_rights.py's status, the programs said one way)
     assert ours == theirs
     assert [offer["id"] for offer in ours["offers"]] == ["usb", "fans", "drives", "power"]
     done = subprocess.run([program, "system-setup", "--service"], env=env, capture_output=True,
@@ -4590,20 +4656,114 @@ def test_unlocking_is_told_and_refused_as_settings_py_does(
     would bring this computer and how it is started as Python tells it; what is no request and
     a run that cannot ask for the rights here (or that runs as root already, where the tests
     do) refused in the same words."""
-    from libre_panel.editor import access
-
-    # (the Rust app knows whether it runs as root: Python's is told the same)
-    monkeypatch.setattr(access, "elevated", lambda: os.geteuid() == 0)
     ask, _homes = servers
     program = str(_program())
     theirs, ours = ask(_get("/api/unlock", WITH))
     assert ours[0] == theirs[0] == "HTTP/1.0 200 OK", ours[2]
-    mine, python = (json.loads(_one_program(answer[2], program)) for answer in (ours, theirs))
+    itself = golden.told("python")  # (how the Python app starts itself)
+    mine, python = (json.loads(_one_program(answer[2], program, itself))
+                    for answer in (ours, theirs))  # fmt: skip
     assert mine == python and mine["platform"] == "linux"
     for body in ({"action": "nope"}, {"action": "unlock", "more": 1}, [1],
                  {"action": "remove", "rapl": True}, {"action": "unlock", "rapl": "yes"},
                  {"action": "unlock"}):  # fmt: skip
         theirs, ours = ask(_post("/api/unlock", body))
         assert ours[0] == theirs[0], (body, ours, theirs)
-        mine, python = (json.loads(_one_program(answer[2], program)) for answer in (ours, theirs))
+        mine, python = (json.loads(_one_program(answer[2], program, itself))
+                        for answer in (ours, theirs))  # fmt: skip
         assert mine == python, body
+
+
+# what names a program, a file or a folder Libre Panel starts, loads or writes
+# (editor/settings.py's NAMING)
+NAMING = {
+    "video.ffmpeg": "/tmp/ffmpeg",
+    "device.output": "/etc/frame.png",
+    "services.cooling.database": "/tmp/cooling.db",
+    "services.cooling.fancontrol": "/tmp/fancontrol.json",
+    "services.memory.database": "/tmp/memory.db",
+    "services.memory.fancontrol": "/tmp/fancontrol.json",
+    "services.downloads.folder": "/tmp/downloads",
+    "services.downloads.steam_path": "/tmp/steam",
+    "services.game.steam_path": "/tmp/steam",
+}
+
+
+@pytest.mark.live  # (the kept answers are an ordinary user's)
+def test_with_the_highest_rights_what_names_a_program_or_a_file_is_not_changed_here(
+    tmp_path: Path,
+) -> None:
+    """editor/settings.py's lock, of the Rust app's server run with administrator rights
+    (LP_TEST_RIGHTS=admin): a setting that names a program, a file or a folder Libre Panel
+    starts, loads or writes is refused, the whole request with it, and nothing is written;
+    asked for what config.toml says already it is no change; everything else is written; a
+    JSON source names no new file."""
+    home = tmp_path / "home"
+    home.mkdir()
+    config = home / "config.toml"
+    config.write_text('[device]\nbrightness = 40\n\n[video]\nffmpeg = "/usr/bin/ffmpeg"\n\n'
+                      '[services.cooling]\ndatabase = "/a.db"\n', encoding="utf-8")  # fmt: skip
+    env = {**os.environ, "LIBRE_PANEL_HOME": str(home), "LIBRE_PANEL_DATA": str(DATA),
+           "XDG_CONFIG_HOME": str(home / "xdg"), "LP_TEST_RIGHTS": "admin", "TZ": "UTC",
+           **_libraries()}  # fmt: skip
+    command = [str(_program()), "editor", "--port", "0"]
+    pipe = subprocess.PIPE
+    ours = subprocess.Popen(command, env=env, stdout=pipe, stderr=pipe, encoding="utf-8")
+    try:
+        assert ours.stdout is not None
+        address = ours.stdout.readline().split(" running at ")[1].split()[0]
+        port, token = int(address.split(":")[2].split("/")[0]), address.split("#token=")[1]
+
+        def write(**changes: Any) -> tuple[int, Any]:
+            text = _post("/api/settings", {"set": changes})
+            text = text.replace(b"{host}", f"127.0.0.1:{port}".encode()).replace(
+                b"{token}", token.encode()
+            )
+            status, _headers, body = _asked(port, text)
+            return int(status.split()[1]), json.loads(body)
+
+        for name, value in NAMING.items():
+            before = config.read_text(encoding="utf-8")
+            status, data = write(**{name: value})
+            assert status == 403, (name, data)
+            assert name in data["error"] and "config.toml" in data["error"], data
+            assert "administrator rights" in data["error"]
+            assert config.read_text(encoding="utf-8") == before, name  # nothing written
+        before = config.read_text(encoding="utf-8")
+        status, _ = write(**{"device.brightness": 10, "video.ffmpeg": "/tmp/ffmpeg"})
+        assert status == 403 and config.read_text(encoding="utf-8") == before
+        # taking out such an option where it is not set changes nothing
+        assert write(**{"services.memory.database": None})[0] == 200
+        # what the file says already is no change; the default of device.output neither
+        same = {"video.ffmpeg": "/usr/bin/ffmpeg", "services.cooling.database": "/a.db"}
+        status, data = write(**same)
+        assert status == 200 and data["config"]["video"]["ffmpeg"] == "/usr/bin/ffmpeg"
+        assert write(**{"device.output": "libre-panel-frame.png"})[0] == 200
+        for changes in ({"video.ffmpeg": ""}, {"services.cooling.database": "/b.db"},
+                        {"services.cooling.database": None}):  # fmt: skip
+            assert write(**changes)[0] == 403, changes
+        # everything else is written
+        status, data = write(**{
+            "device.brightness": 25, "video.local_clip": "clip",
+            "sensors.librehardwaremonitor.url": "http://127.0.0.1:8085/data.json",
+            "services.autopilot.transition": "fade", "services.notices.quiet_s": 30,
+            "services.game.poll_s": 2,
+        })  # fmt: skip
+        assert status == 200 and data["config"]["device"]["brightness"] == 25
+        # a JSON source names no new file: one named already stays, another is refused
+        with config.open("a", encoding="utf-8") as file:
+            file.write('\n[[sensors.json.sources]]\nname = "room"\nfile = "C:/Data/room.json"\n')
+        kept = {"name": "room", "where": "C:/Data/room.json", "fields": {"t": "temp"}}
+        web = {"name": "nas", "where": "http://10.0.0.2/api"}
+        assert write(**{"sensors.json.sources": [kept, web]})[0] == 200
+        other = {"name": "room", "where": "C:/Windows/secret.json"}
+        status, answer = write(**{"sensors.json.sources": [other]})
+        assert status == 403 and "administrator" in answer["error"]
+        assert 'file = "C:/Data/room.json"' in config.read_text(encoding="utf-8")
+    finally:
+        if os.name == "nt":
+            ours.terminate()
+        else:
+            ours.send_signal(signal.SIGINT)
+        said = ours.communicate(timeout=30)[1]
+        assert "panicked" not in said, said

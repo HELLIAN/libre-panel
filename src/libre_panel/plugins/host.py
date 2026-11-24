@@ -13,6 +13,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import math
 import queue
 import threading
 from collections import deque
@@ -69,6 +70,32 @@ def apply_options(schema: dict[str, tuple[str, Any]], given: dict[str, Any], whe
             raise PluginError(f"{where}.{key}: expected {kind}, got {value!r}")
         result[key] = value
     return result
+
+
+def plain(value: Any) -> Any:
+    """``value`` as JSON can say it: a date in config.toml becomes its text, nan nothing."""
+    if isinstance(value, dict):
+        return {str(key): plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [plain(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if value is None or isinstance(value, str | int | bool):
+        return value
+    return str(value)
+
+
+def declared_options(cls: Any) -> list[dict[str, Any]]:
+    """The options a service class declares, as ``{key, type, default}``; one that is not
+    ``(type, default)`` is left out, so a plugin's slip does not take the settings down."""
+    declared = getattr(cls, "options", None)
+    if not isinstance(declared, dict):
+        return []
+    return [
+        {"key": str(key), "type": spec[0], "default": plain(spec[1])}
+        for key, spec in declared.items()
+        if isinstance(spec, tuple | list) and len(spec) == 2 and isinstance(spec[0], str)
+    ]
 
 
 @dataclass(frozen=True, eq=False)

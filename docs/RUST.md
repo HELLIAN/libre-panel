@@ -8,7 +8,7 @@ the same, pixel for pixel.
 This file is the plan and its state. It is kept up to date with every step (the checklists
 below), so that the work can be picked up where it stands.
 
-## What it is made of today
+## What it was made of when the work began
 
 | Part | Language | Lines |
 |---|---|---|
@@ -17,6 +17,11 @@ below), so that the work can be picked up where it stands.
 | The app's pages | JavaScript, CSS | 22,000, 9,700 |
 | The sensor service on Windows (hosts LibreHardwareMonitor) | C# | 2,600 |
 | The engine (compositing, YUV, H.264, USB) | Rust | 11,400 |
+
+Since the Python app went (R12): the app 207,600 lines of Rust (`rust/`, its tests among them)
+and the engine 13,100; the plugin host and the plugin API 8,200 lines of Python, the tests
+beside the crates' own 51,800, the tools and the packaging scripts 9,100; the pages 22,400
+lines of JavaScript and 9,700 of CSS; the sensor service 2,600 of C#.
 
 ## What "all of it in Rust" means
 
@@ -36,11 +41,25 @@ below), so that the work can be picked up where it stands.
 - **LibreHardwareMonitor** (C#, a library of its own) is replaced by sensors read in Rust, chip
   family by chip family; until a family is read in Rust, the .NET service reads it, then goes.
 - **Python plugins run in a program of their own**, the plugin host (stage R10): Python with
-  Libre Panel's package, in the downloads beside the app, started only where plugin folders are
-  installed. Every kind of part works as in the Python app; the app and the host speak
-  through a pipe.
-- **`pip install libre-panel` ends**: Libre Panel comes as its downloads (Windows installer and
-  zip, Linux AppImage).
+  Libre Panel's package, in the downloads beside the app, started only where plugins are
+  installed (a folder, or a package beside the host). Every kind of part works as in the
+  Python app, display drivers too; the app and the host speak
+  through a pipe. The host loads of the package only the plugin API and what that stands on
+  (tests/test_plugin_host.py names those modules): it draws with a small drawing of its own
+  (plugins/drawing.py), not Python's renderer, and the app gives a widget type's piece its
+  widget's effects. Over test_rust_plugins.py it loads 18 of the package's modules (6,536
+  lines) where it loaded 55 (30,277).
+- **pip and pipx install the Rust app**: a release carries a wheel for Linux and one for Windows
+  (packaging/platform_wheel.py) with the app as its downloads carry it: the programs, the
+  engine and its licences in `tools`, Libre Panel's files in `share/libre-panel`, on Linux
+  Pillow's libraries in `lib/libre-panel` (the program names them to itself), on Windows the
+  sensor service. The Python package in them is the plugin host's (its command
+  `libre-panel-plugins`, found beside the app). On Linux the programs are the commands (pipx
+  links them; the app finds its files from where the link leads); on Windows pipx copies a
+  command it cannot link, so the app has a folder of its own (`libre-panel` of the
+  environment) and its command is a small Python starter, libre_panel/launch.py, which runs it
+  (what starts at login starts the program itself). An install is told from a download by its
+  files beside the folder of its program: its update card shows pipx's command.
 
 ## How it stays the same
 
@@ -153,6 +172,34 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
 - [x] the JPEG and WebP comparisons on Windows too: CI builds libjpeg-turbo 3.2.0 and libwebp
       1.6.0 there as Pillow's Windows wheel has them built in (MSVC, the SIMD), from archives
       checked by their SHA-256 (libjpeg's boolean is a byte on Windows, an int elsewhere)
+- [x] as fast as Pillow or faster in what the transitions take, the same bytes:
+      - ImageChops.offset makes two copies a row;
+      - a new picture is filled at once where it is one value in every band, and by doubling
+        where its bands differ;
+      - paste through a mask works a row at a time, and an RGBA picture through its own alpha
+        four pixels at a time;
+      - an RGBa picture is laid onto RGB through its own alpha, faded, in one pass
+        (paste_unpremultiplied: what convert, putalpha and paste make of it);
+      - the bilinear transform has its own loop for 1, 3 and 4 bands, and where the processor
+        has AVX2 it does a pixel's four bands at once and four pixels' places at once (the same
+        doubles in the same order);
+      - the resampling's passes are compiled for AVX2 as well (the same int sums).
+
+      Measured best of five runs taken in turn (Pillow 13.0 alongside):
+
+      | operation | before | after | Pillow |
+      |---|---|---|---|
+      | offset of 1920x720 | 4.26 ms | 0.44 ms | 0.41 ms |
+      | a new 1920x720 picture of one colour | 3.23 ms | 0.20 ms | 0.22 ms |
+      | a 600x300 paste through an L mask | 0.78 ms | 0.53 ms | 0.53 ms |
+      | a turned 130x122 RGBA tile | 0.47 ms | 0.21 ms | 0.43 ms |
+      | a 1920x720 resize | 13.3 ms | 11.7 ms | 12.3 ms |
+
+      Tests: the comparisons of
+      R1 and of every transition (R4); the four bands at once against one by one on turned,
+      grown and moved pictures of 1x1 to 130x122, a map with no number in it among them; and
+      the laying in one pass against convert, putalpha and paste, with and without its fade,
+      anywhere on the picture and beyond it
 - [ ] to decide: the app reads an animated WebP's durations before each frame is loaded,
       when Pillow has not set them yet, so it plays those at its usual pace (the Rust frames
       read them as the app does for now)
@@ -685,10 +732,12 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       moment), at new year's and at random, and 86,985 timestamps (18,378 of them the second of
       two moments of one local time); 16 named zones about the moments they change: all as
       Python's. 22 zone files made for the test, where zoneinfo and glibc part, the same as
-      both. Where glibc would read a TZ value by rules or leniencies of its own (summer time
-      without its rules, which it takes from posixrules; a space or a second sign before an
-      offset; minutes past 59, more digits than POSIX's, more after the rules; leap seconds; a
-      file it reads otherwise than zoneinfo), Rust says it does not know the zone (12 TZ values
+      both. Summer time without its rules ("EST5EDT" where no file has the name) glibc takes
+      from TZDIR's posixrules, else by its own rules, the United States' since 2007: Rust takes
+      the latter as glibc does. Where glibc would read a TZ value by rules or leniencies of its
+      own (posixrules' rules; a space or a second sign before an offset; minutes past 59, more
+      digits than POSIX's, more after the rules; leap seconds; a file it reads otherwise than
+      zoneinfo), Rust says it does not know the zone (14 TZ values where there is a posixrules,
       and 6 files in the tests). The counter-checks put in 42 faults, and the tests catch them
       all (5 of them once cases were added: J59 in a leap year for both, a version 1 file whose
       two blocks part, a rule that changes at new year's seen from 14 hours east, and a fault
@@ -1313,36 +1362,117 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       Pillow's box blur of radius r reaching ceil(r) a pass at most
 - [x] the transitions from one screen to the next (render/overlays.py's fade and slide,
       render/transitions.py's tube and entrance, render/handovers.py's wipe, iris, blinds,
-      dissolve, the slides from each side, zoom, the line of light, glitch, tiles and shatter;
-      a cut is none): each made by its name for a switch, with the parameters a service passed
-      (an entrance's title, text, logo and kind; one whose kind is no key does not start), the
-      new theme's colours and the app's language, its duration and what a switch and toasts
-      do while it plays; each of its frames of the old screen, the new one and how far it has
-      gone to the bit, what it keeps kept as Python keeps it (a map or a strip of light for
-      the frame's size, the logo or the title in big letters with its halo, the text typed in
-      below it, the pieces of each old frame), and where Python's raises (a fade of frames of
-      other modes) Rust's fails too. Python's random.Random in lp-py for the squares, the
-      faults and the pieces (the Mersenne Twister seeded with an int as CPython seeds it, and
-      random(), uniform(), randrange() and getrandbits(), the same numbers). The main loop
-      plays them with R5. The tests: 120 themes of other colours, sizes (1x1 to 1920x480,
-      either way round) and languages, with up to three switches each (their old frame now
-      and then another), at times on their way, at their ends and past them; and six
-      scenarios for what those seldom meet: the entrance at each turn of its timeline in every
-      kind, on another size and on a panel narrower than its band; every transition at its
-      start, its end and where the line of light is almost at its brightest, a shatter whose
-      old frame changes; the maps and the strip of light kept for a size: 1375 frames to the
-      bit; and random's draws of 132 seeds. The counter-checks put 110 faults into
-      transitions.rs and 10 into random.rs: the tests catch 107 and 8 (squares, the early
-      light of an entrance's edges, the music's track joined to its text, the room a narrow
-      panel leaves and the line almost at its brightest once their scenarios were added; the
-      old and new frames of the tests had been one and the same picture, seeds a few apart
-      making the same noise, until the seeds were spread). The other five change nothing: a
-      map's value at the very edge of its soft band is 255 whether it is taken as inside or
-      worked out (the ramp gives 255 there); the text that types in from 1.25 s is none until
-      1.3 s; a halo's margin of 50u instead of 60u loses nothing, its light being none that far
-      from the picture even of an opaque logo, at every size (measured); the lowest bit of the
-      Mersenne Twister's first tempering mask meets the zeros its shift brings in; and of the
-      first word of its seeded state only the top bit is ever used (as its authors' note says)
+      dissolve, the slides from each side, zoom, the line of light, glitch, tiles, shatter,
+      cascade, comet, portal and morph, with render/morph.py's parts; a cut is none): each made
+      by its name for a switch, with the parameters a service passed (an entrance's title, text,
+      logo and kind; one whose kind is no key does not start), the new theme's colours and the
+      app's language, its duration and what a switch and toasts do while it plays; each of its
+      frames of the old screen, the new one and how far it has gone to the bit, what it keeps
+      kept as Python keeps it (a map or a strip of light for the frame's size, the logo or the
+      title in big letters with its halo, the text typed in below it, the pieces of each old
+      frame, the morph's two screens taken apart), and where Python's raises (a fade of frames
+      of other modes) Rust's fails too. The morph's parts as Python's: what each widget shows
+      (shown_as), what a screen shows once and together (things), the frame without them, laid
+      again only where they lay and over the whole of each frosted backdrop they touch, and each
+      alone with its light apart (take_apart), laid where its flight has got to (lay); and the
+      parting of the frame a renderer composed last (Renderer.parting). Python's random.Random
+      in lp-py for the squares, the faults and the pieces (the Mersenne Twister seeded with an
+      int as CPython seeds it, and random(), uniform(), randrange() and getrandbits(), the same
+      numbers). The main loop plays them with R5 and hands the morph the parting of the screen
+      it leaves (drawn once more where the engine composed it); it tells each panel which one it
+      is, how many there are and the switch's key, and a morph shown with ▶ turns the screen
+      into another theme with the readings of now (transition_show's morph_partner: Lumen into
+      Arena's version of the same kind, Arena into Lumen's, any other into Lumen) and back. Over
+      all the panels the morph's board is render/morph.py's (morph.rs's board(), kept in the
+      process: what each screen shows where, in millimetres, then each panel's parts of what
+      flies from it or to it; a panel waits for the others until the things begin to fly), and
+      lp-check's transition op plays the panels beside it in step, as the test plays them in
+      Python. A thing is made only where it lies on the panel: its resize only within the window
+      there (lp-pixels' resize_window, each pixel the whole resize's: the same weights, the
+      passes in the same order, the first rounded to 8 bits either way), its fade in place. The
+      morph's first frame, which takes both screens apart, takes 13.5 to 17.7 ms on a 12.3" with
+      the demo's readings (Lumen to Arena and back, Encore to Lumen), each after it 3.6
+      to 4.8 ms (the median). Over two 12.3" panels side by side, when music comes (Lumen's pair
+      to Encore's, the cover crossing from the first panel to the second), a frame on the first
+      panel takes 5.8 to 6.0 ms (the median), the four where the things turn into their new look
+      19 to 21 ms; the windows spare 10 % of the morph's instructions there, on either panel.
+      The tests: 120 themes of other colours, sizes (1x1 to 1920x480, either way round) and
+      languages, with up to three switches each (their old frame now and then another, now and
+      then told where the panels stand), at times on their way, at their ends and past them; and
+      twenty-six scenarios for what those seldom meet: the entrance at each turn of its timeline
+      in every kind, on another size and on a panel narrower than its band; every transition at
+      its start, its end and where the line of light is almost at its brightest, a shatter whose
+      old frame changes; the maps and the strip of light kept for a size; slides, the wipe, the
+      line of light, the iris, the shatter, the cascade, the comet and the portal over all the
+      panels as one (render/canvas.py: either of two panels side by side or one above the other,
+      at the times their seams and the line are at the panels' edges, in the gap and beyond, a
+      transition the canvas does not touch, canvases that say nothing sensible, a comet over a
+      sliver of a panel, a shatter on a panel lower than a tile (at one moment its first tile
+      seen 200.5 / 255 to the last bit, which rounds to the even 200 in both), the wipe's map
+      for another size); the cascade, the comet, the portal, the shatter and the iris on
+      lumen-1920x720, encore-pair, arena-480x480 and terra-vertical as their renderer drew them
+      last (the cascade's ground and cards from Renderer.beneath), alone and on either of two
+      panels, then on frames of another size; the cascade with the demo's readings on Encore's
+      pair (its ground two pieces that cover all of the panel), Encore's square (its cover's
+      light and veil above a smaller piece) and Contrast (lights that reach beyond their
+      widgets), and on a theme of its own with a veil over a card, alone and on the second of
+      two panels; the morph from Lumen to Arena and back and from Encore to Lumen at 1920x720,
+      from Lumen to Arena as a pair and at 480x480 and from Arena to Lumen upright, with the
+      demo's readings, pictures and moment, and from Lumen to Arena with none, at the turns of
+      its timeline and on frames of another size (where it fades: from the start, and once on
+      its way after it took the screens apart); Lumen's screen shown with ▶ into Arena's; and
+      over two 12.3" panels side by side, a gap between them, this one either of them, once
+      standing lower, once with the other never coming (its old screen fading while it waits):
+      2988 frames to the bit, 1378 of them over the panels, 780 of the cascade, the comet and
+      the portal and 225 of the morph; the morph's other 56 within 2 levels (719 pixels in all);
+      and random's draws of 132 seeds. The morph's own judgements are compared alone besides
+      (tests/test_rust_morph.py): what each widget shows for every kind, which pieces are one
+      thing and where the frame is laid again for 609 frames of blank pieces, each thing taken
+      apart and laid at five alphas and in its own size for 150 frames of random pixels, and
+      what flies from panel to panel for 400 arrangements of two to four panels. The counter-checks put 110 faults into transitions.rs and 10 into
+      random.rs: the tests catch 107 and 8 (squares, the early light of an entrance's edges, the
+      music's track joined to its text, the room a narrow panel leaves and the line almost at
+      its brightest once their scenarios were added; the old and new frames of the tests had
+      been one and the same picture, seeds a few apart making the same noise, until the seeds
+      were spread). The other five change nothing: a map's value at the very edge of its soft
+      band is 255 whether it is taken as inside or worked out (the ramp gives 255 there); the
+      text that types in from 1.25 s is none until 1.3 s; a halo's margin of 50u instead of 60u
+      loses nothing, its light being none that far from the picture even of an opaque logo, at
+      every size (measured); the lowest bit of the Mersenne Twister's first tempering mask meets
+      the zeros its shift brings in; and of the first word of its seeded state only the top bit
+      is ever used (as its authors' note says). The second round's counter-checks put 109 faults
+      into canvas.rs (15), the iris, the shatter, the cascade, the comet and the portal in
+      transitions.rs (82), renderer.rs's beneath (4) and the pixel operations they use (8): the
+      comparisons catch 94 (a ground of more than one piece, lights and a veil kept out of the
+      cards, the rows a low panel breaks into and the round of a tile's fade once their
+      scenarios were added), Rust's unit tests 6 (a level of no number and one rounded half
+      away, the easing past its ends, cards that only touch and a card's margin to the middle of
+      an odd gap). The other nine change nothing: a rectangle's reach is only asked from its
+      middle, from where its corners are as far (to a rounding); a level at either end of a
+      threshold's soft band is what the ramp gives there; the comet light's box keeps a column
+      at its left that its light never reaches; the portal ring's light beyond 12.45 mm is under
+      half a level, so a table of 13 mm and one of 14 mm are the same; the source of the screen
+      that grows through the portal lies in the frame without being held to it (the point it
+      grows about is on the panel); and the ring's slack of a pixel either side of each row's
+      reach, and its < at the reach, differ from none and from <= only for a pixel within a
+      rounding of the reach, none in the tests. The morph's counter-checks put 86 faults into
+      morph.rs, the morph in transitions.rs, the renderer's parting and the windowed resize:
+      the frames of the transitions' comparison caught 56 of them, the morph's own judgements
+      compared alone (tests/test_rust_morph.py: what each widget shows, which pieces are one
+      thing and where the frame is laid again) 15 more, and 8 more once the morph's parts were
+      compared with frames of random pixels (each thing taken apart with its lights added
+      apart, the frame kept outside where it is laid again, each part laid at half and a
+      quarter of its alpha, cut at the panel's edges and resized within the window there), the
+      board's pairing over three and four panels, a frame of another size on the morph's way
+      and a panel waiting for the others with its old screen fading. The other seven change
+      nothing: the pieces that do not meet a region laid again lie wholly outside it; a part
+      laid at no alpha is faded to nothing; a thing whose room lies off this panel lies off it
+      laid too (its box within its room, rounded inward); the parting's ground drawn anew and
+      its frame composed anew from that ground and its pieces are the pixels kept (the
+      renderer's frame is that composition); every widget has an id once its theme is read
+      (theme/model.py names one), so the "None" of a widget without one is never asked; and the
+      arc goes down instead of up only for a thing whose top lies exactly at the arc's height,
+      a length in millimetres turned into pixels, none in the tests
 - [x] the alarm's edge on every panel (render/alarm.py): red round the picture for 3 s from
       the moment the notices service's alarm turns on, pulsing (strong at once, softer and
       strong again once a second) or still on a calm panel, in the theme's crit colour or the
@@ -1357,6 +1487,38 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       63 times). The counter-checks put 25 faults into alarm.rs, and the tests catch all of
       them (the masks kept once the edge is over, which no picture shows, once the test
       counted the masks)
+- [x] the light that moves (render/shine.py) on a panel that moves: a ring gauge's end
+      breathing in its colour, a light running along its arc in turn with the rings before it
+      and, past 80 %, its end glowing wider; a graph's newest point beating once a reading (as
+      often as four times a second where the theme refreshes so); while a track plays the
+      cover's glow round about in its own colours, made at full strength once per cover and each
+      strength of its fade scaled from it in whole numbers, the three bars dancing after
+      "Playing" and the progress's head and sheen; a download's head, its two sheens at its pace
+      (running on from where they were when the pace changes, from the clock where time went
+      back) and the spark at its end; the sun or the moon on its way (by day, with no step of its
+      own, the sun at noon), breathing, and the glint along the day gone. Each light in 12
+      strengths made once for a look and kept, the piece laid before where it stands as it
+      stood, the panel due again when a light takes its next step; none on a calm panel, in the
+      editor's pictures or on a turned widget, the kinds from [shine] and the theme. The tests:
+      33 runs of 15 themes (the built-in ones as a panel shows them with every kind of light or
+      some, at 0, 25 and 50 frames a second, scrolling or not; copies of four that refresh every
+      120 to 400 ms with widgets and modules turned; the editor's pictures; covers dark or black
+      and a dark cover's glow fading out and in a 50th of a second apart; a progress too short
+      for its sheen; a download that speeds up and then goes back in time; the sun's way with no
+      step of its own by day and by night), the frames a moment to a second apart and now and
+      then back in time, the readings changing between them: 581 frames (534 moving), each
+      within two levels of Python's where a lit ring lies under its light, and 3986 lights to
+      the bit, where each lies among the frame's pieces and whether its piece is the one of the
+      step before (2191) or made anew (1795), whether the frame moves on and when it is due
+      again; and a muted volume whose number turns on its glide. The counter-checks put 51
+      faults into shine.rs, its part of renderer.rs and the glide's turn in motion.rs: the tests
+      catch 50 (a cover's glow made anew where its strength stood, a band of no light kept, a
+      beat's shortest period, a short progress's sheen, turned widgets and the editor's pictures
+      shining, a glide's turn told from its start, a download's run back in time, the moon's
+      size and the sun at noon once their cases were added). The other changes nothing that
+      shows: the look ahead's last step taken at exactly 0.5 s or not, which the clock's sums
+      reach almost never (2 of 200 000 moments at 30 000 s, none at 1000 s or at today's time),
+      and then only when the panel is due again
 - [x] the panel's own screens (render/bootscreen.py, render/bootlooks.py and the mark of
       branding.py): the boot logo and the standby clip of any panel of the catalog, in
       landscape or upright, at its size and smaller for the app (without the dither there), in
@@ -1862,6 +2024,16 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       the unit of the first pattern that matches. 3000 messages and 3000 pairs of pattern and
       topic compared with Python; the app talks to a broker of the test's own. A broker
       that is not there is said once (Python says nothing)
+- [x] Dell's fans (sensors/dell.py, lp-sensors' dell): Dell Command | Monitor's numeric
+      sensors (CIM_NumericSensor in `root\dcim\sysman`) as fan.dell.* in RPM and
+      temp.dell.* in °C, each reading scaled by its UnitModifier, its name made a key and
+      numbered where met again, asked every `update_s` seconds in a thread of its own; a PC
+      without it is said once and asked again a minute later. The app asks WMI itself, through
+      COM (windows' Wmi bindings: the namespace's services, a WQL query, each property of each
+      row a number or a text); Python has PowerShell ask, in one PowerShell that stays. 605
+      sets of rows (properties missing, empty, of other kinds, numbers as texts, names met
+      again, texts that are no JSON) compared with Python; the WMI rows are tried on Windows'
+      own classes in CI, which has no Dell Command | Monitor (not yet run on a Dell PC)
 - [x] the calendar (sensors/calendar.py, lp-sensors' calendar): .ics texts from addresses
       (webcal:// too) and files, loaded in a thread of its own; their events in the
       computer's time (UTC, a zone's name, Outlook's and Mozilla's names of zones, whole
@@ -1912,7 +2084,11 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       Almanac, `[modes]`), the mode's frame rate, the pages the loop switches to by itself
       (music while it plays; the PC at rest, by Windows' last input or logind's idle hint),
       the transition of a switch by its occasion (`[transitions]`: its own, the service's,
-      the default, random; its speed) and what a switch does while one plays, the messages
+      the default, random; its speed), a slide, the wipe and the line of light over all the
+      panels as one where they all change at once (a scene, a game, music, the rest, the show
+      on the panel: where each stands as Settings → More panels shows them, and one moment for
+      all, 0.8 s after the change, a scene's from when config.toml was written, the show's
+      0.4 s after it was asked) and what a switch does while one plays, the messages
       (the theme's style; whether one would show, for `notify`), the alarm's edge, the
       events (sample, fresh, theme-changed, panel-connected, -lost, -restarted, quit). The
       services config.toml enables that this build lacks are said. A run with a service of
@@ -2048,7 +2224,7 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       running panel stands in them; steps written in their largest whole unit, or refused
       in the same words.
       Start's card of what is new (`/api/news`, news.json beside config.toml). The program
-      says Libre Panel's version, read from `src/libre_panel/__init__.py` as it is built
+      says Libre Panel's version, read from `pyproject.toml` as it is built
       (`rust/py/build.rs`, `lp_py::VERSION`).
       Whether a newer version is out (`/api/update`, `rust/app/src/updates.rs`): GitHub asked
       at most once a day where check_updates is on, the release picked as updates.py picks
@@ -2151,8 +2327,9 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       the one at hand (as config.toml names it, else as found on the bus), the looks; the
       app's pictures (`/picture`: the boot logo as a PNG, the standby clip as an animated
       WebP, drawn smaller, 16 kept) and the files as the panel takes them (`/file`: the
-      logo's JPEG from quality 95 down until it fits in 1 MiB, the clip's H.264 through ffmpeg
-      from crf 20 as panel_files.py steps it, one slice a picture, 4 kept); ffmpeg found as
+      logo's JPEG at the finest whole quality from 95 down that fits its room, the clip's
+      H.264 through ffmpeg from crf 20 as panel_files.py steps it, by whole steps and then
+      quarters, one slice a picture, 4 kept); ffmpeg found as
       devices/h264.find_ffmpeg finds it (the renderer's videos take it too). The test: both
       servers' answers, the same pixels, the clip's H.264 byte for byte. The writing to the
       panel (`POST /api/start-screen`: what is on it, the logo written and shown or taken
@@ -2291,7 +2468,7 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
 - [x] the Linux AppImage of the Rust app (CI's job `appimage`, on the oldest Ubuntu offered):
       the programs, the app's files, ffmpeg and the engine in "tools", and Pillow's own
       FreeType, HarfBuzz, libjpeg and libwebp in "lib", named to the program by its AppRun
-      (packaging/linux/AppRun-rust; nothing in LD_LIBRARY_PATH, so the window and the tray
+      (packaging/linux/AppRun; nothing in LD_LIBRARY_PATH, so the window and the tray
       icon take the system's GTK); tried by test_appimage.sh as the release's (RUST=1). What
       the tray icon's program says goes into the app's log, as tray.py logs it
 - [x] the screen on Wayland (wayland.py, wayland_feed.py): the capture program
@@ -2301,7 +2478,8 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       connection handed to GStreamer as a file descriptor; GStreamer's pipeline as
       wayland_feed.py makes it, the session stopped as it ends or GStreamer ended as the
       desktop closes it; GNOME's monitors listed, the panel's own monitor offered where GNOME
-      or the portal is. The tests: against test_wayland.py's stand-ins on a bus of their own,
+      or the portal is. The tests (test_rust_wayland.py): against wayland_bus.py's stand-ins on
+      a bus of their own,
       the pipeline word for word, the calls and their options, the kept choice, a cancelled
       dialog, the monitors as the app lists them
 - [ ] the pages in Rust (WebAssembly), view by view, with the same HTML and CSS; the browser
@@ -2358,7 +2536,8 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
       gives the panels their `away_brightness` where `dark_when_away` says so. On Linux
       logind says the same through `gdbus monitor` or `dbus-monitor`, with a delay lock
       (`systemd-inhibit`) the panel goes dark under before the computer sleeps. The tests: the
-      monitor's lines as test_logind.py hands them (Rust's own), and on Windows the session's
+      monitor's lines as the Python app's tests handed them (rust/app/src/logind.rs), and on
+      Windows the session's
       end sent to the running app's window (CI)
 - [x] the command line (cli.py): every command of the Python app (`plugins` with R10);
       `preview` draws a theme, by its name or its folder,
@@ -2423,10 +2602,16 @@ Each stage ends with its pieces checked against the Python app as above, pushed 
 The Python plugins run in the plugin host (src/libre_panel/plugin_host.py): Python with Libre
 Panel's package, a program of its own in the downloads (`plugin-host/libre-panel-plugins`,
 built by PyInstaller, on Windows with its loader compiled in CI), started by the app only
-where `<settings>/plugins/*/plugin.toml` exists, one for the process (rust/app's plugins).
+where `<settings>/plugins/*/plugin.toml` exists or a package installed beside the host (pip,
+`pipx inject`) declares an entry point of a plugin group, which the app reads from the
+packages' files, one for the process (rust/app's plugins).
 The app and the host speak through the host's standard input and output: each message a
 length and JSON, with raw pixels after it where it says so; the host's log lines go into the
 app's log. Libre Panel's own parts stay the app's (the host leaves the built-in ones out).
+Libre Panel's files (fonts, translations, themes) are the app's too: the host carries no
+copy of them and takes the download's `share/libre-panel` beside its folder, as the app
+does (src/libre_panel/datadir.py); packaging/check_plugin_host.py has a plugin letter a
+word of the app's language in one of its fonts, so a host that does not find them fails.
 
 - [x] what is installed: `libre-panel plugins` as cli.py lists it, the themes plugins bring
       among the app's, and Settings' catalog with the plugins' services and sensor sources
@@ -2436,11 +2621,14 @@ app's log. Libre Panel's own parts stay the app's (the host leaves the built-in 
 - [x] services: started, stopped and restarted as ServiceManager does it, with the events of
       the app's host (samples with their snapshot, the mode); what they publish, their states,
       pictures, themes and modes asked for, and their toasts with the app's answer
-- [x] widget types and screens: drawn by Python's renderer for the theme as the app has it
-      (its palette, fonts, size, readings and their pictures, the frame's rate and progress),
-      the piece with its effects handed back and kept while it stays the same; themes checked
-      against the fields the plugins declare (lp-theme's plugins). The same pixels as the
-      Python app's frame
+- [x] widget types and screens: drawn in the host for the theme as the app has it (its
+      palette, fonts, size, readings and their pictures, the frame's rate and progress) by
+      plugins/drawing.py, which gives a plugin's context what Python's renderer gave it, without
+      that renderer; a widget type's piece handed back as it drew it and kept while it stays the
+      same, the widget's effects (opacity, shadow, glow) the app's renderer's, as on its own
+      widgets (Renderer::effects), made again only when the piece or the widget changed; themes
+      checked against the fields the plugins declare (lp-theme's plugins). The same pixels as
+      the Python app's frame
 - [x] transitions and toast styles: played in the host with the new theme's context (the old
       frame sent once, each new one after it; the toast with the one it replaced), with how a
       switch goes while one plays and how long a toast holds and lives
@@ -2450,6 +2638,22 @@ app's log. Libre Panel's own parts stay the app's (the host leaves the built-in 
       host's `need` during a request): the frame the panel shows (`context.shown`) and the
       toast on show (`context.toast`) while they draw; on their pages the panels' frames
       (`shown_frame`), snapshots, the sources, the services and notifications with pictures
+- [x] display drivers (`libre_panel.devices`): `[device] driver` naming a plugin's opens it
+      in the host with the panel's `[device]`, on a thread of the host's own for each panel; the
+      main loop hands it frames as it hands its own drivers theirs (the changed box, every
+      frame whole where it streams, the changed parts one by one over a slow link), a
+      FrameError skips the frame, any other error opens the panel again; Settings offers the
+      plugins' drivers with the app's, whose names they cannot take. Of a frame only the box
+      that changed goes through the pipe (the host lays it on the frame before; the driver
+      gets whole frames, as the Python app's loop gave them). Measured with Lumen (1920×480,
+      25 frames a second, the 4 cores of a test container) and a driver that does nothing:
+      the app 14 % of a core where it takes 8 to 10 % with the frames kept nowhere, the host
+      5 %; a driver that streams (every frame whole) 12 % and 8 %. On the way the box that
+      changed is found without a picture of the difference (byte blocks compared as memory)
+      and the frame before is kept shared, not copied: the serial panels' and the other
+      makers' USB screens' drivers gain it too
+- [x] packages installed with pip or `pipx inject` beside the host start it as plugin folders
+      do (their entry points read from the files, no Python started without one)
 - [x] in the downloads: CI builds the host on Windows and Linux, runs a plugin on it, and
       has the packaged app find it beside itself and run that plugin
 - [x] the pipe's cost, measured (1920×480 at 25 fps, a plugin's screen and a plugin's bar,
@@ -2478,8 +2682,41 @@ app's log. Libre Panel's own parts stay the app's (the host leaves the built-in 
       (`workflow_call`) and publishes what its jobs `try` and `appimage` built and tried: the
       Windows setup and portable zip, the AppImage, and the Linux archive (the AppImage's
       folder, started by its own script as libre-panel.sh, unpacked and drawn from in CI);
-      the Python package beside them for PyPI
+      the wheels for pip and pipx beside them (not on PyPI)
 - [ ] signing the Windows programs (SignPath)
 
 ### R12 the switch
 - [ ] fixtures recorded from the Python app; the Rust app on main; the Python app goes
+  - [x] the crates' comparisons against kept answers (tests/golden.py): each answer of
+        lp-check, once it was the Python app's, kept as a digest in
+        tests/golden/<system>/<test file>.json; what a comparison's cases took from the
+        Python app (a table of its, a width it measured, the demo's readings) kept in
+        tests/golden/given, another for Windows where it is another there. CI runs them
+        without asking the Python app, on Linux and Windows. A comparison whose answer
+        depends on the computer is marked: ``live`` (never held to kept answers: the frames
+        of videos ffmpeg makes), ``c_library`` (held where they were kept, on CI: pictures
+        worked out with the C library's float functions)
+  - [x] the running app and its plugins: what the Python app made of what a test gives the
+        program, kept the same way; the weather and the calendars held against the crates'
+        own readings
+  - [x] the server (tests/test_rust_server.py): what editor/server.py answered each request
+        of a test and wrote into its settings folder, kept as a tape (tests/server_tape.py,
+        tests/golden/given/test_rust_server.json) and played where the Python server was
+        asked; CI runs it without the Python app
+  - [x] what the app tells of "now" takes its moment from one place (rust/app/src/clock.rs),
+        which the tests name with ``LP_NOW``: an answer is then the same whenever it is
+        asked for. What runs by the clock (the panel's frames, a clip, a wait) stays on it
+  - [x] the browser tests on the Rust app's server, the Python app out of reach (CI's rust
+        job on Linux): what a test asks of the app it asks the running program (its tray's
+        menu, its services, its readings, the files it writes), the panels on a bus of the
+        test's own (``LP_TEST_BUS``). The range's A/B runs on the simulated 9.2" showing the
+        engine's video (test_rust_app.py's rig), Windows' start with administrator rights on
+        the tests' stand-in for the registry and Task Scheduler (``LP_TEST_AUTOSTART``: the Run
+        value and the task as files). The graphics card's conversion went with the Python
+        app: the engine converts every video's colours itself (colours.rs)
+  - [x] the Python app goes: its modules, its own tests, its packaging (the PyInstaller build
+        of its programs, its AppImage entry), its commands and extras. What stays of Python
+        is the plugin host and the plugin API with what they stand on (tests/without_app.py,
+        which test_plugin_host.py holds the package to), the tests (the comparisons on kept
+        answers, the browser tests, the plugin host's), and the tools beside them. The tests
+        of what remains in those modules were kept, those of the Python app went with it

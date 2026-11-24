@@ -1,114 +1,22 @@
 """The serial panels' drivers in Rust (rust/devices' serial_panel: Turing rev. A, XuanFang rev. B,
-Kipye rev. D, WeAct) against those of devices/, to the byte: each opened on a port the test
-scripts (what the panel answers, read as the driver asks for it), frames shown whole and in
-parts, of the panel's size and of another, turned, the brightness set, closed; what went to the
-port, in order, and what the driver says of itself."""
+Kipye rev. D, WeAct) as those of the Python app's devices/ drove them, to the byte: each opened
+on a port the test scripts (what the panel answers, read as the driver asks for it), frames
+shown whole and in parts, of the panel's size and of another, turned, the brightness set,
+closed; what went to the port, in order, and what the driver says of itself. What the Python
+drivers did is kept (golden.py): lp-check's answers are checked against it."""
 
 from __future__ import annotations
 
-import base64
 import random
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import serial
 from rust_check import image, run
 from test_rust_usb_drivers import _b64, _frame
 
-from libre_panel.config import DeviceConfig
-from libre_panel.devices import (
-    jonsbo_ds916,
-    kipye_rev_d,
-    serial_link,
-    serial_panel,
-    turing_rev_a,
-    turing_rev_b,
-    turing_rev_c,
-    weact,
-)
-from libre_panel.devices.models import get_model
-from libre_panel.devices.serial_link import FoundPort
+pytestmark = pytest.mark.kept  # (what the Python drivers did: tests/golden)
 
-
-class FakePort:
-    """pyserial's port, scripted as the Rust side's (check/src/usb_drivers.rs ScriptedLink)."""
-
-    def __init__(self, case: dict[str, Any], events: list[Any]) -> None:
-        self.events = events
-        self.incoming = bytearray(base64.b64decode(case.get("incoming", "")))
-        self.fail_writes = {n: text for n, text in case.get("fail_writes", [])}
-        self.writes = 0
-
-    def write(self, data: bytes) -> int:
-        self.writes += 1
-        self.events.append(["write", _b64(data)])
-        if self.writes in self.fail_writes:
-            raise serial.SerialException(self.fail_writes[self.writes])
-        return len(data)
-
-    def read(self, size: int) -> bytes:
-        self.events.append(["read", size])
-        out = bytes(self.incoming[:size])
-        del self.incoming[:size]
-        return out
-
-    def reset_input_buffer(self) -> None:
-        self.events.append(["drain"])
-
-    def close(self) -> None:
-        self.events.append(["close"])
-
-
-DRIVERS = {
-    "rev_a": turing_rev_a.RevADisplay,
-    "rev_b": turing_rev_b.RevBDisplay,
-    "rev_d": kipye_rev_d.RevDDisplay,
-    "weact": weact.WeActDisplay,
-    "ds916": jonsbo_ds916.Ds916Display,
-    "rev_c": turing_rev_c.RevCDisplay,
-}
-
-
-def _python_session(case: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    events: list[Any] = []
-    found = FoundPort(case["found"]["device"], get_model(case["found"]["model"]),
-                      case["found"].get("serial"))  # fmt: skip
-    monkeypatch.setattr(serial_panel, "find_port", lambda model, port: found)
-    monkeypatch.setattr(serial_link, "open_serial",
-                        lambda device, baud, rtscts: FakePort(case, events))  # fmt: skip
-    monkeypatch.setattr(turing_rev_b.RevBDisplay, "sleep", staticmethod(lambda seconds: None))
-    monkeypatch.setattr(jonsbo_ds916, "AGAIN_S", 3600.0)
-    monkeypatch.setattr(turing_rev_c.RevCDisplay, "sleep", staticmethod(lambda seconds: None))
-    ports = [SimpleNamespace(device=p["device"], vid=p.get("vid"), pid=p.get("pid"),
-                             serial_number=p.get("serial"), description="n/a")
-             for p in case.get("ports", [])]  # fmt: skip
-    monkeypatch.setattr(serial_link, "_ports", lambda: list(ports))
-    model = get_model(case["model"]) if case.get("model") else None
-    display = DRIVERS[case["driver"]](DeviceConfig(driver="turzx"), model,
-                                      configured=case.get("configured", True))  # fmt: skip
-    try:
-        display.open()
-    except Exception as error:  # noqa: BLE001 (what Python raises, as it is)
-        return {"error": str(error), "events": events}
-    failed = None
-    for step in case["steps"]:
-        try:
-            if "brightness" in step:
-                display.set_brightness(step["brightness"])
-            else:
-                display.show(step["show"], step.get("region"))
-        except Exception as error:  # noqa: BLE001
-            failed = str(error)
-            break
-    told = {"picture": display.picture, "jpeg_layout": display.jpeg_layout,
-            "describe": display.describe(), "streaming": bool(display.streaming),
-            "slow": bool(display.slow),
-            "model": display.model.id if display.model else None}  # fmt: skip
-    counters = display.counters
-    display.close()
-    return {"events": events, "error": failed, "bytes": counters.bytes,
-            "usb_errors": counters.usb_errors, "told": told}  # fmt: skip
+DRIVERS = ("rev_a", "rev_b", "rev_d", "weact", "ds916")  # (and rev_c, with cases of its own)
 
 
 def _rust_case(case: dict[str, Any]) -> dict[str, Any]:
@@ -116,18 +24,10 @@ def _rust_case(case: dict[str, Any]) -> dict[str, Any]:
     return {"op": "usb_session", **case, "steps": steps}
 
 
-def _compare(cases: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> int:
-    opened = 0
-    for n, (case, got) in enumerate(zip(cases, run([_rust_case(c) for c in cases]),
-                                        strict=True)):  # fmt: skip
-        want = _python_session(case, monkeypatch)
-        assert got["error"] == want["error"], (n, case["driver"])
-        assert got["events"] == want["events"], (n, case["driver"])
-        if "told" in want:
-            opened += 1
-            assert got["told"] == want["told"], n
-            assert (got["bytes"], got["usb_errors"]) == (want["bytes"], want["usb_errors"]), n
-    return opened
+def _sessions(cases: list[dict[str, Any]]) -> int:
+    """Each case's session as the Rust driver leads it; how many opened."""
+    answers = run([_rust_case(c) for c in cases])
+    return sum("told" in got for got in answers)
 
 
 SIZES = {"turing-3.5": (320, 480), "usbpcmonitor-5": (480, 800), "usbpcmonitor-7": (600, 1024),
@@ -171,10 +71,10 @@ def _case(rng: random.Random, driver: str) -> dict[str, Any]:
             "fail_writes": fail}  # fmt: skip
 
 
-@pytest.mark.parametrize("driver", [d for d in DRIVERS if d != "rev_c"])
-def test_serial_sessions_as_the_python_drivers_drive_them(driver, monkeypatch) -> None:
+@pytest.mark.parametrize("driver", DRIVERS)
+def test_serial_sessions_as_the_python_drivers_drive_them(driver: str) -> None:
     rng = random.Random(f"serial-{driver}")
-    assert _compare([_case(rng, driver) for _ in range(20)], monkeypatch) > 5
+    assert _sessions([_case(rng, driver) for _ in range(20)]) > 5
 
 
 def _rev_c_case(rng: random.Random) -> dict[str, Any]:
@@ -211,6 +111,6 @@ def _rev_c_case(rng: random.Random) -> dict[str, Any]:
             "fail_writes": fail}  # fmt: skip
 
 
-def test_rev_c_sessions_as_turing_rev_c_py_drives_them(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rev_c_sessions_as_turing_rev_c_py_drives_them() -> None:
     rng = random.Random(0x7C)
-    assert _compare([_rev_c_case(rng) for _ in range(30)], monkeypatch) > 10
+    assert _sessions([_rev_c_case(rng) for _ in range(30)]) > 10

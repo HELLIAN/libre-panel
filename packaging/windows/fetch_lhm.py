@@ -7,9 +7,9 @@ NuGet over HTTPS, checks every package against the SHA-256 recorded below, takes
 the library that Libre Panel loads (the .NET Framework build, not the reference assembly
 or a build for another runtime) and checks that against its own SHA-256. FOLDER (default
 ``packaging/windows/lhm-libs``) then holds the libraries, their licence texts and
-``SOURCES.txt``; the PyInstaller build bundles it as ``lhm``, and with a pip install it is
-what ``dll_dir`` under ``[sensors.librehardwaremonitor]`` names. It fails, and leaves an
-existing FOLDER alone, when anything does not match.
+``SOURCES.txt``; the sensor service's build puts it beside the service as ``lhm``
+(sensorhost/LibrePanel.Sensors.csproj). It fails, and leaves an existing FOLDER alone, when
+anything does not match.
 
 ``--nupkg-dir`` reads the packages (``<id>.<version>.nupkg``) from a folder instead of
 NuGet, for builds without a network; they are checked all the same.

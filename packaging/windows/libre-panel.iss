@@ -97,6 +97,8 @@ Name: "{autoprograms}\Libre Panel"; Filename: "{app}\LibrePanel.exe"
 Name: "{autodesktop}\Libre Panel"; Filename: "{app}\LibrePanel.exe"; Tasks: desktopicon
 
 [Run]
+; the language chosen in this setup, the app's too on a new install (LanguageChosen below)
+Filename: "{app}\libre-panel.exe"; Parameters: "config language {language} --if-auto"; Flags: runhidden runasoriginaluser; Check: LanguageChosen
 Filename: "{app}\libre-panel.exe"; Parameters: "autostart enable"; Flags: runhidden runasoriginaluser; Tasks: autostart
 Filename: "{app}\LibrePanel.exe"; Description: "{cm:StartNow}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
@@ -105,6 +107,37 @@ Filename: "{app}\libre-panel.exe"; Parameters: "quit"; Flags: runhidden; RunOnce
 Filename: "{app}\libre-panel.exe"; Parameters: "autostart disable"; Flags: runhidden; RunOnceId: "RemoveAutostart"
 
 [Code]
+var
+  NewInstall: Boolean;
+
+{ Whether Libre Panel was installed before, for all users or for this user: asked as the setup
+  starts, before it registers itself (the key is the AppId's). }
+<event('InitializeSetup')>
+function RememberNewInstall: Boolean;
+var
+  Key: String;
+begin
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{76267DAF-70B8-4D39-B8D9-C1C17EB0FF73}_is1';
+  NewInstall := not (RegKeyExists(HKLM64, Key) or RegKeyExists(HKLM32, Key)
+                     or RegKeyExists(HKCU, Key));
+  Result := True;
+end;
+
+{ The language chosen in this setup becomes the app's on a new install where it is not the one
+  the setup offered (the one Windows speaks, else English, as the setup picks it): chosen, not
+  taken as offered; the app would speak Windows' language anyway. The app keeps a language
+  chosen in it (--if-auto), and an update leaves the app's language as it is. }
+function LanguageChosen: Boolean;
+var
+  Offered: String;
+begin
+  if (GetUILanguage and $3FF) = $07 then
+    Offered := 'de'
+  else
+    Offered := 'en';
+  Result := NewInstall and (ActiveLanguage <> Offered);
+end;
+
 { PresentMon unchecked: what will not work, said before anything is installed; "No" goes back
   to the boxes. A silent setup takes its /TASKS as they are. }
 <event('NextButtonClick')>

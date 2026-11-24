@@ -5,7 +5,7 @@ The page's files (``index.html``, scripts, styles) are served from
 ``/static/editor.css`` and import ``/static/kit.js`` to look and work like
 the editor. The editor listens on 127.0.0.1 only, and a request to a page's API (GET as much as
 POST) needs the secret token of the run in the ``X-Libre-Panel`` header, as everywhere in the
-editor (``editor/access.py``): ``kit.js`` sends it.
+editor (``rust/app/src/access.rs``): ``kit.js`` sends it.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Any
 from PIL import Image
 
 from libre_panel.config import CONFIG_FILENAME, config_dir, log_file
+from libre_panel.datadir import DATA
 from libre_panel.plugins.host import NO_PANEL, Delivery, ServiceHost
 
 log = logging.getLogger(__name__)
@@ -100,10 +101,11 @@ class PageContext:
         """True when Libre Panel runs with administrator rights (root on Linux). A request
         cannot be told from the person's, and what it asks for is done with those rights: a page
         then leaves what names a program, a library or a file to config.toml, as the app's own
-        settings do (``editor/settings.py``), and does not start or write what a request names."""
-        from libre_panel.editor import access
+        settings do (``rust/app/src/settings.rs``), and does not start or write what a request
+        names."""
+        from libre_panel import rights
 
-        return access.elevated()
+        return rights.elevated()
 
     @property
     def config_path(self) -> Path:
@@ -254,6 +256,8 @@ class EditorPage:
 
     @classmethod
     def folder(cls) -> Path | None:
+        if cls.__module__.partition(".")[0] == "libre_panel":  # (built-in: Libre Panel's files)
+            return DATA / "pages" / cls.static
         module = sys.modules.get(cls.__module__)
         if module is None or not getattr(module, "__file__", None):
             return None

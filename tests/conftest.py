@@ -1,6 +1,7 @@
 import faulthandler
 import itertools
 import os
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -28,6 +29,38 @@ def pytest_runtest_logreport(report):
     sys.__stdout__.flush()
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Whether the test itself passed, for what it kept (golden.py)."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        item._golden_passed = report.passed
+
+
+@pytest.fixture(autouse=True)
+def _golden(request, tmp_path_factory):
+    """lp-check's answers to the test, against those kept (golden.py), or kept anew."""
+    import golden
+
+    if not golden._places:
+        root = Path(__file__).resolve().parent.parent
+        golden.places(tmp=tmp_path_factory.getbasetemp(), data=root / "data", repo=root)
+    mark = request.node.get_closest_marker
+    kept = (
+        mark("kept") is not None
+        and not golden.live_here(mark("live"))
+        and golden.kept_here(mark("c_library"))
+    )
+    golden.begin(Path(str(request.node.fspath)).stem, request.node.name, kept)
+    yield
+    unasked, untold = golden.unasked(), golden.untold()
+    passed = getattr(request.node, "_golden_passed", False)
+    golden.end(passed)
+    assert not passed or unasked == 0, f"{unasked} of the calls kept for this test were not made"
+    assert not passed or not untold, f"not asked for, of what the Python app told: {untold}"
+
+
 # On GitHub Actions a test that hangs ends the run after ten minutes, with every thread's stack
 # in a file that the workflow prints (pytest captures the standard error a test writes to),
 # instead of holding the job until its limit cuts it off as "cancelled" with nothing said.
@@ -50,65 +83,12 @@ def _hang_guard():
         faulthandler.cancel_dump_traceback_later()
 
 
-@pytest.fixture
-def panel_writes(monkeypatch):
-    """Writing files to a panel switched on, as who looks into issue 52 switches it on. It is
-    off in this version (a clip filled a 9.2"'s folder, which holds its settings too, and it
-    has kept restarting since); what is sent once it is on again stays tested through this."""
-    from libre_panel.devices import panel_files
-
-    monkeypatch.setenv(panel_files.WRITES_ENV, panel_files.WRITES_WORD)
-
-
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
     """Every test gets its own config/user-themes directory."""
     home = tmp_path / "home"
     monkeypatch.setenv("LIBRE_PANEL_HOME", str(home))
-    yield home
-    choice = sys.modules.get("libre_panel.devices.card_choice")
-    if choice is not None:  # (a colour check in the background ends in the test that began it)
-        choice.forget(wait=30)
-
-
-@pytest.fixture(autouse=True)
-def editor_tokens(monkeypatch):
-    """The token of every editor server a test starts is kept by its port (editor_token.py),
-    for the clients of the tests to send: a server answers nothing without it. And the requests
-    that server is still answering when the test ends are answered before the next one starts."""
-    import threading
-
-    import editor_token
-
-    from libre_panel.editor.server import EditorHandler, EditorServer
-
-    made, served = EditorServer.__init__, EditorHandler._serve
-    under_way, count = threading.Condition(), [0]
-
-    def init(self, *args, **kwargs):
-        made(self, *args, **kwargs)
-        editor_token.TOKENS[self.server_address[1]] = self.token
-
-    def serve(self, method):
-        with under_way:
-            count[0] += 1
-        try:
-            return served(self, method)
-        finally:
-            with under_way:
-                count[0] -= 1
-                under_way.notify_all()
-
-    monkeypatch.setattr(EditorServer, "__init__", init)
-    monkeypatch.setattr(EditorHandler, "_serve", serve)
-    yield
-    # A request that a closed browser left under way (the library's pictures are drawn one after
-    # another, a request each) goes on in its thread of the server, which shutting the server
-    # down does not wait for. It ends before the next test starts: it would draw with the
-    # renderer that test has put in place, and show up in what that test counts.
-    with under_way:
-        under_way.wait_for(lambda: count[0] == 0, timeout=120)
-    editor_token.TOKENS.clear()
+    return home
 
 
 @pytest.fixture(autouse=True)
@@ -118,9 +98,7 @@ def not_elevated(monkeypatch):
     unless a test says Libre Panel runs with the highest rights, and plugin folders and programs
     are used wherever they lie (rights.py)."""
     from libre_panel import rights
-    from libre_panel.editor import access
 
-    monkeypatch.setattr(access, "elevated", lambda: False)
     monkeypatch.setattr(rights, "elevated", lambda: False)
 
 
@@ -137,107 +115,24 @@ def no_installed_plugins(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_machine_names(monkeypatch):
-    """What the computer running the tests is made of stays out of them (it differs from
-    machine to machine, and the names are its owner's): nothing is found, until a test
-    brings a computer of its own."""
-    from libre_panel.sensors import hardware
-
-    monkeypatch.setattr(hardware, "_found", None)  # what was asked before is not an answer
-    monkeypatch.setattr(hardware, "_scan_machine", lambda *args: hardware.Found())
-
-
-@pytest.fixture(autouse=True)
-def no_community_list(monkeypatch):
-    """The community's list of themes is never asked of GitHub: its address is one of this
-    computer where nothing answers, until a test serves a list of its own."""
-    from libre_panel.editor import community
-
-    monkeypatch.setattr(community, "INDEX_URL", "http://127.0.0.1:9/community/themes/index.json")
-
-
-@pytest.fixture(autouse=True)
-def no_usb_panel(monkeypatch):
-    """A panel plugged into the machine running the tests stays out of them: a config that
-    names no theme looks for one on the USB bus to pick the panel's own. Nothing is on the
-    bus, until a test says so."""
-    from libre_panel.devices import turzx_usb
-
-    monkeypatch.setattr(turzx_usb.UsbTransport, "present", staticmethod(lambda pid: False))
-
-
-@pytest.fixture(autouse=True)
-def no_linux_setup(monkeypatch):
-    """The one-click setup of Linux never touches the machine running the tests: it is not
-    asked about the board or the rights, and no test asks for an administrator's password.
-    A test brings a computer (``linux_setup.Facts``) and a stand-in for the rights."""
-    from libre_panel import linux_rights, linux_setup
-
-    def forbidden(argv):
-        raise AssertionError("a test asked for the administrator's rights")
-
-    class Untouchable:
-        """The computer a test runs on, which a test may not change (not even one that runs as
-        root, as CI containers do): the first thing a setup does to it fails the test."""
-
-        def __getattr__(self, name):
-            raise AssertionError(f"a test changed the machine it runs on ({name})")
-
-    monkeypatch.setattr(linux_setup, "gather", lambda *args, **kwargs: linux_setup.Facts())
-    monkeypatch.setattr(linux_setup, "RealSystem", Untouchable)
-    monkeypatch.setattr(linux_rights, "JOB", linux_rights.Job(runner=forbidden))
-    monkeypatch.setattr(linux_rights, "imports_isolated", lambda python: False)
-
-
-@pytest.fixture(autouse=True)
-def no_machine_sensors(monkeypatch):
-    """The Linux sensor source reads the folder a test lays out, not this machine's /sys."""
-    from libre_panel.sensors import linux
-
-    monkeypatch.setattr(linux, "ROOT", Path("/no/such/root"))
-
-
-class NoTasks:
-    """A Task Scheduler without tasks, for tests that do not bring their own."""
-
-    def exists(self, name):
-        return False
-
-    def query(self, name):
-        return None
-
-    def create(self, name, xml):
-        raise AssertionError("a test created a real scheduled task")
-
-    def delete(self, name):
-        pass
-
-
-@pytest.fixture(autouse=True)
-def no_scheduled_tasks(monkeypatch):
-    """The machine's own Task Scheduler stays out of the tests (it may hold the
-    elevated "Libre Panel" task)."""
-    from libre_panel import autostart
-
-    monkeypatch.setattr(autostart, "WindowsTasks", NoTasks)
-
-
-@pytest.fixture(autouse=True)
-def no_sensor_service(monkeypatch):
-    """The sensor service of the machine running the tests (a Windows PC with Libre Panel
-    installed) stays out of them: it is not installed, until a test says so."""
-    from libre_panel.sensors import lhm_service
-
-    monkeypatch.setattr(lhm_service, "registration", lambda name=None: None)
-
-
-@pytest.fixture(autouse=True)
 def english(monkeypatch):
     """Tests read English texts, whatever language the machine running them has."""
     monkeypatch.setattr(i18n, "system_language", lambda: "en")
     i18n.set_language("en")
     yield
     i18n.set_language("en")
+
+
+@pytest.fixture
+def bus(monkeypatch):
+    """A session bus of the test's own (wayland_bus.py has stand-ins of services on it)."""
+    daemon = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address"],
+                              stdout=subprocess.PIPE, text=True)  # fmt: skip
+    address = daemon.stdout.readline().strip()
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+    yield address
+    daemon.kill()
+    daemon.wait()
 
 
 _plugin_names = itertools.count()

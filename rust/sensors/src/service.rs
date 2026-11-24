@@ -635,3 +635,324 @@ pub fn check(open: &mut Open, seconds: f64, sleep: &dyn Fn(f64)) -> (bool, Vec<S
     }
     (!answer.sensors.is_empty(), lines)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sensor service as the tests make it up: up or not, its protocol, and its answers to
+    /// `read` in turn (the last one again and again).
+    struct Service {
+        up: bool,
+        protocol: i64,
+        answers: Vec<String>,
+        /// (the hardware asked for, every piece) of each read
+        asked: Vec<(Vec<String>, bool)>,
+    }
+
+    type Made = Arc<Mutex<Service>>;
+
+    struct FakeLink(Made);
+
+    impl Link for FakeLink {
+        fn request(&mut self, message: &Value, _timeout: f64) -> Result<Dict, Unavailable> {
+            let mut service = self.0.lock().unwrap();
+            if !service.up {
+                return Err(Unavailable("the pipe is gone".into()));
+            }
+            let Value::Dict(message) = message else {
+                return Err(Unavailable("not a message".into()));
+            };
+            let text = match message.get("op").and_then(Value::as_str) {
+                Some("hello") => format!(
+                    r#"{{"v": 1, "ok": true, "service": "1.4.0", "protocol": {}}}"#,
+                    service.protocol
+                ),
+                _ => {
+                    let hardware = message.get("hardware").and_then(Value::as_list);
+                    let hardware = hardware.unwrap_or(&[]).iter();
+                    let ids = hardware.filter_map(|id| id.as_str().map(String::from));
+                    let all = matches!(message.get("all"), Some(Value::Bool(true)));
+                    service.asked.push((ids.collect(), all));
+                    match service.answers.len() {
+                        1 => service.answers[0].clone(),
+                        _ => service.answers.remove(0),
+                    }
+                }
+            };
+            Ok(protocol::decode(text.as_bytes())?)
+        }
+    }
+
+    fn service(answers: &[String]) -> Made {
+        Arc::new(Mutex::new(Service {
+            up: true,
+            protocol: PROTOCOL,
+            answers: answers.to_vec(),
+            asked: Vec::new(),
+        }))
+    }
+
+    fn opener(made: &Made) -> Open {
+        let made = made.clone();
+        Box::new(move || match made.lock().unwrap().up {
+            true => Ok(Box::new(FakeLink(made.clone())) as Box<dyn Link>),
+            false => Err(Unavailable("the service does not run".into())),
+        })
+    }
+
+    const SENSORS: &str = r#"[["/amdcpu/0/temperature/2", "/amdcpu/0", "AMD Ryzen 7 7800X3D",
+        "Temperature", "Core (Tctl/Tdie)", 51.5, "°C"], ["/gpu-nvidia/0/temperature/0",
+        "/gpu-nvidia/0", "NVIDIA GeForce RTX 4070", "Temperature", "GPU Core", 48.0, "°C"]]"#;
+
+    fn running(age: f64, ring0: &str, pawnio: &str, more: &str) -> String {
+        format!(
+            r#"{{"v": 1, "ok": true, "state": "running", "age": {age}, "ring0": {ring0},
+            "pawnio": {pawnio}, "sensors": {SENSORS}{more}}}"#
+        )
+    }
+
+    /// What the source said: its log, and what it told the provider.
+    type Said = Arc<Mutex<Vec<String>>>;
+
+    fn options(wanted: &[&str], wait: f64, start_wait: f64, said: &Said) -> Options {
+        let keys = Wanted::default();
+        keys.set(wanted.iter().map(|key| key.to_string()));
+        let (log, failed, ready) = (said.clone(), said.clone(), said.clone());
+        Options {
+            poll_seconds: 0.1,
+            stale_seconds: 0.3,
+            wait_seconds: wait,
+            start_wait_seconds: start_wait,
+            wanted: keys,
+            log: Some(Box::new(move |line| {
+                log.lock().unwrap().push(line.to_string())
+            })),
+            on_failure: Some(Box::new(move |why| {
+                failed.lock().unwrap().push(format!("failure: {why}"));
+            })),
+            on_ready: Some(Box::new(move |status| {
+                ready
+                    .lock()
+                    .unwrap()
+                    .push(format!("ready: {}", status.mode));
+            })),
+            ..Options::default()
+        }
+    }
+
+    fn until(seconds: f64, done: impl Fn() -> bool) -> bool {
+        let end = Instant::now() + Duration::from_secs_f64(seconds);
+        while !done() {
+            if Instant::now() > end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
+    }
+
+    fn value(readings: &Readings, key: &str) -> Option<f64> {
+        match readings.get(key).map(|reading| &reading.value) {
+            Some(Value::Float(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_readings_come_through_the_service_and_only_the_hardware_a_theme_reads_is_asked_for() {
+        let made = service(&[running(0.1, "true", r#""2.0.1""#, "")]);
+        let said = Said::default();
+        let options = options(&["cpu.temp"], 20.0, 180.0, &said);
+        let wanted = options.wanted.clone();
+        let mut source = ServiceSource::start(options, opener(&made));
+        assert!(source.wait_ready(5.0));
+        let readings = source.read();
+        assert_eq!(value(&readings, "cpu.temp"), Some(51.5));
+        assert_eq!(value(&readings, "gpu.temp"), Some(48.0));
+        assert_eq!(value(&readings, "lhm:/amdcpu/0/temperature/2"), Some(51.5));
+        let status = source.status();
+        assert_eq!(
+            (status.mode.as_str(), status.version.as_str()),
+            ("service", "1.4.0")
+        );
+        assert_eq!((status.elevated, status.ring0), (Some(true), Some(true)));
+        assert_eq!(
+            (status.pawnio.as_deref(), status.error.as_str()),
+            (Some("2.0.1"), "")
+        );
+        let first = "LibreHardwareMonitor is read through the sensor service (2 sensors)";
+        assert_eq!(said.lock().unwrap().clone(), [first, "ready: service"]);
+        // every piece once, then only the processor the theme reads; then the card
+        let counted = made.clone();
+        let asked = |n: usize| {
+            let made = counted.clone();
+            move || made.lock().unwrap().asked.len() >= n
+        };
+        assert!(until(5.0, asked(3)));
+        let cpu = (vec!["/amdcpu/0".to_string()], false);
+        assert_eq!(
+            made.lock().unwrap().asked[..3],
+            [(Vec::new(), true), cpu.clone(), cpu]
+        );
+        wanted.set(["gpu.temp".to_string()]);
+        let card = (vec!["/gpu-nvidia/0".to_string()], false);
+        assert!(until(5.0, || made.lock().unwrap().asked.last() == Some(&card)));
+        source.close();
+    }
+
+    #[test]
+    fn what_the_service_read_long_ago_is_not_shown_and_readings_that_stop_coming_go() {
+        let made = service(&[running(60.0, "true", "null", "")]);
+        let said = Said::default();
+        let source = ServiceSource::start(options(&[], 20.0, 180.0, &said), opener(&made));
+        assert!(until(5.0, || made.lock().unwrap().asked.len() >= 3));
+        assert!(source.read().is_empty() && !source.live()); // (it reads anew now)
+        made.lock().unwrap().answers = vec![running(0.05, "true", "null", "")];
+        assert!(until(5.0, || source.live()));
+        made.lock().unwrap().up = false;
+        assert!(until(5.0, || source.read().is_empty())); // (no numbers that stand still)
+        assert_eq!(source.status().error, "the pipe is gone");
+        assert_eq!(source.status().version, "1.4.0"); // (the version it said is kept)
+    }
+
+    #[test]
+    fn a_service_of_another_protocol_or_that_answers_wrongly_or_failed_is_not_used() {
+        let cases = [
+            (
+                2,
+                running(0.1, "true", "null", ""),
+                "the sensor service speaks protocol 2, \
+              this Libre Panel 1: set it up again from this version",
+            ),
+            (
+                1,
+                r#"{"v": 1, "ok": true, "state": "running", "sensors": "none"}"#.to_string(),
+                "sensors is a list of at most 10000",
+            ),
+            (
+                1,
+                r#"{"v": 1, "ok": true, "state": "failed", "error": "no .NET", "sensors": []}"#
+                    .to_string(),
+                "LibreHardwareMonitor did not start in the service: no .NET",
+            ),
+        ]; // fmt: skip
+        for (number, answer, why) in cases {
+            let made = service(&[answer]);
+            made.lock().unwrap().protocol = number;
+            let said = Said::default();
+            let source = ServiceSource::start(options(&[], 0.2, 0.2, &said), opener(&made));
+            assert!(source.wait_ready(5.0)); // (it gave up for now)
+            assert!(source.read().is_empty());
+            assert_eq!(source.status().error, why);
+            let told = said.lock().unwrap().clone();
+            let failed = format!("the sensor service does not answer: {why}");
+            assert_eq!(told, [failed, format!("failure: {why}")]);
+        }
+    }
+
+    #[test]
+    fn a_service_not_answered_yet_is_waited_for_longer_than_one_that_went_silent() {
+        // never answered: given up after start_wait_seconds (it starts a while after Windows)
+        let made = service(&[running(0.1, "true", "null", "")]);
+        made.lock().unwrap().up = false;
+        let said = Said::default();
+        let began = Instant::now();
+        let source = ServiceSource::start(options(&[], 0.2, 2.5, &said), opener(&made));
+        assert!(source.wait_ready(10.0));
+        assert!(began.elapsed().as_secs_f64() >= 2.5);
+        let why = "the service does not run";
+        let failed = format!("the sensor service does not answer: {why}");
+        assert_eq!(
+            said.lock().unwrap().clone(),
+            [failed, format!("failure: {why}")]
+        );
+        // taken back when it answers
+        made.lock().unwrap().up = true;
+        let back = || {
+            said.lock()
+                .unwrap()
+                .iter()
+                .any(|line| line == "ready: service")
+        };
+        assert!(until(15.0, back));
+        assert!(source.live());
+        // once it answered, silence is given up on after wait_seconds
+        let said = Said::default();
+        let made = service(&[running(0.1, "true", "null", "")]);
+        let source = ServiceSource::start(options(&[], 0.2, 2.5, &said), opener(&made));
+        assert!(source.wait_ready(5.0));
+        let silent = Instant::now();
+        made.lock().unwrap().up = false;
+        let given_up = || {
+            said.lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.starts_with("failure"))
+        };
+        assert!(until(10.0, given_up));
+        assert!(
+            silent.elapsed().as_secs_f64() < 2.5,
+            "{:?}",
+            silent.elapsed()
+        );
+    }
+
+    #[test]
+    fn without_pawnio_the_cpu_is_out_of_reach_and_the_status_says_why() {
+        let timing = r#", "timing": {"last": {"full": false, "parts": [["/amdcpu/0",
+            "AMD Ryzen 7 7800X3D", "Cpu", 0.0042]]}, "full": {"full": true, "parts": [["/amdcpu/0",
+            "AMD Ryzen 7 7800X3D", "Cpu", 0.004], ["/lpc/nct6798d", "Nuvoton NCT6798D",
+            "SuperIO", 0.0121]]}}"#;
+        let made = service(&[running(0.1, "false", "null", timing)]);
+        let said = Said::default();
+        let source = ServiceSource::start(options(&[], 20.0, 180.0, &said), opener(&made));
+        assert!(source.wait_ready(5.0));
+        let status = source.status();
+        assert_eq!((status.ring0, status.pawnio), (Some(false), None));
+        let missing = "the sensor service cannot read the CPU's sensors: PawnIO is missing";
+        assert!(said.lock().unwrap().iter().any(|line| line == missing));
+        let line = "round time: last round 4.2 ms (1 part), all hardware 16.1 ms (2 parts)";
+        assert_eq!(round_line(status.timing.as_ref()), line);
+        let older = "round time: not reported by this service version";
+        assert_eq!(round_line(None), older);
+        assert_eq!(
+            round_line(Some(&protocol::Timing::default())),
+            "round time: no round yet"
+        );
+    }
+
+    #[test]
+    fn the_check_waits_for_fresh_readings_and_says_what_it_found() {
+        let starting = r#"{"v": 1, "ok": true, "state": "starting", "sensors": []}"#;
+        let made = service(&[
+            starting.to_string(),
+            running(9.0, "true", r#""2.0.1""#, ""),
+            running(0.4, "true", r#""2.0.1""#, ""),
+        ]); // fmt: skip
+        let slept = Arc::new(Mutex::new(0.0));
+        let sleep = |seconds: f64| *slept.lock().unwrap() += seconds;
+        let (worked, lines) = check(&mut opener(&made), 15.0, &sleep);
+        assert!(worked);
+        assert_eq!(*slept.lock().unwrap(), 1.0);
+        assert_eq!(
+            lines,
+            [
+                "sensor service 1.4.0, protocol 1",
+                "read through the sensor service: 2 sensors of 2 parts",
+                "CPU temperature, power and clock: available",
+                "PawnIO driver: 2.0.1",
+                "round time: not reported by this service version",
+                "cpu.temp: 51.5 °C",
+                "gpu.temp: 48.0 °C",
+            ]
+        ); // fmt: skip
+        made.lock().unwrap().up = false;
+        let (worked, lines) = check(&mut opener(&made), 15.0, &sleep);
+        assert!(!worked);
+        assert_eq!(
+            lines,
+            ["The sensor service does not answer: the service does not run"]
+        );
+    }
+}

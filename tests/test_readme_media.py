@@ -189,9 +189,16 @@ def test_a_clip_that_loops_fades_its_end_into_its_start(encode, tmp_path):
 
 @pytest.fixture(scope="module")
 def panel():
-    """tools/media_panel.py, with a short history to start the graphs from."""
+    """tools/media_panel.py, with a short history to start the graphs from. The tools run Libre
+    Panel in Rust (lp-check and the program): where rust/ is not built, their tests skip."""
     with pytest.MonkeyPatch.context() as patch:
         patch.syspath_prepend(str(TOOLS))
+        import lp_check
+
+        try:
+            lp_check.program(), lp_check.app_program()
+        except SystemExit as missing:
+            pytest.skip(str(missing))
         import media_panel
 
         patch.setattr(media_panel, "PREFILL_S", 10.0)
@@ -243,10 +250,10 @@ LONG = ("card-ignition", "card-turns", "volume-band", "volume-looks", "theme-tub
 
 def test_every_panel_recipe_runs_headless_and_makes_a_clip(panel, clip, short):
     assert list(panel.CLIPS) == [
-        "video-mode", "card-ignition", "card-turns", "ai-card", "agents", "small-panel",
-        "volume-band", "volume-looks", "theme-tube", "game-entrance", "close-up-rings",
-        "close-up-curves", "encore", "nimbus", "terra", "almanac", "music-page", "round-report",
-        "screens-in-turn", "themes-tour",
+        "video-mode", "light", "morph", "card-ignition", "card-turns", "ai-card", "agents",
+        "small-panel", "volume-band", "volume-looks", "theme-tube", "game-entrance",
+        "close-up-rings", "close-up-curves", "encore", "encore-v2", "nimbus", "terra",
+        "almanac", "music-page", "round-report", "screens-in-turn", "themes-tour",
     ]  # fmt: skip
     widths = {}
     for name, recipe in panel.CLIPS.items():
@@ -325,7 +332,9 @@ def test_the_tube_goes_to_the_other_screen_and_back(clip):
     tube = clip("theme-tube")
     assert differ(tube, 5, 28) > 12  # another screen from 2.5 s on
     assert differ(tube, 5, 12) > 5  # a line of light opens between the two at 1.2 s
-    assert differ(tube, 5, tube.frames.count - 1) < 3.5  # back where it began (graphs moved on)
+    # back where it began (the other screen is ~33 apart): its graphs and readings moved on, and
+    # its moving light is at other steps (half a second into it, it is ~3.8 from its first frame)
+    assert differ(tube, 5, tube.frames.count - 1) < 5
 
 
 def test_the_entrance_darkens_the_panel_for_the_game_and_the_end(clip):
@@ -347,11 +356,19 @@ def test_the_card_slot_changes_and_changes_back(clip):
     assert np.abs(card(5) - card(cards.frames.count - 1)).mean() < 1.5  # playing again at the end
 
 
-def test_the_time_of_day_runs_in_a_clip_of_a_clock_and_stands_still_in_the_others(panel, short):
-    clock = panel.Clock()
-    clock.now = panel.START + 2.5
-    assert panel._RunningTime(clock).time() == panel.images.WHEN + 2.5
-    assert panel._FrozenTime().time() == panel.images.WHEN
+def test_the_time_of_day_runs_in_a_clip_of_a_clock_and_stands_still_in_the_others(
+    panel, encode, short
+):
+    # the time of day the program is told: for a reading of a graph's history, and two frames
+    def walls(clock_runs):
+        with panel.workshop() as home:
+            stage = panel.Stage(home, encode.Settings(fps=10))
+            stage.show("almanac")
+            lines = [json.loads(line) for line in stage._feed([-1.0], [0, 25], clock_runs)]
+        assert [line["t"] for line in lines] == [panel.START - 1.0, panel.START, panel.START + 2.5]
+        return [line["wall"] - panel.images.WHEN for line in lines]
+
+    assert walls(True) == [-1.0, 0.0, 2.5] and walls(False) == [0.0, 0.0, 0.0]
     assert panel.CLIPS["almanac"].clock_runs and not panel.CLIPS["video-mode"].clock_runs
     # Almanac Analog's second hand glides: a face a second apart is not the same
     analog = short("nimbus", themes=("almanac-analog",), scale=0.3)
@@ -390,14 +407,10 @@ def test_the_cards_take_turns_in_the_slot_and_come_round_again(panel, clip):
 def test_the_cards_go_from_one_to_the_next_another_way_each_time(panel):
     """The recipe's moments, on a stand-in for the stage: the cards' time is cut short at once,
     and before each change the slot is given the next way."""
-    from types import SimpleNamespace
-
-    box = SimpleNamespace(turns=[300.0] * 4, turn_at=0.0, transition="light")
 
     class Stage:
-        clock = SimpleNamespace(now=12.0)
-        loop = SimpleNamespace(renderer=SimpleNamespace(_slots={"cards": box}))
-        moments: list = []
+        def __init__(self):
+            self.moments, self.slotted = [], []
 
         def theme(self, name, widgets=None):
             self.widgets = widgets
@@ -409,6 +422,9 @@ def test_the_cards_go_from_one_to_the_next_another_way_each_time(panel):
         def at(self, at, do):
             self.moments.append((at, do))
 
+        def slot(self, seconds=None, way=None):
+            self.slotted.append((seconds, way))
+
     stage = Stage()
     panel.card_turns(stage, ("lumen",))
     slots = [w for w in stage.widgets if w.get("module") == "cards"]
@@ -417,13 +433,12 @@ def test_the_cards_go_from_one_to_the_next_another_way_each_time(panel):
     ways = []
     for at, do in sorted(stage.moments, key=lambda moment: moment[0]):
         do(stage)
-        ways.append((round(at, 2), box.transition))
+        ways.append((round(at, 2), stage.slotted[-1]))
+    turn = panel.CARD_TURN_S
     assert ways == [
-        (0.0, "fade"), (round(panel.CARD_TURN_S + 0.3, 2), "slide"),
-        (round(2 * panel.CARD_TURN_S + 0.3, 2), "rise"),
-        (round(3 * panel.CARD_TURN_S + 0.3, 2), "wipe"),
+        (0.0, (turn, "fade")), (round(turn + 0.3, 2), (None, "slide")),
+        (round(2 * turn + 0.3, 2), (None, "rise")), (round(3 * turn + 0.3, 2), (None, "wipe")),
     ]  # fmt: skip
-    assert box.turns == [panel.CARD_TURN_S] * 4 and box.turn_at == 12.0
 
 
 def test_the_tour_shows_each_of_the_themes_and_comes_round_to_the_first(panel, clip):
@@ -444,11 +459,12 @@ def test_the_tour_shows_each_of_the_themes_and_comes_round_to_the_first(panel, c
 def test_the_start_clip_is_the_boot_logo_then_the_standby_clip_round_and_round(
     panel, encode, tmp_path
 ):
-    from libre_panel.render import bootscreen
-
     start = panel.START_CLIPS["start-screen"]
     assert start.kind == "panel" and start.about
-    fps = bootscreen.CLIP_FPS  # (the clip's own rate: a round is its frames)
+    own = [panel.DEFAULT_LOOK]
+    with panel.start_screens(start.themes[0], 0.1, own) as (fps, every, _logo, clips):
+        ((look, loop),) = list(clips)  # (the clip's own rate: a round is its frames)
+    assert look == every[0] == panel.DEFAULT_LOOK
     settings = encode.Settings(fps=fps, scale=0.1)
     recorded = panel.record_start("start-screen", start, settings, tmp_path)
     frames = recorded.frames
@@ -456,10 +472,10 @@ def test_the_start_clip_is_the_boot_logo_then_the_standby_clip_round_and_round(
     logo = round(start.logo_s * fps)
     assert differ(recorded, 0, logo - 1) == 0  # the logo stands
     assert differ(recorded, logo - 1, logo) > 0  # the clip begins
-    after = logo + bootscreen.CLIP_FRAMES  # and comes round
+    after = logo + len(loop)  # and comes round
     assert differ(recorded, logo, after) == 0 < differ(recorded, logo, logo + 20)
     looks = len(start.looks)  # then the other looks, each for a while
-    assert set(start.looks) == set(bootscreen.designs()) - {bootscreen.DEFAULT}
+    assert set(start.looks) == set(every) - {panel.DEFAULT_LOOK}
     for k in range(looks):
         at = frames.count - round((looks - k - 0.5) * start.look_s * fps)
         assert differ(recorded, logo, at) > 1  # (not Libre Panel's own any more)
@@ -483,34 +499,27 @@ def test_a_clip_shows_the_theme_it_is_given(panel, clip, encode, tmp_path):
                      tmp_path / "x", themes=("studio",))  # fmt: skip
 
 
-def test_a_clip_leaves_the_machine_as_it_found_it(panel, encode, tmp_path, monkeypatch):
+def test_a_clip_is_made_in_a_settings_folder_of_its_own(panel):
+    """None of the user's themes, config or plugins, nothing of the desktop, no panel of this
+    computer; and nothing of it left after."""
     import os
-    import time
 
-    from libre_panel import app, i18n
-    from libre_panel.plugins import loader
-
-    monkeypatch.setattr(loader, "_installed", lambda group: iter(["a plugin of the machine"]))
-    before = os.environ["LIBRE_PANEL_HOME"]
-    i18n.set_language("de")
+    before = dict(os.environ)
     with panel.workshop() as home:
-        assert os.environ["LIBRE_PANEL_HOME"] == str(home) != before  # a folder of its own
-        assert list(loader._installed("libre_panel.themes")) == []  # no plugin of the machine
-        assert app.time.time() == panel.images.WHEN == app.time.time()  # the time stands still
-        assert app.time.sleep is time.sleep  # (the rest of ``time`` is the real one)
-    assert os.environ["LIBRE_PANEL_HOME"] == before and app.time is time
-    assert list(loader._installed("libre_panel.themes")) == ["a plugin of the machine"]
-    assert i18n.language() == "de"
-    i18n.set_language("en")
+        env = panel._environment(home)
+        assert env["LIBRE_PANEL_HOME"] == str(home) != os.environ.get("LIBRE_PANEL_HOME")
+        assert env["LIBRE_PANEL_DATA"] == str(panel.ROOT / "data")
+        assert "DISPLAY" not in env and "WAYLAND_DISPLAY" not in env
+        assert (home / "bus").read_text() == "" and env["LP_TEST_BUS"] == str(home / "bus")
+        assert not (home / "plugins").exists() and not (home / "themes").exists()
+    assert not home.exists() and dict(os.environ) == before
 
 
 def test_values_surge_and_settle_again(panel):
-    from libre_panel.sensors.base import Reading
-
     readings = {
-        "cpu.load": Reading("cpu.load", 70.0, "%"),
-        "cpu.power": Reading("cpu.power", 40.0, "W"),
-        "gpu.load": Reading("gpu.load", 10.0, "%"),
+        "cpu.load": panel.Reading(70.0, "%"),
+        "cpu.power": panel.Reading(40.0, "W"),
+        "gpu.load": panel.Reading(10.0, "%"),
     }
     change = panel.surge({"cpu.load": 50, "cpu.power": 40, "fan": 9}, at=2.0, rise=1.0, hold=1.0,
                          fall=2.0, every=8.0)  # fmt: skip
@@ -528,9 +537,7 @@ def test_values_surge_and_settle_again(panel):
 
 
 def test_what_plays_can_be_silenced_for_a_while(panel):
-    from libre_panel.sensors.base import Reading
-
-    readings = {"media.title": Reading("media.title", "x"), "cpu.load": Reading("cpu.load", 1.0)}
+    readings = {"media.title": panel.Reading("x"), "cpu.load": panel.Reading(1.0)}
     quiet = panel.silence("media.", 2.0, 5.0)
     for seconds, gone in ((1.9, False), (2.0, True), (4.9, True), (5.0, False)):
         now = dict(readings)
@@ -539,12 +546,8 @@ def test_what_plays_can_be_silenced_for_a_while(panel):
 
 
 def test_the_demo_comes_round_with_a_clip_that_loops(panel):
-    clock = panel.Clock()
-    looping, plain = panel.ClipDemo(clock, [], period=8.0), panel.ClipDemo(clock, [])
-    at = {}
-    for seconds in (0.0, 3.3, 8.0, 16.0):
-        clock.now = panel.START + seconds
-        at[seconds] = looping.read()
+    times = [0.0, 3.3, 8.0, 16.0]
+    at = dict(zip(times, panel.Demo([], period=8.0).read(times), strict=True))
     for key in ("cpu.load", "gpu.fan", "net.down"):
         assert (
             at[0.0][key].value
@@ -553,10 +556,18 @@ def test_the_demo_comes_round_with_a_clip_that_loops(panel):
         )
     assert at[0.0]["cpu.load"].value != at[3.3]["cpu.load"].value  # it moves in between
     assert at[3.3]["temp.cpu.package"].value == at[3.3]["cpu.temp"].value  # copies agree
-    clock.now = panel.START
-    start = plain.read()["cpu.load"].value
-    clock.now = panel.START + 8.0
-    assert plain.read()["cpu.load"].value != pytest.approx(start)  # (without a period it goes on)
+    start, later = panel.Demo([]).read([0.0, 8.0])
+    assert later["cpu.load"].value != pytest.approx(start["cpu.load"].value)  # (without a period
+    # it goes on)
+
+
+def test_the_demo_s_readings_are_typed_as_the_program_takes_them(panel):
+    """A reading's value goes to the program with its type (lp-check's), floats by their bits:
+    the demo's values come back as they went."""
+    (said,) = panel.ask([{"op": "clip_demo", "when": panel.images.WHEN, "seconds": [1.5],
+                          "period": None}])  # fmt: skip
+    for key, value, _unit, _label in said["frames"][0]:
+        assert panel.typed(panel._plain(value)) == value, key
 
 
 def test_the_bezel_is_the_device_frame_of_the_images_tool(panel):
@@ -631,18 +642,17 @@ def test_a_crop_around_an_element_keeps_its_room_inside_the_window(app_clips):
 
 
 def test_the_app_of_the_clips_is_opened_with_the_token_it_wants(app_clips, panel):
-    """The editor's server answers only the token of its run (editor/access.py); the address the
-    recipes open has it after the ``#``, where the app takes it from."""
+    """The app's server answers only the token of its run; the address the recipes open has it
+    after the ``#``, where the app takes it from (``#token=...``), and a request says it in its
+    ``X-Libre-Panel`` header."""
     import json
     import urllib.request
 
-    from libre_panel.editor import access
-
     data, folder = panel.theme_data("layout-desk")
     with app_clips.running(data, folder) as url:
-        base, token = access.split_token(url)
+        base, _sep, token = url.partition("#token=")
         assert token and url == f"{base}#token={token}" and base.startswith("http://127.0.0.1:")
-        request = urllib.request.Request(base + "api/themes", headers={access.HEADER: token})
+        request = urllib.request.Request(base + "api/themes", headers={"X-Libre-Panel": token})
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request) as answer:
             assert any(theme["id"] == app_clips.THEME for theme in json.load(answer))
 
@@ -680,11 +690,9 @@ def samples():
 
 
 def test_the_made_up_library_draws_each_file_at_any_size_and_time(samples):
-    from libre_panel import player
-
     assert len(samples.SAMPLES) >= 5
     for name, sample in samples.SAMPLES.items():
-        assert sample.kind in player.KINDS, name
+        assert sample.kind in ("video", "animation", "picture"), name  # (the Player's kinds)
         first, again = samples.frame(name, 3.0, (160, 90)), samples.frame(name, 3.0, (160, 90))
         assert first.size == (160, 90) and first.mode == "RGB", name
         assert first.tobytes() == again.tobytes(), name  # the same on every run
@@ -822,21 +830,24 @@ def test_the_desk_has_the_panel_below_the_monitor_as_the_desktop_has_it(scene):
 def test_the_top_of_the_readme_is_the_headline_over_lumen_in_its_frame(
     scene, encode, tmp_path, monkeypatch
 ):
-    made = []
+    made, asked = [], []
 
-    def lumen(settings):  # (Lumen, made up: a colour a frame)
+    def lumen(settings, theme):  # (the panel, made up: a colour a frame)
+        asked.append(theme)
         sink = encode.FrameSink(tmp_path / f"lumen-{len(made)}", fps=50)
         for n in range(4):
             sink.add(Image.new("RGB", (384, 96), (40 * n, 90, 200)))
         made.append(sink.frames().folder)
         return sink.frames(), 1
 
-    monkeypatch.setattr(scene, "_bare_lumen", lumen)
+    monkeypatch.setattr(scene, "_bare_panel", lumen)
     pictures = {}
     for language in ("en", "de"):
         out = encode.FrameSink(tmp_path / language, fps=scene.FPS)
-        poster = scene.hero(language)(encode.Settings(), out)
-        assert not made[-1].exists()  # (Lumen's frames are gone once they are in it)
+        hero = scene.CLIPS["hero" if language == "en" else "hero-de"]
+        assert hero.themes == ("lumen-v2",)  # (the README's top shows Lumen v2, its light)
+        poster = hero.draw(encode.Settings(), out, hero.themes)
+        assert asked[-1] == "lumen-v2" and not made[-1].exists()  # (gone once it is in it)
         frames = out.frames()
         assert frames.count == 2 and poster == 0  # every second frame: 50 a second to 25
         first, second = (np.asarray(frames.image(n), np.int16) for n in range(2))
@@ -858,7 +869,7 @@ def test_a_scene_draws_the_website_and_the_app_in_their_windows(scene, encode, t
         patch.setattr(scene, "SCENE_S", 0.4)  # (ten frames: the first moments of the scene)
         sink = encode.FrameSink(tmp_path / "scene", fps=scene.FPS)
         try:
-            scene.screen_monitor(encode.Settings(scale=0.5), sink)
+            scene.screen_monitor(encode.Settings(scale=0.5), sink, ("lumen",))
         except scene.media_app.Unavailable as error:
             pytest.skip(str(error))
     frames = sink.frames()

@@ -26,6 +26,9 @@ pub const CONFIG_FILENAME: &str = "config.toml";
 pub const DEFAULT_THEME: &str = "libre-default";
 pub const SYMBOL_PACKS: [&str; 2] = ["classic", "vivid"];
 pub const DEFAULT_SYMBOLS: &str = "vivid";
+/// How amounts of data are said (`data_unit`): "auto" each in the unit that fits it (KB/s,
+/// MB/s, GB/s; the graphics card's memory in GB), "mb" in MB alone.
+pub const DATA_UNITS: [&str; 2] = ["auto", "mb"];
 pub const MOTIONS: [&str; 3] = ["auto", "full", "calm"];
 pub const STILLS: [&str; 3] = ["auto", "png", "jpeg"];
 pub const VIDEO_RANGES: [&str; 3] = ["auto", "limited", "full"];
@@ -274,7 +277,9 @@ pub struct HardwareConfig {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeatherConfig {
     pub enabled: bool,
+    /// "open-meteo" or "openweathermap" (with the user's `api_key`)
     pub provider: String,
+    pub api_key: String,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub place: String,
@@ -287,6 +292,7 @@ impl Default for WeatherConfig {
         WeatherConfig {
             enabled: false,
             provider: "open-meteo".into(),
+            api_key: String::new(),
             latitude: None,
             longitude: None,
             place: String::new(),
@@ -317,6 +323,9 @@ pub struct ModeConfig {
 pub struct TransitionsConfig {
     pub default: String,
     pub speed: String,
+    /// a slide, the wipe and the line of light over all the panels as one, where they all
+    /// change at once (render/canvas.py)
+    pub canvas: bool,
     pub occasions: IndexMap<String, String>,
     pub random: Vec<String>,
 }
@@ -326,12 +335,63 @@ impl Default for TransitionsConfig {
         TransitionsConfig {
             default: "fade".into(),
             speed: "normal".into(),
+            canvas: true,
             occasions: OCCASION_TRANSITIONS
                 .iter()
                 .map(|(occasion, name)| (occasion.to_string(), name.to_string()))
                 .collect(),
             random: RANDOM_TRANSITIONS.iter().map(|n| n.to_string()).collect(),
         }
+    }
+}
+
+/// The light that moves over a panel that moves (`[shine]`, render/shine.py), each kind of it.
+pub const SHINE_KINDS: [&str; 5] = ["rings", "graphs", "music", "downloads", "sun"];
+
+/// `[shine]`: which light moves over a panel that moves: a ring's end that breathes and a
+/// sweep along it, a graph's end that beats, a cover that glows while music plays (with the
+/// bars after "Playing" and the progress's light), a download's sheen, the sun's glow and
+/// glint. A theme may show fewer (its `animation.shine`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShineConfig {
+    pub rings: bool,
+    pub graphs: bool,
+    pub music: bool,
+    pub downloads: bool,
+    pub sun: bool,
+}
+
+impl Default for ShineConfig {
+    fn default() -> ShineConfig {
+        ShineConfig {
+            rings: true,
+            graphs: true,
+            music: true,
+            downloads: true,
+            sun: true,
+        }
+    }
+}
+
+impl ShineConfig {
+    /// Whether the kind `kind` (one of SHINE_KINDS) is on.
+    pub fn on(&self, kind: &str) -> bool {
+        match kind {
+            "rings" => self.rings,
+            "graphs" => self.graphs,
+            "music" => self.music,
+            "downloads" => self.downloads,
+            "sun" => self.sun,
+            _ => false,
+        }
+    }
+
+    /// The kinds that are on, in SHINE_KINDS's order.
+    pub fn kinds(&self) -> Vec<&'static str> {
+        SHINE_KINDS
+            .into_iter()
+            .filter(|kind| self.on(kind))
+            .collect()
     }
 }
 
@@ -405,6 +465,8 @@ pub struct Config {
     pub fps: i64,
     pub transition: String,
     pub transitions: TransitionsConfig,
+    /// `[shine]`: the light that moves
+    pub shine: ShineConfig,
     pub check_updates: Option<bool>,
     pub allow_notify: bool,
     /// its icon in the notification area (the tray), with its menu
@@ -422,6 +484,7 @@ pub struct Config {
     pub hotkeys: IndexMap<String, String>,
     pub hotkeys_enabled: bool,
     pub symbols: String,
+    pub data_unit: String,
     pub cards: Vec<String>,
     pub card_order: String,
     pub card_transition: String,
@@ -451,6 +514,7 @@ impl Config {
             fps: 10,
             transition: "fade".into(),
             transitions: TransitionsConfig::default(),
+            shine: ShineConfig::default(),
             check_updates: None,
             allow_notify: false,
             tray_icon: false,
@@ -470,6 +534,7 @@ impl Config {
             hotkeys: IndexMap::new(),
             hotkeys_enabled: true,
             symbols: DEFAULT_SYMBOLS.into(),
+            data_unit: "auto".into(),
             cards: DEFAULT_CARDS.iter().map(|c| c.to_string()).collect(),
             card_order: "first".into(),
             card_transition: "light".into(),
@@ -824,6 +889,7 @@ fn transitions(cfg: &mut Config, table: &Table) -> Result<()> {
                     return Err(config_error(format!("{name}: one of {}", listed(&speeds))));
                 }
             }
+            "canvas" => cfg.transitions.canvas = bool_of(value, &name)?,
             "random" => {
                 let names = list_of(value, &name)?;
                 if names.is_empty() || names.len() > 32 {
@@ -853,6 +919,28 @@ fn transitions(cfg: &mut Config, table: &Table) -> Result<()> {
                 )))
             }
         }
+    }
+    Ok(())
+}
+
+/// _shine: `[shine]` into the config: each kind of the light that moves, on or off.
+fn shine(cfg: &mut Config, table: &Table) -> Result<()> {
+    for (key, value) in table {
+        let name = format!("shine.{key}");
+        let on = match key.as_str() {
+            "rings" => &mut cfg.shine.rings,
+            "graphs" => &mut cfg.shine.graphs,
+            "music" => &mut cfg.shine.music,
+            "downloads" => &mut cfg.shine.downloads,
+            "sun" => &mut cfg.shine.sun,
+            _ => {
+                return Err(config_error(format!(
+                    "unknown setting {}",
+                    lp_py::repr(&name)
+                )))
+            }
+        };
+        *on = bool_of(value, &name)?;
     }
     Ok(())
 }
@@ -1435,12 +1523,22 @@ pub fn parse_config(data: &Table, path: Option<&Path>, platform: &str) -> Result
         cfg.transition = cfg.transitions.default.clone();
     }
     transitions(&mut cfg, table_of(data, "transitions", &empty)?)?;
+    shine(&mut cfg, table_of(data, "shine", &empty)?)?;
     if let Some(value) = data.get("symbols") {
         cfg.symbols = lp_py::strip(str_of(value, "symbols")?).to_string();
         if !SYMBOL_PACKS.contains(&cfg.symbols.as_str()) {
             return Err(config_error(format!(
                 "symbols: must be one of {}",
                 listed(&SYMBOL_PACKS)
+            )));
+        }
+    }
+    if let Some(value) = data.get("data_unit") {
+        cfg.data_unit = lp_py::strip(str_of(value, "data_unit")?).to_string();
+        if !DATA_UNITS.contains(&cfg.data_unit.as_str()) {
+            return Err(config_error(format!(
+                "data_unit: must be one of {}",
+                listed(&DATA_UNITS)
             )));
         }
     }
@@ -1550,6 +1648,7 @@ pub fn parse_config(data: &Table, path: Option<&Path>, platform: &str) -> Result
     let w = table_of(data, "weather", &empty)?;
     cfg.weather.enabled = flag(w, "enabled", false, "weather.enabled")?;
     cfg.weather.provider = text(w, "provider", "open-meteo", "weather.provider")?;
+    cfg.weather.api_key = text(w, "api_key", "", "weather.api_key")?;
     if let Some(value) = w.get("latitude") {
         cfg.weather.latitude = Some(number_of(value, "weather.latitude")?);
     }

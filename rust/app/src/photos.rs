@@ -72,7 +72,7 @@ pub fn panels(
     let picture = photo(env, &placed).map_err(|why| failed(why.0))?;
     let picture = picture.ok_or_else(nothing)?;
     let png = lp_devices::png::encode_optimized(&picture).map_err(failed)?;
-    let [year, month, day, ..] = crate::share::local_time(crate::share::now());
+    let [year, month, day, ..] = crate::share::local_time(crate::clock::now());
     Ok((
         png,
         format!("libre-panel-{year:04}-{month:02}-{day:02}.png"),

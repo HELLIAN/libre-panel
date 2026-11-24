@@ -869,6 +869,50 @@ pub fn demo_history(t: f64, wave: (&str, f64, f64, f64), samples: usize) -> Vec<
     points.collect()
 }
 
+/// The demo's readings `seconds` after `when` as a clip of the README has them
+/// (tools/media_panel.py): the waves shaped like a load (demo_history's shape, not the sine),
+/// a copy under a friendlier name with them. With a `period` (a clip that loops) the wave a
+/// period on is blended in over the period, smoothly, so that each value is the same when the
+/// clip ends as when it begins.
+pub fn clip_readings(when: f64, seconds: f64, period: Option<f64>, local: &Zone) -> Readings {
+    let mut out = read(when + seconds, local);
+    let shape = |wave, at: f64| demo_history(when + at, wave, 1)[0];
+    for (key, _, unit, base, amp, every) in waves() {
+        if amp == 0.0 {
+            continue;
+        }
+        let wave = (unit, base, amp, every);
+        let value = match period {
+            None => shape(wave, seconds),
+            Some(period) => {
+                let x = seconds.rem_euclid(period);
+                let share = (x / period).clamp(0.0, 1.0);
+                let share = share * share * (3.0 - 2.0 * share);
+                (1.0 - share) * shape(wave, x + period) + share * shape(wave, x)
+            }
+        };
+        let Some(reading) = out.get_mut(&key) else {
+            continue;
+        };
+        reading.value = Value::Float(value);
+        let origin = reading.origin.clone();
+        if let Some(copy) = out.get_mut(&origin) {
+            copy.value = Value::Float(value);
+        }
+    }
+    out
+}
+
+/// wave_histories: each wave's history at `t` (demo_history), by its key.
+pub fn wave_histories(t: f64, samples: usize) -> Vec<(String, Vec<f64>)> {
+    waves()
+        .into_iter()
+        .map(|(key, _, unit, base, amp, period)| {
+            (key, demo_history(t, (unit, base, amp, period), samples))
+        })
+        .collect()
+}
+
 /// demo_snapshot: a complete snapshot at `t` with filled graph history, for previews and
 /// the app (its pictures apart: `pictures`).
 pub fn demo_snapshot(t: f64, samples: usize, local: &Zone) -> Result<Snapshot, String> {
@@ -876,6 +920,7 @@ pub fn demo_snapshot(t: f64, samples: usize, local: &Zone) -> Result<Snapshot, S
     readings.extend(demo_report(t, 7)?);
     readings.extend(demo_session());
     readings.extend(demo_downloads(t));
+    readings.extend(named_readings().iter().cloned());
     let history = waves()
         .into_iter()
         .map(|(key, _, unit, base, amp, period)| {
@@ -888,6 +933,42 @@ pub fn demo_snapshot(t: f64, samples: usize, local: &Zone) -> Result<Snapshot, S
         now,
         fold,
         images: IndexMap::new(),
+    })
+}
+
+/// LP_DEMO_READINGS: a JSON file of readings the demo's snapshot shows over its own, each
+/// `{"key": [value, unit, label]}` (tools/readme_images.py: the weather and the moon of the
+/// README's pictures of the app); none where it is not set or cannot be read.
+pub const NAMED_READINGS_ENV: &str = "LP_DEMO_READINGS";
+
+fn named_readings() -> &'static [(String, Reading)] {
+    static NAMED: std::sync::OnceLock<Vec<(String, Reading)>> = std::sync::OnceLock::new();
+    NAMED.get_or_init(|| {
+        let Some(path) = std::env::var_os(NAMED_READINGS_ENV) else {
+            return Vec::new();
+        };
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let Ok(Value::Dict(given)) = lp_py::json::loads(&text) else {
+            return Vec::new();
+        };
+        let text_of = |v: Option<&Value>| match v {
+            Some(Value::Str(s)) => s.clone(),
+            _ => String::new(),
+        };
+        given
+            .into_iter()
+            .filter_map(|(key, told)| {
+                let Value::List(told) = told else {
+                    return None;
+                };
+                let reading = Reading {
+                    unit: text_of(told.get(1)),
+                    label: text_of(told.get(2)),
+                    ..Reading::of(told.first()?.clone())
+                };
+                Some((key, reading))
+            })
+            .collect()
     })
 }
 

@@ -26,6 +26,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
+import golden
 import pytest
 from rust_check import run
 
@@ -237,9 +238,7 @@ def test_json_is_read_and_written_as_python_s() -> None:
     texts += [_broken(rng, text) for text in texts[:3000]]
     texts += ["", " ", "﻿[]", "1" * 4300, "-" + "1" * 4301, '{"a":1,}', "[1,]", "01"]
     # every theme that comes with the app, as it is on disk
-    themes = sorted(
-        (Path(__file__).resolve().parent.parent / "src/libre_panel/themes").glob("*/theme.json")
-    )
+    themes = sorted((Path(__file__).resolve().parent.parent / "data/themes").glob("*/theme.json"))
     texts += [path.read_text(encoding="utf-8") for path in themes]
     [ours] = run([{"op": "json", "texts": texts}])
     halves = 0
@@ -556,7 +555,13 @@ def test_wide_characters_as_python_s_east_asian_width() -> None:
 def test_time_zones_found_as_zoneinfo_finds_them() -> None:
     # (in the search path, else in the tzdata package, on Windows all of them; a key checked
     # by the system's own paths' rules)
-    from libre_panel import timezones
+    from zoneinfo import ZoneInfo
+
+    def found(key: str) -> bool:
+        try:
+            return bool(key) and ZoneInfo(key) is not None
+        except (ValueError, KeyError, OSError):  # (KeyError: ZoneInfoNotFoundError)
+            return False
 
     keys = ["", "UTC", "Asia/Tokyo", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Nope/Zone"]
     keys += ["/etc/localtime", "../etc/passwd", "Europe/", "./UTC", "..", ".", "a//b", "zone.tab"]
@@ -565,7 +570,7 @@ def test_time_zones_found_as_zoneinfo_finds_them() -> None:
     keys += ["Europe\\Berlin", "C:UTC", "..\\zoneinfo\\UTC", "America/Argentina", "Etc/UTC"]
     keys += ["Europe/Berlin/", "America.Argentina/Cordoba", "__init__.py", "America/Indiana/Knox"]
     [ours] = run([{"op": "py_num", "cases": [], "zones": keys}])
-    assert ours["zones"] == [timezones.zone.__wrapped__(k) is not None for k in keys]
+    assert ours["zones"] == [found(k) for k in keys]
 
 
 # -- time zones -----------------------------------------------------------------------------
@@ -816,7 +821,7 @@ def test_the_computer_s_zone_and_named_zones_as_python_takes_them() -> None:
         "Asia/Kolkata", "Pacific/Chatham", "America/Sao_Paulo", "Africa/Casablanca",
         "Europe/Dublin", "America/St_Johns", "Antarctica/Troll", "Pacific/Apia",
         "Pacific/Kiritimati", "Asia/Tehran", "America/Nuuk", "Asia/Gaza", "Europe/Moscow",
-        "EST5EDT", "WET", "Etc/GMT-14", "Etc/GMT+12", "America/Santiago", "Pacific/Easter",
+        "WET", "Etc/GMT-14", "Etc/GMT+12", "America/Santiago", "Pacific/Easter",
         "Asia/Jerusalem", "America/Adak", "Europe/London", "Africa/Cairo", "posixrules",
         "CET-1CEST,M3.5.0,M10.5.0/3", "EST5EDT,M3.2.0,M11.1.0", "<+0330>-3:30",
         "AEST-10AEDT,M10.1.0,M4.1.0/3", "NZST-12NZDT,M9.5.0,M4.1.0/3", "XXX3YYY,J60/2,J300/2",
@@ -830,11 +835,17 @@ def test_the_computer_s_zone_and_named_zones_as_python_takes_them() -> None:
         "CET-x",
     ]  # fmt: skip
     # (glibc reads these by rules or leniencies of its own: Rust says it does not know them)
-    unknown = ["CET-1CEST", "CET- 1", "CET-1:75", "CET-+1", "CET-1CEST,M3.5.0,M10.5.0/3,junk",
+    unknown = ["CET- 1", "CET-1:75", "CET-+1", "CET-1CEST,M3.5.0,M10.5.0/3,junk",
                "CET-1,M3.5.0,M10.5.0/3", "CET-1 x", "CET-001", "XXX3YYY,J0060/2,J300/2",
                "XXX3YYY,M3.05.0,M10.5.0", "XXX3YYY,J+60,J300/2", "XXX3YYY,J0,J300"]  # fmt: skip
     # (a zone of leap seconds, where there is one: glibc counts them)
-    (unknown if Path("/usr/share/zoneinfo/right/UTC").exists() else zones).append("right/UTC")
+    tzdir = Path(os.environ.get("TZDIR") or "/usr/share/zoneinfo")
+    (unknown if (tzdir / "right/UTC").exists() else zones).append("right/UTC")
+    # (summer time without its rules, where no file has the name: glibc takes the rules of
+    # TZDIR's posixrules, else its own, the United States')
+    without = ["CET-1CEST", "EST5EDT4", "EST5EDT,"]
+    (zones if (tzdir / "EST5EDT").exists() else without).append("EST5EDT")
+    (unknown if (tzdir / "posixrules").exists() else zones).extend(without)
     _zones_as_python_takes_them(zones, unknown, _NAMED_KEYS, {"UTC": _NAMED_KEYS})
 
 
@@ -1516,13 +1527,10 @@ def test_patterns_match_as_python_s_re() -> None:
     # (lp_py::regex, the part of re the app's own patterns are written in: the app's patterns
     # and ones made up of the same pieces, each searched, matched, matched whole, replaced and
     # split in texts; a pattern re refuses is refused)
-    from libre_panel.sensors import hwnames
-    from libre_panel.sensors import librehardwaremonitor as lhm
-
     rng = random.Random(0x5E)
-    real = [lhm._NUMBER, lhm._CORE_CLOCK, hwnames._MARKS, *hwnames._CPU_CUTS, hwnames._VENDOR,
-            hwnames._GENUINE, hwnames._COMPANY]  # fmt: skip
-    patterns = [(p.pattern, bool(p.flags & re.IGNORECASE)) for p in real]
+    # (the Python app's own, of its sensors' names and numbers: each with whether it ignores
+    # case)
+    patterns = [(pattern, ignore) for pattern, ignore in golden.given("own_patterns")]
     patterns += [
         (r"[^a-z0-9]+", False),
         (r"[*?\[]", False),

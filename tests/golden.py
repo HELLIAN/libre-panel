@@ -1,0 +1,286 @@
+"""The answers the comparisons got from lp-check while the Python app still checked them, kept
+(docs/RUST.md, R12 the switch): each answer, once it was the same as the Python app's, as a
+digest in tests/golden/<system>/<test file>.json, by test, call and case. A comparison that no
+longer has the Python app to ask (marked ``kept``) checks lp-check's answers against them
+(``rust_check.run`` does); the others go on asking what they compare with (Pillow, Python's
+own library, the modules the plugin host keeps), and their answers may depend on the computer
+(its zones, the time a file was written) as kept ones may not.
+
+``LP_GOLDEN=record`` keeps the answers of the marked tests that run (the Python app's
+comparisons passing, or else what the Rust app answers now, for a change meant to be seen): a
+test's kept answers are written anew as a whole, the other tests' stay. ``LP_GOLDEN_OUT``
+names a folder where the answers of every test that passed are written as well (CI keeps them
+as a file of its run, golden-<system>: what a test would keep, before it is marked).
+
+What depends on where a test ran is taken out first: its temporary folder, the app's files,
+the repository (each a word in angle brackets, with the path's separators as "/")."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+FOLDER = (
+    Path(__file__).resolve().parent / "golden" / ("win32" if sys.platform == "win32" else "linux")
+)
+RECORDING = os.environ.get("LP_GOLDEN") == "record"
+OUT = os.environ.get("LP_GOLDEN_OUT") or None
+
+_places: list[tuple[str, str]] = []  # (a path as it is written, its word), longest first
+_test: dict[str, Any] = {"file": None, "name": None, "kept": False, "calls": 0, "made": None,
+                         "told": {}}  # fmt: skip
+_files: dict[str, dict[str, Any]] = {}  # the kept answers by test file, as read or recorded
+_out: dict[str, dict[str, Any]] = {}  # the answers written to OUT by test file
+_given: dict[str, Any] = {}  # what was taken from the Python app, by name, as read
+
+
+def places(**named: Path | str) -> None:
+    """The paths to write as words in the answers (``tmp``, ``data``, ``repo``), in every spelling
+    an answer may have them in (as given, resolved, with "\\" or "/", JSON-escaped)."""
+    found = []
+    for word, path in named.items():
+        for spelled in {str(path), str(Path(path).resolve())}:
+            for each in {spelled, spelled.replace("\\", "/"), json.dumps(spelled)[1:-1]}:
+                found.append((each, f"<{word}>"))
+    _places[:] = sorted(set(found), key=lambda pair: -len(pair[0]))
+
+
+def _plain_text(value: str) -> str:
+    for spelled, word in _places:
+        if spelled and spelled in value:
+            start = value.find(spelled)
+            while start != -1:
+                end = start + len(spelled)
+                # (the rest of that path with "/" between its parts)
+                tail = re.match(r"[^\s\"'():,;]*", value[end:])
+                rest = tail.group(0).replace("\\", "/") if tail else ""
+                value = value[:start] + word + rest + value[end + len(rest) :]
+                start = value.find(spelled, start + len(word))
+    return value
+
+
+def _plain(value: Any) -> Any:
+    """The answer with the places taken out of its texts and keys; without calling itself, as
+    an answer nests as deep as a reader lets it (a TOML value about 500 levels)."""
+    holder = [value]
+    todo: list[tuple[Any, Any]] = [(holder, 0)]  # (where an item is, its index or key)
+    while todo:
+        into, at = todo.pop()
+        item = into[at]
+        if isinstance(item, str):
+            into[at] = _plain_text(item)
+        elif isinstance(item, list):
+            into[at] = made = list(item)
+            todo.extend((made, n) for n in range(len(made)))
+        elif isinstance(item, dict):
+            into[at] = made = {
+                (_plain_text(key) if isinstance(key, str) else key): each
+                for key, each in item.items()
+            }
+            todo.extend((made, key) for key in made)
+    return holder[0]
+
+
+def digest(value: Any) -> str:
+    """A short digest of an answer as JSON (keys sorted), the places taken out."""
+    text = json.dumps(_plain(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def given(name: str) -> Any:
+    """What a comparison's cases took from the Python app (a table of its, the demo's readings),
+    as it was when its answers were kept: tests/golden/given/<name>.json, or the system's own
+    in given/<system>/ where it was another there. The cases stay those the Python app
+    answered, whatever the app's own tables become."""
+    if name not in _given:
+        folders = (FOLDER.parent / "given" / FOLDER.name, FOLDER.parent / "given")
+        found = [f / f"{name}.json" for f in folders if (f / f"{name}.json").is_file()]
+        assert found, f"tests/golden/given has no {name}.json"
+        _given[name] = json.loads(found[0].read_text(encoding="utf-8"))
+    return _given[name]
+
+
+def told(what: str) -> Any:
+    """What the Python app told while the cases of the test that runs were made (``what``:
+    whether it read a theme, how wide it measured a text): the next of what it told then, in
+    the order it was asked. A test's cases depended on such answers here and there; with them
+    kept (given/<test file>.json: by test, by what was asked) the cases stay the ones its
+    kept answers are to."""
+    file, name, taken = _test["file"], _test["name"], _test["told"]
+    tape = given(file).get(name, {}).get(what)
+    assert tape is not None, f"nothing of what the Python app told {name} ({what}) was kept"
+    at = taken.get(what, 0)
+    assert at < len(tape), f"{name} asks for more of {what} than was kept ({len(tape)})"
+    taken[what] = at + 1
+    return tape[at]
+
+
+def untold() -> list[str]:
+    """What was kept of the Python app's telling for the test that runs and was not asked for:
+    its cases are then not the ones that were made."""
+    if _test["file"] is None or not _test["told"]:
+        return []
+    tapes = given(_test["file"]).get(_test["name"], {})
+    return [f"{what}: {len(tape) - _test['told'].get(what, 0)} of {len(tape)}"
+            for what, tape in tapes.items() if _test["told"].get(what, 0) != len(tape)]  # fmt: skip
+
+
+def _kept(file: str) -> dict[str, Any]:
+    if file not in _files:
+        path = FOLDER / f"{file}.json"
+        _files[file] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return _files[file]
+
+
+def begin(file: str, name: str, kept: bool) -> None:
+    """A test begins (its file's name without .py, its name with its parameters; whether it is
+    checked against what was kept)."""
+    made = [] if (RECORDING and kept) or OUT else None
+    _test.update(file=file, name=name, kept=kept, calls=0, made=made, told={})
+
+
+def unasked() -> int:
+    """How many of the calls kept for the test that runs it has not made (none: all were)."""
+    if not _test["kept"] or RECORDING:
+        return 0
+    kept = _kept(_test["file"]).get(_test["name"])
+    return 0 if kept is None else max(0, len(kept) - _test["calls"])
+
+
+def _write(folder: Path, tests: dict[str, Any], file: str) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(dict(sorted(tests.items())), indent=0, ensure_ascii=False)
+    (folder / f"{file}.json").write_text(text + "\n", encoding="utf-8")
+
+
+def end(passed: bool) -> None:
+    """A test ended: what it recorded is kept where it passed, and written."""
+    file, name, kept, made = _test["file"], _test["name"], _test["kept"], _test["made"]
+    _test.update(file=None, name=None, kept=False, calls=0, made=None, told={})
+    if file is None or not passed or made is None:
+        return
+    if OUT and made:
+        _out.setdefault(file, {})[name] = made
+        _write(Path(OUT) / FOLDER.name, _out[file], file)
+    if not RECORDING or not kept:
+        return
+    tests = _kept(file)
+    if not made and name not in tests:
+        return
+    if made:
+        tests[name] = made
+    else:
+        tests.pop(name, None)
+    _write(FOLDER, tests, file)
+
+
+def answered(answers: list[Any]) -> None:
+    """lp-check's answers to a call of the test: recorded, or checked against those kept."""
+    if _test["file"] is None:
+        return
+    call, digests = _test["calls"], [digest(answer) for answer in answers]
+    _test["calls"] += 1
+    if _test["made"] is not None:
+        _test["made"].append(digests)
+    if RECORDING or not _test["kept"]:
+        return
+    kept = _kept(_test["file"]).get(_test["name"])
+    # (asked for with the first answer, not before the test: one that leaves a system out
+    # has nothing kept there, and no answer either)
+    assert kept is not None, "nothing was kept for this test (LP_GOLDEN=record keeps it)"
+    assert call < len(kept), f"call {call} of {_test['name']}: none was kept"
+    differ = [n for n, (ours, theirs) in enumerate(zip(digests, kept[call], strict=False))
+              if ours != theirs]  # fmt: skip
+    assert len(digests) == len(kept[call]), (call, len(digests), len(kept[call]))
+    assert not differ, f"call {call}: cases {differ[:20]} answer otherwise than they did"
+
+
+def kept_here(mark: Any) -> bool:
+    """Whether the answers kept for a test hold on this computer, by its ``c_library`` mark
+    (None: it has none, and they hold on any). Such a test's pictures are worked out with the
+    C library's float functions (its sines, arc tangents, exponentials), whose last bits differ
+    from one library to the next: a pixel here and there comes out a level apart. Its answers
+    were kept on CI's computers and are checked there; on another computer the test runs
+    without them."""
+    return mark is None or os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+def live_here(mark: Any, system: str = sys.platform) -> bool:
+    """Whether a test's ``live`` mark (None: it has none) leaves it unchecked on ``system``: one
+    without arguments on every system, else on those it names. Such a test's answers depend on
+    the computer there (its clock, how fast a program of its answers), so none are kept."""
+    return mark is not None and (not mark.args or system in mark.args)
+
+
+def _marked(path: Path, system: str) -> set[str]:
+    """The tests of a test file that are checked against kept answers on ``system``: those
+    marked ``kept``, or all of a file that is, without those marked ``live`` there."""
+    import ast
+
+    def marks(node: ast.FunctionDef, name: str) -> list[ast.AST]:
+        found = []
+        for mark in node.decorator_list:
+            attr = mark.func if isinstance(mark, ast.Call) else mark
+            if isinstance(attr, ast.Attribute) and attr.attr == name:
+                found.append(mark)
+        return found
+
+    def live(node: ast.FunctionDef) -> bool:
+        for mark in marks(node, "live"):
+            named = [a.value for a in mark.args] if isinstance(mark, ast.Call) else []
+            if not named or system in named:
+                return True
+        return False
+
+    body = ast.parse(path.read_text(encoding="utf-8")).body
+    whole = any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets)
+        and any(isinstance(n, ast.Attribute) and n.attr == "kept" for n in ast.walk(node.value))
+        for node in body
+    )
+    tests = [n for n in body if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+    return {t.name for t in tests if (whole or marks(t, "kept")) and not live(t)}
+
+
+def take(folder: Path) -> list[str]:
+    """What the tests marked ``kept`` answered, taken from ``folder`` (a run's golden-<system>
+    files, unpacked: <system>/<test file>.json) into tests/golden: theirs anew, every other
+    test's let go. Only answers a run checked against the Python app belong there, so they come
+    from its files (CI keeps them), never from a record of what the Rust app answers now."""
+    said = []
+    tests = FOLDER.parent.parent
+    for system in ("linux", "win32"):
+        mine = FOLDER.parent / system
+        for path in sorted(tests.glob("test_*.py")):
+            marked = _marked(path, system)
+            if not marked:
+                continue
+            given = folder / system / f"{path.stem}.json"
+            new = json.loads(given.read_text(encoding="utf-8")) if given.is_file() else {}
+            old_file = mine / f"{path.stem}.json"
+            old = json.loads(old_file.read_text(encoding="utf-8")) if old_file.is_file() else {}
+
+            def wanted(name: str) -> bool:
+                return name.split("[")[0] in marked  # noqa: B023
+
+            kept = {name: made for name, made in old.items() if wanted(name)}
+            kept.update({name: made for name, made in new.items() if wanted(name)})
+            if kept:
+                _write(mine, kept, path.stem)
+                said.append(f"{system}/{path.stem}: {len(kept)} tests")
+            elif old_file.is_file():
+                old_file.unlink()
+    return said
+
+
+if __name__ == "__main__":
+    # python tests/golden.py take <folder>
+    if len(sys.argv) != 3 or sys.argv[1] != "take":
+        sys.exit("usage: golden.py take <folder of a run's golden-<system> files>")
+    print("\n".join(take(Path(sys.argv[2]))))

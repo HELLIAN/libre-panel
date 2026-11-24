@@ -30,7 +30,9 @@ pub const LOWS_WINDOW: f64 = 30.0;
 pub const FINE_MS: f64 = 100.0;
 /// what a round's frames come to is worked out anew at most this often
 pub const ROUND_EVERY_S: f64 = 1.0;
-/// with no game found for us: the peak goes on this long after the last frame
+/// a game's frame rate holds this long after its frames last counted: PresentMon's lines come
+/// in bunches, and under load (an anti-cheat's game) a bunch may come later than a second, so
+/// the rate would go and the game module would show "No game running" for a moment
 pub const HOLD_SECONDS: f64 = 3.0;
 /// seconds of the fine frame rate in each reading
 pub const TRACE_S: f64 = 5.0;
@@ -304,8 +306,9 @@ pub struct FrameCounter {
     /// app -> every frame of its round
     rounds: IndexMap<String, FrameTimes>,
     target: Option<String>,
-    /// the program that counted, and when
-    last: Option<(String, f64)>,
+    /// the program that counted, when, and what its frames said then (held for a moment
+    /// while they stall: HOLD_SECONDS)
+    last: Option<(String, f64, Readings)>,
 }
 
 impl FrameCounter {
@@ -405,13 +408,28 @@ impl FrameCounter {
         let peaks = std::mem::take(&mut self.peaks);
         let mut out = Readings::new();
         if let Some(app) = &best {
-            self.last = Some((app.clone(), now));
             out = self.metrics(app, now);
-        } else if self.target.is_none() {
-            match &self.last {
-                // a game that stalls for a moment is still a game
-                Some((app, at)) if now - at <= HOLD_SECONDS => best = Some(app.clone()),
-                _ => return out, // no game: no peak, nothing
+            self.last = Some((app.clone(), now, out.clone()));
+        } else {
+            // A game whose frames stall for a moment, or come late in a bunch, is still a
+            // game, at the rate it had: held, with its fine course as far as it is known.
+            let held = self.last.as_ref().filter(|(app, at, _)| {
+                now - at <= HOLD_SECONDS && (self.target.is_none() || self.is_target(app))
+            });
+            match held.cloned() {
+                Some((app, _, said)) => {
+                    out = said;
+                    match self.trace(&app, now) {
+                        Some(trace) => out.insert(
+                            "game.fps_trace".into(),
+                            text(&trace, "fps", "Frame rate, 25 points a second"),
+                        ),
+                        None => out.shift_remove("game.fps_trace"),
+                    };
+                    best = Some(app);
+                }
+                None if self.target.is_none() => return out, // no game: no peak, nothing
+                None => {}
             }
         }
         // With a game found (or just seen) the peak is always there, 0 without a frame. The
@@ -599,5 +617,59 @@ impl FrameCounter {
             .map(|point| point.map_or("null".to_string(), lp_py::float_repr))
             .collect();
         Some(format!("[{}]", said.join(",")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fps(readings: &Readings) -> Option<String> {
+        match readings.get("game.fps").map(|r| &r.value) {
+            Some(Value::Float(x)) => Some(lp_py::float_repr(*x)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_game_whose_frames_stall_keeps_its_rate_for_a_moment() {
+        for target in [None, Some("game.exe")] {
+            let mut counter = FrameCounter::new(true);
+            counter.set_target(target);
+            let mut at = 100.0;
+            for _ in 0..120 {
+                at += 1.0 / 60.0;
+                counter.add("Game.exe", 1000.0 / 60.0, at, None);
+            }
+            assert_eq!(fps(&counter.readings(at)).as_deref(), Some("60.0"));
+            // no line for 1.5 s (a bunch that comes late): the rate holds, the course has
+            // its end not known yet
+            let held = counter.readings(at + 1.5);
+            assert_eq!(fps(&held).as_deref(), Some("60.0"), "{target:?}");
+            assert!(held["game.fps_trace"]
+                .value
+                .as_str()
+                .unwrap()
+                .ends_with("null]"));
+            assert_eq!(held["game.app"].value.as_str(), Some("Game"));
+            // the bunch comes: counted again; then a stop longer than HOLD_SECONDS: gone
+            for _ in 0..90 {
+                at += 1.0 / 60.0;
+                counter.add("Game.exe", 1000.0 / 60.0, at + 1.5, None);
+            }
+            assert!(counter.readings(at + 1.5).contains_key("game.fps"));
+            let later = counter.readings(at + 1.5 + HOLD_SECONDS + 0.5);
+            assert!(!later.contains_key("game.fps"), "{target:?}");
+        }
+        // a rate held is the game's: another program's is not held for the game found
+        let mut counter = FrameCounter::new(true);
+        let mut at = 10.0;
+        for _ in 0..60 {
+            at += 0.02;
+            counter.add("Other.exe", 20.0, at, None);
+        }
+        assert!(counter.readings(at).contains_key("game.fps"));
+        counter.set_target(Some("game.exe"));
+        assert!(!counter.readings(at + 1.5).contains_key("game.fps"));
     }
 }

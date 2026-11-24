@@ -17,7 +17,14 @@
 use std::path::{Path, PathBuf};
 
 /// Whether this program runs with administrator rights (Windows) or as root (elsewhere).
+/// LP_TEST_RIGHTS is the tests' own: "user" as an ordinary user whoever runs them (a CI
+/// runner on Windows is an administrator, a container is root), "admin" with the highest.
 pub fn elevated() -> bool {
+    match std::env::var("LP_TEST_RIGHTS").as_deref() {
+        Ok("user") => return false,
+        Ok("admin") => return true,
+        _ => {}
+    }
     #[cfg(windows)]
     {
         // SAFETY: a call without arguments.
@@ -79,15 +86,31 @@ pub fn protected_folders() -> Vec<PathBuf> {
             folders.extend(machine_text(key, name).map(PathBuf::from));
         }
     }
-    if let Some(own) = std::env::current_exe()
-        .ok()
-        .and_then(|program| std::fs::canonicalize(program).ok())
-        .and_then(|program| program.parent().map(Path::to_path_buf))
-    {
+    if let Some(own) = program_folder() {
         folders.push(own.join("tools"));
         folders.push(own);
     }
     folders
+}
+
+/// The folder Libre Panel's program is in, its links followed, written as a person writes it
+/// (`plain`).
+pub fn program_folder() -> Option<PathBuf> {
+    let program = std::env::current_exe().ok()?;
+    let program = std::fs::canonicalize(&program).map_or(program, plain);
+    program.parent().map(Path::to_path_buf)
+}
+
+/// A resolved path as a person (and Python) writes it: Windows' long form `\\?\C:\x` as
+/// `C:\x` (a network share's `\\?\UNC\...` stays as it is); others as they are.
+pub fn plain(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    match path.to_string_lossy().strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
+        _ => path,
+    }
 }
 
 /// Elsewhere: whether `path` and every folder above it belong to root (`owners`) and nobody
@@ -198,6 +221,25 @@ pub fn which(name: &str, passed: &mut Vec<PathBuf>) -> Option<PathBuf> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_resolved_path_is_written_as_a_person_writes_it() {
+        let plain_here = |text: &str| plain(PathBuf::from(text)).display().to_string();
+        if cfg!(windows) {
+            assert_eq!(plain_here(r"\\?\C:\Program Files\x"), r"C:\Program Files\x");
+            assert_eq!(plain_here(r"\\?\UNC\server\share"), r"\\?\UNC\server\share");
+        }
+        assert_eq!(
+            plain_here("/opt/libre-panel/tools"),
+            "/opt/libre-panel/tools"
+        );
+        let folder = program_folder().expect("the test's own folder");
+        assert!(
+            !folder.display().to_string().starts_with(r"\\?\"),
+            "{}",
+            folder.display()
+        );
+    }
 
     #[test]
     fn what_root_alone_may_change_is_safe() {

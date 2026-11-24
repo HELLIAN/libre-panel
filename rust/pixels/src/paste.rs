@@ -2,7 +2,7 @@
 //! (libImaging/Paste.c's paste, paste_mask_L/RGBA/RGBa, fill, fill_mask_L/RGBA; PIL/Image.py's
 //! way of choosing what is pasted).
 
-use crate::ints::{blend, preblend};
+use crate::ints::{blend, preblend, unmultiplied};
 use crate::{error, Image, Mode, Result};
 
 /// The part of a box that lies on an image of ``w`` by ``h``: where it goes (dx, dy), where it
@@ -67,6 +67,53 @@ fn weight(mask: &Image, matte: Matte, i: usize) -> u32 {
     }
 }
 
+/// One pixel `from` onto `out` through the weight `a`: PREBLEND for a premultiplied matte, else
+/// BLEND (which keeps what is there through 0 and takes what comes through 255, exactly).
+#[inline(always)]
+fn mix(out: &mut [u8], from: &[u8], a: u32, pre: bool) {
+    if pre {
+        for (out, &i) in out.iter_mut().zip(from) {
+            *out = preblend(a, u32::from(*out), u32::from(i));
+        }
+    } else if a == 255 {
+        let n = out.len();
+        out.copy_from_slice(&from[..n]);
+    } else if a != 0 {
+        for (out, &i) in out.iter_mut().zip(from) {
+            *out = blend(a, u32::from(*out), u32::from(i));
+        }
+    }
+}
+
+/// A row of `DB`-band pixels, the pasted ones of `SB` bands, through `weights`.
+#[inline(always)]
+fn mix_row<const DB: usize, const SB: usize>(
+    to: &mut [u8],
+    from: &[u8],
+    weights: impl Iterator<Item = u32>,
+    pre: bool,
+) {
+    for ((out, i), a) in to
+        .chunks_exact_mut(DB)
+        .zip(from.chunks_exact(SB))
+        .zip(weights)
+    {
+        mix(out, i, a, pre);
+    }
+}
+
+/// The weights of an L mask's `n` pixels from pixel `s` on.
+fn mask_l(mask: &Image, s: usize, n: usize) -> impl Iterator<Item = u32> + '_ {
+    mask.data[s..s + n].iter().map(|&v| u32::from(v))
+}
+
+/// The weights of an RGBA or RGBa mask's `n` pixels from pixel `s` on: their alpha.
+fn mask_a(mask: &Image, s: usize, n: usize) -> impl Iterator<Item = u32> + '_ {
+    mask.data[s * 4..(s + n) * 4]
+        .chunks_exact(4)
+        .map(|p| u32::from(p[3]))
+}
+
 impl Image {
     /// Image.paste(im, (x, y), mask): ``im`` with its corner at (x, y); through ``mask`` (of
     /// im's size: L, or the alpha of RGBA or RGBa) where one is given. Image.py converts ``im``
@@ -112,27 +159,95 @@ impl Image {
             }
             return Ok(());
         };
+        if self.mode == Mode::RGB && im.mode == Mode::RGBA && std::ptr::eq(mask, im) {
+            // (an RGBA picture through its own alpha: four pixels at a time where the
+            // processor can, the same bytes)
+            return self.paste_part(im, (0, 0, im.width, im.height), x, y);
+        }
         for row in 0..ysize {
-            for col in 0..xsize {
-                let s = (sy + row) * im.width + sx + col;
-                let d = ((dy + row) * self.width + dx + col) * db;
-                let from = &im.data[s * sb..s * sb + sb];
-                let a = weight(mask, matte, s);
-                let out = &mut self.data[d..d + db];
-                match matte {
-                    Matte::Premultiplied => {
-                        for (out, &i) in out.iter_mut().zip(from) {
-                            *out = preblend(a, u32::from(*out), u32::from(i));
-                        }
+            let s = (sy + row) * im.width + sx;
+            let d = ((dy + row) * self.width + dx) * db;
+            let to = &mut self.data[d..d + xsize * db];
+            let from = &im.data[s * sb..(s + xsize) * sb];
+            let pre = matches!(matte, Matte::Premultiplied);
+            // (each row in one go, its bands a pixel known: the same sums as pixel by pixel)
+            match (matte, db, sb) {
+                (Matte::Plain, 3, 3) => mix_row::<3, 3>(to, from, mask_l(mask, s, xsize), pre),
+                (Matte::Plain, 4, 4) => mix_row::<4, 4>(to, from, mask_l(mask, s, xsize), pre),
+                (Matte::Plain, 1, 1) => mix_row::<1, 1>(to, from, mask_l(mask, s, xsize), pre),
+                (Matte::Alpha | Matte::Premultiplied, 3, 3) => {
+                    mix_row::<3, 3>(to, from, mask_a(mask, s, xsize), pre)
+                }
+                (Matte::Alpha | Matte::Premultiplied, 3, 4) => {
+                    mix_row::<3, 4>(to, from, mask_a(mask, s, xsize), pre)
+                }
+                (Matte::Alpha | Matte::Premultiplied, 4, 4) => {
+                    mix_row::<4, 4>(to, from, mask_a(mask, s, xsize), pre)
+                }
+                _ => {
+                    for col in 0..xsize {
+                        let a = weight(mask, matte, s + col);
+                        let out = &mut to[col * db..col * db + db];
+                        let from = &from[col * sb..col * sb + sb];
+                        mix(out, from, a, pre);
                     }
-                    // (BLEND keeps what is there through 0 and takes what comes through 255,
-                    // exactly)
-                    _ if a == 0 => {}
-                    _ if a == 255 => out.copy_from_slice(&from[..db]),
-                    _ => {
-                        for (out, &i) in out.iter_mut().zip(from) {
-                            *out = blend(a, u32::from(*out), u32::from(i));
-                        }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// An RGBa picture laid onto this RGB one through its own alpha, each alpha first taken
+    /// through `fade` where given: what `s = im.convert("RGBA")`, its alpha through
+    /// `point(fade)` (`putalpha`), then `paste(s, (x, y), s)` give, in one pass and without the
+    /// pictures between.
+    pub fn paste_unpremultiplied(
+        &mut self,
+        im: &Image,
+        x: i64,
+        y: i64,
+        fade: Option<&[u8; 256]>,
+    ) -> Result<()> {
+        if self.mode != Mode::RGB || im.mode != Mode::RGBa {
+            return error("an RGBa picture onto an RGB one only");
+        }
+        let Some([dx, dy, sx, sy, xsize, ysize]) = clipped(
+            self.width,
+            self.height,
+            x,
+            y,
+            x + im.width as i64,
+            y + im.height as i64,
+        ) else {
+            return Ok(());
+        };
+        for row in 0..ysize {
+            let s = ((sy + row) * im.width + sx) * 4;
+            let d = ((dy + row) * self.width + dx) * 3;
+            let to = &mut self.data[d..d + xsize * 3];
+            let from = &im.data[s..s + xsize * 4];
+            for (out, p) in to.chunks_exact_mut(3).zip(from.chunks_exact(4)) {
+                let alpha = p[3];
+                let a = fade.map_or(alpha, |f| f[usize::from(alpha)]);
+                if a == 0 {
+                    continue;
+                }
+                // (of alpha 255 the colours are plain already: rgba2rgbA leaves them)
+                let plain = if alpha == 255 {
+                    [p[0], p[1], p[2]]
+                } else {
+                    [
+                        unmultiplied(p[0], alpha),
+                        unmultiplied(p[1], alpha),
+                        unmultiplied(p[2], alpha),
+                    ]
+                };
+                if a == 255 {
+                    out.copy_from_slice(&plain);
+                } else {
+                    let a = u32::from(a);
+                    for (o, &c) in out.iter_mut().zip(&plain) {
+                        *o = blend(a, u32::from(*o), u32::from(c));
                     }
                 }
             }
@@ -383,6 +498,54 @@ mod tests {
                 let cut = layer.crop(0, 0, w as i64, h as i64);
                 slow.paste(&cut, x, y, Some(&cut)).unwrap();
                 assert_eq!(fast, slow, "{w}x{h} at {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn of_alpha_255_the_colours_are_plain_already() {
+        for c in 0..=255u8 {
+            assert_eq!(unmultiplied(c, 255), c);
+        }
+    }
+
+    #[test]
+    fn rgba_laid_in_one_pass_as_converted_faded_and_pasted() {
+        // (premultiplied pictures of every alpha, with and without a fade, anywhere on the
+        // picture and beyond it)
+        let mut seed = 0x0bad_cafe_1234_5678_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 16) as u8
+        };
+        for (w, h) in [(1usize, 1usize), (7, 3), (40, 17), (130, 9)] {
+            let mut plain = Image::blank(Mode::RGBA, w, h);
+            for v in plain.data.iter_mut() {
+                *v = next();
+            }
+            let im = plain.convert(Mode::RGBa).unwrap();
+            let mut ground = Image::blank(Mode::RGB, 60, 20);
+            for v in ground.data.iter_mut() {
+                *v = next();
+            }
+            for fade in [None, Some(0.0), Some(0.37), Some(0.998)] {
+                let lut: Option<[u8; 256]> = fade
+                    .map(|f: f64| std::array::from_fn(|v| (v as f64 * f).round_ties_even() as u8));
+                for (x, y) in [(0i64, 0i64), (-3, 2), (25, -4), (55, 15), (70, 0)] {
+                    let mut fast = ground.clone();
+                    fast.paste_unpremultiplied(&im, x, y, lut.as_ref()).unwrap();
+                    let mut s = im.convert(Mode::RGBA).unwrap();
+                    if let Some(lut) = &lut {
+                        let table: Vec<i64> = lut.iter().map(|&v| i64::from(v)).collect();
+                        let a = s.getchannel(3).unwrap().point(&table).unwrap();
+                        s.putalpha(&a).unwrap();
+                    }
+                    let mut slow = ground.clone();
+                    slow.paste(&s, x, y, Some(&s)).unwrap();
+                    assert_eq!(fast, slow, "{w}x{h} at {x},{y}, {fade:?}");
+                }
             }
         }
     }

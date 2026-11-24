@@ -3,7 +3,7 @@
 <p>
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/media/hero-de.png">
-    <img src="docs/media/hero-de.gif" width="100%" alt="Libre Panel. Die Werte deines PCs als bewegtes Licht. Frei und quelloffen, für die kleinen USB-Displays im Gehäuse deines PCs. Darunter Lumen, das eigene Theme von Libre Panel, im Videomodus auf einem 9,2-Zoll-Panel: was gerade läuft, mit Cover, die Uhrzeit mit der Last als vorbeiziehendes Licht, vier drehende Lüfter und leuchtende Ringe für CPU, GPU und RAM">
+    <img src="docs/media/hero-de.gif" width="100%" alt="Libre Panel. Die Werte deines PCs als bewegtes Licht. Frei und quelloffen, für die kleinen USB-Displays im Gehäuse deines PCs. Darunter Lumen v2, das eigene Theme von Libre Panel, im Videomodus auf einem 9,2-Zoll-Panel, mit weichem Licht, das hinter seinen Karten treibt: was gerade läuft, mit Cover, die Uhrzeit mit der Last als vorbeiziehendes Licht, vier drehende Lüfter und leuchtende Ringe für CPU, GPU und RAM">
   </picture>
 </p>
 
@@ -134,6 +134,17 @@ Licht in gefrästen Rillen. Standard sind 25 Bilder pro Sekunde, flüssig und f�
 deutlich leichter; alle anderen Panels bekommen Standbilder, gesendet nur dort, wo sich etwas
 ändert.
 
+### Licht, das sich bewegt
+
+<p><img src="docs/media/light.gif" width="100%" alt="Lumen v2 im Videomodus auf einem 9,2-Zoll-Panel: Weiche Lichtflecken treiben hinter den Karten; eine Last treibt die Ringe hoch, und das Licht wird wärmer, die Enden der Ringe atmen, der neueste Punkt jedes Verlaufs schlägt mit jedem Messwert, und alles beruhigt sich wieder"></p>
+
+Lumen, Arena und Encore gibt es in einer zweiten Version mit eigenem Licht: weiche Flecken, die
+hinter den Karten treiben, über alle deine Panels wie über eins, und wärmer werden, während der
+PC arbeitet; bei Encore nehmen sie die Farben des Covers an, das gerade läuft. Und auf jedem
+Theme bewegt sich das Licht ein wenig: Das Ende eines Rings atmet, der neueste Punkt eines
+Verlaufs schlägt mit jedem Messwert, und das Cover leuchtet in seinen eigenen Farben. Jede Art
+lässt sich unter *Einstellungen → Panel → Bewegtes Licht* abschalten.
+
 ### Karten im Wechsel
 
 <p><img src="docs/media/card-turns.gif" width="100%" alt="Das Kartenfach von Lumen, seine Karten im Wechsel: Was gerade läuft, macht in einer Überblendung dem Wetter Platz, ein Zifferblatt schiebt das Wetter nach links hinaus, der Tag mit seinem Monat steigt an die Stelle der Uhr, und ein Lichtstrahl wischt hinüber zu dem, was gerade läuft"></p>
@@ -143,6 +154,17 @@ Symbolen und den nächsten Stunden, der Tag, ein Zifferblatt, der Mond oder dein
 erste, die etwas zu zeigen hat, ist zu sehen, oder sie wechseln sich ab, jede für ihre Minuten.
 Von einer zur nächsten geht das Fach, wie du willst: mit einer Lichtlinie, einer Überblendung,
 einem Schub zur Seite oder nach oben oder einem Lichtstrahl, der darüberwischt.
+
+### Von einem Bildschirm zum nächsten
+
+<p><img src="docs/media/morph.gif" width="100%" alt="Verwandlung auf einem 9,2-Zoll-Panel: Lumen v2 macht Arena v2 Platz, und was beide zeigen, fliegt an seinen neuen Platz und in seine neue Größe: Die Uhrzeit schrumpft in die Ecke, die Ringe für CPU und GPU rücken hinüber, und der Rest von Arena erscheint um sie herum; dann auf demselben Weg zurück zu Lumen v2"></p>
+
+Ein neuer Bildschirm kommt, wie du willst. Bei der *Verwandlung* fliegt, was beide Bildschirme
+zeigen (die Uhrzeit, ein Ring, das Cover, das Logo eines Spiels), an seinen neuen Platz und in
+seine neue Größe, sogar von einem Panel zum anderen. Bei der *Kaskade* steigen die Karten des
+neuen Bildschirms nacheinander herein, ein *Komet* fliegt mit leuchtendem Schweif hinüber, und
+ein *Portal* öffnet sich auf den neuen Bildschirm. Mit mehr als einem Panel laufen Schübe,
+Wischer und die Lichtlinie über alle wie über einen Bildschirm.
 
 ### Hinweise
 
@@ -191,14 +213,15 @@ Bildschirm. Nichts verlässt diesen PC
 
 ### Mehrere Panels zugleich
 
-<p><img src="docs/media/more-panels.gif" width="100%" alt="Zwei 9,2-Zoll-Leisten übereinander: Lumen mit dem Titel, der Uhrzeit und den Ringen, darunter Lumen Companion mit jedem Kern, den Temperaturen mit drehenden Lüftern, den Laufwerken und den Prozessen; eine Last steigt auf beiden im selben Takt, dann wird der Prozessor zu heiß, beide Ränder pulsieren rot und das zweite Panel zeigt High Contrast, bis er abgekühlt ist"></p>
+<p><img src="docs/media/panels-light.gif" width="100%" alt="Zwei 9,2-Zoll-Leisten übereinander: Lumen v2 mit dem Titel, der Uhrzeit und den Ringen, darunter Lumen v2 Companion mit jedem Kern, den Temperaturen mit drehenden Lüftern, den Laufwerken und den Prozessen; ein weiches Licht treibt über beide wie über einen Bildschirm, und eine Last steigt auf beiden im selben Takt und wärmt es"></p>
 
-Bis zu vier Panels, jedes mit eigenem Theme, auf denselben Messwerten und im selben Takt. Ein
-Panel neben Lumen bekommt **Lumen Companion**: jeden Kern, die Temperaturen mit drehenden
-Lüftern, die Laufwerke und die Prozesse, und Lumen lässt weg, was sein Companion zeigt. Ein
-Bild kann sich über alle Panels spannen, **Szenen** legen mit einem Klick auf jedes Panel ein
-Theme, und erreicht ein Sensor seine kritische Grenze, pulsiert der Rand jedes Panels rot. Die
-drei Lüfter-Displays eines JONSBO ZC-360 sind drei eigene Panels
+Bis zu vier Panels, jedes mit eigenem Theme, auf denselben Messwerten und im selben Takt; das
+Licht der v2-Themes und die Übergänge laufen über sie wie über einen Bildschirm. Ein Panel neben
+Lumen bekommt **Lumen Companion**: jeden Kern, die Temperaturen mit drehenden Lüftern, die
+Laufwerke und die Prozesse, und Lumen lässt weg, was sein Companion zeigt. Ein Bild kann sich
+über alle Panels spannen, **Szenen** legen mit einem Klick auf jedes Panel ein Theme, und
+erreicht ein Sensor seine kritische Grenze, pulsiert der Rand jedes Panels rot. Die drei
+Lüfter-Displays eines JONSBO ZC-360 sind drei eigene Panels
 ([mehrere Panels zugleich](docs/CONFIGURATION.md#more-panels-at-once), englisch).
 
 ### Das Panel als Monitor
@@ -234,9 +257,11 @@ sicher da ist (höchstens 480.000 Bytes auf dem 9,2", 650.000 auf dem 12,3"), da
 vor und nach jedem Schreiben gefragt, was auf ihm liegt, und nichts wird gelöscht, um Platz zu
 schaffen. Genau das fehlte 0.9.1: Einem 9,2"-Panel ging der Platz für seinen Startbildschirm
 aus, und es startet seitdem immer wieder neu. Pegel hat mehr Details, als fein in diesen Platz
-passen, und wird nicht geschrieben; für die anderen Panels der Familie bleibt das Schreiben
-aus, weil nicht bekannt ist, wie viel Platz sie haben. Was auf einem Panel liegt, lässt sich
-immer abfragen, und ein Bootlogo wieder entfernen: dann zeigt das Panel sein Werkslogo.
+passen, und wird nicht geschrieben. **Das 8,8"** bekommt den Platz des 9,2"; auf **die anderen
+Panels der Familie**, deren Platz nicht bekannt ist, schreibt es nur, wenn du es nach einer
+deutlichen Warnung auf eigenes Risiko ausprobierst, und bittet dich danach, das Ergebnis zu
+teilen, damit das Modell für alle freigegeben werden kann. Was auf einem Panel liegt, lässt
+sich immer abfragen, und ein Bootlogo wieder entfernen: dann zeigt das Panel sein Werkslogo.
 
 ### Jede Größe, rund und hochkant
 
@@ -339,7 +364,7 @@ zur Seite, wenn seine Messwerte fehlen, und kostet nichts, solange kein Theme es
 |---|---|---|---|
 | **Turing / TURZX** | 8,8", 9,2", 12,3" | 1,6", 2,1" rund, 2,8" rund, 4,6", 5,2", 8" | USB, Videomodus |
 | **Turing Smart Screen** | 3,5", 8,8" | 2,1" rund, 5" | COM-Port |
-| **JONSBO** | ZC-360, jedes Display ein eigenes Panel; DS339 | ZC-360 als ein Bild, TF3-360SC, DS916 | USB |
+| **JONSBO** | ZC-360, jedes Display ein eigenes Panel; DS339, DS916 | ZC-360 als ein Bild, TF3-360SC | USB |
 | **Waveshare USB Monitor** | 2,8", als USB-Display | – | USB |
 | **UsbPCMonitor** | – | 3,5", 5", 7" | COM-Port |
 | **XuanFang** | – | 3,5" | COM-Port |
@@ -347,7 +372,7 @@ zur Seite, wenn seine Messwerte fehlen, und kostet nichts, solange kein Theme es
 | **WeAct Display FS V1** | 0,96" | 3,5" | COM-Port |
 | **VMAX** | – | 4,6" | USB |
 | **Hongtai / Jungle Leopard** | – | Chill Arc 360, MSI EZ Display und mehr | COM-Port |
-| **Lian Li** | – | Universal Screen, HydroShift II, OLED Curve | USB |
+| **Lian Li** | Universal Screen 8,8" | Universal Screen 9,2", HydroShift II, OLED Curve | USB |
 | **Thermalright** | – | Trofeo Vision | USB |
 | **BeadaPanel** | – | jedes Modell | USB |
 | **NZXT Kraken** | – | mit LCD | USB |
@@ -391,8 +416,8 @@ deinem Benutzer mit einem Klick USB-Zugriff aufs Panel. Oder der <b>Tarball</b>.
 <b>Mit Python</b><br>
 <sub>3.11 oder neuer</sub>
 <br><br>
-<b>pipx</b> installiert es aus diesem Repository, mit den Treibern der Panels und dem Tray,
-unter Windows und Linux.
+<b>pipx</b> installiert dieselbe App wie die Downloads, aus dem Wheel des Releases für
+Windows oder Linux.
 <br><br>
 <a href="#mit-python">Die Befehle</a>
 </td>
@@ -466,7 +491,8 @@ Administratorrechte.
 ### Mit Python
 
 ```bash
-pipx install "libre-panel[usb,serial,tray] @ git+https://github.com/syntensa/libre-panel@v0.9.4"
+pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-manylinux_2_35_x86_64.whl"    # Linux
+pipx install "libre-panel @ https://github.com/syntensa/libre-panel/releases/download/v0.9.5/libre_panel-0.9.5-py3-none-win_amd64.whl"    # Windows
 libre-panel tray                    # die Hintergrund-App mit Tray-Symbol; öffnet ihr Fenster
 libre-panel autostart enable        # bei jeder Anmeldung starten
 ```
@@ -503,7 +529,9 @@ Anfragen mit einem geheimen Token, der bei jedem Start neu ist.
 <br>
 
 - **Das Wetter** ist aus, bis du einen Ort setzt. Dann gehen nur seine Koordinaten an
-  [Open-Meteo](https://open-meteo.com), alle 15 Minuten. Einen Ort, den du per Name suchst,
+  [Open-Meteo](https://open-meteo.com), alle 15 Minuten, oder, wenn du es mit eigenem
+  Schlüssel wählst, die Koordinaten und der Schlüssel an
+  [OpenWeatherMap](https://openweathermap.org). Einen Ort, den du per Name suchst,
   bekommt die Ortssuche von Open-Meteo erst, wenn du auf *Suchen* drückst; gespeichert wird
   er auf etwa einen Kilometer genau.
 - **Neue Versionen**: *Start* fragt einmal, ob nachgesehen werden soll. Sagst du ja, fragt

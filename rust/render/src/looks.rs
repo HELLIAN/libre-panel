@@ -5,11 +5,11 @@
 //! one) and keeps clear of what the panel's frame hides. Sizes are for a panel 480 px high and
 //! scale with the shorter side of the frame.
 //!
-//! Python makes a look's picture anew only where it changed since the one before, and its tests
-//! hold each to the picture made whole, pixel for pixel (test_volume_looks.py): here each is
-//! made whole. What a look keeps between frames that decides what shows is kept as Python keeps
-//! it: the picture of what it shows (made again only where the text, muted, the level's steps,
-//! the size or the theme change) and the level gliding.
+//! Python made a look's picture anew only where it changed since the one before, and its tests
+//! held each to the picture made whole, pixel for pixel: here each is made whole. What a look
+//! keeps between frames that decides what shows is kept as Python kept it: the picture of what
+//! it shows (made again only where the text, muted, the level's steps, the size or the theme
+//! change) and the level gliding.
 
 use std::rc::Rc;
 

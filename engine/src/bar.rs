@@ -4,7 +4,7 @@
 //! canvas, the pill a span's light is made of (lit.py's _pill), and how its glow is worked out.
 //! A pill longer than the short ones is a reference's first and last columns with the column
 //! between them as often as its length asks: its caps reach no further, and Lanczos makes the
-//! columns between them alike (the same pixels: tests/test_lit_bars.py holds them to it). For a
+//! columns between them alike (the same pixels, as the Python app's tests held them). For a
 //! value, its lit spans and its paint, the light of each span goes on the groove as Pillow lays
 //! it (alpha_composite), worked out in single precision as lit.py's light (its blur ring.rs's:
 //! the same picture to a level) and kept by its length, as lit.py keeps it (a value gliding back

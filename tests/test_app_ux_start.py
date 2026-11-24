@@ -11,6 +11,7 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 
+from community_github import GitHub, github  # noqa: E402, F401
 from playwright.sync_api import expect  # noqa: E402
 from test_app_browser import (  # noqa: E402, F401
     PICTURE,
@@ -22,13 +23,14 @@ from test_app_browser import (  # noqa: E402, F401
     clip_ready,
     game_option,
     game_theme,
+    running_app,
+    server_language,
     settings_config,
     shown_themes,
     unlock_route,
     waits_for,
     windows_download,
 )
-from test_share import GitHub, github  # noqa: E402, F401
 
 from libre_panel import __version__  # noqa: E402
 
@@ -225,12 +227,16 @@ def test_the_news_tell_of_the_start_screen_where_the_panel_is_mounted_upside_dow
     isolated_home,
 ):
     """A panel at hand whose start screen can be written, mounted upside down: its logo and
-    clip can be written upright now, and the news say so; not where it is mounted upright."""
+    clip can be written upright now, and the news say so; not where it is mounted upright, nor
+    for a panel whose start screen is not written to it."""
     choose_theme(isolated_home, "lumen")
     updated(isolated_home)
+    models = [{"id": "turing-8.8-usb", "writes": True}, {"id": "turing-5.2-usb", "writes": False}]
+    told = {"model": "turing-8.8-usb", "panel": 0, "models": models}
+    answered = []
 
     def start_screen(route, request):
-        told = {"model": "turing-8.8-usb", "panel": 0}
+        answered.append(told["model"])
         route.fulfill(status=200, content_type="application/json", body=json.dumps(told))
 
     routes = {"**/api/app": a_panel_app(), "**/api/start-screen?*": start_screen}
@@ -250,6 +256,12 @@ def test_the_news_tell_of_the_start_screen_where_the_panel_is_mounted_upside_dow
         ]
         rows.nth(2).get_by_role("button", name="Show me").click()
         page.wait_for_function("location.hash === '#/settings/panel/start-screen'")
+    told["model"] = "turing-5.2-usb"
+    answered.clear()
+    with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
+        waits_for(page, lambda: "turing-5.2-usb" in answered)
+        page.wait_for_timeout(500)  # (what the answer shows has long been shown)
+        expect(page.locator(".news-card .first-step")).to_have_count(2)
 
 
 def test_who_began_with_this_version_gets_the_first_steps_and_no_news(
@@ -328,7 +340,6 @@ def test_the_panels_card_shows_the_theme_while_the_panel_shows_nothing(
 def test_every_card_of_the_gallery_names_its_actions(app_url, isolated_home):  # noqa: F811
     """A click on a card puts it on the panel (its name says so); "Edit" and "Export…" are always
     there, with their names, and cover nothing of the card's text in either language."""
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "lumen")
     with browser_page(app_url, "home/themes", allow=PICTURE) as page:
@@ -343,7 +354,7 @@ def test_every_card_of_the_gallery_names_its_actions(app_url, isolated_home):  #
         expect(almanac.get_by_role("button", name="Export “Almanac”…")).to_be_visible()
         assert page.locator(".theme-card-edit").count() == len(shown_themes(page))
         assert page.locator(".theme-card-export").count() == len(shown_themes(page))
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "home/themes", allow=PICTURE) as page:
         page.wait_for_selector(".theme-card")
         for card in page.locator(".theme-card").all():
@@ -488,12 +499,21 @@ def test_installed_with_pip_the_card_gives_the_command(app_url, isolated_home): 
 
     choose_theme(isolated_home, "lumen")
     set_config_value("check_updates", True)
-    routes = {"**/api/update*": update_route({**NEW, "download": ""}, kind="python")}
+    wheel = ("https://github.com/syntensa/libre-panel/releases/download/v9.1.0/"
+             "libre_panel-9.1.0-py3-none-manylinux_2_35_x86_64.whl")  # fmt: skip
+    pip = {**NEW, "download": "", "wheel": wheel}
+    routes = {"**/api/update*": update_route(pip, kind="python")}
     with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
         card = page.locator("[data-update='new']")
-        expect(card.locator("code")).to_contain_text("libre-panel@v9.1.0")
+        expect(card.locator("code")).to_have_text(f'pipx install --force "libre-panel @ {wheel}"')
         expect(card.get_by_role("link", name="Download")).to_have_count(0)
         expect(card.get_by_role("link", name="What is new")).to_be_visible()
+    # a release without a wheel for this platform: no command, the page and "Later"
+    routes = {"**/api/update*": update_route({**pip, "wheel": ""}, kind="python")}
+    with browser_page(app_url, "home", routes=routes, allow=PICTURE) as page:
+        card = page.locator("[data-update='new']")
+        expect(card.get_by_role("link", name="What is new")).to_be_visible()
+        expect(card.locator("code")).to_have_count(0)
 
 
 def test_start_shows_the_panel_the_header_chose_and_the_header_counts_every_panel(
@@ -502,11 +522,6 @@ def test_start_shows_the_panel_the_header_chose_and_the_header_counts_every_pane
     """With three panels (the first and two beside it, PNG files here) the header offers
     Panel 1, 2 and 3, and Start's card shows the chosen one: its state, its theme, its
     picture; the first panel's controls (brightness, upside down) stay the first's."""
-    from test_service import FakeRegistry
-
-    from libre_panel.autostart import Autostart
-    from libre_panel.service import BackgroundApp
-
     isolated_home.mkdir(parents=True, exist_ok=True)
     out = isolated_home.as_posix()
     (isolated_home / "config.toml").write_text(
@@ -516,33 +531,27 @@ def test_start_shows_the_panel_the_header_chose_and_the_header_counts_every_pane
         f'\n[[panels]]\ndriver = "virtual"\ntheme = "slate"\noutput = "{out}/three.png"\n',
         encoding="utf-8",
     )
-    app = BackgroundApp(port=0, autostart=Autostart("win32", registry=FakeRegistry()))
-    url = app.start()
-    try:
-        with browser_page(url, "home", allow=PICTURE) as page:
-            switch = page.get_by_role("radiogroup", name=PANEL_SWITCH)
-            expect(switch.get_by_role("radio")).to_have_count(3)
-            page.wait_for_selector(".panel-card .state-dot.showing")
-            expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
-            expect(page.locator(".panel-card-brightness")).to_have_count(1)
-            switch.get_by_role("radio", name="Panel 2").click()
-            expect(page.locator(".panel-card h2")).to_contain_text("Pico", timeout=20000)
-            expect(page.locator(".panel-card-brightness")).to_have_count(0)
-            switch.get_by_role("radio", name="Panel 3").click()
-            expect(page.locator(".panel-card h2")).to_contain_text("Slate", timeout=20000)
-            switch.get_by_role("radio", name="Panel 1").click()
-            expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
-            # Status is about the panel the header chose: the first's numbers, the others' line
-            page.goto(f"{url}#/live")
-            page.wait_for_selector(".live-numbers")
-            switch.get_by_role("radio", name="Panel 2").click()
-            expect(page.locator(".live-state")).to_contain_text("Pico", timeout=20000)
-            expect(page.locator(".live-numbers")).to_have_count(0)
-            switch.get_by_role("radio", name="Panel 1").click()
-            page.wait_for_selector(".live-numbers")
-    finally:
-        app.quit()
-        app.shutdown()
+    with running_app() as (_app, url), browser_page(url, "home", allow=PICTURE) as page:
+        switch = page.get_by_role("radiogroup", name=PANEL_SWITCH)
+        expect(switch.get_by_role("radio")).to_have_count(3)
+        page.wait_for_selector(".panel-card .state-dot.showing")
+        expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
+        expect(page.locator(".panel-card-brightness")).to_have_count(1)
+        switch.get_by_role("radio", name="Panel 2").click()
+        expect(page.locator(".panel-card h2")).to_contain_text("Pico", timeout=20000)
+        expect(page.locator(".panel-card-brightness")).to_have_count(0)
+        switch.get_by_role("radio", name="Panel 3").click()
+        expect(page.locator(".panel-card h2")).to_contain_text("Slate", timeout=20000)
+        switch.get_by_role("radio", name="Panel 1").click()
+        expect(page.locator(".panel-card h2")).to_contain_text("Libre Default")
+        # Status is about the panel the header chose: the first's numbers, the others' line
+        page.goto(f"{url}#/live")
+        page.wait_for_selector(".live-numbers")
+        switch.get_by_role("radio", name="Panel 2").click()
+        expect(page.locator(".live-state")).to_contain_text("Pico", timeout=20000)
+        expect(page.locator(".live-numbers")).to_have_count(0)
+        switch.get_by_role("radio", name="Panel 1").click()
+        page.wait_for_selector(".live-numbers")
 
 
 # -- sharing a theme ---------------------------------------------------------------------------
@@ -684,10 +693,9 @@ def test_a_text_does_not_end_in_a_word_alone(app_url, isolated_home):  # noqa: F
     Klick" and "Wenn du sie änderst, auf jedem / Screen": a last line of one word, in one text
     of six across the app's views and languages. The lines break so that it has company, where
     the browser knows how; what is typed into a field stays where it was typed."""
-    from libre_panel import i18n
 
     choose_theme(isolated_home, "lumen")
-    i18n.set_language("de")
+    server_language(app_url, "de")
     with browser_page(app_url, "home", allow=PICTURE) as page:
         if not page.evaluate("CSS.supports('text-wrap', 'pretty')"):
             pytest.skip("this browser does not know text-wrap: pretty")
@@ -749,7 +757,7 @@ def test_the_community_themes_follow_the_chosen_panel_and_one_of_yours_is_shared
     import hashlib
     from urllib.parse import parse_qs, urlsplit
 
-    from test_share import an_entry, png, theme_json, zipped
+    from community_github import an_entry, png, theme_json, zipped
 
     other = zipped({"wide/theme.json": theme_json(name="Wide", display={"model": "custom",
                     "width": 800, "height": 480}), "wide/assets/back.png": png()})  # fmt: skip

@@ -6,26 +6,35 @@ everyone…* fills the text in and saves the zip. The workflow runs this in two 
 jobs, so that what comes from the issue is looked into only where nothing can be written:
 
 - ``check`` (no rights): downloads the zip from GitHub's attachments (nowhere else), checks it
-  as Libre Panel checks every shared theme (theme/share.py: plain JSON, pictures and fonts,
+  as Libre Panel checks every shared theme (rust/app/src/share.rs: plain JSON, pictures and fonts,
   nothing runs), works out the panel size it is made for, draws its picture with the demo
   readings (none of anybody's computer) and leaves the zip, the picture and the list's entry
   in a folder; or, where something is wrong, the reason in words.
 - ``add`` (the job that may write): takes that folder, checks the entry as the app reads the
-  list (editor/community.py), the zip against its SHA-256 and the picture by its first bytes,
-  and puts them beside the list, ``community/themes/<id>/``, with the entry in index.json. The
-  workflow opens a pull request with them; a person looks at it before it is merged.
+  list (rust/app/src/community.rs), the zip against its SHA-256 and the picture by its first bytes,
+  and puts them beside the list, ``community/themes/<id>/``, with the entry in index.json; a
+  new version of a listed theme (the form's *Replaces*) takes that one's place, its folder and
+  its entry. The workflow opens a pull request with them; a person looks at it before it is
+  merged.
 
 Text from the issue is data: it reaches no shell, and the entry keeps it within the list's
 lengths.
+
+What Libre Panel checks of a shared theme, how it draws it and how it reads the list is the
+program's own (`libre-panel share` and `libre-panel preview`): LIBRE_PANEL_PROGRAM names it,
+else it is the `libre-panel` on the PATH.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
-import io
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -35,6 +44,7 @@ from urllib.parse import urlsplit
 
 FORM_FIELDS = {  # the issue form's labels: the text under each "### <label>"
     "Name": "name",
+    "Replaces": "replaces",
     "Made by": "author",
     "What it shows": "description",
     "The theme": "theme",
@@ -49,13 +59,73 @@ ATTACHMENT = re.compile(
 HOSTS = ("github.com", "objects.githubusercontent.com")
 S3 = re.compile(r"^github-production-[a-z0-9-]+\.s3\.amazonaws\.com$")
 LIST = Path("community/themes")
-TEXTS = {"name": 80, "author": 80, "description": 400}
+TEXTS = {"name": 80, "replaces": 80, "author": 80, "description": 400}
 BRANCH = "community/theme-"  # and the issue's number: the pull request's branch (the workflow's)
 TIMEOUT_S = 30
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")  # a theme's folder (theme/model.py)
 
 
 class Refused(ValueError):
     """What keeps the theme out, said to the person who shared it."""
+
+
+class ShareError(ValueError):
+    """What Libre Panel says of a shared theme it does not take, in its words."""
+
+
+# -- the program --------------------------------------------------------------------------------
+
+
+def program() -> str:
+    """The Libre Panel that checks and draws (LIBRE_PANEL_PROGRAM, else the one on the PATH)."""
+    found = os.environ.get("LIBRE_PANEL_PROGRAM") or shutil.which("libre-panel")
+    if not found:
+        raise RuntimeError("needs the libre-panel program: LIBRE_PANEL_PROGRAM or the PATH")
+    return found
+
+
+def _run(*args: str, home: Path | None = None) -> str:
+    """What the program prints for ``args``; :class:`ShareError` with what it said where it
+    refused. ``home``: its own folder of settings (a run that leaves nothing behind)."""
+    with tempfile.TemporaryDirectory() as place:
+        env = {**os.environ, "LIBRE_PANEL_HOME": str(home or place)}
+        done = subprocess.run([program(), *args], capture_output=True, text=True, env=env,
+                              encoding="utf-8", timeout=120)  # fmt: skip
+    if done.returncode == 1:
+        raise ShareError(done.stderr.strip() or done.stdout.strip())
+    if done.returncode != 0:
+        raise RuntimeError(f"libre-panel {args[0]} ended with {done.returncode}: {done.stderr}")
+    return done.stdout
+
+
+@functools.cache
+def limits() -> dict[str, Any]:
+    """The largest zip, list and picture, and the list's format, as the app has them."""
+    return json.loads(_run("share", "limits"))
+
+
+def _with_zip(data: bytes, *args: str) -> str:
+    """``libre-panel share`` of a zip given as bytes (in a file of its own meanwhile)."""
+    with tempfile.TemporaryDirectory() as place:
+        zip_file = Path(place) / "theme.zip"
+        zip_file.write_bytes(data)
+        return _run("share", args[0], str(zip_file), *args[1:])
+
+
+def inspect_shared(data: bytes) -> dict[str, Any]:
+    """What a shared theme's zip holds, checked as the app checks it on import: its name, size,
+    maker and licence; :class:`ShareError` where the app does not take it."""
+    return json.loads(_with_zip(data, "inspect"))
+
+
+def retitled(data: bytes, **given: str) -> bytes:
+    """The zip with ``given`` set in its theme.json (name, author, description; one left empty
+    stays as it is), every other file as it was."""
+    with tempfile.TemporaryDirectory() as place:
+        out = Path(place) / "retitled.zip"
+        options = [part for key, value in given.items() for part in (f"--{key}", value)]
+        _with_zip(data, "retitle", str(out), *options)
+        return out.read_bytes()
 
 
 # -- the issue --------------------------------------------------------------------------------
@@ -161,34 +231,21 @@ def _maker(given: str, original: str) -> str:
 
 
 def _picture(data: bytes) -> bytes:
-    """The theme drawn with the demo readings, as a PNG."""
-    from libre_panel.render.renderer import Renderer
-    from libre_panel.sensors.demo import demo_snapshot
-    from libre_panel.theme.model import load_theme
-    from libre_panel.theme.share import import_theme
-
+    """The theme drawn with the demo readings, as a PNG (`libre-panel preview`)."""
     with tempfile.TemporaryDirectory() as place:
-        done = import_theme(data, themes=Path(place))
-        renderer = Renderer(load_theme(Path(place) / done["id"]), preview=True)
-        try:
-            frame, _ = renderer.render(demo_snapshot())
-        finally:
-            renderer.close()
-    buffer = io.BytesIO()
-    frame.convert("RGB").save(buffer, "PNG", optimize=True)
-    return buffer.getvalue()
+        themes, out = Path(place) / "themes", Path(place) / "preview.png"
+        theme_id = _with_zip(data, "import", str(themes)).strip()
+        _run("preview", str(themes / theme_id), "-o", str(out))
+        return out.read_bytes()
 
 
 def check(body: str, login: str, out: Path, get=download) -> dict[str, Any]:
     """The theme of an issue checked and drawn: its zip, picture and entry in ``out``
     (``theme.zip``, ``preview.png``, ``entry.json``). :class:`Refused` where it cannot go in."""
-    from libre_panel.editor.community import MAX_PREVIEW
-    from libre_panel.theme.share import MAX_ZIP, ShareError, inspect_shared, retitled
-
     answers = fields(body)
     if "[x]" not in answers.get("consent", "").lower():
         raise Refused("Please tick that every picture and font in the theme may be shared.")
-    data = get(attachment(answers.get("theme", "")), MAX_ZIP)
+    data = get(attachment(answers.get("theme", "")), limits()["max_zip"])
     try:
         theme = inspect_shared(data)
     except ShareError as exc:
@@ -203,12 +260,15 @@ def check(body: str, login: str, out: Path, get=download) -> dict[str, Any]:
         picture = _picture(data)
     except ShareError as exc:
         raise Refused(f"Libre Panel cannot take this theme: {exc}") from exc
-    if len(picture) > MAX_PREVIEW:
+    if len(picture) > limits()["max_preview"]:
         raise Refused("Its picture comes out larger than the list takes; fewer photos, perhaps?")
     width, height = theme["size"]
     sha256 = hashlib.sha256(data).hexdigest()
     entry = {"name": name, "author": author, "description": description,
              "sizes": [f"{width}x{height}"], "sha256": sha256}  # fmt: skip
+    replaces = _text(answers, "replaces", "")[0]
+    if replaces:  # (which listed theme it is: the job that adds it looks)
+        entry["replaces"] = replaces
     out.mkdir(parents=True, exist_ok=True)
     (out / "theme.zip").write_bytes(data)
     (out / "preview.png").write_bytes(picture)
@@ -222,21 +282,23 @@ def check(body: str, login: str, out: Path, get=download) -> dict[str, Any]:
 # -- add (the job that may write) --------------------------------------------------------------
 
 
-def _taken(root: Path) -> set[str]:
-    from libre_panel.theme.model import list_themes
+def _built_in() -> set[str]:
+    """The ids of the themes that come with Libre Panel (`libre-panel themes`)."""
+    listed = _run("themes").splitlines()
+    return {line.split()[0] for line in listed if len(line.split()) > 1}
 
+
+def _taken(root: Path) -> set[str]:
     index = json.loads((root / LIST / "index.json").read_text(encoding="utf-8"))
     names = {Path(entry.get("zip", "")).stem for entry in index.get("themes", [])}
     names |= {path.name for path in (root / LIST).iterdir() if path.is_dir()}
-    return names | {theme["id"] for theme in list_themes()}  # (not to hide a built-in one)
+    return names | _built_in()  # (not to hide a built-in one)
 
 
 def theme_id(name: str, number: int, taken: set[str]) -> str:
     """The entry's id: its folder, its zip's name, its folder where it is installed."""
-    from libre_panel.theme.model import valid_theme_name
-
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:48].strip("-")
-    base = slug if valid_theme_name(slug) else f"theme-{number}"
+    base = slug if NAME.match(slug) and ".." not in slug else f"theme-{number}"
     chosen, n = base, 1
     while chosen in taken:
         n += 1
@@ -244,42 +306,107 @@ def theme_id(name: str, number: int, taken: set[str]) -> str:
     return chosen
 
 
-def add(checked: Path, number: int, root: Path) -> dict[str, Any]:
-    """The checked theme beside the list, with its entry in index.json: the entry as written.
-    What ``check`` left is read as data again: the entry as the app reads the list, the zip by
-    its SHA-256, the picture by its first bytes."""
-    from libre_panel.editor.community import INDEX_FORMAT, MAX_PREVIEW, parse_index
-    from libre_panel.theme.share import MAX_ZIP
+def _same_name(a: str, b: str) -> bool:
+    return " ".join(a.casefold().split()) == " ".join(b.casefold().split())
 
+
+def replaced(index: dict[str, Any], name: str) -> tuple[int, str]:
+    """The listed theme a new version takes the place of: its place in the list and its id,
+    by its name as the list shows it (or its id)."""
+    found = [(at, Path(str(entry.get("zip", ""))).stem)
+             for at, entry in enumerate(index.get("themes", []))
+             if _same_name(str(entry.get("name", "")), name)
+             or Path(str(entry.get("zip", ""))).stem == name.strip()]  # fmt: skip
+    if not found:
+        raise Refused(
+            f"No theme called “{name}” is among the community themes. Write its name under "
+            "*Replaces* as *Start → Themes → Community themes* shows it, or leave the field empty "
+            "for a new theme."
+        )
+    if len(found) > 1:
+        raise Refused(f"More than one community theme is called “{name}”: write its id instead.")
+    return found[0]
+
+
+def add(checked: Path, number: int, root: Path) -> dict[str, Any]:
+    """The checked theme beside the list, with its entry in index.json: the entry as written;
+    a new version of a listed theme in that one's place (its folder, its entry, where it was in
+    the list), with what it replaces under ``replaced``. What ``check`` left is read as data
+    again: the entry as the app reads the list, the zip by its SHA-256, the picture by its first
+    bytes."""
     raw = json.loads((checked / "entry.json").read_text(encoding="utf-8"))
     data, picture = (checked / "theme.zip").read_bytes(), (checked / "preview.png").read_bytes()
-    if len(data) > MAX_ZIP or hashlib.sha256(data).hexdigest() != raw.get("sha256"):
+    if len(data) > limits()["max_zip"] or hashlib.sha256(data).hexdigest() != raw.get("sha256"):
         raise Refused("The checked zip is not the one its entry names.")
-    if len(picture) > MAX_PREVIEW or not picture.startswith(b"\x89PNG\r\n\x1a\n"):
+    if len(picture) > limits()["max_preview"] or not picture.startswith(b"\x89PNG\r\n\x1a\n"):
         raise Refused("The checked picture is no PNG of the size the list takes.")
-    chosen = theme_id(str(raw.get("name", "")), number, _taken(root))
+    index_path = root / LIST / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    replaces = " ".join(str(raw.get("replaces") or "").split())
+    if replaces:
+        at, chosen = replaced(index, replaces)
+        was = index["themes"][at]
+    else:
+        at, chosen, was = None, theme_id(str(raw.get("name", "")), number, _taken(root)), None
     entry = {key: raw.get(key) for key in ("name", "author", "description", "sizes")}
     entry.update(preview=f"{chosen}/preview.png", zip=f"{chosen}/{chosen}.zip",
                  sha256=raw.get("sha256"))  # fmt: skip
-    if not parse_index(json.dumps({"format": INDEX_FORMAT, "themes": [entry]}).encode()):
+    if not _readable({"format": limits()["format"], "themes": [entry]}):
         raise Refused("The entry is not one the app can read.")
     folder = root / LIST / chosen
+    if was is not None:  # (what the version before had there goes: the folder is this one's)
+        shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     (folder / f"{chosen}.zip").write_bytes(data)
     (folder / "preview.png").write_bytes(picture)
-    index_path = root / LIST / "index.json"
-    index = json.loads(index_path.read_text(encoding="utf-8"))
-    index["themes"].append(entry)
+    if at is None:
+        index["themes"].append(entry)
+    else:
+        index["themes"][at] = entry
     index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {**entry, "id": chosen}
+    if was is None:
+        return {**entry, "id": chosen}
+    before = {key: was.get(key) for key in ("name", "author", "sizes")}
+    return {**entry, "id": chosen, "replaced": before}
+
+
+def _readable(index: dict[str, Any]) -> int:
+    """How many entries of a list the app reads (`libre-panel share entry`)."""
+    with tempfile.TemporaryDirectory() as place:
+        listed = Path(place) / "index.json"
+        listed.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+        try:
+            return int(_run("share", "entry", str(listed)))
+        except ShareError:
+            return 0
+
+
+def _sizes(sizes: list[str]) -> str:
+    return ", ".join(size.replace("x", " × ") for size in sizes)
 
 
 def pull_request_text(entry: dict[str, Any], number: int) -> str:
-    """What the pull request says: the entry, from where it came, what to look at."""
-    sizes = ", ".join(size.replace("x", " × ") for size in entry["sizes"])
+    """What the pull request says: the entry, from where it came, what to look at; for a new
+    version, which listed theme it takes the place of and what to make sure of first."""
+    sizes = _sizes(entry["sizes"])
+    was = entry.get("replaced")
+    if was is None:
+        head = [f"A community theme shared in #{number}: **{entry['name']}** by {entry['author']}, "
+                f"made for {sizes}."]  # fmt: skip
+    else:
+        head = [
+            f"A new version of the community theme **{was['name']}** by {was['author']} (made for "
+            f"{_sizes(was['sizes'])}), shared in #{number}: **{entry['name']}** by "
+            f"{entry['author']}, made for {sizes}.",
+            "",
+            f"It takes that one's place: its folder (`community/themes/{entry['id']}/`) and its "
+            "entry in index.json, where it was in the list; the app installs this version from "
+            "then on. **Before merging, make sure it is theirs to replace:** that the one who "
+            f"opened #{number} is the one who shared the version before (`git log -- "
+            f"community/themes/{entry['id']}`), or that its maker agrees.",
+        ]  # fmt: skip
     return "\n".join([
-        f"A community theme shared in #{number}: **{entry['name']}** by {entry['author']}, "
-        f"made for {sizes}.",
+        *head,
         "",
         f"> {entry['description']}" if entry["description"] else "> (no description)",
         "",
@@ -327,7 +454,8 @@ def main(argv: list[str] | None = None) -> int:
             (args.out / "refused.md").write_text(f"{exc}\n", encoding="utf-8")
             print(f"refused: {exc}")
             return 0  # (the next job says it on the issue)
-        print(f"checked: {checked['name']} for {', '.join(checked['sizes'])}")
+        replacing = f", in the place of {checked['replaces']}" if checked.get("replaces") else ""
+        print(f"checked: {checked['name']} for {', '.join(checked['sizes'])}{replacing}")
         return 0
     refused = args.checked / "refused.md"
     try:
@@ -340,7 +468,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     args.pull_request.write_text(pull_request_text(entry, args.number) + "\n", encoding="utf-8")
-    print(entry["id"])
+    # (what the commit and the pull request are called)
+    print(entry["id"] + (" (new version)" if "replaced" in entry else ""))
     return 0
 
 
