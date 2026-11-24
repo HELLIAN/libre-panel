@@ -1270,7 +1270,7 @@
     "total"
    ],
    "agent": [
-    "enum:both|claude|codex",
+    "enum:both|claude|codex|local",
     "both"
    ],
    "finish": [

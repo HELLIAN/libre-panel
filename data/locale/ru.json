@@ -3077,7 +3077,11 @@
     "The light ring went away; Libre Panel looks for it again.": "Световое кольцо пропало; Libre Panel ищет его снова.",
     "The light ring cannot be used: {reason}": "Световое кольцо нельзя использовать: {reason}",
     "Looking for the light ring …": "Поиск светового кольца …",
-    "It takes whole JPEG pictures: no smooth motion. Close L-Connect while Libre Panel runs: two programs cannot drive it at once.": "Принимает целые JPEG-изображения: плавного движения нет. Пока работает Libre Panel, закройте L-Connect: две программы не могут управлять устройством одновременно."
+    "It takes whole JPEG pictures: no smooth motion. Close L-Connect while Libre Panel runs: two programs cannot drive it at once.": "Принимает целые JPEG-изображения: плавного движения нет. Пока работает Libre Panel, закройте L-Connect: две программы не могут управлять устройством одновременно.",
+    "Local model": "Локальная модель",
+    "Tokens today": "Токены за сегодня",
+    "Model server (llama.cpp, Ollama)": "Сервер моделей (llama.cpp, Ollama)",
+    "Its address, such as http://192.168.1.20:8080 for llama.cpp or http://localhost:11434 for Ollama: asked every two seconds while a theme shows the local model, with nothing sent but the requests. Empty: none.": "Его адрес, например http://192.168.1.20:8080 для llama.cpp или http://localhost:11434 для Ollama: опрашивается каждые две секунды, пока тема показывает локальную модель; отправляются только запросы. Пусто: нет."
   },
   "fields": {
     "night": "ночь",
@@ -3255,6 +3259,7 @@
     "ai": "активность ИИ",
     "claude": "Claude Code",
     "codex": "Codex",
+    "local": "Локальная модель",
     "acrylic": "акрил (светящийся)",
     "agenda": "встречи",
     "analog": "аналоговые часы",

@@ -291,7 +291,9 @@ const AI_NAMES: [(&str, &str); 2] = [("claude", "Claude Code"), ("codex", "Codex
 /// build_ai: what Claude Code and Codex do (the agents service): their sign, moving while
 /// they work or wait, the state in words, the tool at work, what the session is called, and
 /// how much of the plan's limits is used; both side by side, one over the other, or the one
-/// the module's `agent` names; of both, while one is not running, the other alone.
+/// the module's `agent` names; of both, while one is not running, the other alone. `local`:
+/// a model server of one's own (llama.cpp's, Ollama), with its model and the tokens of the
+/// day.
 pub fn build_ai(b: &mut Build, _src: &Source) -> Result<()> {
     b.card(true)?;
     let which = match b.ms("agent") {
@@ -359,13 +361,16 @@ fn ai_agent(
     let (color, wait, calm) = (b.tint("accent"), b.c("warn"), b.c("text3"));
     let (ts, pad) = (b.ts as f64, b.pad as f64);
     let title = fmax(7.0, fmin(ts * 1.05, h * 0.11));
-    let shown = AI_NAMES
-        .iter()
-        .find(|(k, _)| *k == name)
-        .map_or(name, |(_, n)| n);
+    let local = name == "local";
+    let shown = match local {
+        true => t("Local model"),
+        false => (AI_NAMES.iter().find(|(k, _)| *k == name))
+            .map_or(name, |(_, n)| n)
+            .to_string(),
+    };
     b.label(
         &format!("{part}-name"),
-        shown,
+        &shown,
         x,
         y,
         title,
@@ -421,6 +426,9 @@ fn ai_agent(
     let mut meters = vec![("five_hour", t("5 hours")), ("week", t("7 days"))];
     if alone && name == "claude" {
         meters.push(("context", t("Context"))); // (its status line tells it)
+    }
+    if local {
+        meters.clear(); // (a server of one's own has no plan; its tokens instead of a name)
     }
     // what the session is called has a line of its own: alone always; beside the other only
     // where every meter fits too
@@ -547,7 +555,33 @@ fn ai_agent(
         )?;
     }
     let mut row = line + small * 2.0;
-    if task {
+    if task && local {
+        b.label(
+            &format!("{part}-tokens-label"),
+            &t("Tokens today"),
+            tx,
+            row,
+            small * 0.9,
+            None,
+            "left",
+            tw * 0.55,
+        )?;
+        b.value(
+            &format!("{part}-tokens"),
+            &format!("{key}.tokens_today"),
+            "{value:count}",
+            tx + tw,
+            row,
+            small * 0.9,
+            None,
+            "right",
+            tw * 0.4,
+            "display_font",
+            true,
+            vec![("fallback", "--".into())],
+        )?;
+        row += task_h;
+    } else if task {
         b.value(
             &format!("{part}-task"),
             &format!("{key}.task"),

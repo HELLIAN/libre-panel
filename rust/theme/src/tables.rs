@@ -573,7 +573,7 @@ pub static WIDGETS: &[(&str, &[Field])] = &[
         f("turn", "number", Given::Float(5.0)),
         f("transition", "enum:light|fade|slide|rise|wipe|cut|random", Given::Str("light")),
         f("time", "enum:total|remaining", Given::Str("total")),
-        f("agent", "enum:both|claude|codex", Given::Str("both")),
+        f("agent", "enum:both|claude|codex|local", Given::Str("both")),
         f("finish", "enum:auto|flat|lit|facet|acrylic", Given::Str("auto")),
     ]),
 ];

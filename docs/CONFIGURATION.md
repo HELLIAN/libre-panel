@@ -1491,6 +1491,8 @@ claude_usage = true   # ask Claude Code for the plan's usage every three minutes
 codex_usage = true    # ask Codex's app-server every minute
 task = true           # show what the session is called (ai.<agent>.task)
 notice = false        # a notice on the panel when a session begins to wait for you
+local_server = ""     # a model server of your own: http://192.168.1.20:8080 (llama.cpp's)
+                      # or http://localhost:11434 (Ollama); "" for none
 ```
 
 While a theme shows `ai.*`, the service asks the programs themselves for the plan's usage, also
@@ -1525,6 +1527,28 @@ With `notice` on, a notice comes on the panel when a session begins to wait for 
 (a question, a permission): what the session is called where `task` is on, else *Waiting for
 you*. A theme that shows `ai.*` itself leaves it out, as one that shows what plays leaves out
 the notice of a new track.
+
+#### A model server of your own
+
+With `local_server` set (in *Settings → Game mode and more → AI activity*: *Model server*), a
+model that runs on this PC or another of the network is the board's third agent, `local`:
+llama.cpp's server (`llama-server`) or Ollama. While a theme shows `ai.local.*`, the service
+asks it every two seconds, a few GETs and nothing else sent; it says in the log once when it
+stops answering, and when it answers again.
+
+- **llama.cpp**: its slots (`/slots`) are the sessions, each working or idle, with the model
+  it serves. The tokens of each task it saw (the prompt's and those it made) add up to
+  `ai.local.tokens_today`. A server started with `--no-slots` says only that it runs: idle,
+  with its model.
+- **Ollama**: the model it holds (`/api/ps`); it does not say whether it works, so it is idle
+  while it holds one.
+
+A server that holds no model, loads one or does not answer is `off`. The readings are those of
+the other agents where the server tells them: `ai.local.state` (`working`, `idle`, `off`),
+`.busy`, `.tool` (the model, while it works), `.model`, `.since`, `.sessions`, `.tokens_today`,
+`.s1.state` to `.s3.state` with `.task` (the slot) and `.since`, and `.server` (`llama.cpp` or
+`Ollama`). The AI activity module shows it with `agent = "local"`: its sign and state, the
+model, the tokens of the day, and its other slots where there is room.
 
 #### Claude Code in the cloud
 

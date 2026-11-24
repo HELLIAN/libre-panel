@@ -3077,7 +3077,11 @@
     "The light ring went away; Libre Panel looks for it again.": "灯环不见了；Libre Panel 会再次查找。",
     "The light ring cannot be used: {reason}": "无法使用灯环：{reason}",
     "Looking for the light ring …": "正在查找灯环 …",
-    "It takes whole JPEG pictures: no smooth motion. Close L-Connect while Libre Panel runs: two programs cannot drive it at once.": "它接收整张 JPEG 图片：无流畅动态。Libre Panel 运行时请关闭 L-Connect：两个程序不能同时控制它。"
+    "It takes whole JPEG pictures: no smooth motion. Close L-Connect while Libre Panel runs: two programs cannot drive it at once.": "它接收整张 JPEG 图片：无流畅动态。Libre Panel 运行时请关闭 L-Connect：两个程序不能同时控制它。",
+    "Local model": "本地模型",
+    "Tokens today": "今日 Token",
+    "Model server (llama.cpp, Ollama)": "模型服务器（llama.cpp、Ollama）",
+    "Its address, such as http://192.168.1.20:8080 for llama.cpp or http://localhost:11434 for Ollama: asked every two seconds while a theme shows the local model, with nothing sent but the requests. Empty: none.": "其地址，例如 llama.cpp 的 http://192.168.1.20:8080 或 Ollama 的 http://localhost:11434：主题显示本地模型时每两秒询问一次，只发送请求本身。留空：无。"
   },
   "fields": {
     "night": "夜晚",
@@ -3255,6 +3259,7 @@
     "ai": "AI 活动",
     "claude": "Claude Code",
     "codex": "Codex",
+    "local": "本地模型",
     "acrylic": "亚克力（发光）",
     "agenda": "日程",
     "analog": "模拟时钟",

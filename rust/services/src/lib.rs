@@ -2,6 +2,7 @@
 //! them and the main loop (plugins/host.py).
 
 pub mod agents;
+pub mod agents_local;
 pub mod agents_service;
 pub mod agents_setup;
 pub mod agents_usage;

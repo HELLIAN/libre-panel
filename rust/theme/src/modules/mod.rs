@@ -215,7 +215,7 @@ pub fn mix(a: &str, b: &str, amount: f64) -> Result<String> {
 /// render/formatting.py's counts: whether a format shows its value as a number that may
 /// count to a new reading (`{value:.0f}°`, `{value:bytes}/s`), not a text or a time.
 pub fn counts(fmt: &str) -> bool {
-    // \{value:(bytes|rate|rate_unit|gb|mb|[^{}A-Za-z]*[bcdeEfFgGnoxX%])\}
+    // \{value:(bytes|rate|rate_unit|gb|mb|count|[^{}A-Za-z]*[bcdeEfFgGnoxX%])\}
     let mut from = 0;
     while let Some(at) = fmt[from..].find("{value:") {
         let rest: Vec<char> = fmt[from + at + 7..].chars().collect();
@@ -223,8 +223,8 @@ pub fn counts(fmt: &str) -> bool {
             let w: Vec<char> = word.chars().collect();
             rest.len() > w.len() && rest[..w.len()] == w[..] && rest[w.len()] == '}'
         };
-        if starts("bytes") || starts("rate") || starts("rate_unit") || starts("gb") || starts("mb")
-        {
+        let app_s = ["bytes", "rate", "rate_unit", "gb", "mb", "count"];
+        if app_s.iter().any(|word| starts(word)) {
             return true;
         }
         let run = rest

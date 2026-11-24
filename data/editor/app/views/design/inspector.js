@@ -622,6 +622,7 @@ function ModuleInspector({ widget }) {
                   { value: "both", label: t("both") },
                   { value: "claude", label: enumLabel("claude") },
                   { value: "codex", label: enumLabel("codex") },
+                  { value: "local", label: enumLabel("local") },
                 ]} />
             <//>`
           : null}

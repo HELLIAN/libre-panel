@@ -3077,7 +3077,11 @@
     "The light ring went away; Libre Panel looks for it again.": "L'anello luminoso non c'è più; Libre Panel lo cerca di nuovo.",
     "The light ring cannot be used: {reason}": "Non si può usare l'anello luminoso: {reason}",
     "Looking for the light ring …": "Ricerca dell'anello luminoso …",
-    "It takes whole JPEG pictures: no smooth motion. Close L-Connect while Libre Panel runs: two programs cannot drive it at once.": "Riceve immagini JPEG intere: nessun movimento fluido. Chiudere L-Connect mentre Libre Panel è in esecuzione: due programmi non possono pilotarlo contemporaneamente."
+    "It takes whole JPEG pictures: no smooth motion. Close L-Connect while Libre Panel runs: two programs cannot drive it at once.": "Riceve immagini JPEG intere: nessun movimento fluido. Chiudere L-Connect mentre Libre Panel è in esecuzione: due programmi non possono pilotarlo contemporaneamente.",
+    "Local model": "Modello locale",
+    "Tokens today": "Token oggi",
+    "Model server (llama.cpp, Ollama)": "Server di modelli (llama.cpp, Ollama)",
+    "Its address, such as http://192.168.1.20:8080 for llama.cpp or http://localhost:11434 for Ollama: asked every two seconds while a theme shows the local model, with nothing sent but the requests. Empty: none.": "Il suo indirizzo, ad esempio http://192.168.1.20:8080 per llama.cpp o http://localhost:11434 per Ollama: interrogato ogni due secondi finché un tema mostra il modello locale, senza inviare altro che le richieste. Vuoto: nessuno."
   },
   "fields": {
     "night": "notte",
@@ -3255,6 +3259,7 @@
     "ai": "attività IA",
     "claude": "Claude Code",
     "codex": "Codex",
+    "local": "Modello locale",
     "acrylic": "acrilico (luminoso)",
     "agenda": "appuntamenti",
     "analog": "orologio analogico",

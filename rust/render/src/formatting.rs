@@ -3,12 +3,12 @@
 //! such field is refused, and a width of four digits or more too. The app's own specs:
 //! `{value:bytes}` (1.2 MB; of a reading that comes in GB or MB, 16.4 GB), `{value:duration}`
 //! (3d 5h), `{value:clock}` (3:07), `{value:gb}` (a size in GB from the reading's own unit),
-//! `{value:rate}` with `{value:rate_unit}` (519 and KB/s, from 1 MB/s 1.2 and MB/s) and
-//! `{value:upper}` (a text in capitals), and `{value:mb}` (an amount in MB from the reading's
-//! own unit). Where the app says amounts of data in MB alone (`data_unit = "mb"`,
-//! lp_i18n::data_in_mb), `bytes` and `rate` say a count of bytes in MB too. Whether a format
-//! shows its value as a number (counts(), which the modules ask) is lp-theme's
-//! modules::counts.
+//! `{value:rate}` with `{value:rate_unit}` (519 and KB/s, from 1 MB/s 1.2 and MB/s),
+//! `{value:upper}` (a text in capitals), `{value:mb}` (an amount in MB from the reading's own
+//! unit) and `{value:count}` (a count said short: 987, 48.2k, 2.4M). Where the app says
+//! amounts of data in MB alone (`data_unit = "mb"`, lp_i18n::data_in_mb), `bytes` and `rate`
+//! say a count of bytes in MB too. Whether a format shows its value as a number (counts(),
+//! which the modules ask) is lp-theme's modules::counts.
 
 use lp_py::format::{self as py, FmtError, Kind};
 use lp_py::Value;
@@ -110,6 +110,23 @@ fn rate_as(value: &Value, in_mb_alone: bool) -> Result<(String, &'static str), F
 /// An amount in MB as it is said: a decimal below 100, none from there (0.4, 12.3, 2400).
 fn in_mb(mb: f64) -> String {
     fixed(mb, if mb.abs() < 100.0 { ".1f" } else { ".0f" })
+}
+
+/// `{value:count}`: a count said short, the same in every language: as it is below a thousand
+/// (987), then in thousands and millions, with a decimal below 100 (48.2k, 312k, 2.4M, 1234M).
+fn count_of(value: &Value) -> Result<String, FmtError> {
+    let n = py::float_of(value)?;
+    let short = |x: f64, unit: &str| {
+        let digits = if x.abs() < 99.95 { ".1f" } else { ".0f" };
+        format!("{}{unit}", fixed(x, digits))
+    };
+    Ok(if n.is_nan() || n.abs() < 999.5 {
+        fixed(n, ".0f") // (and what is no number: nan)
+    } else if n.abs() < 999_500.0 {
+        short(n / 1e3, "k")
+    } else {
+        short(n / 1e6, "M")
+    })
 }
 
 /// `{value:mb}`: an amount (or a rate) in MB, from the reading's own unit; of a count of bytes
@@ -214,6 +231,7 @@ fn format_field(value: &Value, spec: &str, unit: &str) -> Result<String, FmtErro
         "rate_unit" => Ok(rate_parts(value)?.1.to_string()),
         "upper" => Ok(lp_py::upper(&py::str_of(value))),
         "mb" => mb_of(value, unit),
+        "count" => count_of(value),
         "gb" => {
             let gb = py::float_of(value)? * size_of(unit) / (1024.0f64 * 1024.0 * 1024.0);
             Ok(fixed(gb, ".1f"))
@@ -335,5 +353,27 @@ mod tests {
         assert_eq!(mb(16.0, "GB"), "16384");
         assert_eq!(mb(2_400_000.0, "B/s"), "2.4");
         assert_eq!(mb(42.5, ""), "42.5");
+    }
+
+    #[test]
+    fn a_count_is_said_short() {
+        let count = |value: Value| format_field(&value, "count", "").unwrap();
+        let f = Value::Float;
+        assert_eq!(count(Value::int(0)), "0");
+        assert_eq!(count(Value::int(987)), "987");
+        assert_eq!(count(f(999.4)), "999");
+        assert_eq!(count(f(999.5)), "1.0k"); // (never "1000")
+        assert_eq!(count(f(48_213.0)), "48.2k");
+        assert_eq!(count(f(99_949.0)), "99.9k");
+        assert_eq!(count(f(99_950.0)), "100k");
+        assert_eq!(count(f(312_400.0)), "312k");
+        assert_eq!(count(f(999_499.0)), "999k");
+        assert_eq!(count(f(999_500.0)), "1.0M");
+        assert_eq!(count(f(2_350_000.0)), "2.4M");
+        assert_eq!(count(f(1_234_000_000.0)), "1234M");
+        assert_eq!(count(f(-48_213.0)), "-48.2k");
+        assert_eq!(count(f(f64::NAN)), "nan");
+        assert!(format_field(&Value::Str("x".into()), "count", "").is_err());
+        assert!(crate::formatting::safe_format("{value:count}", &f(5.0), "", "").is_ok());
     }
 }
