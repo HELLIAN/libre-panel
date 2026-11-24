@@ -26,7 +26,7 @@ import { html, useEffect, useRef, useState } from "../../lib/preact.js";
 import { panelName, stateText } from "../../shell/panel-popover.js";
 import { Segmented, Select, Slider, Toggle } from "../../ui/controls.js";
 import { Popover } from "../../ui/layer.js";
-import { MountedChoice } from "../home/panel.js";
+import { MountedChoice, asksMounting, usePanelModel } from "../home/panel.js";
 import { fitsPanel } from "../home/themes.js";
 import { toastError } from "../../ui/toast.js";
 import { openDialog } from "../../ui/dialog.js";
@@ -520,7 +520,12 @@ function DisplayCard() {
   const config = useConfig();
   const catalog = useCatalog();
   const [chosen, setChosen] = useState(null); // the slider stays where it is let go until it is written
+  const { model: shown } = usePanelModel();
+  const { models } = useStore((s) => ({ models: s.specs?.models || [], themes: s.themes, versions: s.versions }));
   if (!config) return null;
+  // (as Start asks it: where a screen has a version for a panel on end, a bar's; a 3.5″'s screens
+  // are each made one way, Column upright and Libre Default on its side, and the choice did nothing)
+  const mounting = asksMounting(shown || models.find((model) => model.id === config.device?.model) || null);
   const { brightness, rotate, dark_on_quit: dark, dark_on_sleep: sleep, night, dark_when_away: away } = config.device;
   // sleep and locking are heard from Windows, and from logind on Linux
   const desktop = ["win32", "linux"].includes(catalog?.platform);
@@ -546,12 +551,14 @@ function DisplayCard() {
     <${LightColours} on=${Boolean(config.light_colours)} />
     <${GraphSteps} on=${Boolean(config.graph_steps)} />
     <${DataUnit} unit=${config.data_unit || "auto"} />
-    <${SettingRow}
-      title=${t("How the panel is mounted")}
-      hint=${t("Libre Panel's screens show in their version for it: Lumen Vertical for Lumen on a bar that stands on end.")}
-    >
-      <${MountedChoice} />
-    <//>
+    ${mounting
+      ? html`<${SettingRow}
+          title=${t("How the panel is mounted")}
+          hint=${t("Libre Panel's screens show in their version for it: Lumen Vertical for Lumen on a bar that stands on end.")}
+        >
+          <${MountedChoice} />
+        <//>`
+      : null}
     <${SettingRow}
       title=${t("Upside down")}
       hint=${t("For a panel that is mounted the other way round. The preview stays the right way up.")}

@@ -1095,6 +1095,24 @@ def test_live_names_things_as_settings_does(app_url, isolated_home):  # noqa: F8
         assert note["y"] >= name["y"] + name["height"] - 1
 
 
+def test_how_the_panel_is_mounted_is_asked_only_where_a_screen_has_a_version_for_it(
+    app_url,  # noqa: F811
+    isolated_home,
+):
+    """How the panel is mounted shows a screen in its version for a bar on end (Lumen Vertical).
+    A 3.5″'s screens are each made one way (Column upright, Libre Default on its side), so there
+    Settings → Panel offered a choice that did nothing; it leaves it out, as Start does."""
+    from libre_panel.config import set_config_value
+
+    choose_theme(isolated_home, "libre-default")
+    mounted = ".settings-row:has-text('How the panel is mounted')"
+    for model, rows in (("turing-3.5", 0), ("turing-9.2-usb", 1)):
+        set_config_value("device.model", model)
+        with browser_page(app_url, "settings/panel") as page:
+            expect(page.get_by_role("switch", name="Upside down")).to_have_count(1)
+            expect(page.locator(mounted)).to_have_count(rows)
+
+
 def test_a_late_read_of_the_settings_does_not_undo_a_click(app_url, isolated_home):  # noqa: F811
     """Settings → Panel reads config.toml as it opens. On a busy machine that answer came after a
     quick click's write and put the old value back: the choice jumped back, and a click on it
