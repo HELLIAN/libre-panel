@@ -30,7 +30,7 @@ def test_every_picture_and_clip_the_pages_show_is_made_by_a_recipe(pages, recipe
     assert set(shown) == {*pages.READMES, *pages.SITE, pages.NOTES}  # all of them, read
     assert ("media", "hero.gif") in shown["README.md"]  # the headline over Lumen in video mode
     assert ("media", "hero-de.gif") in shown["README.de.md"]  # (the headline in German)
-    assert ("media", "video-mode.webm") in shown["site/index.html"]
+    assert ("media", "light.webm") in shown["site/index.html"]  # Lumen v2 in video mode on top
     # the German page shows the same, its own where a picture has words (the top, the buttons)
     german = {(folder, name.replace("-de.", ".")) for folder, name in shown["README.de.md"]}
     assert german == shown["README.md"]
@@ -124,7 +124,7 @@ def test_the_website_is_put_together_with_every_file_it_names(pages, recipes, tm
     site = tmp_path / "site"
     pages.build(tmp_path / "repo", site)
     for path in ("index.html", "de/index.html", "site.css", "site.js", "images/icon.png",
-                 "images/social-preview.png", "media/video-mode.webm", "media/video-mode.png",
+                 "images/social-preview.png", "media/light.webm", "media/light.png",
                  "fonts/Barlow-Regular.ttf", "fonts/OFL-Barlow.txt"):  # fmt: skip
         assert (site / path).is_file(), path
     assert not (site / "fonts" / "LiberationSans-Regular.ttf").exists()  # only what it uses

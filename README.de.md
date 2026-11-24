@@ -3,7 +3,7 @@
 <p>
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/media/hero-de.png">
-    <img src="docs/media/hero-de.gif" width="100%" alt="Libre Panel. Die Werte deines PCs als bewegtes Licht. Frei und quelloffen, für die kleinen USB-Displays im Gehäuse deines PCs. Darunter Lumen, das eigene Theme von Libre Panel, im Videomodus auf einem 9,2-Zoll-Panel: was gerade läuft, mit Cover, die Uhrzeit mit der Last als vorbeiziehendes Licht, vier drehende Lüfter und leuchtende Ringe für CPU, GPU und RAM">
+    <img src="docs/media/hero-de.gif" width="100%" alt="Libre Panel. Die Werte deines PCs als bewegtes Licht. Frei und quelloffen, für die kleinen USB-Displays im Gehäuse deines PCs. Darunter Lumen v2, das eigene Theme von Libre Panel, im Videomodus auf einem 9,2-Zoll-Panel, mit weichem Licht, das hinter seinen Karten treibt: was gerade läuft, mit Cover, die Uhrzeit mit der Last als vorbeiziehendes Licht, vier drehende Lüfter und leuchtende Ringe für CPU, GPU und RAM">
   </picture>
 </p>
 
@@ -134,6 +134,17 @@ Licht in gefrästen Rillen. Standard sind 25 Bilder pro Sekunde, flüssig und f�
 deutlich leichter; alle anderen Panels bekommen Standbilder, gesendet nur dort, wo sich etwas
 ändert.
 
+### Licht, das sich bewegt
+
+<p><img src="docs/media/light.gif" width="100%" alt="Lumen v2 im Videomodus auf einem 9,2-Zoll-Panel: Weiche Lichtflecken treiben hinter den Karten; eine Last treibt die Ringe hoch, und das Licht wird wärmer, die Enden der Ringe atmen, der neueste Punkt jedes Verlaufs schlägt mit jedem Messwert, und alles beruhigt sich wieder"></p>
+
+Lumen, Arena und Encore gibt es in einer zweiten Version mit eigenem Licht: weiche Flecken, die
+hinter den Karten treiben, über alle deine Panels wie über eins, und wärmer werden, während der
+PC arbeitet; bei Encore nehmen sie die Farben des Covers an, das gerade läuft. Und auf jedem
+Theme bewegt sich das Licht ein wenig: Das Ende eines Rings atmet, der neueste Punkt eines
+Verlaufs schlägt mit jedem Messwert, und das Cover leuchtet in seinen eigenen Farben. Jede Art
+lässt sich unter *Einstellungen → Panel → Bewegtes Licht* abschalten.
+
 ### Karten im Wechsel
 
 <p><img src="docs/media/card-turns.gif" width="100%" alt="Das Kartenfach von Lumen, seine Karten im Wechsel: Was gerade läuft, macht in einer Überblendung dem Wetter Platz, ein Zifferblatt schiebt das Wetter nach links hinaus, der Tag mit seinem Monat steigt an die Stelle der Uhr, und ein Lichtstrahl wischt hinüber zu dem, was gerade läuft"></p>
@@ -143,6 +154,17 @@ Symbolen und den nächsten Stunden, der Tag, ein Zifferblatt, der Mond oder dein
 erste, die etwas zu zeigen hat, ist zu sehen, oder sie wechseln sich ab, jede für ihre Minuten.
 Von einer zur nächsten geht das Fach, wie du willst: mit einer Lichtlinie, einer Überblendung,
 einem Schub zur Seite oder nach oben oder einem Lichtstrahl, der darüberwischt.
+
+### Von einem Bildschirm zum nächsten
+
+<p><img src="docs/media/morph.gif" width="100%" alt="Verwandlung auf einem 9,2-Zoll-Panel: Lumen v2 macht Arena v2 Platz, und was beide zeigen, fliegt an seinen neuen Platz und in seine neue Größe: Die Uhrzeit schrumpft in die Ecke, die Ringe für CPU und GPU rücken hinüber, und der Rest von Arena erscheint um sie herum; dann auf demselben Weg zurück zu Lumen v2"></p>
+
+Ein neuer Bildschirm kommt, wie du willst. Bei der *Verwandlung* fliegt, was beide Bildschirme
+zeigen (die Uhrzeit, ein Ring, das Cover, das Logo eines Spiels), an seinen neuen Platz und in
+seine neue Größe, sogar von einem Panel zum anderen. Bei der *Kaskade* steigen die Karten des
+neuen Bildschirms nacheinander herein, ein *Komet* fliegt mit leuchtendem Schweif hinüber, und
+ein *Portal* öffnet sich auf den neuen Bildschirm. Mit mehr als einem Panel laufen Schübe,
+Wischer und die Lichtlinie über alle wie über einen Bildschirm.
 
 ### Hinweise
 
@@ -191,14 +213,15 @@ Bildschirm. Nichts verlässt diesen PC
 
 ### Mehrere Panels zugleich
 
-<p><img src="docs/media/more-panels.gif" width="100%" alt="Zwei 9,2-Zoll-Leisten übereinander: Lumen mit dem Titel, der Uhrzeit und den Ringen, darunter Lumen Companion mit jedem Kern, den Temperaturen mit drehenden Lüftern, den Laufwerken und den Prozessen; eine Last steigt auf beiden im selben Takt, dann wird der Prozessor zu heiß, beide Ränder pulsieren rot und das zweite Panel zeigt High Contrast, bis er abgekühlt ist"></p>
+<p><img src="docs/media/panels-light.gif" width="100%" alt="Zwei 9,2-Zoll-Leisten übereinander: Lumen v2 mit dem Titel, der Uhrzeit und den Ringen, darunter Lumen v2 Companion mit jedem Kern, den Temperaturen mit drehenden Lüftern, den Laufwerken und den Prozessen; ein weiches Licht treibt über beide wie über einen Bildschirm, und eine Last steigt auf beiden im selben Takt und wärmt es"></p>
 
-Bis zu vier Panels, jedes mit eigenem Theme, auf denselben Messwerten und im selben Takt. Ein
-Panel neben Lumen bekommt **Lumen Companion**: jeden Kern, die Temperaturen mit drehenden
-Lüftern, die Laufwerke und die Prozesse, und Lumen lässt weg, was sein Companion zeigt. Ein
-Bild kann sich über alle Panels spannen, **Szenen** legen mit einem Klick auf jedes Panel ein
-Theme, und erreicht ein Sensor seine kritische Grenze, pulsiert der Rand jedes Panels rot. Die
-drei Lüfter-Displays eines JONSBO ZC-360 sind drei eigene Panels
+Bis zu vier Panels, jedes mit eigenem Theme, auf denselben Messwerten und im selben Takt; das
+Licht der v2-Themes und die Übergänge laufen über sie wie über einen Bildschirm. Ein Panel neben
+Lumen bekommt **Lumen Companion**: jeden Kern, die Temperaturen mit drehenden Lüftern, die
+Laufwerke und die Prozesse, und Lumen lässt weg, was sein Companion zeigt. Ein Bild kann sich
+über alle Panels spannen, **Szenen** legen mit einem Klick auf jedes Panel ein Theme, und
+erreicht ein Sensor seine kritische Grenze, pulsiert der Rand jedes Panels rot. Die drei
+Lüfter-Displays eines JONSBO ZC-360 sind drei eigene Panels
 ([mehrere Panels zugleich](docs/CONFIGURATION.md#more-panels-at-once), englisch).
 
 ### Das Panel als Monitor

@@ -29,7 +29,7 @@
 <link rel="icon" type="image/png" href="../images/icon.png">
 <link rel="preload" href="../fonts/Barlow-Regular.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="preload" href="../fonts/Barlow-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="preload" href="../media/video-mode.png" as="image">
+<link rel="preload" href="../media/light.png" as="image">
 <link rel="stylesheet" href="../site.css">
 <script>document.documentElement.className = "js";</script>
 <script src="../site.js" defer></script>
@@ -89,14 +89,14 @@
     <div class="stage">
       <div class="wrap">
         <figure class="media media-hero">
-          <video autoplay loop muted playsinline preload="auto" width="2000" height="580" poster="../media/video-mode.png" aria-label="Lumen, das eigene Theme von Libre Panel, im Videomodus auf einem 9,2-Zoll-Panel: was gerade läuft, mit Cover, die Uhrzeit mit der Last als vorbeiziehendes Licht, drehende Lüfter und leuchtende Ringe für CPU, GPU und RAM">
-            <source src="../media/video-mode.webm" type="video/webm">
-            <source src="../media/video-mode.mp4" type="video/mp4">
-            <img src="../media/video-mode.gif" width="960" height="278" alt="Lumen im Videomodus auf einem 9,2-Zoll-Panel">
+          <video autoplay loop muted playsinline preload="auto" width="2000" height="580" poster="../media/light.png" aria-label="Lumen v2, das eigene Theme von Libre Panel, im Videomodus auf einem 9,2-Zoll-Panel, mit weichem Licht, das hinter seinen Karten treibt: was gerade läuft, mit Cover, die Uhrzeit mit der Last als vorbeiziehendes Licht, drehende Lüfter und leuchtende Ringe für CPU, GPU und RAM">
+            <source src="../media/light.webm" type="video/webm">
+            <source src="../media/light.mp4" type="video/mp4">
+            <img src="../media/light.gif" width="960" height="278" alt="Lumen v2 im Videomodus auf einem 9,2-Zoll-Panel">
           </video>
           <button class="toggle" type="button" data-playing="true" data-pause="Clip anhalten" data-play="Clip abspielen" aria-label="Clip anhalten"><svg class="icon i-pause" aria-hidden="true"><use href="#i-pause"/></svg><svg class="icon i-play" aria-hidden="true"><use href="#i-play"/></svg></button>
         </figure>
-        <p class="caption">Lumen, das eigene Theme von Libre Panel, im Videomodus auf einem 9,2"-Panel, mit Demo-Werten.</p>
+        <p class="caption">Lumen v2, das eigene Theme von Libre Panel, mit seinem Licht, im Videomodus auf einem 9,2"-Panel, mit Demo-Werten.</p>
         <ul class="facts" aria-label="Auf einen Blick">
           <li><span class="dot" style="background: var(--accent)"></span>Läuft sofort, out of the box</li>
           <li><span class="dot" style="background: var(--cpu)"></span>Bis zu 50 fps auf TURZX-USB-Panels</li>
@@ -222,14 +222,14 @@
       <div class="head">
         <p class="kicker">In 30 Sekunden</p>
         <h2 id="tour-title">Ein Panel, das sich mit deinem PC bewegt</h2>
-        <p>Jeder Clip hier ist Libre Panel selbst, Bild für Bild aufgenommen mit Demo-Werten: Lumen auf der 9,2"-Leiste, Studio für den Hinweis, Encore, Nimbus und Almanac, zwei Leisten zugleich, Libre Default auf einem 3,5"-Panel und der eigene Startbildschirm des Panels, wie Libre Panel ihn zeichnet.</p>
+        <p>Jeder Clip hier ist Libre Panel selbst, Bild für Bild aufgenommen mit Demo-Werten: Lumen und Lumen v2 auf der 9,2"-Leiste, die Verwandlung von Lumen v2 zu Arena v2, Studio für den Hinweis, Encore, Nimbus und Almanac, zwei Leisten zugleich, Libre Default auf einem 3,5"-Panel und der eigene Startbildschirm des Panels, wie Libre Panel ihn zeichnet.</p>
       </div>
 
       <article class="feature" id="video-mode">
         <div class="feature-copy">
           <span class="label">Videomodus</span>
           <h3>Bis zu 50 Bilder pro Sekunde</h3>
-          <p>TURZX-USB-Panels haben einen Videodecoder, und Libre Panel schickt ihm bis zu 50 Bilder pro Sekunde (Standard sind 30, die flüssig aussehen und den PC deutlich weniger fordern): Zahlen zählen zum nächsten Messwert, Ringe und Balken gleiten, Verläufe scrollen mit jedem Bild ein Stück weiter, und Lüfter drehen mit ihrer echten Drehzahl.</p>
+          <p>TURZX-USB-Panels haben einen Videodecoder, und Libre Panel schickt ihm bis zu 50 Bilder pro Sekunde (Standard sind 25, die flüssig aussehen und den PC deutlich weniger fordern): Zahlen zählen zum nächsten Messwert, Ringe und Balken gleiten, Verläufe scrollen mit jedem Bild ein Stück weiter, und Lüfter drehen mit ihrer echten Drehzahl.</p>
           <details class="more">
             <summary>Mehr<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
             <p>Die Downloads bringen das ffmpeg mit, das er braucht, und er schaltet sich auf dem 9,2" von selbst ein. Panels ohne Decoder bekommen Standbilder, gesendet nur dort, wo sich etwas ändert.</p>
@@ -248,7 +248,27 @@
         </figure>
       </article>
 
-      <article class="feature flip" id="look">
+      <article class="feature flip" id="light">
+        <div class="feature-copy">
+          <span class="label">Bewegtes Licht</span>
+          <h3>Ein Licht über all deine Panels</h3>
+          <p>Lumen, Arena und Encore gibt es in einer zweiten Version mit eigenem Licht: weiche Flecken, die hinter den Karten treiben, über alle deine Panels wie über eins, und wärmer werden, während der PC arbeitet. Bei Encore nehmen sie die Farben des Covers an, das gerade läuft.</p>
+          <details class="more">
+            <summary>Mehr<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+            <p>Auf jedem Theme bewegt sich das Licht ein wenig: Das Ende eines Rings atmet, der neueste Punkt eines Verlaufs schlägt mit jedem Messwert, und das Cover leuchtet in seinen eigenen Farben. Jede Art lässt sich unter Einstellungen → Panel → Bewegtes Licht abschalten, und ein ruhiges Panel zeigt nichts davon. Deine eigenen Themes können dasselbe Licht nutzen.</p>
+          </details>
+        </div>
+        <figure class="media">
+          <video loop muted playsinline preload="none" width="2430" height="1726" data-lazy data-poster="../media/panels-light.png" aria-label="Zwei 9,2-Zoll-Leisten übereinander: Lumen v2 mit dem Titel, der Uhrzeit und den Ringen, darunter Lumen v2 Companion mit jedem Kern, den Temperaturen, den Laufwerken und den Prozessen; ein weiches Licht treibt über beide wie über einen Bildschirm, und eine Last steigt auf beiden im selben Takt und wärmt es">
+            <source src="../media/panels-light.webm" type="video/webm">
+            <source src="../media/panels-light.mp4" type="video/mp4">
+          </video>
+          <noscript><img src="../media/panels-light.gif" width="960" height="682" loading="lazy" alt="Ein Licht über zwei Panels: Lumen v2 und Lumen v2 Companion"></noscript>
+          <button class="toggle" type="button" data-playing="false" data-pause="Clip anhalten" data-play="Clip abspielen" aria-label="Clip abspielen"><svg class="icon i-pause" aria-hidden="true"><use href="#i-pause"/></svg><svg class="icon i-play" aria-hidden="true"><use href="#i-play"/></svg></button>
+        </figure>
+      </article>
+
+      <article class="feature" id="look">
         <div class="feature-copy">
           <span class="label">Der Look</span>
           <h3>Werte als Licht gezeichnet</h3>
@@ -379,17 +399,22 @@
 
       <article class="feature feature-wide" id="transitions">
         <div class="feature-copy">
-          <div><span class="label">Übergänge</span><h3>Der nächste Bildschirm öffnet sich in einer Lichtlinie</h3></div>
+          <div><span class="label">Übergänge</span><h3>Was beide Bildschirme zeigen, fliegt an seinen neuen Platz</h3></div>
           <div class="copy">
-            <p>Ein Theme für den Schreibtisch, ein anderes, solange Musik läuft, ein drittes in der Nacht: Der Autopilot wählt das Theme nach Regeln, die du schreibst.</p>
+            <p>Bei der Verwandlung fliegen die Uhrzeit, ein Ring, das Cover oder das Logo eines Spiels an ihren neuen Platz und in ihre neue Größe, sogar von einem Panel zum anderen. Bei der Kaskade steigen die neuen Karten nacheinander herein, ein Komet fliegt hinüber, ein Portal öffnet sich, und Schübe, Wischer und die Lichtlinie laufen über alle deine Panels wie über einen Bildschirm.</p>
             <details class="more">
               <summary>Mehr<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-            <p>Eine Linie zündet auf halber Höhe und öffnet sich zum nächsten Bildschirm, der schon live läuft. Auch der Autopilot ist ein Dienst und aus, bis du ihn einschaltest.</p>
+            <p>Ein Theme für den Schreibtisch, ein anderes, solange Musik läuft, ein drittes in der Nacht: Der Autopilot wählt das Theme nach Regeln, die du schreibst. Auch er ist ein Dienst und aus, bis du ihn einschaltest.</p>
             </details>
           </div>
         </div>
         <figure class="media">
-          <img src="../images/studio.png" width="1920" height="480" loading="lazy" decoding="async" alt="Studio: eine große Uhr, die Wetterkarte mit den nächsten Stunden und leuchtende Ringe für CPU, RAM und GPU">
+          <video loop muted playsinline preload="none" width="2000" height="580" data-lazy data-poster="../media/morph.png" aria-label="Verwandlung auf einem 9,2-Zoll-Panel: Lumen v2 macht Arena v2 Platz, und was beide zeigen, fliegt an seinen neuen Platz und in seine neue Größe: Die Uhrzeit schrumpft in die Ecke, die Ringe für CPU und GPU rücken hinüber, und der Rest von Arena erscheint um sie herum; dann auf demselben Weg zurück">
+            <source src="../media/morph.webm" type="video/webm">
+            <source src="../media/morph.mp4" type="video/mp4">
+          </video>
+          <noscript><img src="../media/morph.gif" width="960" height="278" loading="lazy" alt="Verwandlung von Lumen v2 zu Arena v2 und zurück"></noscript>
+          <button class="toggle" type="button" data-playing="false" data-pause="Clip anhalten" data-play="Clip abspielen" aria-label="Clip abspielen"><svg class="icon i-pause" aria-hidden="true"><use href="#i-pause"/></svg><svg class="icon i-play" aria-hidden="true"><use href="#i-play"/></svg></button>
         </figure>
       </article>
 
@@ -834,6 +859,8 @@
             <li><b>Turing Smart Screen</b><span class="chip chip-quiet">COM-Port</span><span class="desc">3,5", 8,8"</span></li>
             <li><b>JONSBO ZC-360</b><span class="chip chip-quiet">USB</span><span class="desc">jedes Display ein eigenes Panel</span></li>
             <li><b>JONSBO DS339</b><span class="chip chip-quiet">USB</span><span class="desc">3,39"</span></li>
+            <li><b>JONSBO DS916</b><span class="chip chip-quiet">COM-Port</span><span class="desc">9,16"</span></li>
+            <li><b>Lian Li</b><span class="chip chip-quiet">USB</span><span class="desc">Universal Screen 8,8"</span></li>
             <li><b>WeAct Display FS V1</b><span class="chip chip-quiet">COM-Port</span><span class="desc">0,96"</span></li>
             <li><b>Waveshare USB-Monitor</b><span class="chip chip-quiet">USB</span><span class="desc">2,8", als USB-Display</span></li>
           </ul>
@@ -859,8 +886,6 @@
           </ul>
         </div>
         <div class="card group no">
-            <li><b>JONSBO DS916</b><span class="chip chip-quiet">COM-Port</span><span class="desc">9,16"</span></li>
-            <li><b>Lian Li</b><span class="chip chip-quiet">USB</span><span class="desc">Universal Screen 8,8"</span></li>
           <h3><span class="state">Nicht unterstützt</span></h3>
           <p>Für sie gibt es hier noch keinen Treiber.</p>
           <ul class="rows">

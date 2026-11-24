@@ -951,6 +951,14 @@ def theme_tube(stage: Stage, themes: tuple[str, ...]) -> None:
     stage.at(3.9, lambda s: s.ask_theme(None, by="clip", transition="tube"))
 
 
+def theme_morph(stage: Stage, themes: tuple[str, ...]) -> None:
+    # Morph to the second screen and back: what both show flies to its new place and size
+    first, second = (stage.theme(theme) for theme in themes)
+    stage.show(first, transition="morph")
+    stage.at(0.5, lambda s: s.ask_theme(second, by="clip", transition="morph"))
+    stage.at(3.3, lambda s: s.ask_theme(None, by="clip", transition="morph"))
+
+
 # A game starts and ends: the entrance closes the screen to a line, opens a band with the game's
 # name, and opens onto the screen of the game; at the end the other way round.
 def game_entrance(stage: Stage, themes: tuple[str, ...]) -> None:
@@ -1051,6 +1059,15 @@ CLIPS: dict[str, PanelClip] = {
         "video mode: lit curves scrolling, rings and numbers gliding, fans running up",
         ("lumen",), 8.0, video_mode, poster=4.0,
     ),
+    "light": PanelClip(
+        "Lumen v2: soft pools of light drift behind the cards and warm as the PC works; the ends"
+        " of the rings breathe, the newest point of each curve beats",
+        ("lumen-v2",), 8.0, video_mode, poster=4.0,
+    ),
+    "morph": PanelClip(
+        "Morph: what Lumen v2 and Arena v2 both show flies to its new place, and back",
+        ("lumen-v2", "arena-v2"), 6.0, theme_morph, poster=1.5, loop="cut",
+    ),
     "card-ignition": PanelClip(
         "the card slot changes from playback to the weather and back, with its line of light",
         ("lumen",), 6.6, card_ignition, poster=3.4,
@@ -1100,6 +1117,11 @@ CLIPS: dict[str, PanelClip] = {
     "encore": PanelClip(
         "Encore: what plays, the cover's colours behind it, the time rolling, the volume rising",
         ("encore",), 7.0, encore_screen, poster=2.4, periodic=True, clock_runs=True,
+    ),
+    "encore-v2": PanelClip(
+        "Encore v2: the light takes the colours of the cover that plays, the time rolling, the"
+        " volume rising",
+        ("encore-v2",), 7.0, encore_screen, poster=2.4, periodic=True, clock_runs=True,
     ),
     "nimbus": PanelClip(
         "Nimbus: the weather's symbols moving, the next days, the moon, a small clock rolling",
@@ -1200,6 +1222,12 @@ def more_panels(stage: Stage, themes: tuple[str, ...]) -> None:
     alarm_at(stage, 3.6, 6.8)
 
 
+def panels_light(stage: Stage, themes: tuple[str, ...]) -> None:
+    # one light over the panels where they stand, warmed by a burst of work on both
+    stage.show(stage.theme(pair_version(themes[0]) or themes[0]))
+    work_burst(stage, at=0.8)
+
+
 def millimetres(model: str) -> tuple[float, float]:
     """The size of ``model``'s picture in millimetres, landscape (as the app has it)."""
     found = images.parts(((model, "landscape"),))["models"][model]
@@ -1245,6 +1273,12 @@ def record_panels(
 
 
 PANELS_CLIPS: dict[str, PanelsClip] = {
+    "panels-light": PanelsClip(
+        "two panels as one: Lumen v2's light flows over both, and a burst of work warms it on"
+        " both at once",
+        ("lumen-v2", "lumen-v2-companion"), 8.0, panels_light, places=((0, 0), (0, 1)),
+        poster=4.0,
+    ),
     "more-panels": PanelsClip(
         "two panels at once: the same beat on both, then an alarm that turns both edges red",
         ("lumen", "lumen-companion"), 9.0, more_panels, places=((0, 0), (0, 1)),

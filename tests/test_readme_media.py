@@ -250,10 +250,10 @@ LONG = ("card-ignition", "card-turns", "volume-band", "volume-looks", "theme-tub
 
 def test_every_panel_recipe_runs_headless_and_makes_a_clip(panel, clip, short):
     assert list(panel.CLIPS) == [
-        "video-mode", "card-ignition", "card-turns", "ai-card", "agents", "small-panel",
-        "volume-band", "volume-looks", "theme-tube", "game-entrance", "close-up-rings",
-        "close-up-curves", "encore", "nimbus", "terra", "almanac", "music-page", "round-report",
-        "screens-in-turn", "themes-tour",
+        "video-mode", "light", "morph", "card-ignition", "card-turns", "ai-card", "agents",
+        "small-panel", "volume-band", "volume-looks", "theme-tube", "game-entrance",
+        "close-up-rings", "close-up-curves", "encore", "encore-v2", "nimbus", "terra",
+        "almanac", "music-page", "round-report", "screens-in-turn", "themes-tour",
     ]  # fmt: skip
     widths = {}
     for name, recipe in panel.CLIPS.items():
@@ -830,21 +830,24 @@ def test_the_desk_has_the_panel_below_the_monitor_as_the_desktop_has_it(scene):
 def test_the_top_of_the_readme_is_the_headline_over_lumen_in_its_frame(
     scene, encode, tmp_path, monkeypatch
 ):
-    made = []
+    made, asked = [], []
 
-    def lumen(settings):  # (Lumen, made up: a colour a frame)
+    def lumen(settings, theme):  # (the panel, made up: a colour a frame)
+        asked.append(theme)
         sink = encode.FrameSink(tmp_path / f"lumen-{len(made)}", fps=50)
         for n in range(4):
             sink.add(Image.new("RGB", (384, 96), (40 * n, 90, 200)))
         made.append(sink.frames().folder)
         return sink.frames(), 1
 
-    monkeypatch.setattr(scene, "_bare_lumen", lumen)
+    monkeypatch.setattr(scene, "_bare_panel", lumen)
     pictures = {}
     for language in ("en", "de"):
         out = encode.FrameSink(tmp_path / language, fps=scene.FPS)
-        poster = scene.hero(language)(encode.Settings(), out)
-        assert not made[-1].exists()  # (Lumen's frames are gone once they are in it)
+        hero = scene.CLIPS["hero" if language == "en" else "hero-de"]
+        assert hero.themes == ("lumen-v2",)  # (the README's top shows Lumen v2, its light)
+        poster = hero.draw(encode.Settings(), out, hero.themes)
+        assert asked[-1] == "lumen-v2" and not made[-1].exists()  # (gone once it is in it)
         frames = out.frames()
         assert frames.count == 2 and poster == 0  # every second frame: 50 a second to 25
         first, second = (np.asarray(frames.image(n), np.int16) for n in range(2))
@@ -866,7 +869,7 @@ def test_a_scene_draws_the_website_and_the_app_in_their_windows(scene, encode, t
         patch.setattr(scene, "SCENE_S", 0.4)  # (ten frames: the first moments of the scene)
         sink = encode.FrameSink(tmp_path / "scene", fps=scene.FPS)
         try:
-            scene.screen_monitor(encode.Settings(scale=0.5), sink)
+            scene.screen_monitor(encode.Settings(scale=0.5), sink, ("lumen",))
         except scene.media_app.Unavailable as error:
             pytest.skip(str(error))
     frames = sink.frames()
