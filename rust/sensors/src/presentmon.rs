@@ -10,7 +10,8 @@
 //! The recording session must exist *before* the game starts: the anti-cheat of some games
 //! refuses to let a new session begin while the game runs, but leaves one that is already
 //! running alone. So PresentMon runs for as long as a theme shows `game.*` readings (it stops
-//! a minute after none does), and is started again only slowly while a game runs. It sits in
+//! a minute after none does; the `game` service asks for them for as long as it runs), and is
+//! started again only slowly while a game runs. When it ends and why, the log says. It sits in
 //! a Windows job that ends it with Libre Panel, whatever way Libre Panel ends. While Windows
 //! ends the session it is not started again, nor to stop its recording session: Windows
 //! refuses new programs then, with a box that names PresentMon.
@@ -412,17 +413,22 @@ fn begin(shared: &Arc<Shared>, program_of: &mut Option<PathBuf>) -> Option<Run> 
 
 /// A PresentMon ended: say why, and (how long to wait, how often it failed in a row).
 fn ended(shared: &Shared, run: Run, failures: u32, game_runs: bool) -> (f64, u32) {
+    let lived = run.started.elapsed().as_secs_f64();
     for reader in run.readers {
         let _ = reader.join(); // the last lines of its output
     }
     if run.told.header.load(Ordering::Relaxed) {
-        // it worked: start it again soon
+        // it worked: start it again soon (said, and that it records again, once it does)
         shared.blocked.store(false, Ordering::Relaxed);
         let wait = if game_runs {
             BLOCKED_SECONDS
         } else {
             RESTART_SECONDS
         };
+        shared.say(
+            &format!("PresentMon ended after {lived:.0} s; it starts again in {wait:.0} s"),
+            "ended",
+        );
         return (wait, 0);
     }
     let lines: Vec<String> = run
@@ -537,7 +543,14 @@ fn supervise(shared: &Arc<Shared>) {
         } else {
             match idle_since {
                 None => idle_since = Some(now),
-                Some(since) if now.duration_since(since).as_secs_f64() > IDLE_SECONDS => break,
+                Some(since) if now.duration_since(since).as_secs_f64() > IDLE_SECONDS => {
+                    if run.is_some() {
+                        shared.note(
+                            "PresentMon ends: for a minute no theme or service read game.*".into(),
+                        );
+                    }
+                    break;
+                }
                 Some(_) => {}
             }
         }
@@ -863,6 +876,42 @@ while :; do echo "Game.exe,12,16.6"; sleep 0.02; done"#,
         // (started again after RETRY_SECONDS, recording once steady)
         assert!(until(15.0, || source.problem().is_none()));
         assert_eq!(source.notes(), [rights, "PresentMon is recording"]);
+        assert!(until(5.0, || source.read().contains_key("game.fps")));
+        source.close();
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_that_ends_after_it_worked_is_said_and_started_again() {
+        let (folder, program) = script(
+            "restart",
+            r#"echo "Application,ProcessID,MsBetweenPresents"
+if [ ! -e ran ]; then
+  touch ran
+  for i in 1 2 3 4 5 6 7 8 9 10; do echo "Game.exe,12,16.6"; sleep 0.02; done
+  exit 0
+fi
+while :; do echo "Game.exe,12,16.6"; sleep 0.02; done"#,
+        );
+        let mut source = PresentMonSource::new(program.to_str().unwrap(), game());
+        source.read();
+        // (how long it lived as the supervisor saw it end: at most a look later)
+        let ended = |said: &str| {
+            said.starts_with("PresentMon ended after ")
+                && said.ends_with(" s; it starts again in 2 s")
+        };
+        assert!(until(10.0, || source
+            .problem()
+            .is_some_and(|said| ended(&said))));
+        // (started again after RESTART_SECONDS, recording once steady)
+        assert!(until(15.0, || source.problem().is_none()));
+        let notes = source.notes();
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(
+            ended(&notes[0]) && notes[1] == "PresentMon is recording",
+            "{notes:?}"
+        );
         assert!(until(5.0, || source.read().contains_key("game.fps")));
         source.close();
         std::fs::remove_dir_all(&folder).unwrap();
