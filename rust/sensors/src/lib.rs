@@ -33,6 +33,7 @@ pub mod provider;
 pub mod rapl;
 pub mod rtss;
 pub mod service;
+pub mod session;
 pub mod shm;
 pub mod sky;
 pub mod smbios;

@@ -2,16 +2,10 @@
 //! the panel sleeps with the computer, and it dims while the session is locked or the monitor
 //! is off (winsession.py). A hidden window of its own hears it from Windows.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-/// Set from the moment Windows asks whether the session may end, until it ends or another
-/// program cancels it.
-static ENDING: AtomicBool = AtomicBool::new(false);
-
 /// ending: whether the Windows session is ending (shut down, restart, sign out): start no
-/// program.
+/// program. The flag is lp-sensors' session's, which PresentMon reads too.
 pub fn ending() -> bool {
-    ENDING.load(Ordering::Relaxed)
+    lp_sensors::session::ending()
 }
 
 #[cfg(windows)]
@@ -47,7 +41,8 @@ mod windows {
         WM_DESTROY, WNDCLASSW,
     };
 
-    use super::{Handlers, ENDING};
+    use super::Handlers;
+    use lp_sensors::session::set_ending;
 
     const WM_QUERYENDSESSION: u32 = 0x0011;
     const WM_ENDSESSION: u32 = 0x0016;
@@ -153,16 +148,16 @@ mod windows {
     ) -> LRESULT {
         match message {
             WM_QUERYENDSESSION => {
-                ENDING.store(true, Ordering::Relaxed);
+                set_ending(true);
                 1 // (Libre Panel never holds up the end of a session)
             }
             WM_ENDSESSION => {
                 if wparam != 0 {
                     // (the session really ends: not cancelled)
-                    ENDING.store(true, Ordering::Relaxed);
+                    set_ending(true);
                     end();
                 } else {
-                    ENDING.store(false, Ordering::Relaxed);
+                    set_ending(false);
                 }
                 0
             }

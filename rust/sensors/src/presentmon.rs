@@ -48,10 +48,6 @@ pub const NOT_FOUND_SECONDS: f64 = 30.0;
 /// a PresentMon that does not end when asked is killed after this long
 pub const STOP_SECONDS: f64 = 5.0;
 
-/// Windows ends the session (the user logs off, the computer shuts down): the program says so
-/// here, and PresentMon is not started again.
-pub static SESSION_ENDING: AtomicBool = AtomicBool::new(false);
-
 /// find_presentmon: the PresentMon program: the path named in the settings, the one a
 /// download carries (its `tools` folder), PATH, or Intel's folder under Program Files. With
 /// the highest rights only one from a safe place: a named one elsewhere is passed over for
@@ -574,7 +570,7 @@ fn supervise(shared: &Arc<Shared>) {
                 next_start = now + Duration::from_secs_f64(delay);
             }
         }
-        if run.is_none() && now >= next_start && !SESSION_ENDING.load(Ordering::Relaxed) {
+        if run.is_none() && now >= next_start && !crate::session::ending() {
             run = begin(shared, &mut program);
             if run.is_none() {
                 // not there, or it would not start
@@ -592,7 +588,7 @@ fn supervise(shared: &Arc<Shared>) {
             let _ = reader.join();
         }
     }
-    if !SESSION_ENDING.load(Ordering::Relaxed) {
+    if !crate::session::ending() {
         // (Windows ends the recording session with itself)
         release_session(program.as_deref());
     }
