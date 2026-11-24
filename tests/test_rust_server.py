@@ -39,7 +39,7 @@ from test_rust_app import (
     this_computer,
 )
 
-from libre_panel import i18n
+from libre_panel import __version__, i18n
 
 pytestmark = pytest.mark.skipif(
     sys.version_info[:2] != (3, 12), reason="the release's http.server is Python 3.12's"
@@ -3090,6 +3090,9 @@ def test_a_backup_is_made_and_put_back_as_backup_py_does(
         if name == "libre-panel-backup.json":
             theirs_said, ours_said = json.loads(body), json.loads(ours_file[4])
             assert theirs_said.pop("made")[:10] == ours_said.pop("made")[:10]
+            # (the version that made it: the one built, where the kept one is the version it
+            # was kept with, inside the zip as packed)
+            assert ours_said.pop("version") == __version__ and theirs_said.pop("version")
             assert ours_said == theirs_said
             assert ours_file[4].count(b"\n") == body.count(b"\n")
         else:

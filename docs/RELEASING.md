@@ -20,7 +20,9 @@ is not on PyPI: pip and pipx install the release's wheel by its link.
 ## Cutting a release
 
 ```bash
-# 1. set the version in pyproject.toml (the one place it is set)
+# 1. set the version in pyproject.toml (the one place it is set); from a candidate to a
+#    release or back, the update check's kept answers change with it (a release sees no
+#    pre-release): LP_GOLDEN=record pytest tests/test_rust_server.py -k update_check
 # 2. CHANGELOG.md: a section "## 0.1.0 — <date>"
 # 3. the pictures and clips of this release (see below), looked at one by one; Libre Panel in
 #    Rust draws them (cargo build --release in rust/: lp-check and libre-panel)
@@ -61,6 +63,13 @@ the run written down: nothing it sends to a panel was changed after it. What it 
 panel whose room ends before the file does (42 for the file that ended early) is a command
 for that state: it ships untried by us, and the protocol notes say what is known of it from
 the panel of issue 52.
+
+0.9.5 makes the files finer in the same room (every whole JPEG quality, the clip's crf in
+quarter steps), so its candidate 0.9.5rc4 was run the same way on 2026-11-24, on Windows, on
+the same 9.2" (mounted on end) and 12.3": both files put on the panel, the clip written again,
+a smaller clip (Dark's) over a larger one (Aurora's), the factory logo again and the logo anew,
+and the panels switched off and on; both started with what was written. Nothing 0.9.5 sends to
+a panel changed after that candidate.
 
 Two exceptions are the project owner's decisions, and are said wherever they apply. **The
 8.8"** is written to with the 9.2"'s room although no 8.8" was at hand (0.9.5): its maker

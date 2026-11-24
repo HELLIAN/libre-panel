@@ -25,8 +25,10 @@ are passed over.
 
 ``LP_GOLDEN=record`` (as golden.py's) keeps what the Rust app's server answers now in place of
 what was kept, for a change meant to be seen (a new setting, a new text): the answers of the
-tests that run and pass are written anew, the other tests' stay, and what the Python server
-wrote into its folder stays as it was kept."""
+tests that run and pass are written anew, the other tests' stay. Of what the Python server
+wrote into its folder, a file the Rust app's server wrote as well is kept as it wrote it (the
+update check's updates.json, which says what a candidate sees and a release does not); the
+rest stays as it was kept."""
 
 from __future__ import annotations
 
@@ -269,6 +271,11 @@ class Played:
             whole = isinstance(body, str) or "base64" in body
             now = entry(self.ours, *self.request, ours, whole=whole)
             self.last.update(status=now["status"], headers=now["headers"], body=now["body"])
+            for name, form in (self.last.get("home") or {}).items():
+                mine = self.homes[1] / name
+                if form is not None and not name.endswith("/") and mine.is_file():
+                    whole = isinstance(form, str) or "base64" in form
+                    self.last["home"][name] = kept(self.ours.plain(mine.read_bytes()), whole)
         made = played(self.last, self.theirs, self.ours, ours)
         if not self.again:
             self._lay(self.last.get("home"))
